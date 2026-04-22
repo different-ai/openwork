@@ -6,7 +6,7 @@ import { t } from "../../../../i18n";
 import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import type { WorkspaceInfo } from "../../../../app/lib/tauri";
+import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,

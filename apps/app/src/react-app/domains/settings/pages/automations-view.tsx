@@ -21,7 +21,7 @@ import {
 
 import { t } from "../../../../i18n";
 import type { ScheduledJob } from "../../../../app/types";
-import { formatRelativeTime, isTauriRuntime } from "../../../../app/utils";
+import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 
 type AutomationsFilter = "all" | "scheduled" | "templates";
 type ScheduleMode = "daily" | "interval";
@@ -487,12 +487,12 @@ export function AutomationsView(props: AutomationsViewProps) {
     setCreateError(null);
   };
 
-  const supported = jobsSource === "remote" || (isTauriRuntime() && props.schedulerInstalled && !schedulerInstallRequested);
-  const schedulerGateActive = jobsSource === "local" && isTauriRuntime() && (!props.schedulerInstalled || schedulerInstallRequested);
+  const supported = jobsSource === "remote" || (isDesktopRuntime() && props.schedulerInstalled && !schedulerInstallRequested);
+  const schedulerGateActive = jobsSource === "local" && isDesktopRuntime() && (!props.schedulerInstalled || schedulerInstallRequested);
   const automationDisabled = props.newTaskDisabled || schedulerGateActive || createBusy;
   const sourceLabel = jobsSource === "remote" ? t("scheduled.source_remote") : t("scheduled.source_local");
   const sourceDescription = jobsSource === "remote" ? t("scheduled.subtitle_remote") : t("scheduled.subtitle_local");
-  const supportNote = jobsSource === "remote" ? null : !isTauriRuntime() ? t("scheduled.desktop_required") : null;
+  const supportNote = jobsSource === "remote" ? null : !isDesktopRuntime() ? t("scheduled.desktop_required") : null;
 
   const lastUpdatedLabel = useMemo(() => {
     lastUpdatedNow;

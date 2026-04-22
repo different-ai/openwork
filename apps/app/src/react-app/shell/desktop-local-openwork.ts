@@ -3,7 +3,7 @@ import {
   engineStart,
   openworkServerInfo,
   orchestratorWorkspaceActivate,
-} from "../../app/lib/tauri";
+} from "../../app/lib/desktop";
 import { writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "./app-inspector";

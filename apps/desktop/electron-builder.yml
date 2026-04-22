@@ -1,0 +1,29 @@
+appId: com.differentai.openwork.electron
+productName: OpenWork
+directories:
+  output: dist-electron
+files:
+  - electron/**/*
+  - package.json
+extraResources:
+  - from: ../app/dist
+    to: app-dist
+  - from: src-tauri/sidecars
+    to: sidecars
+asar: true
+npmRebuild: false
+mac:
+  icon: src-tauri/icons/icon.icns
+  target:
+    - dmg
+    - zip
+linux:
+  icon: src-tauri/icons/icon.png
+  target:
+    - AppImage
+    - tar.gz
+win:
+  icon: src-tauri/icons/icon.ico
+  target:
+    - nsis
+artifactName: openwork-electron-${os}-${arch}-${version}.${ext}

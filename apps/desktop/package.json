@@ -2,18 +2,32 @@
   "name": "@openwork/desktop",
   "private": true,
   "version": "0.11.212",
+  "description": "OpenWork desktop shell",
+  "author": {
+    "name": "OpenWork",
+    "email": "support@openworklabs.com"
+  },
   "opencodeRouterVersion": "0.11.212",
+  "main": "electron/main.mjs",
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "dev:react-session": "OPENWORK_DEV_MODE=1 VITE_OPENWORK_REACT_SESSION=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev-react\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
+    "dev:electron": "node ./scripts/electron-dev.mjs",
+    "dev:electron:react-session": "VITE_OPENWORK_REACT_SESSION=1 node ./scripts/electron-dev.mjs",
     "dev:windows": "node ./scripts/dev-windows.mjs",
     "dev:windows:x64": "node ./scripts/dev-windows.mjs x64",
     "build": "tauri build",
     "build:debug:react-session": "VITE_OPENWORK_REACT_SESSION=1 tauri build --debug",
+    "build:electron": "node ./scripts/electron-build.mjs",
+    "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
+    "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
+    "electron": "pnpm exec electron ./electron/main.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
     "@tauri-apps/cli": "^2.0.0"
   },
   "packageManager": "pnpm@10.27.0"

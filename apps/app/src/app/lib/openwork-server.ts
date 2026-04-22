@@ -1,7 +1,7 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
-import { isTauriRuntime } from "../utils";
-import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
+import { desktopFetch } from "./desktop";
+import { isDesktopRuntime } from "../utils";
+import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./desktop";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -761,11 +761,11 @@ function isStreamUrl(url: string): boolean {
 }
 
 const resolveFetch = (url?: string) => {
-  if (!isTauriRuntime()) return globalThis.fetch;
+  if (!isDesktopRuntime()) return globalThis.fetch;
   if (url && isStreamUrl(url)) {
     return typeof window !== "undefined" ? window.fetch.bind(window) : globalThis.fetch;
   }
-  return tauriFetch;
+  return desktopFetch;
 };
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;

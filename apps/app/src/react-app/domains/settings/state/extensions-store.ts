@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 
 import { applyEdits, modify } from "jsonc-parser";
-import { join } from "@tauri-apps/api/path";
 
 import { currentLocale, t } from "../../../../i18n";
 import type {
@@ -14,7 +13,7 @@ import type {
   ReloadTrigger,
   SkillCard,
 } from "../../../../app/types";
-import { addOpencodeCacheHint, isTauriRuntime, normalizeDirectoryPath } from "../../../../app/utils";
+import { addOpencodeCacheHint, isDesktopRuntime, normalizeDirectoryPath } from "../../../../app/utils";
 import skillCreatorTemplate from "../../../../app/data/skill-creator.md?raw";
 import {
   isPluginInstalled,
@@ -25,17 +24,20 @@ import {
 import {
   importSkill,
   installSkillTemplate,
+  joinDesktopPath,
   listLocalSkills,
+  openDesktopPath,
   pickDirectory,
   readLocalSkill,
   readOpencodeConfig,
+  revealDesktopItemInDir,
   uninstallSkill as uninstallSkillCommand,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
   writeLocalSkill,
   writeOpencodeConfig,
   type OpencodeConfigFile,
-} from "../../../../app/lib/tauri";
+} from "../../../../app/lib/desktop";
 import type { OpenworkHubRepo, OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import {
   createDenClient,
@@ -333,7 +335,7 @@ export function createExtensionsStore(options: {
       return config.openwork ?? {};
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       return await workspaceOpenworkRead({ workspacePath: root }) as unknown as Record<string, unknown>;
     }
 
@@ -357,7 +359,7 @@ export function createExtensionsStore(options: {
       return true;
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       const result = await workspaceOpenworkWrite({
         workspacePath: root,
         config: config as never,
@@ -467,7 +469,7 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server unavailable. Connect to import skills.");
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       throw new Error(translate("skills.desktop_required"));
     }
 
@@ -537,7 +539,7 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server unavailable. Connect to remove skills.");
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       throw new Error(translate("skills.desktop_required"));
     }
 
@@ -1161,7 +1163,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (isLocalWorkspace && isTauriRuntime()) {
+    if (isLocalWorkspace && isDesktopRuntime()) {
       if (root !== skillsRoot) skillsLoaded = false;
       if (!optionsOverride?.force && skillsLoaded) return;
       if (refreshSkillsInFlight) return;
@@ -1326,7 +1328,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       mutateState((current) => ({
         ...current,
         pluginStatus: translate("skills.plugin_management_host_only"),
@@ -1464,7 +1466,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setStateField("pluginStatus", translate("skills.plugin_management_host_only"));
       return;
     }
@@ -1547,7 +1549,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setStateField("pluginStatus", translate("skills.plugin_management_host_only"));
       return;
     }
@@ -1593,7 +1595,7 @@ export function createExtensionsStore(options: {
 
   async function importLocalSkill() {
     const isLocalWorkspace = options.workspaceType() === "local";
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(translate("skills.desktop_required"));
       return;
     }
@@ -1670,7 +1672,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       const message = translate("skills.desktop_required");
       setStateField("skillsStatus", message);
       return { ok: false, message };
@@ -1723,7 +1725,7 @@ export function createExtensionsStore(options: {
   }
 
   async function revealSkillsFolder() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setStateField("skillsStatus", translate("skills.desktop_required"));
       return;
     }
@@ -1734,13 +1736,12 @@ export function createExtensionsStore(options: {
     }
 
     try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      const opencodeSkills = await join(root, ".opencode", "skills");
-      const claudeSkills = await join(root, ".claude", "skills");
-      const legacySkills = await join(root, ".opencode", "skill");
+      const opencodeSkills = await joinDesktopPath(root, ".opencode", "skills");
+      const claudeSkills = await joinDesktopPath(root, ".claude", "skills");
+      const legacySkills = await joinDesktopPath(root, ".opencode", "skill");
       const tryOpen = async (target: string) => {
         try {
-          await openPath(target);
+          await openDesktopPath(target);
           return true;
         } catch {
           return false;
@@ -1749,7 +1750,7 @@ export function createExtensionsStore(options: {
       if (await tryOpen(opencodeSkills)) return;
       if (await tryOpen(claudeSkills)) return;
       if (await tryOpen(legacySkills)) return;
-      await revealItemInDir(opencodeSkills);
+      await revealDesktopItemInDir(opencodeSkills);
     } catch (error) {
       setStateField("skillsStatus", error instanceof Error ? error.message : translate("skills.reveal_failed"));
     }
@@ -1816,7 +1817,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", "OpenWork server unavailable. Connect to view skills.");
       return null;
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setStateField("skillsStatus", translate("skills.desktop_required"));
       return null;
     }
@@ -1881,7 +1882,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", "OpenWork server unavailable. Connect to edit skills.");
       return;
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setStateField("skillsStatus", translate("skills.desktop_required"));
       return;
     }
@@ -1990,7 +1991,9 @@ export function createExtensionsStore(options: {
   };
 
   const start = () => {
-    if (started || disposed) return;
+    if (started) return;
+    // StrictMode double-mount re-arms after dispose.
+    disposed = false;
     started = true;
 
     if (typeof window !== "undefined") {
@@ -2038,6 +2041,7 @@ export function createExtensionsStore(options: {
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    started = false;
     abortRefreshes();
     stopOpenworkSubscription?.();
     stopOpenworkSubscription = null;

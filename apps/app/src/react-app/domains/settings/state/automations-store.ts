@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react";
 
 import { t } from "../../../../i18n";
-import { schedulerDeleteJob, schedulerListJobs } from "../../../../app/lib/tauri";
+import { schedulerDeleteJob, schedulerListJobs } from "../../../../app/lib/desktop";
 import type { ScheduledJob } from "../../../../app/types";
-import { isTauriRuntime, normalizeDirectoryPath } from "../../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath } from "../../../../app/utils";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 
 export type AutomationActionPlan =
@@ -167,7 +167,7 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
 
   const getScheduledJobsPollingAvailable = () => {
     if (getScheduledJobsSource() === "remote") return true;
-    return isTauriRuntime() && options.schedulerPluginInstalled();
+    return isDesktopRuntime() && options.schedulerPluginInstalled();
   };
 
   const maybeRefreshScheduledJobs = () => {
@@ -262,7 +262,7 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
       }
     }
 
-    if (!isTauriRuntime() || !options.schedulerPluginInstalled()) {
+    if (!isDesktopRuntime() || !options.schedulerPluginInstalled()) {
       if (getScheduledJobsContextKey() !== requestContextKey) return "skipped";
       setStateField("scheduledJobsStatus", null);
       return "unavailable";
@@ -311,7 +311,7 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       throw new Error(t("automations.desktop_required"));
     }
     const root = options.selectedWorkspaceRoot().trim();
@@ -336,7 +336,9 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
   };
 
   const start = () => {
-    if (started || disposed) return;
+    if (started) return;
+    // StrictMode double-mount re-arms after dispose.
+    disposed = false;
     started = true;
     lastContextKey = getScheduledJobsContextKey();
     openworkServerUnsubscribe = options.openworkServer.subscribe(() => {
@@ -349,6 +351,7 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    started = false;
     openworkServerUnsubscribe?.();
     openworkServerUnsubscribe = null;
     listeners.clear();

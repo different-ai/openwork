@@ -22,6 +22,7 @@ import {
 } from "../../app/lib/openwork-server";
 import {
   engineInfo,
+  revealDesktopItemInDir,
   openworkServerInfo,
   openworkServerRestart,
   pickDirectory,
@@ -38,7 +39,7 @@ import {
   type OpenworkServerInfo,
   type WorkspaceInfo,
   type WorkspaceList,
-} from "../../app/lib/tauri";
+} from "../../app/lib/desktop";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -53,7 +54,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../app/types";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
-import { isSandboxWorkspace, isTauriRuntime, normalizeDirectoryPath, safeStringify } from "../../app/utils";
+import { isDesktopRuntime, isSandboxWorkspace, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
@@ -111,7 +112,7 @@ async function resolveRouteOpenworkConnection() {
   let resolvedToken = settings.token?.trim() ?? "";
   let hostInfo: OpenworkServerInfo | null = null;
 
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     try {
       const info = await openworkServerInfo();
       hostInfo = info;
@@ -352,7 +353,7 @@ export function SessionRoute() {
     let desktopList = null as Awaited<ReturnType<typeof workspaceBootstrap>> | null;
     let desktopWorkspaces = workspacesRef.current;
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         try {
           desktopList = await workspaceBootstrap();
           desktopWorkspaces = (desktopList.workspaces ?? []).map(mapDesktopWorkspace);
@@ -519,7 +520,7 @@ export function SessionRoute() {
   }, [refreshRouteState]);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     let cancelled = false;
     void engineInfo()
       .then((info) => {
@@ -612,7 +613,7 @@ export function SessionRoute() {
   );
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (loading) return;
     if (client) {
       reconnectAttemptedWorkspaceIdRef.current = "";
@@ -1014,7 +1015,7 @@ export function SessionRoute() {
       // desktop-provided workspaceBootstrap results). Either call failing on
       // its own should NOT block the other — the user's intent was "rename
       // this workspace" and a soft failure in one store is recoverable.
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         await workspaceUpdateDisplayName({
           workspaceId: renameWorkspaceId,
           displayName: trimmed,
@@ -1036,10 +1037,9 @@ export function SessionRoute() {
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     const path = workspace?.path?.trim();
-    if (!path || !isTauriRuntime()) return;
+    if (!path || !isDesktopRuntime()) return;
     try {
-      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      await revealItemInDir(path);
+      await revealDesktopItemInDir(path);
     } catch {
       // ignore
     }
@@ -1051,7 +1051,7 @@ export function SessionRoute() {
 
   const handleSaveShareRemoteAccess = useCallback(
     async (enabled: boolean) => {
-      if (shareRemoteAccessBusy || !isTauriRuntime()) return;
+      if (shareRemoteAccessBusy || !isDesktopRuntime()) return;
       const previous = readOpenworkServerSettings();
       const next = { ...previous, remoteAccessEnabled: enabled };
       setShareRemoteAccessBusy(true);
@@ -1075,7 +1075,7 @@ export function SessionRoute() {
 
   const handleExportWorkspaceConfig = useCallback(
     async (workspaceId: string) => {
-      if (!isTauriRuntime()) return;
+      if (!isDesktopRuntime()) return;
       const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
       if (!workspace) return;
       const outputPath = await pickDirectory({
@@ -1085,8 +1085,7 @@ export function SessionRoute() {
       if (!targetPath) return;
       await workspaceExportConfig({ workspaceId, outputPath: targetPath });
       try {
-        const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-        await revealItemInDir(targetPath);
+        await revealDesktopItemInDir(targetPath);
       } catch {
         // ignore reveal failures
       }
@@ -1104,7 +1103,7 @@ export function SessionRoute() {
       }
       // Remove from both stores so the next refresh can't resurrect the row
       // from whichever list wins the merge.
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         await workspaceForget(workspaceId).catch(() => undefined);
       }
       if (client) {
@@ -1213,15 +1212,26 @@ export function SessionRoute() {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
     try {
+      const workspaceName = folderNameFromPath(folder);
       const list = await workspaceCreate({
         folderPath: folder,
-        name: folderNameFromPath(folder),
+        name: workspaceName,
         preset,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
+      }
+      // Register the workspace with the running openwork-server so
+      // listWorkspaces() reflects it immediately. Without this the UI only
+      // picks up the new workspace after an app restart (because the server
+      // is launched with a fixed --workspace list at boot and the bridge
+      // write only updates desktop-side state).
+      if (client) {
+        await client
+          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
+          .catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);
       await refreshRouteState();
@@ -1231,7 +1241,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [navigate, refreshRouteState]);
+  }, [client, navigate, refreshRouteState]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
@@ -1328,7 +1338,7 @@ export function SessionRoute() {
           // Fire Tauri updates but don't await them — they're bookkeeping and
           // awaiting 2 IPC roundtrips on every click used to stall rapid
           // workspace switches behind a queue.
-          if (isTauriRuntime()) {
+          if (isDesktopRuntime()) {
             void workspaceSetSelected(workspaceId).catch(() => undefined);
             void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
           }
@@ -1405,7 +1415,7 @@ export function SessionRoute() {
               workspaceDetail: shareWorkspaceState.shareWorkspaceDetail,
               fields: shareWorkspaceState.shareFields,
               remoteAccess:
-                isTauriRuntime() && shareWorkspaceState.shareWorkspace?.workspaceType === "local"
+                isDesktopRuntime() && shareWorkspaceState.shareWorkspace?.workspaceType === "local"
                   ? {
                       enabled: openworkServerSettings.remoteAccessEnabled === true,
                       busy: shareRemoteAccessBusy,

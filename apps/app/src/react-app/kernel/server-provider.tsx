@@ -10,10 +10,10 @@ import {
   type ReactNode,
 } from "react";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
+import { desktopFetch } from "../../app/lib/desktop";
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
-import { isTauriRuntime } from "../../app/utils";
+import { isDesktopRuntime } from "../../app/utils";
 
 export function normalizeServerUrl(input: string): string | undefined {
   const trimmed = input.trim();
@@ -78,7 +78,7 @@ async function checkHealth(url: string): Promise<boolean> {
     baseUrl: url,
     headers,
     signal: AbortSignal.timeout(3000),
-    fetch: isTauriRuntime() ? tauriFetch : undefined,
+    fetch: isDesktopRuntime() ? desktopFetch : undefined,
   });
   return client.global
     .health()
@@ -106,7 +106,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     // Hosted web deployments served by OpenWork must reuse the OpenCode proxy
     // rather than any persisted localhost target.
     const forceProxy =
-      !isTauriRuntime() &&
+      !isDesktopRuntime() &&
       isWebDeployment() &&
       (import.meta.env.PROD ||
         (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&

@@ -9,9 +9,9 @@ import type {
   OpenworkServerClient,
   OpenworkServerStatus,
 } from "../../../../app/lib/openwork-server";
-import { pickDirectory } from "../../../../app/lib/tauri";
+import { pickDirectory } from "../../../../app/lib/desktop";
 import {
-  isTauriRuntime,
+  isDesktopRuntime,
   normalizeDirectoryQueryPath,
   safeStringify,
 } from "../../../../app/utils";
@@ -129,7 +129,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   }, [canReadConfig, canWriteConfig, openworkServerReady, openworkServerWorkspaceReady]);
 
   const canPickAuthorizedFolder =
-    isTauriRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
+    isDesktopRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
   const workspaceRootFolder = props.selectedWorkspaceRoot.trim();
   const visibleAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;
@@ -257,7 +257,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   }, [authorizedFolders, persistAuthorizedFolders]);
 
   const pickAuthorizedFolder = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     try {
       const selection = await pickDirectory({
         title: t("onboarding.authorize_folder"),

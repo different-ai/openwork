@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { McpDirectoryInfo } from "../../../app/constants";
-import type { OpencodeConfigFile } from "../../../app/lib/tauri";
+import type { OpencodeConfigFile } from "../../../app/lib/desktop";
 import type { McpServerEntry, McpStatusMap } from "../../../app/types";
 
 import PresentationalMcpView from "../settings/pages/mcp-view";

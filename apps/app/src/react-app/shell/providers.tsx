@@ -3,7 +3,7 @@ import { useEffect, type ReactNode } from "react";
 
 import { isWebDeployment } from "../../app/lib/openwork-deployment";
 import { hydrateOpenworkServerSettingsFromEnv, readOpenworkServerSettings } from "../../app/lib/openwork-server";
-import { isTauriRuntime } from "../../app/utils";
+import { isDesktopRuntime } from "../../app/utils";
 import { DenAuthProvider } from "../domains/cloud/den-auth-provider";
 import { DesktopConfigProvider } from "../domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "../domains/cloud/restriction-notice-provider";
@@ -14,7 +14,7 @@ import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 
 function resolveDefaultServerUrl(): string {
-  if (isTauriRuntime()) return "http://127.0.0.1:4096";
+  if (isDesktopRuntime()) return "http://127.0.0.1:4096";
 
   const openworkUrl =
     typeof import.meta.env?.VITE_OPENWORK_URL === "string"

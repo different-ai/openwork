@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-react";
 
 import type { McpDirectoryInfo } from "../../../app/constants";
+import { openDesktopUrl, opencodeMcpAuth } from "../../../app/lib/desktop";
 import { unwrap } from "../../../app/lib/opencode";
-import { opencodeMcpAuth } from "../../../app/lib/tauri";
 import { validateMcpServerName } from "../../../app/mcp";
 import type { Client } from "../../../app/types";
-import { isTauriRuntime, normalizeDirectoryPath } from "../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
 import { t, type Language } from "../../../i18n";
 import { Button } from "../../design-system/button";
 import { TextInput } from "../../design-system/text-input";
@@ -96,9 +96,8 @@ export function McpAuthModal(props: McpAuthModalProps) {
   }, []);
 
   const openAuthorizationUrl = async (url: string) => {
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
+    if (isDesktopRuntime()) {
+      await openDesktopUrl(url);
       return;
     }
 
@@ -330,7 +329,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
   };
 
   const handleCliReauth = async () => {
-    if (!props.entry || cliAuthBusy || props.isRemoteWorkspace || !isTauriRuntime()) return;
+    if (!props.entry || cliAuthBusy || props.isRemoteWorkspace || !isDesktopRuntime()) return;
 
     setCliAuthBusy(true);
     setCliAuthResult(null);
@@ -759,7 +758,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 <div className="space-y-2 pt-2">
                   <p className="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token")}</p>
                   {!props.isRemoteWorkspace ? (
-                    isTauriRuntime() ? (
+                    isDesktopRuntime() ? (
                       <Button variant="secondary" onClick={() => void handleCliReauth()} disabled={cliAuthBusy}>
                         {cliAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
                         {cliAuthBusy

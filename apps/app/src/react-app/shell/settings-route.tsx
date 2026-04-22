@@ -55,11 +55,11 @@ import {
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type WorkspaceInfo,
-} from "../../app/lib/tauri";
+} from "../../app/lib/desktop";
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
-import { isMacPlatform, isTauriRuntime, normalizeDirectoryPath, safeStringify } from "../../app/utils";
+import { isDesktopRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
@@ -147,7 +147,7 @@ async function resolveRouteOpenworkConnection() {
   let normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
   let resolvedToken = settings.token?.trim() ?? "";
 
-  if ((!normalizedBaseUrl || !resolvedToken) && isTauriRuntime()) {
+  if ((!normalizedBaseUrl || !resolvedToken) && isDesktopRuntime()) {
     try {
       const info = await openworkServerInfo();
       normalizedBaseUrl =
@@ -388,7 +388,7 @@ export function SettingsRoute() {
         startupPreference: () => {
           // In Tauri desktop mode, prefer the embedded host server (hostInfo.baseUrl)
           // unless the user has explicitly pinned a remote urlOverride.
-          if (!isTauriRuntime()) return "server";
+          if (!isDesktopRuntime()) return "server";
           const stored = readOpenworkServerSettings();
           return stored.urlOverride?.trim() ? "server" : "local";
         },
@@ -585,7 +585,7 @@ export function SettingsRoute() {
     let desktopList = null as Awaited<ReturnType<typeof workspaceBootstrap>> | null;
     let desktopWorkspaces = workspacesRef.current;
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         try {
           desktopList = await workspaceBootstrap();
           desktopWorkspaces = (desktopList.workspaces ?? []).map(mapDesktopWorkspace);
@@ -671,7 +671,7 @@ export function SettingsRoute() {
   }, [workspaces]);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (loading) return;
     if (openworkClient) {
       reconnectAttemptedWorkspaceIdRef.current = "";
@@ -804,15 +804,26 @@ export function SettingsRoute() {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
     try {
+      const workspaceName = folderNameFromPath(folder);
       const list = await workspaceCreate({
         folderPath: folder,
-        name: folderNameFromPath(folder),
+        name: workspaceName,
         preset,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
+      }
+      // Register the workspace with the running openwork-server so
+      // listWorkspaces() reflects it immediately. Without this the UI only
+      // picks up the new workspace after an app restart (because the server
+      // is launched with a fixed --workspace list at boot and the bridge
+      // write only updates desktop-side state).
+      if (openworkClient) {
+        await openworkClient
+          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
+          .catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);
       await refreshRouteState();
@@ -1102,7 +1113,7 @@ export function SettingsRoute() {
             onReleaseChannelChange={(next) =>
               local.setPrefs((previous) => ({ ...previous, releaseChannel: next }))
             }
-            alphaChannelSupported={isTauriRuntime() && isMacPlatform()}
+            alphaChannelSupported={isDesktopRuntime() && isMacPlatform()}
           />
         );
       case "recovery":

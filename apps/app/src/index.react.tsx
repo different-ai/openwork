@@ -6,7 +6,7 @@ import { BrowserRouter, HashRouter } from "react-router-dom";
 
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { bootstrapTheme } from "./app/theme";
-import { isTauriRuntime } from "./app/utils";
+import { isDesktopRuntime } from "./app/utils";
 import { initLocale } from "./i18n";
 import { getReactQueryClient } from "./react-app/infra/query-client";
 import {
@@ -32,7 +32,7 @@ root.dataset.openworkDeployment = getOpenWorkDeployment();
 
 const platform = createDefaultPlatform();
 const queryClient = getReactQueryClient();
-const Router = isTauriRuntime() ? HashRouter : BrowserRouter;
+const Router = isDesktopRuntime() ? HashRouter : BrowserRouter;
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>

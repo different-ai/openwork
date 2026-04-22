@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
-import type { WorkspaceInfo } from "../../../../app/lib/tauri";
+import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,

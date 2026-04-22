@@ -13,7 +13,7 @@ export default {
   "app.error.install_failed": "L'installation d'OpenCode a échoué. Voir les journaux ci-dessus.",
   "app.error.pick_workspace_folder": "Choisissez d'abord un dossier d'espace de travail.",
   "app.error.remote_base_url_required": "Ajoutez une URL de serveur pour continuer.",
-  "app.error.tauri_required": "Cette action nécessite l'environnement d'exécution de l'application Tauri.",
+  "app.error.tauri_required": "Cette action nécessite l'environnement d'exécution de l'application de bureau OpenWork.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",
   "app.error_auth_failed": "Échec de l'authentification",
   "app.error_auto_compact_scope": "La compaction automatique du contexte ne peut être modifiée que pour un espace de travail local ou un espace de travail de serveur OpenWork accessible en écriture.",

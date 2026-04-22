@@ -1,15 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
-import { relaunch } from "@tauri-apps/plugin-process";
 
 import type {
   ReloadReason,
   ReloadTrigger,
   ResetOpenworkMode,
 } from "../../app/types";
-import { resetOpenworkState } from "../../app/lib/tauri";
+import { relaunchDesktopApp, resetOpenworkState } from "../../app/lib/desktop";
 import {
   addOpencodeCacheHint,
-  isTauriRuntime,
+  isDesktopRuntime,
   safeStringify,
 } from "../../app/utils";
 import { t } from "../../i18n";
@@ -145,12 +144,12 @@ export function useSystemState(
     options.setError(null);
 
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         await resetOpenworkState(resetModalMode);
       }
       clearOpenworkLocalStorage(resetModalMode);
-      if (isTauriRuntime()) {
-        await relaunch();
+      if (isDesktopRuntime()) {
+        await relaunchDesktopApp();
       } else {
         window.location.reload();
       }

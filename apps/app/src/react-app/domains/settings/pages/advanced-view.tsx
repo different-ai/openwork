@@ -4,8 +4,8 @@ import { CircleAlert, Cpu, RefreshCcw, Server, Zap } from "lucide-react";
 
 import type { OpencodeConnectStatus } from "../../../../app/types";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
-import type { EngineInfo } from "../../../../app/lib/tauri";
-import { isTauriRuntime } from "../../../../app/utils";
+import type { EngineInfo } from "../../../../app/lib/desktop";
+import { isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
@@ -267,7 +267,7 @@ export function AdvancedView(props: AdvancedViewProps) {
             variant="outline"
             className="h-8 shrink-0 px-3 py-0 text-xs"
             onClick={props.toggleMicrosandboxCreateSandbox}
-            disabled={props.busy || !isTauriRuntime()}
+            disabled={props.busy || !isDesktopRuntime()}
           >
             {props.microsandboxCreateSandboxEnabled ? "On" : "Off"}
           </Button>
@@ -299,7 +299,7 @@ export function AdvancedView(props: AdvancedViewProps) {
           </div>
         </div>
 
-        {isTauriRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
+        {isDesktopRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
           <div className={`${settingsPanelSoftClass} space-y-3`}>
             <div className="flex items-start justify-between gap-3">
               <div>

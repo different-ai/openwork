@@ -8,9 +8,9 @@ import {
   orchestratorWorkspaceActivate,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
-} from "../../app/lib/tauri";
+} from "../../app/lib/desktop";
 import { hydrateOpenworkServerSettingsFromEnv, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
-import { isTauriRuntime, safeStringify } from "../../app/utils";
+import { isDesktopRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
 
@@ -35,7 +35,7 @@ export function useDesktopRuntimeBoot() {
   const { setActive } = useServer();
 
   useEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       // Web/headless: nothing to spawn, we're instantly "ready".
       markReady();
       return;
