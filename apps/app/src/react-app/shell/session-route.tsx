@@ -53,7 +53,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../app/types";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
-import { isSandboxWorkspace, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
+import { isSandboxWorkspace, isTauriRuntime, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
@@ -82,6 +82,7 @@ import {
 } from "./app-inspector";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
+import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -138,6 +139,61 @@ function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
+}
+
+function describeRouteError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  const serialized = safeStringify(error);
+  return serialized && serialized !== "{}" ? serialized : t("app.unknown_error");
+}
+
+function mergeRouteWorkspaces(
+  serverWorkspaces: OpenworkWorkspaceInfo[],
+  desktopWorkspaces: RouteWorkspace[],
+): RouteWorkspace[] {
+  const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
+  const desktopByPath = new Map(
+    desktopWorkspaces
+      .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
+      .filter(([path]) => path.length > 0),
+  );
+
+  const mergedServer = serverWorkspaces.map((workspace) => {
+    const match =
+      desktopById.get(workspace.id) ??
+      desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
+    const merged = match
+      ? {
+          ...workspace,
+          displayName: match.displayName?.trim()
+            ? match.displayName
+            : workspace.displayName,
+          name: match.name?.trim() ? match.name : workspace.name,
+        }
+      : workspace;
+    return {
+      ...merged,
+      displayNameResolved: workspaceLabel(merged),
+    };
+  });
+
+  const mergedIds = new Set(mergedServer.map((workspace) => workspace.id));
+  const mergedPaths = new Set(
+    mergedServer
+      .map((workspace) => normalizeDirectoryPath(workspace.path ?? ""))
+      .filter((path) => path.length > 0),
+  );
+
+  const missingDesktop = desktopWorkspaces.filter((workspace) => {
+    if (mergedIds.has(workspace.id)) return false;
+    const normalizedPath = normalizeDirectoryPath(workspace.path ?? "");
+    if (normalizedPath && mergedPaths.has(normalizedPath)) return false;
+    return true;
+  });
+
+  return [...mergedServer, ...missingDesktop];
 }
 
 function toSessionGroups(
@@ -235,11 +291,13 @@ export function SessionRoute() {
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => readActiveWorkspaceId() ?? "");
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const refreshInFlightRef = useRef(false);
+  const workspacesRef = useRef<RouteWorkspace[]>([]);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -265,6 +323,7 @@ export function SessionRoute() {
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const [shareRemoteAccessBusy, setShareRemoteAccessBusy] = useState(false);
   const [shareRemoteAccessError, setShareRemoteAccessError] = useState<string | null>(null);
+  const reconnectAttemptedWorkspaceIdRef = useRef("");
 
   const openworkServerSettings = useMemo(
     () => readOpenworkServerSettings(),
@@ -289,9 +348,25 @@ export function SessionRoute() {
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     setLoading(true);
+    setRouteError(null);
+    let desktopList = null as Awaited<ReturnType<typeof workspaceBootstrap>> | null;
+    let desktopWorkspaces = workspacesRef.current;
     try {
-      const desktopList = isTauriRuntime() ? await workspaceBootstrap().catch(() => null) : null;
-      const desktopWorkspaces = (desktopList?.workspaces ?? []).map(mapDesktopWorkspace);
+      if (isTauriRuntime()) {
+        try {
+          desktopList = await workspaceBootstrap();
+          desktopWorkspaces = (desktopList.workspaces ?? []).map(mapDesktopWorkspace);
+        } catch (error) {
+          const message = describeRouteError(error);
+          console.error("[session-route] workspaceBootstrap failed", error);
+          recordInspectorEvent("route.workspace_bootstrap.error", {
+            route: "session",
+            message,
+            preservedWorkspaceCount: workspacesRef.current.length,
+          });
+          desktopWorkspaces = workspacesRef.current;
+        }
+      }
 
       const { normalizedBaseUrl, resolvedToken, hostInfo } = await resolveRouteOpenworkConnection();
       setOpenworkServerHostInfoState(hostInfo);
@@ -311,50 +386,7 @@ export function SessionRoute() {
         token: resolvedToken,
       });
       const list = await openworkClient.listWorkspaces();
-      const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
-      const desktopByPath = new Map(
-        desktopWorkspaces
-          .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
-          .filter(([path]) => path.length > 0),
-      );
-
-      const baseRouteWorkspaces = list.items.map((workspace) => {
-        const match =
-          desktopById.get(workspace.id) ??
-          desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
-        const merged = match
-          ? {
-              ...workspace,
-              displayName: match.displayName?.trim()
-                ? match.displayName
-                : workspace.displayName,
-              name: match.name?.trim() ? match.name : workspace.name,
-            }
-          : workspace;
-        return {
-          ...merged,
-          displayNameResolved: workspaceLabel(merged),
-        };
-      });
-
-      // If the user removed a workspace locally, the server may still know
-      // about it until its --workspace list gets reconciled. Hide rows that
-      // the desktop has forgotten so rename/delete feel instant.
-      const routeWorkspaces = desktopWorkspaces.length === 0
-        ? baseRouteWorkspaces
-        : baseRouteWorkspaces.filter((workspace) => {
-            if (desktopById.has(workspace.id)) return true;
-            const normalized = normalizeDirectoryPath(workspace.path ?? "");
-            return normalized.length > 0 && desktopByPath.has(normalized);
-          });
-
-      const desktopRemotes = desktopWorkspaces.filter(
-        (workspace) => workspace.workspaceType === "remote",
-      );
-      const nextWorkspaces =
-        routeWorkspaces.length > 0
-          ? [...routeWorkspaces, ...desktopRemotes]
-          : desktopWorkspaces;
+      const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
 
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
@@ -414,6 +446,21 @@ export function SessionRoute() {
         selectedWorkspaceId: nextWorkspaceId,
         errors: Object.fromEntries(sessionEntries.filter((e) => e.error).map((e) => [e.workspaceId, e.error])),
       });
+    } catch (error) {
+      const message = describeRouteError(error);
+      console.error("[session-route] refreshRouteState failed", error);
+      recordInspectorEvent("route.refresh.error", {
+        route: "session",
+        message,
+        preservedWorkspaceCount: desktopWorkspaces.length,
+      });
+      setRouteError(message);
+      if (desktopWorkspaces.length > 0) {
+        setWorkspaces(desktopWorkspaces);
+        setSelectedWorkspaceId((current) =>
+          current || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "",
+        );
+      }
     } finally {
       setLoading(false);
       refreshInFlightRef.current = false;
@@ -423,6 +470,10 @@ export function SessionRoute() {
       markBootRouteReady();
     }
   }, [markBootRouteReady, selectedSessionId]);
+
+  useEffect(() => {
+    workspacesRef.current = workspaces;
+  }, [workspaces]);
 
   useEffect(() => {
     let cancelled = false;
@@ -492,6 +543,7 @@ export function SessionRoute() {
       baseUrl,
       tokenPresent: token.length > 0,
       connected: Boolean(client),
+      routeError,
       selectedSessionId,
       selectedWorkspaceId,
       persistedActiveWorkspaceId: readActiveWorkspaceId(),
@@ -522,6 +574,7 @@ export function SessionRoute() {
     loading,
     selectedSessionId,
     selectedWorkspaceId,
+    routeError,
     sessionsByWorkspaceId,
     token,
     workspaces,
@@ -557,6 +610,28 @@ export function SessionRoute() {
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
     [selectedWorkspaceId, workspaces],
   );
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (loading) return;
+    if (client) {
+      reconnectAttemptedWorkspaceIdRef.current = "";
+      return;
+    }
+    if (!selectedWorkspace || selectedWorkspace.workspaceType !== "local") return;
+    const workspaceId = selectedWorkspace.id?.trim() ?? "";
+    if (!workspaceId || reconnectAttemptedWorkspaceIdRef.current === workspaceId) return;
+    reconnectAttemptedWorkspaceIdRef.current = workspaceId;
+
+    void ensureDesktopLocalOpenworkConnection({
+      route: "session",
+      workspace: selectedWorkspace,
+      allWorkspaces: workspaces,
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : describeRouteError(error);
+      setRouteError(message);
+    });
+  }, [client, loading, selectedWorkspace, workspaces]);
 
   const selectedWorkspaceRoot = selectedWorkspace?.path?.trim() || "";
   const opencodeBaseUrl = useMemo(() => {
@@ -833,6 +908,7 @@ export function SessionRoute() {
         const result = await opencodeClient.session.promptAsync({
           sessionID: selectedSessionId,
           parts,
+          model: local.prefs.defaultModel ?? undefined,
           agent: selectedAgent ?? undefined,
           ...(local.prefs.modelVariant ? { variant: local.prefs.modelVariant } : {}),
         });

@@ -59,10 +59,12 @@ import {
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
-import { isMacPlatform, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
+import { isMacPlatform, isTauriRuntime, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
+import { recordInspectorEvent } from "./app-inspector";
+import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -77,6 +79,61 @@ function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
       workspace.path?.trim() ||
       t("session.workspace_fallback"),
   };
+}
+
+function describeRouteError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  const serialized = safeStringify(error);
+  return serialized && serialized !== "{}" ? serialized : t("app.unknown_error");
+}
+
+function mergeRouteWorkspaces(
+  serverWorkspaces: OpenworkWorkspaceInfo[],
+  desktopWorkspaces: RouteWorkspace[],
+): RouteWorkspace[] {
+  const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
+  const desktopByPath = new Map(
+    desktopWorkspaces
+      .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
+      .filter(([path]) => path.length > 0),
+  );
+
+  const mergedServer = serverWorkspaces.map((workspace) => {
+    const match =
+      desktopById.get(workspace.id) ??
+      desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
+    const merged = match
+      ? {
+          ...workspace,
+          displayName: match.displayName?.trim()
+            ? match.displayName
+            : workspace.displayName,
+          name: match.name?.trim() ? match.name : workspace.name,
+        }
+      : workspace;
+    return {
+      ...merged,
+      displayNameResolved: workspaceLabel(merged),
+    };
+  });
+
+  const mergedIds = new Set(mergedServer.map((workspace) => workspace.id));
+  const mergedPaths = new Set(
+    mergedServer
+      .map((workspace) => normalizeDirectoryPath(workspace.path ?? ""))
+      .filter((path) => path.length > 0),
+  );
+
+  const missingDesktop = desktopWorkspaces.filter((workspace) => {
+    if (mergedIds.has(workspace.id)) return false;
+    const normalizedPath = normalizeDirectoryPath(workspace.path ?? "");
+    if (normalizedPath && mergedPaths.has(normalizedPath)) return false;
+    return true;
+  });
+
+  return [...mergedServer, ...missingDesktop];
 }
 
 function folderNameFromPath(path: string) {
@@ -233,6 +290,8 @@ export function SettingsRoute() {
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const workspacesRef = useRef<RouteWorkspace[]>([]);
+  const reconnectAttemptedWorkspaceIdRef = useRef("");
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
@@ -523,9 +582,24 @@ export function SettingsRoute() {
   const refreshRouteState = useMemo(() => async () => {
     setLoading(true);
     setRouteError(null);
+    let desktopList = null as Awaited<ReturnType<typeof workspaceBootstrap>> | null;
+    let desktopWorkspaces = workspacesRef.current;
     try {
-      const desktopList = isTauriRuntime() ? await workspaceBootstrap().catch(() => null) : null;
-      const desktopWorkspaces = (desktopList?.workspaces ?? []).map(mapDesktopWorkspace);
+      if (isTauriRuntime()) {
+        try {
+          desktopList = await workspaceBootstrap();
+          desktopWorkspaces = (desktopList.workspaces ?? []).map(mapDesktopWorkspace);
+        } catch (error) {
+          const message = describeRouteError(error);
+          console.error("[settings-route] workspaceBootstrap failed", error);
+          recordInspectorEvent("route.workspace_bootstrap.error", {
+            route: "settings",
+            message,
+            preservedWorkspaceCount: workspacesRef.current.length,
+          });
+          desktopWorkspaces = workspacesRef.current;
+        }
+      }
       const { normalizedBaseUrl, resolvedToken } = await resolveRouteOpenworkConnection();
 
       if (!normalizedBaseUrl || !resolvedToken) {
@@ -541,21 +615,7 @@ export function SettingsRoute() {
 
       const client = createOpenworkServerClient({ baseUrl: normalizedBaseUrl, token: resolvedToken });
       const list = await client.listWorkspaces();
-      const serverWorkspaces = list.items.map((workspace) => ({
-        ...workspace,
-        displayNameResolved: workspaceLabel(workspace),
-      }));
-      // Mirror Solid's `applyServerLocalWorkspaces`: prefer server-registered
-      // local workspaces (their IDs are what subsequent API calls need) and
-      // append any remote entries from the desktop list since the server
-      // doesn't track remotes.
-      const desktopRemotes = desktopWorkspaces.filter(
-        (workspace) => workspace.workspaceType === "remote",
-      );
-      const nextWorkspaces =
-        serverWorkspaces.length > 0
-          ? [...serverWorkspaces, ...desktopRemotes]
-          : desktopWorkspaces;
+      const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
           try {
@@ -585,7 +645,18 @@ export function SettingsRoute() {
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
       setSelectedWorkspaceId((current) => current || resolveWorkspaceListSelectedId(desktopList) || list.activeId?.trim() || nextWorkspaces[0]?.id || "");
     } catch (error) {
-      setRouteError(error instanceof Error ? error.message : t("app.unknown_error"));
+      const message = describeRouteError(error);
+      console.error("[settings-route] refreshRouteState failed", error);
+      recordInspectorEvent("route.refresh.error", {
+        route: "settings",
+        message,
+        preservedWorkspaceCount: desktopWorkspaces.length,
+      });
+      setRouteError(message);
+      if (desktopWorkspaces.length > 0) {
+        setWorkspaces(desktopWorkspaces);
+        setSelectedWorkspaceId((current) => current || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+      }
     } finally {
       setLoading(false);
       // Settings can be the first route a user lands on (direct link, deep
@@ -594,6 +665,32 @@ export function SettingsRoute() {
       markBootRouteReady();
     }
   }, [markBootRouteReady]);
+
+  useEffect(() => {
+    workspacesRef.current = workspaces;
+  }, [workspaces]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (loading) return;
+    if (openworkClient) {
+      reconnectAttemptedWorkspaceIdRef.current = "";
+      return;
+    }
+    if (!selectedWorkspace || selectedWorkspace.workspaceType !== "local") return;
+    const workspaceId = selectedWorkspace.id?.trim() ?? "";
+    if (!workspaceId || reconnectAttemptedWorkspaceIdRef.current === workspaceId) return;
+    reconnectAttemptedWorkspaceIdRef.current = workspaceId;
+
+    void ensureDesktopLocalOpenworkConnection({
+      route: "settings",
+      workspace: selectedWorkspace,
+      allWorkspaces: workspaces,
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : describeRouteError(error);
+      setRouteError(message);
+    });
+  }, [loading, openworkClient, selectedWorkspace, workspaces]);
 
   useEffect(() => {
     void refreshRouteState();

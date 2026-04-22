@@ -338,11 +338,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setSending(true);
     try {
       const nextDraft = buildDraft(text, attachments);
-      props.onSendDraft(nextDraft);
+      await props.onSendDraft(nextDraft);
       setDraft("");
       attachments.forEach(revokeAttachmentPreview);
       setAttachments([]);
       props.onDraftChange(buildDraft("", []));
+      setSending(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
       setSending(false);
