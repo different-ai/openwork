@@ -25,6 +25,9 @@
     "electron": "pnpm exec electron ./electron/main.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",

@@ -235,19 +235,64 @@ from ~120MB full bundle to ~5-20MB. A net win over Tauri's no-delta default.
 - **Third-party integrations depending on the Tauri identifier** (Sparkle,
   crash reporters, etc.): none in the current build, so zero action.
 
-### 9 — Concrete next-step PRs (order matters)
+### 9 — localStorage migration
 
-1. **This PR** (#1522) — Electron shell lives side-by-side. No user impact.
-2. **Follow-up PR**: "unify app identity with Tauri". Flips `appId` to
-   `com.differentai.openwork`, points `userData` at the Tauri folder, adds
-   the `openwork-workspaces.json` → `workspace-state.json` rename.
-3. **Follow-up PR**: "electron-updater + release workflow". Wires
-   electron-builder `publish:` config, teaches `Release App` to emit the
-   electron-updater feed manifests.
-4. **Final PR**: "last Tauri release v0.12.0". Ships the Tauri
-   `migrate_to_electron` command + prompt. Triggers migration for every
-   existing user on their next Tauri update.
+localStorage lives inside Chromium leveldb keyed by origin. Tauri serves
+the renderer from `tauri://localhost`, Electron serves it from `file://`
+(packaged) or `http://localhost:5173` (dev). Pointing Electron's
+`userData` at the Tauri folder is not enough — the leveldb records are
+invisible across origins.
 
-After (4) lands and rolls out, flip the default
-`apps/desktop/package.json` scripts so `dev` / `build` / `package` use
-Electron, and delete `src-tauri/`.
+Scope: **workspace list + selection only**. Everything else (theme,
+font zoom, sidebar widths, feature flags) is cheap to redo.
+
+Migrated keys (allowlist):
+- `openwork.react.activeWorkspace` — last selected workspace
+- `openwork.react.sessionByWorkspace` — per-workspace last session
+- `openwork.server.list` — multi-server list
+- `openwork.server.active` — selected server
+- `openwork.server.urlOverride` — server override
+- `openwork.server.token` — server token
+
+Implementation (landed in this PR):
+- Tauri Rust command `write_migration_snapshot(payload)` serializes the
+  allowlist into `<app_data_dir>/migration-snapshot.v1.json`.
+- `apps/app/src/app/lib/migration.ts` exposes:
+  - `writeMigrationSnapshotFromTauri()` — scrapes localStorage via the
+    pattern list and hands it to the Rust command.
+  - `ingestMigrationSnapshotOnElectronBoot()` — called once from
+    `desktop-runtime-boot.ts` on Electron only; hydrates localStorage
+    keys that are empty, then acks via IPC so the snapshot is renamed
+    to `migration-snapshot.v1.done.json`.
+- Electron main exposes `openwork:migration:read` and
+  `openwork:migration:ack` IPC handlers; preload bridges them under
+  `window.__OPENWORK_ELECTRON__.migration`.
+
+The "last Tauri release" still needs to call
+`writeMigrationSnapshotFromTauri()` right before it kicks off the
+Electron installer. That's the UI/Rust-command-downloader piece in the
+final PR below.
+
+### 10 — Concrete PRs (order matters)
+
+1. **PR #1522** (merged) — Electron shell lives side-by-side. No user impact.
+2. **This PR** — "migration engine". Unifies `appId` + `userData` path to
+   Tauri's, adds `openwork-workspaces.json` → `workspace-state.json`
+   auto-copy, adds electron-updater wiring, adds migration snapshot
+   read/write plumbing on both sides. Zero user impact by itself (there's
+   no Tauri release yet that calls the snapshot writer).
+3. **Last Tauri release v0.12.0** — ships:
+   - a Rust command `migrate_to_electron()` that downloads the Electron
+     installer, verifies its code signature, and opens it;
+   - a one-time prompt ("OpenWork is moving to a new engine — install?")
+     that calls `writeMigrationSnapshotFromTauri()` then
+     `migrate_to_electron()`;
+   - bumps `tauri.conf.json` + `latest.json` so the existing Tauri
+     updater delivers this release.
+4. **Release-engineering PR**: update `Release App` workflow to emit
+   Electron artifacts + `latest*.yml` feeds alongside the Tauri assets
+   for the v0.12.0 release, and only Electron for v0.12.1+.
+
+After (3) rolls out, flip the default `apps/desktop/package.json`
+scripts so `dev` / `build` / `package` use Electron, and delete
+`src-tauri/`.

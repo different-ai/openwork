@@ -16,10 +16,32 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
+// electron-updater is dynamically imported later because it pulls in a
+// larger dep graph and we only want it loaded in packaged builds.
 import { createRuntimeManager } from "./runtime.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
+const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
+const MIGRATION_SNAPSHOT_FILENAME = "migration-snapshot.v1.json";
+const MIGRATION_SNAPSHOT_DONE_FILENAME = "migration-snapshot.v1.done.json";
+
+// Share the same on-disk state folder as the Tauri shell so in-place
+// migration is a no-op for almost every file. Done BEFORE whenReady so all
+// app.getPath("userData") callers see the unified path.
+//
+// Override via OPENWORK_ELECTRON_USERDATA so dogfooders can isolate their
+// Electron install from the real Tauri app.
+app.setName("OpenWork");
+const userDataOverride = process.env.OPENWORK_ELECTRON_USERDATA?.trim();
+if (userDataOverride) {
+  app.setPath("userData", userDataOverride);
+} else {
+  app.setPath(
+    "userData",
+    path.join(app.getPath("appData"), TAURI_APP_IDENTIFIER),
+  );
+}
 
 // Resolve and cache the app icon (reused for BrowserWindow + mac dock).
 // Packaged builds ship icons via electron-builder config, but for `dev:electron`
@@ -151,6 +173,34 @@ function desktopBootstrapPath() {
 
 function workspaceStatePath() {
   return path.join(app.getPath("userData"), "workspace-state.json");
+}
+
+// Tauri shell writes the same data to openwork-workspaces.json. Electron
+// reads the legacy filename on first launch when the Electron-native file
+// isn't present yet, then writes to the Electron filename going forward.
+function legacyTauriWorkspaceStatePath() {
+  return path.join(app.getPath("userData"), "openwork-workspaces.json");
+}
+
+async function migrateLegacyWorkspaceStateIfNeeded() {
+  const current = workspaceStatePath();
+  const legacy = legacyTauriWorkspaceStatePath();
+  try {
+    if (existsSync(current)) return false;
+    if (!existsSync(legacy)) return false;
+    await mkdir(path.dirname(current), { recursive: true });
+    const raw = await readFile(legacy, "utf8");
+    // Write to the Electron name without deleting the legacy file for a few
+    // releases so a rollback to Tauri (same bundle id) still finds data.
+    await writeFile(current, raw, "utf8");
+    console.info(
+      "[migration] copied openwork-workspaces.json → workspace-state.json",
+    );
+    return true;
+  } catch (error) {
+    console.warn("[migration] legacy workspace-state copy failed", error);
+    return false;
+  }
 }
 
 function configHomePath() {
@@ -1170,6 +1220,113 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.exit(0);
 });
 
+// Migration snapshot: one-way handoff from the last Tauri release into the
+// first Electron launch. The Tauri shell writes migration-snapshot.v1.json
+// into app_data_dir before it kicks off the Electron installer. Electron
+// renders the workspace list / session-by-workspace preferences from it on
+// first boot and then marks it .done so subsequent boots don't re-import.
+function migrationSnapshotPath(done = false) {
+  return path.join(
+    app.getPath("userData"),
+    done ? MIGRATION_SNAPSHOT_DONE_FILENAME : MIGRATION_SNAPSHOT_FILENAME,
+  );
+}
+
+ipcMain.handle("openwork:migration:read", async () => {
+  const snapshotPath = migrationSnapshotPath();
+  if (!existsSync(snapshotPath)) return null;
+  try {
+    const raw = await readFile(snapshotPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.version === 1) {
+      return parsed;
+    }
+    return null;
+  } catch (error) {
+    console.warn("[migration] failed to read snapshot", error);
+    return null;
+  }
+});
+
+ipcMain.handle("openwork:migration:ack", async () => {
+  const snapshotPath = migrationSnapshotPath();
+  const donePath = migrationSnapshotPath(true);
+  if (!existsSync(snapshotPath)) return { ok: true, moved: false };
+  try {
+    await rename(snapshotPath, donePath);
+    return { ok: true, moved: true };
+  } catch (error) {
+    console.warn("[migration] failed to rename snapshot", error);
+    return { ok: false, moved: false };
+  }
+});
+
+// electron-updater wiring. Packaged-only; dev builds skip this so the
+// updater doesn't try to probe a non-existent release channel.
+let autoUpdaterInstance = null;
+let autoUpdaterLoaded = false;
+
+async function ensureAutoUpdater() {
+  if (!app.isPackaged) return null;
+  if (autoUpdaterLoaded) return autoUpdaterInstance;
+  autoUpdaterLoaded = true;
+  try {
+    const mod = await import("electron-updater");
+    autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
+    if (autoUpdaterInstance) {
+      autoUpdaterInstance.autoDownload = false;
+      autoUpdaterInstance.autoInstallOnAppQuit = true;
+      autoUpdaterInstance.on("error", (err) => {
+        console.warn("[updater] error", err);
+      });
+    }
+  } catch (error) {
+    console.warn("[updater] electron-updater not available", error);
+    autoUpdaterInstance = null;
+  }
+  return autoUpdaterInstance;
+}
+
+ipcMain.handle("openwork:updater:check", async () => {
+  const updater = await ensureAutoUpdater();
+  if (!updater) return { available: false, reason: "unavailable" };
+  try {
+    const result = await updater.checkForUpdates();
+    const info = result?.updateInfo ?? null;
+    return {
+      available: Boolean(info && info.version && info.version !== app.getVersion()),
+      currentVersion: app.getVersion(),
+      latestVersion: info?.version ?? null,
+      releaseDate: info?.releaseDate ?? null,
+      releaseNotes: info?.releaseNotes ?? null,
+    };
+  } catch (error) {
+    return { available: false, reason: String(error?.message ?? error) };
+  }
+});
+
+ipcMain.handle("openwork:updater:download", async () => {
+  const updater = await ensureAutoUpdater();
+  if (!updater) return { ok: false, reason: "unavailable" };
+  try {
+    await updater.downloadUpdate();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) };
+  }
+});
+
+ipcMain.handle("openwork:updater:installAndRestart", async () => {
+  const updater = await ensureAutoUpdater();
+  if (!updater) return { ok: false, reason: "unavailable" };
+  try {
+    updater.quitAndInstall(false, true);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) };
+  }
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -1190,10 +1347,21 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    // Copy Tauri workspace state on first launch so the Electron sidebar
+    // reflects the exact workspace list users see in the Tauri app today.
+    await migrateLegacyWorkspaceStateIfNeeded();
+
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
+    });
+
+    // Kick the packaged-only updater after the window is up so the user
+    // sees a working app first. This is a no-op in dev.
+    void ensureAutoUpdater().then((updater) => {
+      if (!updater) return;
+      void updater.checkForUpdates().catch(() => undefined);
     });
   });
 

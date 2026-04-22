@@ -20,6 +20,25 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return ipcRenderer.invoke("openwork:shell:relaunch");
     },
   },
+  migration: {
+    readSnapshot() {
+      return ipcRenderer.invoke("openwork:migration:read");
+    },
+    ackSnapshot() {
+      return ipcRenderer.invoke("openwork:migration:ack");
+    },
+  },
+  updater: {
+    check() {
+      return ipcRenderer.invoke("openwork:updater:check");
+    },
+    download() {
+      return ipcRenderer.invoke("openwork:updater:download");
+    },
+    installAndRestart() {
+      return ipcRenderer.invoke("openwork:updater:installAndRestart");
+    },
+  },
   meta: {
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
