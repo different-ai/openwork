@@ -57,6 +57,65 @@ pub fn find_free_port() -> Result<u16, String> {
     Ok(port)
 }
 
+/// Merge an existing NO_PROXY/no_proxy list with the loopback hosts required
+/// for local OpenCode engine communication. Preserves the user's existing
+/// entries and order; only appends loopback hosts that are not already listed.
+pub(crate) fn merge_no_proxy(
+    no_proxy: Option<&str>,
+    no_proxy_lower: Option<&str>,
+    loopback_hosts: &[&str],
+) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    for raw in [no_proxy, no_proxy_lower].into_iter().flatten() {
+        for part in raw.split(',') {
+            let trimmed = part.trim();
+            if !trimmed.is_empty()
+                && !entries
+                    .iter()
+                    .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+            {
+                entries.push(trimmed.to_string());
+            }
+        }
+    }
+    for host in loopback_hosts {
+        if !entries
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(host))
+        {
+            entries.push((*host).to_string());
+        }
+    }
+    entries.join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_no_proxy;
+
+    const LOOPBACK: &[&str] = &["127.0.0.1", "localhost", "::1"];
+
+    #[test]
+    fn merge_no_proxy_adds_loopback_when_empty() {
+        assert_eq!(merge_no_proxy(None, None, LOOPBACK), "127.0.0.1,localhost,::1");
+    }
+
+    #[test]
+    fn merge_no_proxy_preserves_user_entries() {
+        let result = merge_no_proxy(Some("corp.example.com, .internal"), None, LOOPBACK);
+        assert_eq!(
+            result,
+            "corp.example.com,.internal,127.0.0.1,localhost,::1"
+        );
+    }
+
+    #[test]
+    fn merge_no_proxy_is_case_insensitive_and_dedupes() {
+        let result = merge_no_proxy(Some("LOCALHOST,corp"), Some("127.0.0.1"), LOOPBACK);
+        assert_eq!(result, "LOCALHOST,corp,127.0.0.1,::1");
+    }
+}
+
 pub fn build_engine_args(bind_host: &str, port: u16) -> Vec<String> {
     vec![
         "serve".to_string(),
@@ -133,6 +192,20 @@ pub fn spawn_engine(
 
     command = command.env("OPENCODE_CLIENT", "openwork");
     command = command.env("OPENWORK", "1");
+
+    // Ensure local loopback traffic (OpenWork <-> OpenCode engine) always
+    // bypasses any system HTTP proxy. Some corporate Windows environments set
+    // HTTP_PROXY/HTTPS_PROXY for all outbound traffic, which routes the
+    // 127.0.0.1 engine calls through the proxy and causes the engine to fail
+    // to start or never become ready. See issue #1276.
+    let loopback_hosts = ["127.0.0.1", "localhost", "::1"];
+    let merged_no_proxy = merge_no_proxy(
+        std::env::var("NO_PROXY").ok().as_deref(),
+        std::env::var("no_proxy").ok().as_deref(),
+        &loopback_hosts,
+    );
+    command = command.env("NO_PROXY", &merged_no_proxy);
+    command = command.env("no_proxy", &merged_no_proxy);
 
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
