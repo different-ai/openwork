@@ -1508,7 +1508,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1613,7 +1613,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={worker.workerId}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1686,7 +1686,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={template.id}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1762,7 +1762,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1876,7 +1876,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
