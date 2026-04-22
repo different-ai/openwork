@@ -1506,6 +1506,17 @@ function createRoutes(
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
+    // Emit a synthetic config reload so the OpenCode engine instance bound to
+    // this workspace re-reads opencode.jsonc. Without this, the workspace that
+    // the user is on at launch keeps serving a stale engine that ignores
+    // permissions defined in opencode.jsonc until the user toggles to another
+    // workspace and back. See issue #870.
+    emitReloadEvent(
+      ctx.reloadEvents,
+      workspace,
+      "config",
+      buildConfigTrigger(opencodeConfigPath(workspace.path)),
+    );
     return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted: false });
   });
 

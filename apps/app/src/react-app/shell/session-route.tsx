@@ -400,6 +400,13 @@ export function SessionRoute() {
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
       setSelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
+      // Mark the chosen workspace as active on the server so that the
+      // OpenCode engine bound to it re-reads opencode.jsonc and applies
+      // permissions. Fire-and-forget; the route is idempotent and any
+      // transport failure is non-fatal. See issue #870.
+      if (nextWorkspaceId) {
+        void openworkClient.activateWorkspace(nextWorkspaceId).catch(() => undefined);
+      }
       recordInspectorEvent("route.refresh.complete", {
         workspaces: nextWorkspaces.length,
         selectedWorkspaceId: nextWorkspaceId,
@@ -1170,6 +1177,16 @@ export function SessionRoute() {
           if (isTauriRuntime()) {
             void workspaceSetSelected(workspaceId).catch(() => undefined);
             void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
+          }
+          // Tell the OpenWork server this workspace is now active so it can
+          // emit a config reload event that the OpenCode engine picks up.
+          // Without this, the permissions from opencode.jsonc are never
+          // applied on the workspace the user is already on at launch. See
+          // issue #870.
+          if (workspaceId && client) {
+            void client
+              .activateWorkspace(workspaceId)
+              .catch(() => undefined);
           }
           // If we remember what the user last opened here and that session
           // still exists in our local list, navigate. Otherwise stay put.
