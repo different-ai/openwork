@@ -438,9 +438,12 @@ export function SettingsRoute() {
   const opencodeClient = useMemo(
     () =>
       opencodeBaseUrl && token
-        ? createClient(opencodeBaseUrl, undefined, { token, mode: "openwork" })
+        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+            token,
+            mode: "openwork",
+          })
         : null,
-    [opencodeBaseUrl, token],
+    [opencodeBaseUrl, selectedWorkspaceRoot, token],
   );
 
   useEffect(() => {
@@ -644,7 +647,7 @@ export function SettingsRoute() {
   ]);
 
   useEffect(() => {
-    if (!opencodeClient) {
+    if (!activeClient) {
       setProviders([]);
       setProviderDefaults({});
       setProviderConnectedIds([]);
@@ -653,7 +656,7 @@ export function SettingsRoute() {
     }
     void providerAuthStore.refreshProviders();
     void connectionsStore.refreshMcpServers();
-  }, [connectionsStore, opencodeClient, providerAuthStore, selectedWorkspace?.id]);
+  }, [activeClient, connectionsStore, providerAuthStore, selectedWorkspace?.id]);
 
   if (route.redirectPath) {
     return <Navigate to={route.redirectPath} replace />;

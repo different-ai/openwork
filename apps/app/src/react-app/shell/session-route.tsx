@@ -1,9 +1,15 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { AgentPartInput, FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
+import type {
+  AgentPartInput,
+  ConfigProvidersResponse,
+  FilePartInput,
+  ProviderListResponse,
+  TextPartInput,
+} from "@opencode-ai/sdk/v2/client";
 
-import { unwrap } from "../../app/lib/opencode";
+import { createClient, unwrap } from "../../app/lib/opencode";
 import { listCommands, shellInSession } from "../../app/lib/opencode-session";
 import {
   buildOpenworkWorkspaceBaseUrl,
@@ -43,9 +49,9 @@ import type {
   TodoItem,
   WorkspacePreset,
   WorkspaceConnectionState,
+  ProviderListItem,
   WorkspaceSessionGroup,
 } from "../../app/types";
-import { createClient } from "../../app/lib/opencode";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
 import { isSandboxWorkspace, isTauriRuntime, normalizeDirectoryPath } from "../../app/utils";
 import { t } from "../../i18n";
@@ -75,6 +81,7 @@ import {
   recordInspectorEvent,
 } from "./app-inspector";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
+import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -247,6 +254,8 @@ export function SessionRoute() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [providers, setProviders] = useState<ProviderListItem[]>([]);
+  const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
@@ -559,10 +568,82 @@ export function SessionRoute() {
   const opencodeClient = useMemo(
     () =>
       opencodeBaseUrl && token
-        ? createClient(opencodeBaseUrl, undefined, { token, mode: "openwork" })
+        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+            token,
+            mode: "openwork",
+          })
         : null,
-    [opencodeBaseUrl, token],
+    [opencodeBaseUrl, selectedWorkspaceRoot, token],
   );
+
+  useEffect(() => {
+    if (!opencodeClient) {
+      setProviders([]);
+      setProviderConnectedIds([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const applyProviderState = (value: ProviderListResponse) => {
+      if (cancelled) return;
+      setProviders((value.all ?? []) as ProviderListItem[]);
+      setProviderConnectedIds(value.connected ?? []);
+    };
+
+    void (async () => {
+      let disabledProviders: string[] = [];
+      try {
+        const config = unwrap(
+          await opencodeClient.config.get({
+            directory: selectedWorkspaceRoot || undefined,
+          }),
+        ) as { disabled_providers?: string[] };
+        disabledProviders = Array.isArray(config.disabled_providers)
+          ? config.disabled_providers
+          : [];
+      } catch {
+        // ignore config read failures and continue with provider discovery
+      }
+
+      try {
+        applyProviderState(
+          filterProviderList(
+            unwrap(await opencodeClient.provider.list()),
+            disabledProviders,
+          ),
+        );
+      } catch {
+        try {
+          const fallback = unwrap(
+            await opencodeClient.config.providers({
+              directory: selectedWorkspaceRoot || undefined,
+            }),
+          ) as ConfigProvidersResponse;
+          applyProviderState(
+            filterProviderList(
+              {
+                all: mapConfigProvidersToList(
+                  fallback.providers,
+                ) as ProviderListResponse["all"],
+                connected: [],
+                default: fallback.default,
+              },
+              disabledProviders,
+            ),
+          );
+        } catch {
+          if (cancelled) return;
+          setProviders([]);
+          setProviderConnectedIds([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [opencodeClient, selectedWorkspaceRoot]);
 
   const modelLabel = local.prefs.defaultModel
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
@@ -968,7 +1049,11 @@ export function SessionRoute() {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (!workspace || !token || !baseUrl) return;
     const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
-    const workspaceClient = createClient(workspaceOpencodeBaseUrl, undefined, { token, mode: "openwork" });
+    const workspaceClient = createClient(
+      workspaceOpencodeBaseUrl,
+      workspace.path?.trim() || undefined,
+      { token, mode: "openwork" },
+    );
     const session = unwrap(
       await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
     );
@@ -1137,8 +1222,8 @@ export function SessionRoute() {
       headerStatus={client ? t("status.connected") : t("status.disconnected_label")}
       busyHint={loading ? t("session.loading_detail") : null}
       startupPhase={loading ? "nativeInit" : "ready"}
-      providerConnectedIds={[]}
-      providers={[]}
+      providerConnectedIds={providerConnectedIds}
+      providers={providers}
       mcpConnectedCount={0}
       onSendFeedback={() => {
         platform.openLink(
@@ -1193,7 +1278,11 @@ export function SessionRoute() {
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (!workspace || !token || !baseUrl) return;
           const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
-          const workspaceClient = createClient(workspaceOpencodeBaseUrl, undefined, { token, mode: "openwork" });
+          const workspaceClient = createClient(
+            workspaceOpencodeBaseUrl,
+            workspace.path?.trim() || undefined,
+            { token, mode: "openwork" },
+          );
           const session = unwrap(
             await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
           );
