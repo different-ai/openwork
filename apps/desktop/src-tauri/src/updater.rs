@@ -7,6 +7,17 @@ fn is_mac_dmg_or_translocated(path: &Path) -> bool {
     path_str.contains("/Volumes/") || path_str.contains("AppTranslocation")
 }
 
+#[cfg(target_os = "linux")]
+fn is_linux_appimage_install(executable_path: Option<&Path>) -> bool {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return true;
+    }
+
+    executable_path
+        .map(|path| path.to_string_lossy().ends_with(".AppImage"))
+        .unwrap_or(false)
+}
+
 pub fn updater_environment() -> UpdaterEnvironment {
     let executable_path = std::env::current_exe().ok();
 
@@ -40,6 +51,15 @@ pub fn updater_environment() -> UpdaterEnvironment {
         );
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    if supported && !is_linux_appimage_install(executable_path.as_deref()) {
+        supported = false;
+        reason = Some(
+            "OpenWork auto-update is only supported for AppImage installs on Linux. Use your package manager or install the AppImage build to update automatically."
+                .to_string(),
+        );
     }
 
     UpdaterEnvironment {
