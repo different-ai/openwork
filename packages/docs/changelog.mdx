@@ -5,9 +5,9 @@ title: "Changelog"
 
   ## [v0.11.212](https://github.com/different-ai/openwork/compare/v0.11.210...v0.11.212): Den desktop controls tighten and Cloud providers stay in sync
 
-  - Enforced Den desktop restrictions in the app and added org controls for supported desktop versions so admins can limit blocked models, providers, and releases.
-  - Auto-sync cloud providers into the active org workspace and key them by cloud id so updates, removals, and disconnects reconcile more reliably.
-  - Improved Den admin flows with explicit names for LLM providers and steadier active-org handling for legacy org-scoped clients.
+  - Better org controls: Organization owners can now limit or block models, providers, and updates to specific releases.
+  - Auto-sync cloud providers into the active org workspace. The app should be able to update, remove, and reconcile disconnects more reliably.
+  - Improved admin flows in the cloud, with explicit names for LLM providers and a more robust active-org handling.
 
 </Update>
 
@@ -15,9 +15,10 @@ title: "Changelog"
 
   ## [v0.11.210](https://github.com/different-ai/openwork/compare/v0.11.207...v0.11.210): Den enterprise org controls expand and microsandbox preview lands
 
-  - Added Den org settings for allowed email domains and desktop restrictions so owners can control who accepts invites and which desktop capabilities signed-in members can use.
-  - Improved Den org administration with active-org-aware desktop sign-in, inline organization renaming, clearer invite delivery failures, and compatibility for older org-scoped clients.
-  - Added a microsandbox preview toggle in Settings > Advanced, plus Spanish and Catalan localization, an in-app docs shortcut, and an agents-ready docs and landing refresh.
+  - Added a microsandbox preview mode. Toggle in `Settings` > `Advanced` to enable it and test it out. That means no more docker as requirement to create fast, isolated workspaces.
+  - Openwork Organization owners can now define allowed email domains. Active-Org-Aware Desktop sign-in, and rename their org. 
+  - Better control for Org owners regarding who accepts invites and invite delivery failures.
+  - Quality of life: Added Spanish and Catalan localization, a shortcut to access the docs in the app and made the landing page easier to read for agents.
 
 </Update>
 
