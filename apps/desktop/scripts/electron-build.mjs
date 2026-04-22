@@ -9,11 +9,12 @@ const repoRoot = resolve(desktopRoot, "../..");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
 
-function run(command, args, cwd) {
+function run(command, args, cwd, env) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
     shell: process.platform === "win32",
+    env: env ? { ...process.env, ...env } : process.env,
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
@@ -21,7 +22,12 @@ function run(command, args, cwd) {
 }
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force"], desktopRoot);
-run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot);
+// OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so
+// index.html resolves /assets/* correctly when loaded via file:// from
+// inside the packaged .app bundle.
+run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
+  OPENWORK_ELECTRON_BUILD: "1",
+});
 run(nodeCmd, ["--check", resolve(desktopRoot, "electron/main.mjs")], repoRoot);
 run(nodeCmd, ["--check", resolve(desktopRoot, "electron/preload.mjs")], repoRoot);
 

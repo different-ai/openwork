@@ -26,7 +26,13 @@ if (shortHostname && shortHostname !== hostname) {
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
+// Electron packaged builds load index.html via `file://`, so asset URLs
+// must be relative. Tauri serves via its own protocol so absolute paths
+// work there. Gate on an env var the electron build script sets.
+const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
+
 export default defineConfig({
+  base: isElectronPackagedBuild ? "./" : "/",
   plugins: [
     {
       name: "openwork-dev-server-id",
