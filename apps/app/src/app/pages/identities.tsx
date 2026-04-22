@@ -179,6 +179,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [agentBaseUpdatedAt, setAgentBaseUpdatedAt] = createSignal<number | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<string | null>(null);
   const [agentError, setAgentError] = createSignal<string | null>(null);
+  const [agentAutoHealAttempted, setAgentAutoHealAttempted] = createSignal(false);
 
   const [sendChannel, setSendChannel] = createSignal<"telegram" | "slack">("telegram");
   const [sendDirectory, setSendDirectory] = createSignal("");
@@ -296,6 +297,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setAgentBaseUpdatedAt(null);
     setAgentStatus(null);
     setAgentError(null);
+    setAgentAutoHealAttempted(false);
   };
 
   const loadAgentFile = async () => {
@@ -360,6 +362,17 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setAgentSaving(false);
     }
   };
+
+  createEffect(() => {
+    if (!messagingEnabled()) return;
+    if (agentLoading() || agentSaving() || agentDirty()) return;
+    if (agentExists()) return;
+    if (agentAutoHealAttempted()) return;
+    if (!workspaceId()) return;
+
+    setAgentAutoHealAttempted(true);
+    void createDefaultAgentFile();
+  });
 
   const saveAgentFile = async () => {
     if (agentSaving()) return;
