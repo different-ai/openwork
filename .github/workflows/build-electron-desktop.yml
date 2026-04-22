@@ -32,16 +32,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
+      # pnpm must be installed BEFORE setup-node so setup-node can find the
+      # pnpm binary on PATH. Matches the pattern in build-desktop.yml so
+      # the two workflows share the same bootstrap story.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -51,7 +53,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package Electron desktop
+      - name: Package Electron desktop (unpacked)
         run: pnpm --filter @openwork/desktop package:electron:dir
 
       - name: Upload Electron artifacts
