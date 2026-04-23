@@ -86,7 +86,9 @@ export function IntegrationsScreen() {
                 className="overflow-hidden rounded-2xl border border-gray-100 bg-white"
               >
                 {/* Header */}
-                <div className="flex items-start gap-4 border-b border-gray-100 px-6 py-5">
+                <div
+                  className={`flex items-start gap-4 px-6 py-5 ${isConnected ? "border-b border-gray-100" : ""}`}
+                >
                   <ProviderLogo provider={meta.provider} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -106,9 +108,7 @@ export function IntegrationsScreen() {
                         </span>
                       )}
                     </div>
-                    {meta.provider !== "github" ? (
-                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{meta.description}</p>
-                    ) : null}
+                    <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{meta.description}</p>
                   </div>
 
                   <div className="shrink-0">
@@ -142,18 +142,7 @@ export function IntegrationsScreen() {
                       />
                     ))}
                   </div>
-                ) : (
-                  <div className="px-6 py-5 text-[13px] text-gray-400">
-                    Requires scopes: {meta.scopes.map((scope) => (
-                      <code
-                        key={scope}
-                        className="mr-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600"
-                      >
-                        {scope}
-                      </code>
-                    ))}
-                  </div>
-                )}
+                ) : null}
               </div>
             );
           })}
