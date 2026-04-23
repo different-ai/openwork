@@ -7,6 +7,8 @@ use tauri::AppHandle;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+use crate::paths::resolve_process_working_dir;
+
 pub const DEFAULT_OPENCODE_ROUTER_HEALTH_PORT: u16 = 3005;
 
 pub fn resolve_opencode_router_health_port() -> Result<u16, String> {
@@ -46,9 +48,10 @@ pub fn spawn_opencode_router(
 
     let args = build_opencode_router_args(workspace_path, opencode_url);
 
+    let cwd = resolve_process_working_dir(app, Path::new(workspace_path), "opencode-router")?;
     let mut command = command
         .args(args)
-        .current_dir(Path::new(workspace_path))
+        .current_dir(cwd)
         .env("OPENCODE_ROUTER_HEALTH_PORT", health_port.to_string());
 
     if let Some(username) = opencode_username {
