@@ -327,17 +327,47 @@ async function ensureWorkspaceOpenworkConfig(
 ): Promise<void> {
   const path = openworkConfigPath(workspaceRoot);
   const now = Date.now();
+  const desiredWorkspace = {
+    name: basename(workspaceRoot) || "Workspace",
+    createdAt: now,
+    preset,
+  };
   const desiredBlueprint = starterBootstrapEnabled ? buildDefaultWorkspaceBlueprint(preset) : null;
 
   if (await exists(path)) {
     // File already written by the desktop layer (Tauri/Electron) before the
-    // server is called. Patch the blueprint field if missing so the toggle
-    // actually takes effect end-to-end.
+    // server is called. Backfill the missing workspace metadata / blueprint so
+    // creation stays consistent across desktop hosts.
     try {
       const raw = await readFile(path, "utf8");
       const parsed = JSON.parse(raw) as Partial<WorkspaceOpenworkConfig> & Record<string, unknown>;
+      let changed = false;
+      const currentWorkspace = parsed.workspace && typeof parsed.workspace === "object" && !Array.isArray(parsed.workspace)
+        ? { ...(parsed.workspace as Record<string, unknown>) }
+        : {};
+
+      if (typeof currentWorkspace.name !== "string" || !currentWorkspace.name.trim()) {
+        currentWorkspace.name = desiredWorkspace.name;
+        changed = true;
+      }
+      if (typeof currentWorkspace.createdAt !== "number") {
+        currentWorkspace.createdAt = desiredWorkspace.createdAt;
+        changed = true;
+      }
+      if (typeof currentWorkspace.preset !== "string" || !currentWorkspace.preset.trim()) {
+        currentWorkspace.preset = desiredWorkspace.preset;
+        changed = true;
+      }
+      if (changed) {
+        parsed.workspace = currentWorkspace;
+      }
+
       if (!("blueprint" in parsed) || parsed.blueprint === undefined) {
         parsed.blueprint = desiredBlueprint;
+        changed = true;
+      }
+
+      if (changed) {
         await writeFile(path, JSON.stringify(parsed, null, 2) + "\n", "utf8");
       }
     } catch {
@@ -349,11 +379,7 @@ async function ensureWorkspaceOpenworkConfig(
 
   const config: WorkspaceOpenworkConfig = {
     version: 1,
-    workspace: {
-      name: basename(workspaceRoot) || "Workspace",
-      createdAt: now,
-      preset,
-    },
+    workspace: desiredWorkspace,
     authorizedRoots: [workspaceRoot],
     blueprint: desiredBlueprint,
     reload: null,

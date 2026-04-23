@@ -339,6 +339,81 @@ function defaultWorkspaceOpenworkConfig(workspacePath) {
   };
 }
 
+function normalizeOpenworkServerBaseUrl(value) {
+  return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+}
+
+async function readResponseError(response, fallback) {
+  try {
+    const raw = await response.text();
+    if (raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.message === "string" && parsed.message.trim()) {
+          return parsed.message.trim();
+        }
+      } catch {
+        // Keep the raw body if it is not JSON.
+      }
+      return raw.trim();
+    }
+  } catch {
+    // ignore response body parsing errors
+  }
+  return fallback;
+}
+
+async function ensureLocalWorkspaceBootstrap(input) {
+  const workspacePaths = Array.from(
+    new Set([
+      input.folderPath,
+      ...(await readWorkspaceState())
+        .workspaces
+        .filter((entry) => entry?.workspaceType !== "remote")
+        .map((entry) => String(entry?.path ?? "").trim())
+        .filter(Boolean),
+    ]),
+  );
+
+  const postCreate = async (info) => {
+    const baseUrl = normalizeOpenworkServerBaseUrl(info?.baseUrl);
+    const ownerToken = typeof info?.ownerToken === "string" ? info.ownerToken.trim() : "";
+    const hostToken = typeof info?.hostToken === "string" ? info.hostToken.trim() : "";
+    if (!baseUrl || (!ownerToken && !hostToken)) {
+      throw new Error("OpenWork server is unavailable for workspace bootstrap.");
+    }
+
+    const headers = { "Content-Type": "application/json" };
+    if (ownerToken) {
+      headers.Authorization = `Bearer ${ownerToken}`;
+    } else {
+      headers["X-OpenWork-Host-Token"] = hostToken;
+    }
+
+    const response = await fetch(`${baseUrl}/workspaces/local`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        folderPath: input.folderPath,
+        name: input.name,
+        preset: input.preset,
+        starterBootstrapEnabled: input.starterBootstrapEnabled,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response, `Failed to initialize workspace (${response.status})`));
+    }
+  };
+
+  const existingInfo = await runtimeManager.openworkServerInfo().catch(() => null);
+  try {
+    await postCreate(existingInfo);
+  } catch {
+    const restarted = await runtimeManager.openworkServerRestart({ workspacePaths });
+    await postCreate(restarted);
+  }
+}
+
 async function readWorkspaceOpenworkConfig(workspacePath) {
   const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
   if (!(await pathExists(openworkPath))) {
@@ -751,16 +826,23 @@ async function handleDesktopInvoke(event, command, ...args) {
       const input = args[0] ?? {};
       const folderPath = String(input.folderPath ?? "").trim();
       if (!folderPath) throw new Error("folderPath is required");
+      const workspaceName = String(input.name ?? (path.basename(folderPath) || "Workspace"));
+      const preset = String(input.preset ?? "starter");
+      const starterBootstrapEnabled = input.starterBootstrapEnabled !== false;
+      await ensureLocalWorkspaceBootstrap({
+        folderPath,
+        name: workspaceName,
+        preset,
+        starterBootstrapEnabled,
+      });
       const workspace = normalizeWorkspaceEntry({
         id: makeWorkspaceId("local", folderPath),
-        name: String(input.name ?? (path.basename(folderPath) || "Workspace")),
-        displayName: String(input.name ?? (path.basename(folderPath) || "Workspace")),
+        name: workspaceName,
+        displayName: workspaceName,
         path: folderPath,
-        preset: String(input.preset ?? "starter"),
+        preset,
         workspaceType: "local",
       });
-      await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-      await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath));
       return mutateWorkspaceState((state) => {
         state.workspaces = state.workspaces.filter((entry) => entry.id !== workspace.id);
         state.workspaces.push(workspace);

@@ -1078,7 +1078,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function openworkServerRestart(options = {}) {
-    const workspacePaths = (await listLocalWorkspacePaths()).filter(Boolean);
+    const workspacePaths = Array.isArray(options.workspacePaths)
+      ? options.workspacePaths.map((value) => String(value ?? "").trim()).filter(Boolean)
+      : (await listLocalWorkspacePaths()).filter(Boolean);
     return startOpenworkServer({
       workspacePaths,
       opencodeBaseUrl: engineState.baseUrl,
