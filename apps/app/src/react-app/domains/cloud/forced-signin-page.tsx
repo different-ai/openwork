@@ -20,6 +20,7 @@ import {
   type DenSessionUpdatedDetail,
 } from "../../../app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
+import { useBootState } from "../../shell/boot-state";
 import { useDenAuth } from "./den-auth-provider";
 import { useDesktopConfig } from "./desktop-config-provider";
 import { DenSignInSurface } from "./den-signin-surface";
@@ -76,6 +77,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const desktopConfig = useDesktopConfig();
+  const { markRouteReady } = useBootState();
   const tr = useCallback((key: string) => t(key, currentLocale()), []);
 
   const initial = readDenSettings();
@@ -215,6 +217,10 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   // Listen for Den session events broadcast from the Tauri deep-link handler,
   // a successful browser auth, or an org switch, and reflect the result in
   // the sign-in surface's status/error banners.
+  useEffect(() => {
+    markRouteReady();
+  }, [markRouteReady]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
