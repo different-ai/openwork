@@ -13,7 +13,7 @@ export default {
   "app.error.install_failed": "Cài đặt OpenCode thất bại. Xem nhật ký ở trên.",
   "app.error.pick_workspace_folder": "Vui lòng chọn thư mục workspace trước.",
   "app.error.remote_base_url_required": "Vui lòng nhập URL máy chủ để tiếp tục.",
-  "app.error.tauri_required": "Thao tác này yêu cầu môi trường Tauri.",
+  "app.error.tauri_required": "Thao tác này yêu cầu môi trường ứng dụng máy tính OpenWork.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_auth_failed": "Xác thực thất bại",
   "app.error_auto_compact_scope": "Tự động thu gọn ngữ cảnh chỉ có thể thay đổi cho workspace nội bộ hoặc workspace OpenWork có quyền ghi.",

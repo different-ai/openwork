@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -579,7 +579,26 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
-  return response;
+  return sanitizeProxyResponse(response);
+}
+
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function resolveOpenCodeRouterBaseUrl(): string {
@@ -613,7 +632,7 @@ async function proxyOpenCodeRouterRequest(input: {
       headers,
       body,
     });
-    return response;
+    return sanitizeProxyResponse(response);
   } catch (error) {
     const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
     throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
@@ -787,6 +806,15 @@ function resolveToyUiEnabled(): boolean {
   const raw = (process.env.OPENWORK_TOY_UI ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
+}
+
+// Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
+// /dev/log endpoint accepts JSON payloads and appends them to that file so an
+// operator can `tail -f` the file to see live browser activity. Returning null
+// disables the endpoint entirely.
+function resolveDevLogPath(): string | null {
+  const raw = (process.env.OPENWORK_DEV_LOG_FILE ?? "").trim();
+  return raw.length > 0 ? raw : null;
 }
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
@@ -1171,6 +1199,53 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  // Dev log sink: append browser console + error events to a file that an
+  // operator (or an AI driver) can tail. Unauth on purpose because this is
+  // scoped to the dev host and needs to work before clients finish wiring
+  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
+  addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+    }
+    let payload: unknown = null;
+    try {
+      payload = await ctx.request.json();
+    } catch {
+      return jsonResponse({ ok: false, reason: "invalid_json" }, 400);
+    }
+    const entries = Array.isArray(payload) ? payload : [payload];
+    try {
+      await mkdir(dirname(target), { recursive: true });
+      const lines = entries
+        .map((entry) => {
+          try {
+            const stamped = { at: new Date().toISOString(), ...(entry as Record<string, unknown>) };
+            return JSON.stringify(stamped);
+          } catch {
+            return JSON.stringify({ at: new Date().toISOString(), raw: String(entry) });
+          }
+        })
+        .join("\n");
+      await appendFile(target, `${lines}\n`, "utf8");
+    } catch (error) {
+      return jsonResponse({ ok: false, reason: error instanceof Error ? error.message : String(error) }, 500);
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "GET", "/dev/log", "none", async () => {
+    // Probe response: always 200 so the client's capability probe doesn't
+    // log a noisy "Failed to load resource: 404" in the browser console
+    // when the sink is simply disabled. Clients should key on `ok` + `reason`
+    // in the body, not on HTTP status.
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" });
+    }
+    return jsonResponse({ ok: true, path: target });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {

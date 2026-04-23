@@ -1,7 +1,6 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-
+import { desktopFetch } from "../lib/desktop";
 import type { OpenworkServerClient } from "../lib/openwork-server";
-import { isTauriRuntime, safeStringify } from "../utils";
+import { isDesktopRuntime, safeStringify } from "../utils";
 import { parseBundlePayload } from "./schema";
 import type { BundleImportIntent, BundleRequest, BundleV1 } from "./types";
 import { extractBundleId, isConfiguredBundlePublisherUrl } from "./url-policy";
@@ -130,8 +129,8 @@ export async function fetchBundle(
   try {
     let response: Response;
     try {
-      response = isTauriRuntime()
-        ? await tauriFetch(targetUrl.toString(), {
+        response = isDesktopRuntime()
+          ? await desktopFetch(targetUrl.toString(), {
             method: "GET",
             headers: { Accept: "application/json" },
             signal: controller.signal,
