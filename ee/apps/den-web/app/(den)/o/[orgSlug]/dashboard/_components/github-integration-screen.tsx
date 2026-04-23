@@ -3,14 +3,25 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Github, Link2, LoaderCircle, Puzzle, RefreshCw, Settings, Sparkles, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ExternalLink,
+  GitBranch,
+  Github,
+  LoaderCircle,
+  Puzzle,
+  RefreshCw,
+  Search,
+  Settings,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import { getGithubIntegrationRoute, getIntegrationsRoute } from "../../../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../../../_components/ui/button";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../../../_components/ui/input";
-import { DenSelectableRow } from "../../../../_components/ui/selectable-row";
-import { Search, ExternalLink, GitBranch } from "lucide-react";
 import {
   type IntegrationRepo,
   useApplyGithubDiscovery,
@@ -38,6 +49,8 @@ export function GithubIntegrationScreen() {
   const connectorInstanceId = searchParams.get("connectorInstanceId")?.trim() ?? null;
   const connectorAccountId = searchParams.get("connectorAccountId")?.trim() ?? null;
   const mode = searchParams.get("mode")?.trim() ?? null;
+  const installationId = parseInstallationId(searchParams.get("installation_id"));
+  const state = searchParams.get("state")?.trim() ?? null;
 
   if (connectorInstanceId) {
     return (
@@ -53,7 +66,65 @@ export function GithubIntegrationScreen() {
     return <GithubConnectedAccountSelectionPhase connectorAccountId={connectorAccountId} />;
   }
 
-  return <GithubRepositorySelectionPhase />;
+  if (installationId && state) {
+    return <GithubInstallCompletionRedirect installationId={installationId} state={state} />;
+  }
+
+  return (
+    <DashboardPageTemplate
+      icon={Github}
+      badgeLabel="GitHub"
+      title="Connect GitHub"
+      description="Choose a connected account from the Integrations page to continue."
+      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
+    >
+      <StatePanel
+        title="Nothing to do here"
+        body="Return to Integrations to connect a new GitHub account or configure another repository."
+      />
+    </DashboardPageTemplate>
+  );
+}
+
+function GithubInstallCompletionRedirect({ installationId, state }: { installationId: number; state: string }) {
+  const router = useRouter();
+  const { orgSlug } = useOrgDashboard();
+  const completionQuery = useGithubInstallCompletion({ installationId, state });
+
+  useEffect(() => {
+    if (!completionQuery.data) return;
+    const nextUrl = `${getGithubIntegrationRoute(orgSlug)}?connectorAccountId=${encodeURIComponent(completionQuery.data.connectorAccount.id)}`;
+    router.replace(nextUrl);
+  }, [completionQuery.data, orgSlug, router]);
+
+  return (
+    <DashboardPageTemplate
+      icon={Github}
+      badgeLabel="GitHub"
+      title="Finishing GitHub connection"
+      description="OpenWork is finalizing the GitHub App installation for this organization."
+      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
+    >
+      {completionQuery.error ? (
+        <StatePanel
+          title="GitHub connection could not be completed"
+          body={completionQuery.error instanceof Error ? completionQuery.error.message : "Unknown GitHub installation error."}
+        />
+      ) : (
+        <section className="flex flex-col items-center justify-center rounded-2xl border border-gray-100 bg-white px-6 py-16 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white">
+            <LoaderCircle className="h-6 w-6 animate-spin" aria-hidden />
+          </div>
+          <h2 className="mt-5 text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+            Finalizing your GitHub connection
+          </h2>
+          <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500">
+            OpenWork is resolving the installation and loading accessible repositories.
+          </p>
+        </section>
+      )}
+    </DashboardPageTemplate>
+  );
 }
 
 function GithubConnectorInstanceRouter({
@@ -853,185 +924,6 @@ function RepositoryCard({
   );
 }
 
-function GithubRepositorySelectionPhase() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const { orgSlug } = useOrgDashboard();
-  const installationId = parseInstallationId(searchParams.get("installation_id"));
-  const state = searchParams.get("state")?.trim() ?? null;
-  const setupAction = searchParams.get("setup_action")?.trim() ?? "";
-  const [query, setQuery] = useState("");
-  const [selectedRepoId, setSelectedRepoId] = useState<string | null>(null);
-  const completionQuery = useGithubInstallCompletion({ installationId, state });
-  const connectMutation = useCreateGithubConnectorInstance();
-
-  const filteredRepos = useMemo(() => {
-    const repositories = completionQuery.data?.repositories ?? [];
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return repositories;
-    }
-
-    return repositories.filter((repository) =>
-      `${repository.fullName}\n${repository.description}`.toLowerCase().includes(normalized),
-    );
-  }, [completionQuery.data?.repositories, query]);
-
-  const selectedRepo = (completionQuery.data?.repositories ?? []).find((repository) => repository.id === selectedRepoId) ?? null;
-
-  async function handleConnectRepo() {
-    if (!installationId || !completionQuery.data || !selectedRepo || !selectedRepo.defaultBranch) {
-      return;
-    }
-
-    const repositoryId = Number(selectedRepo.id);
-    if (!Number.isInteger(repositoryId) || repositoryId <= 0) {
-      return;
-    }
-
-    const result = await connectMutation.mutateAsync({
-      branch: selectedRepo.defaultBranch,
-      connectorAccountId: completionQuery.data.connectorAccount.id,
-      connectorInstanceName: selectedRepo.fullName,
-      installationId,
-      repositoryFullName: selectedRepo.fullName,
-      repositoryId,
-    });
-    router.replace(`${getGithubIntegrationRoute(orgSlug)}?connectorInstanceId=${encodeURIComponent(result.connectorInstanceId)}`);
-  }
-
-  return (
-    <DashboardPageTemplate
-      icon={Github}
-      badgeLabel="GitHub"
-      title="Connect GitHub"
-      description="Finish the GitHub App flow by choosing the repository you want OpenWork to treat as a connector source."
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
-    >
-      <div className="mb-6 flex items-center justify-between gap-3">
-        <Link href={getIntegrationsRoute(orgSlug)} className="inline-flex items-center gap-2 text-[13px] font-medium text-gray-500 transition hover:text-gray-900">
-          <ArrowLeft className="h-4 w-4" />
-          Back to integrations
-        </Link>
-        {setupAction ? (
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
-            GitHub setup action: {setupAction}
-          </span>
-        ) : null}
-      </div>
-
-      {!installationId ? (
-        <StatePanel
-          title="Missing installation id"
-          body="GitHub returned to OpenWork without an installation id. Restart the connect flow from Integrations."
-        />
-      ) : !state ? (
-        <StatePanel
-          title="Missing install state"
-          body="GitHub returned without the signed connection state. Restart the connect flow from Integrations."
-        />
-      ) : completionQuery.isLoading ? (
-        <StatePanel
-          title="Finalizing your GitHub connection"
-          body="OpenWork is resolving the installation, creating the connector account, and loading repositories."
-        />
-      ) : completionQuery.error ? (
-        <StatePanel
-          title="GitHub connection could not be completed"
-          body={completionQuery.error instanceof Error ? completionQuery.error.message : "Unknown GitHub installation error."}
-        />
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">Step 2 of 3</p>
-                <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">Choose a repository</h2>
-                <p className="mt-2 max-w-2xl text-[14px] leading-6 text-gray-500">
-                  GitHub is connected as <strong>{completionQuery.data?.connectorAccount.displayName}</strong>. Pick the repository that should become a connector instance in this OpenWork organization.
-                </p>
-              </div>
-              <div className="hidden rounded-2xl bg-slate-950 px-4 py-3 text-[12px] font-medium text-white sm:block">
-                Installation #{installationId}
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <DenInput
-                value={query}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder="Search repositories"
-              />
-            </div>
-
-            <div className="mt-5 overflow-hidden rounded-2xl border border-gray-100 bg-white">
-              {filteredRepos.length > 0 ? (
-                <div className="divide-y divide-gray-100">
-                  {filteredRepos.map((repository) => (
-                    <DenSelectableRow
-                      key={repository.id}
-                      title={repository.fullName}
-                      description={repository.hasPluginManifest ? "Plugin or marketplace manifest detected" : repository.description}
-                      descriptionBelow
-                      selected={selectedRepoId === repository.id}
-                      onClick={() => setSelectedRepoId(repository.id)}
-                      leading={
-                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white">
-                          <Link2 className="h-4 w-4" />
-                        </div>
-                      }
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="px-5 py-12 text-center text-[14px] text-gray-400">
-                  No repositories matched your search.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-gray-200 bg-white p-6 shadow-sm">
-            <h3 className="text-[16px] font-semibold text-gray-950">Selection</h3>
-            {selectedRepo ? (
-              <div className="mt-4 space-y-3 text-[14px] text-gray-600">
-                <DetailField label="Repository" value={selectedRepo.fullName} />
-                <DetailField label="Default branch" value={selectedRepo.defaultBranch ?? "Unavailable"} />
-                <DetailField label="Manifest detection" value={selectedRepo.hasPluginManifest ? "Detected" : "Not detected yet"} />
-              </div>
-            ) : (
-              <p className="mt-4 text-[14px] leading-6 text-gray-500">
-                Choose a repository from the left to create a connector instance and begin discovery.
-              </p>
-            )}
-
-            {connectMutation.error ? (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-                {connectMutation.error instanceof Error ? connectMutation.error.message : "Failed to connect the repository."}
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex flex-col gap-3">
-              <DenButton
-                disabled={!selectedRepo || !selectedRepo.defaultBranch}
-                loading={connectMutation.isPending}
-                onClick={() => void handleConnectRepo()}
-              >
-                {selectedRepo ? "Start discovery" : "Select a repository"}
-              </DenButton>
-              {!selectedRepo?.defaultBranch && selectedRepo ? (
-                <p className="text-[12px] text-amber-700">
-                  This repository does not expose a default branch, so OpenWork cannot create the connector target yet.
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
-    </DashboardPageTemplate>
-  );
-}
-
 function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstanceId: string; onBack: () => void }) {
   const discoveryQuery = useGithubConnectorDiscovery(connectorInstanceId);
   const applyMutation = useApplyGithubDiscovery();
@@ -1376,15 +1268,6 @@ function DiscoveryLoadingState() {
         OpenWork is scanning the repo for Claude-compatible plugin and marketplace manifests.
       </p>
     </section>
-  );
-}
-
-function DetailField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="mt-4">
-      <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</p>
-      <p className="mt-1 font-medium text-gray-950">{value}</p>
-    </div>
   );
 }
 
