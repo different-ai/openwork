@@ -437,6 +437,7 @@ export function useGithubInstallCompletion(input: { installationId: number | nul
   return useQuery({
     enabled: Number.isFinite(input.installationId ?? NaN) && (input.installationId ?? 0) > 0 && Boolean(input.state?.trim()),
     queryKey: [...integrationQueryKeys.githubInstall(input.installationId), input.state ?? "no-state"] as const,
+    retry: false,
     queryFn: async (): Promise<GithubInstallCompleteResult> => {
       const { response, payload } = await requestJson(
         "/v1/connectors/github/install/complete",

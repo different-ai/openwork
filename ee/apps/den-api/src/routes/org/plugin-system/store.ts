@@ -3054,15 +3054,11 @@ export async function completeGithubConnectorInstall(input: { context: PluginArc
     context: input.context,
     installationId: input.installationId,
   })
-  const repositories = await listGithubRepositories({
-    connectorAccountId: connectorAccount.id,
-    context: input.context,
-    limit: 100,
-  })
 
   return {
     connectorAccount,
-    repositories: repositories.items,
+    // Keep install completion fast. The connected-account screen loads repositories next.
+    repositories: [],
   }
 }
 

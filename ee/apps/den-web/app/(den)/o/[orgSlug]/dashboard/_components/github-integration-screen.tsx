@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -18,7 +19,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
-import { getGithubIntegrationRoute, getIntegrationsRoute } from "../../../../_lib/den-org";
+import {
+  getGithubIntegrationAccountRoute,
+  getGithubIntegrationRoute,
+  getGithubIntegrationSetupRoute,
+  getIntegrationsRoute,
+} from "../../../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../../../_components/ui/button";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../../../_components/ui/input";
@@ -87,15 +93,24 @@ export function GithubIntegrationScreen() {
 }
 
 function GithubInstallCompletionRedirect({ installationId, state }: { installationId: number; state: string }) {
-  const router = useRouter();
   const { orgSlug } = useOrgDashboard();
+  const queryClient = useQueryClient();
   const completionQuery = useGithubInstallCompletion({ installationId, state });
 
   useEffect(() => {
     if (!completionQuery.data) return;
-    const nextUrl = `${getGithubIntegrationRoute(orgSlug)}?connectorAccountId=${encodeURIComponent(completionQuery.data.connectorAccount.id)}`;
-    router.replace(nextUrl);
-  }, [completionQuery.data, orgSlug, router]);
+
+    queryClient.invalidateQueries({ queryKey: ["integrations"] });
+    if (completionQuery.data.repositories.length > 0) {
+      queryClient.setQueryData(
+        ["integrations", "repos", "github", completionQuery.data.connectorAccount.id, "connected-account"],
+        completionQuery.data.repositories,
+      );
+    }
+
+    const nextUrl = getGithubIntegrationAccountRoute(orgSlug, completionQuery.data.connectorAccount.id);
+    window.location.replace(nextUrl);
+  }, [completionQuery.data, orgSlug, queryClient]);
 
   return (
     <DashboardPageTemplate
@@ -573,9 +588,8 @@ function RemoveRepositoryConfirmDialog({
 }
 
 function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connectorAccountId: string }) {
-  const router = useRouter();
   const { orgSlug } = useOrgDashboard();
-  const { data: connections = [] } = useIntegrations();
+  const { data: connections = [], isFetching: connectionsFetching, isLoading: connectionsLoading } = useIntegrations();
   const repositoriesQuery = useGithubAccountRepositories(connectorAccountId);
   const connectMutation = useCreateGithubConnectorInstance();
   const [query, setQuery] = useState("");
@@ -629,7 +643,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       repositoryFullName: selectedRepo.fullName,
       repositoryId,
     });
-    router.replace(`${getGithubIntegrationRoute(orgSlug)}?connectorInstanceId=${encodeURIComponent(result.connectorInstanceId)}`);
+    window.location.assign(getGithubIntegrationSetupRoute(orgSlug, result.connectorInstanceId));
   }
 
   const accessLabel = connection?.account.repositorySelection === "selected"
@@ -664,7 +678,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
         ) : null}
       </div>
 
-      {repositoriesQuery.isLoading ? (
+      {repositoriesQuery.isLoading || (!connection && (connectionsLoading || connectionsFetching)) ? (
         <StatePanel
           title="Loading repositories"
           body="OpenWork is checking which repositories this GitHub installation can already read."
@@ -1279,5 +1293,3 @@ function StatePanel({ title, body }: { title: string; body: string }) {
     </div>
   );
 }
-
-
