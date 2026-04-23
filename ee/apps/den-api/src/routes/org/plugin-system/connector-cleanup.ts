@@ -1,6 +1,6 @@
 export type ConnectorCleanupMarketplaceMembership<TPluginId extends string = string, TMarketplaceId extends string = string> = {
   marketplaceId: TMarketplaceId
-  membershipSource: "connector" | "manual"
+  membershipSource: "api" | "connector" | "manual" | "system"
   pluginId: TPluginId
 }
 
