@@ -123,6 +123,9 @@ describe("validateMcpConfig", () => {
 
   test("rejects remote with invalid or non-http url", () => {
     expect(() => validateMcpConfig({ type: "remote", url: "notaurl" })).toThrow();
+    expect(() => validateMcpConfig({ type: "remote", url: "https:example.com" })).toThrow();
+    expect(() => validateMcpConfig({ type: "remote", url: " https://example.com" })).toThrow();
+    expect(() => validateMcpConfig({ type: "remote", url: "https://example.com " })).toThrow();
     expect(() => validateMcpConfig({ type: "remote", url: "file:///tmp/mcp" })).toThrow();
     expect(() => validateMcpConfig({ type: "remote", url: "javascript:alert(1)" })).toThrow();
   });

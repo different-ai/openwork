@@ -59,8 +59,15 @@ export function validateMcpConfig(config: Record<string, unknown>): void {
     if (!url || typeof url !== "string" || url.trim().length === 0) {
       throw new ApiError(400, "invalid_mcp_config", "Remote MCP requires url");
     }
+    const normalizedUrl = url.trim();
+    if (url !== normalizedUrl) {
+      throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must not include surrounding whitespace");
+    }
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must start with http(s)://");
+    }
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(normalizedUrl);
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
         throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must use http(s)");
       }
