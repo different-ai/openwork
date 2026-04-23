@@ -974,11 +974,13 @@ export function SettingsRoute() {
             canEditPlugins={!isRemoteWorkspace}
             addPlugin={(pluginNameOverride) => extensionsStore.addPlugin(pluginNameOverride)}
             reloadWorkspaceEngine={async () => {
-              await openworkServerStore.reconnectOpenworkServer();
+              if (openworkClient && selectedWorkspace?.id) {
+                await openworkClient.reloadEngine(selectedWorkspace.id);
+              }
               await automationsStore.refresh({ force: true });
             }}
             reloadBusy={false}
-            canReloadWorkspace={isDesktopRuntime()}
+            canReloadWorkspace={Boolean(openworkClient && selectedWorkspace?.id)}
             openLink={(url) => platform.openLink(url)}
           />
         );
