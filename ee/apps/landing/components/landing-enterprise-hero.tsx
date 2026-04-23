@@ -20,6 +20,8 @@ type Department = {
   dailyActive: string;
   spend: string;
   avgPerPerson: string;
+  /** Daily active users over the last 10 weekdays. */
+  trend: number[];
   powerUsers: string[];
 };
 
@@ -27,7 +29,7 @@ type ToolRow = {
   tool: string;
   penetration: string;
   topDepartment: string;
-  topUsers: Array<{ initials: string; department: string }>;
+  topUsers: string[];
   featured?: boolean;
 };
 
@@ -36,7 +38,10 @@ type PowerUser = {
   initials: string;
   department: string;
   topTool: string;
+  /** Cumulative requests by weekday (10 weekdays). Shape reveals usage personality. */
   trend: number[];
+  /** One-line descriptor of the usage personality (shown as tooltip). */
+  trendNote: string;
   requests: string;
   inputTokens: string;
   outputTokens: string;
@@ -50,6 +55,7 @@ const departments: Department[] = [
     dailyActive: "32 / 54",
     spend: "$210K",
     avgPerPerson: "$4.4K",
+    trend: [26, 28, 27, 29, 29, 30, 31, 30, 32, 32],
     powerUsers: ["JC", "LT", "GH", "+3"]
   },
   {
@@ -58,6 +64,7 @@ const departments: Department[] = [
     dailyActive: "16 / 28",
     spend: "$120K",
     avgPerPerson: "$4.3K",
+    trend: [8, 9, 10, 11, 12, 13, 14, 15, 15, 16],
     powerUsers: ["AL", "MC", "AT", "+2"]
   },
   {
@@ -66,6 +73,7 @@ const departments: Department[] = [
     dailyActive: "9 / 24",
     spend: "$90K",
     avgPerPerson: "$3.8K",
+    trend: [4, 5, 5, 4, 6, 7, 6, 8, 8, 9],
     powerUsers: ["HL", "DG", "AR", "+1"]
   },
   {
@@ -74,6 +82,7 @@ const departments: Department[] = [
     dailyActive: "7 / 36",
     spend: "$30K",
     avgPerPerson: "$968",
+    trend: [9, 9, 10, 9, 8, 8, 7, 8, 7, 7],
     powerUsers: ["MF", "SG", "RM", "+2"]
   },
   {
@@ -82,6 +91,7 @@ const departments: Department[] = [
     dailyActive: "3 / 28",
     spend: "$18K",
     avgPerPerson: "$643",
+    trend: [1, 1, 1, 2, 1, 2, 2, 3, 3, 3],
     powerUsers: ["RF", "AS", "JR", "+1"]
   },
   {
@@ -90,6 +100,7 @@ const departments: Department[] = [
     dailyActive: "1 / 25",
     spend: "$15K",
     avgPerPerson: "$600",
+    trend: [0, 1, 0, 0, 0, 1, 1, 0, 1, 1],
     powerUsers: ["AC", "WB", "HF", "+2"]
   },
   {
@@ -98,6 +109,7 @@ const departments: Department[] = [
     dailyActive: "0 / 12",
     spend: "$7K",
     avgPerPerson: "$583",
+    trend: [3, 2, 2, 1, 1, 1, 0, 0, 0, 0],
     powerUsers: ["SD", "OB", "RH", "+1"]
   }
 ];
@@ -107,49 +119,32 @@ const toolRows: ToolRow[] = [
     tool: "OpenWork",
     penetration: "41%",
     topDepartment: "Customer Support",
-    topUsers: [
-      { initials: "AL", department: "Data Science" },
-      { initials: "GH", department: "Engineering" },
-      { initials: "AC", department: "Sales" }
-    ],
+    topUsers: ["AL", "GH", "AC"],
     featured: true
   },
   {
     tool: "Cursor",
     penetration: "24%",
     topDepartment: "Engineering",
-    topUsers: [
-      { initials: "JC", department: "Engineering" },
-      { initials: "LT", department: "Engineering" },
-      { initials: "AT", department: "Data Science" }
-    ]
+    topUsers: ["JC", "LT", "AT"]
   },
   {
     tool: "Figma AI",
     penetration: "11%",
     topDepartment: "Product",
-    topUsers: [
-      { initials: "HL", department: "Product" },
-      { initials: "RF", department: "Marketing" }
-    ]
+    topUsers: ["HL", "RF"]
   },
   {
     tool: "Notion AI",
     penetration: "9%",
     topDepartment: "Product",
-    topUsers: [
-      { initials: "DG", department: "Product" },
-      { initials: "AS", department: "Marketing" }
-    ]
+    topUsers: ["DG", "AS"]
   },
   {
     tool: "Zendesk AI",
     penetration: "7%",
     topDepartment: "Customer Support",
-    topUsers: [
-      { initials: "MF", department: "Customer Support" },
-      { initials: "SG", department: "Customer Support" }
-    ]
+    topUsers: ["MF", "SG"]
   }
 ];
 
@@ -159,7 +154,9 @@ const powerUsers: PowerUser[] = [
     initials: "JC",
     department: "Engineering",
     topTool: "Cursor",
-    trend: [14, 16, 18, 17, 22, 25, 28, 34],
+    // Crunch sessions — some big-bang days, quieter ones in between.
+    trend: [60, 200, 290, 490, 610, 780, 860, 1080, 1260, 1400],
+    trendNote: "Deep-work bursts, quiet days in between",
     requests: "1.4K",
     inputTokens: "820K",
     outputTokens: "310K",
@@ -170,7 +167,9 @@ const powerUsers: PowerUser[] = [
     initials: "LT",
     department: "Engineering",
     topTool: "Cursor",
-    trend: [10, 12, 14, 16, 18, 20, 22, 26],
+    // Nearly-constant daily rhythm with tiny human variation.
+    trend: [105, 217, 325, 440, 550, 658, 771, 881, 993, 1100],
+    trendNote: "Steady daily rhythm, every weekday the same",
     requests: "1.1K",
     inputTokens: "640K",
     outputTokens: "250K",
@@ -181,7 +180,9 @@ const powerUsers: PowerUser[] = [
     initials: "AL",
     department: "Data Science",
     topTool: "OpenWork",
-    trend: [7, 9, 11, 13, 12, 15, 18, 22],
+    // Front-loaded: early bursts of curiosity, then flattening.
+    trend: [160, 300, 420, 530, 630, 720, 800, 860, 920, 960],
+    trendNote: "Early-adopter curve — curiosity cooling off",
     requests: "960",
     inputTokens: "540K",
     outputTokens: "210K",
@@ -192,7 +193,9 @@ const powerUsers: PowerUser[] = [
     initials: "AT",
     department: "Data Science",
     topTool: "OpenWork",
-    trend: [8, 10, 11, 13, 15, 16, 18, 20],
+    // Scheduled automation — perfectly linear.
+    trend: [88, 176, 264, 352, 440, 528, 616, 704, 792, 880],
+    trendNote: "Scheduled automation — same batch every day",
     requests: "880",
     inputTokens: "500K",
     outputTokens: "200K",
@@ -203,7 +206,9 @@ const powerUsers: PowerUser[] = [
     initials: "GH",
     department: "Engineering",
     topTool: "OpenWork",
-    trend: [5, 7, 9, 10, 12, 13, 15, 18],
+    // Weekly batch runs — two big step-jumps.
+    trend: [20, 35, 55, 185, 210, 235, 260, 395, 550, 720],
+    trendNote: "Weekly batch runs — steps every few days",
     requests: "720",
     inputTokens: "410K",
     outputTokens: "180K",
@@ -214,7 +219,9 @@ const powerUsers: PowerUser[] = [
     initials: "MC",
     department: "Data Science",
     topTool: "OpenWork",
-    trend: [6, 7, 9, 10, 12, 13, 14, 16],
+    // Smooth, accelerating learning curve.
+    trend: [30, 70, 120, 180, 250, 330, 420, 520, 615, 680],
+    trendNote: "Learning curve — compounding every week",
     requests: "680",
     inputTokens: "380K",
     outputTokens: "170K",
@@ -225,7 +232,9 @@ const powerUsers: PowerUser[] = [
     initials: "AC",
     department: "Sales",
     topTool: "OpenWork",
-    trend: [3, 4, 5, 6, 7, 8, 10, 11],
+    // Late adopter — recent steep ramp.
+    trend: [15, 35, 60, 90, 130, 190, 265, 345, 430, 510],
+    trendNote: "Late adopter — just caught the wave",
     requests: "510",
     inputTokens: "290K",
     outputTokens: "140K",
@@ -236,13 +245,44 @@ const powerUsers: PowerUser[] = [
     initials: "WB",
     department: "Sales",
     topTool: "OpenWork",
-    trend: [2, 3, 4, 5, 5, 6, 7, 9],
+    // Patient, consistent daily use.
+    trend: [40, 82, 125, 168, 210, 253, 297, 341, 386, 430],
+    trendNote: "Patient, near-identical daily habit",
     requests: "430",
     inputTokens: "240K",
     outputTokens: "115K",
     cost: "$360"
   }
 ];
+
+/**
+ * All initials that appear as avatars anywhere in the dashboard, mapped to a
+ * full name (where we have one) and their home department (for pill color
+ * and tooltip context).
+ */
+const peopleByInitials: Record<string, { name?: string; department: string }> = {
+  JC: { name: "John Carmack", department: "Engineering" },
+  LT: { name: "Linus Torvalds", department: "Engineering" },
+  GH: { name: "Grace Hopper", department: "Engineering" },
+  AL: { name: "Ada Lovelace", department: "Data Science" },
+  MC: { name: "Marie Curie", department: "Data Science" },
+  AT: { name: "Alan Turing", department: "Data Science" },
+  AC: { name: "Andrew Carnegie", department: "Sales" },
+  WB: { name: "Warren Buffett", department: "Sales" },
+  HF: { name: "Henry Ford", department: "Sales" },
+  HL: { department: "Product" },
+  DG: { department: "Product" },
+  AR: { department: "Product" },
+  MF: { department: "Customer Support" },
+  SG: { department: "Customer Support" },
+  RM: { department: "Customer Support" },
+  RF: { department: "Marketing" },
+  AS: { department: "Marketing" },
+  JR: { department: "Marketing" },
+  SD: { department: "Legal" },
+  OB: { department: "Legal" },
+  RH: { department: "Legal" }
+};
 
 type TabId = "departments" | "users" | "tools";
 
@@ -357,9 +397,26 @@ function TopNav() {
       </div>
 
       <div className="flex items-center gap-4 text-[#30405F] md:gap-5">
-        <Search className="h-5 w-5 stroke-[1.8]" aria-hidden="true" />
-        <Bell className="h-5 w-5 stroke-[1.8]" aria-hidden="true" />
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EEF2FB] text-[13px] font-medium text-[#30405F] md:h-9 md:w-9 md:text-[14px]">
+        <button
+          type="button"
+          title="Search"
+          aria-label="Search"
+          className="rounded-full p-1 transition-colors duration-150 hover:bg-[#EEF2FB] active:scale-95"
+        >
+          <Search className="h-5 w-5 stroke-[1.8]" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          title="Notifications"
+          aria-label="Notifications"
+          className="rounded-full p-1 transition-colors duration-150 hover:bg-[#EEF2FB] active:scale-95"
+        >
+          <Bell className="h-5 w-5 stroke-[1.8]" aria-hidden="true" />
+        </button>
+        <div
+          title="Alex Garcia · Admin"
+          className="flex h-8 w-8 cursor-default items-center justify-center rounded-full bg-[#EEF2FB] text-[13px] font-medium text-[#30405F] transition-shadow duration-150 hover:shadow-[0_0_0_3px_rgba(29,99,255,0.08)] md:h-9 md:w-9 md:text-[14px]"
+        >
           AG
         </div>
       </div>
@@ -377,10 +434,13 @@ type StatCardProps = {
 
 function StatCard({ icon, title, value, subvalue, tone }: StatCardProps) {
   return (
-    <div className="rounded-[18px] border border-[#e3e7ee] bg-white/90 px-4 py-4 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px] md:px-5 md:py-5">
+    <div
+      tabIndex={0}
+      className="group cursor-default rounded-[18px] border border-[#e3e7ee] bg-white/90 px-4 py-4 shadow-[0_1px_0_rgba(7,25,44,0.02)] outline-none transition-all duration-200 hover:-translate-y-[1px] hover:border-[#d4dae5] hover:shadow-[0_8px_22px_rgba(7,25,44,0.07)] focus-visible:border-[#1D63FF] focus-visible:shadow-[0_0_0_3px_rgba(29,99,255,0.15)] md:rounded-[20px] md:px-5 md:py-5"
+    >
       <div className="flex items-center gap-3 md:gap-4">
         <div
-          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] md:h-14 md:w-14 md:rounded-[14px] ${toneBg(tone)}`}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] transition-transform duration-200 group-hover:scale-[1.04] md:h-14 md:w-14 md:rounded-[14px] ${toneBg(tone)}`}
         >
           {icon}
         </div>
@@ -431,10 +491,10 @@ function TabBar({ activeTab, onChange }: TabBarProps) {
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.id)}
-            className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors md:text-[13px] ${
+            className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-all duration-150 active:scale-[0.96] md:text-[13px] ${
               selected
-                ? "bg-[#07192C] text-white"
-                : "text-[#30405F] hover:text-[#07192C]"
+                ? "bg-[#07192C] text-white shadow-[0_1px_0_rgba(7,25,44,0.1)]"
+                : "text-[#30405F] hover:bg-[#F4F6FB] hover:text-[#07192C]"
             }`}
           >
             {tab.label}
@@ -463,11 +523,12 @@ function DepartmentsTable() {
       aria-label="Departments leaderboard"
       className="overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px]"
     >
-      <div className="grid grid-cols-[1.4fr_0.7fr_0.6fr_0.7fr_1.2fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12.5px]">
+      <div className="grid grid-cols-[1.2fr_0.65fr_0.55fr_0.65fr_0.85fr_1.1fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12.5px]">
         <div>Team</div>
         <div>Daily active</div>
         <div>Spend</div>
         <div>Avg / person</div>
+        <div>Adoption trend</div>
         <div>Power users</div>
       </div>
 
@@ -480,9 +541,10 @@ function DepartmentsTable() {
           {grouped[group].map((row) => (
             <div
               key={row.name}
-              className="grid grid-cols-[1.4fr_0.7fr_0.6fr_0.7fr_1.2fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-3.5"
+              tabIndex={0}
+              className="group grid cursor-pointer grid-cols-[1.2fr_0.65fr_0.55fr_0.65fr_0.85fr_1.1fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 outline-none transition-colors duration-150 last:border-b-0 hover:bg-[#F6F8FC] focus-visible:bg-[#F6F8FC] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1D63FF]/40 active:bg-[#EDF0F6] md:px-6 md:py-3.5"
             >
-              <div className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
+              <div className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C] transition-colors duration-150 group-hover:text-[#011627] md:text-[14px]">
                 {row.name}
               </div>
               <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
@@ -494,20 +556,29 @@ function DepartmentsTable() {
               <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
                 {row.avgPerPerson}
               </div>
+              <div>
+                <Sparkline
+                  values={row.trend}
+                  color={trendDirectionColor(row.trend)}
+                  title={`${row.name} adoption: ${row.trend[0]} \u2192 ${row.trend[row.trend.length - 1]} daily active users`}
+                />
+              </div>
               <div className="flex items-center gap-1.5">
                 {row.powerUsers.map((user) =>
                   user.startsWith("+") ? (
                     <span
                       key={user}
                       className="text-[12px] text-[#5A6886] md:text-[13px]"
+                      title={`${user.replace("+", "")} more power users in ${row.name}`}
                     >
                       {user}
                     </span>
                   ) : (
                     <InitialPill
                       key={user}
-                      department={row.name}
+                      department={peopleByInitials[user]?.department ?? row.name}
                       initials={user}
+                      name={peopleByInitials[user]?.name}
                     />
                   )
                 )}
@@ -530,7 +601,7 @@ function PowerUsersTable() {
       <div className="grid grid-cols-[1.6fr_1fr_0.85fr_0.55fr_0.7fr_0.7fr_0.6fr] gap-2 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12px]">
         <div>Name</div>
         <div>Top tool</div>
-        <div>Trend</div>
+        <div>Cumulative trend</div>
         <div className="text-right">Requests</div>
         <div className="text-right">In tokens</div>
         <div className="text-right">Out tokens</div>
@@ -540,12 +611,14 @@ function PowerUsersTable() {
       {powerUsers.map((user) => (
         <div
           key={user.name}
-          className="grid grid-cols-[1.6fr_1fr_0.85fr_0.55fr_0.7fr_0.7fr_0.6fr] items-center gap-2 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-3.5"
+          tabIndex={0}
+          className="group grid cursor-pointer grid-cols-[1.6fr_1fr_0.85fr_0.55fr_0.7fr_0.7fr_0.6fr] items-center gap-2 border-b border-[#eef1f5] px-4 py-3 outline-none transition-colors duration-150 last:border-b-0 hover:bg-[#F6F8FC] focus-visible:bg-[#F6F8FC] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1D63FF]/40 active:bg-[#EDF0F6] md:px-6 md:py-3.5"
         >
           <div className="flex min-w-0 items-center gap-2.5">
             <InitialPill
               department={user.department}
               initials={user.initials}
+              name={user.name}
             />
             <div className="min-w-0">
               <div className="truncate text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
@@ -568,6 +641,7 @@ function PowerUsersTable() {
             <Sparkline
               values={user.trend}
               color={sparklineColor(user.department)}
+              title={`${user.trendNote} — cumulative ${user.trend[0].toLocaleString()} \u2192 ${user.trend[user.trend.length - 1].toLocaleString()} over 10 weekdays`}
             />
           </div>
 
@@ -606,8 +680,11 @@ function ToolsTable() {
       {toolRows.map((row) => (
         <div
           key={row.tool}
-          className={`grid grid-cols-[1.4fr_0.7fr_1.2fr_1fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-4 ${
-            row.featured ? "bg-[#EEF3FF]" : ""
+          tabIndex={0}
+          className={`group grid cursor-pointer grid-cols-[1.4fr_0.7fr_1.2fr_1fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 outline-none transition-colors duration-150 last:border-b-0 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#1D63FF]/40 md:px-6 md:py-4 ${
+            row.featured
+              ? "bg-[#EEF3FF] hover:bg-[#E3EBFE] active:bg-[#D7E0FC]"
+              : "hover:bg-[#F6F8FC] focus-visible:bg-[#F6F8FC] active:bg-[#EDF0F6]"
           }`}
         >
           <div className="flex items-center gap-2.5">
@@ -623,13 +700,17 @@ function ToolsTable() {
             {row.topDepartment}
           </div>
           <div className="flex items-center gap-1.5">
-            {row.topUsers.map((user) => (
-              <InitialPill
-                key={user.initials}
-                department={user.department}
-                initials={user.initials}
-              />
-            ))}
+            {row.topUsers.map((initials) => {
+              const person = peopleByInitials[initials];
+              return (
+                <InitialPill
+                  key={initials}
+                  department={person?.department ?? row.topDepartment}
+                  initials={initials}
+                  name={person?.name}
+                />
+              );
+            })}
           </div>
         </div>
       ))}
@@ -640,10 +721,11 @@ function ToolsTable() {
 type SparklineProps = {
   values: number[];
   color: string;
+  title?: string;
 };
 
-function Sparkline({ values, color }: SparklineProps) {
-  const width = 72;
+function Sparkline({ values, color, title }: SparklineProps) {
+  const width = 84;
   const height = 22;
   const padding = 2;
 
@@ -656,8 +738,7 @@ function Sparkline({ values, color }: SparklineProps) {
 
   const points = values.map((v, i) => {
     const x = padding + i * stepX;
-    const y =
-      padding + (height - padding * 2) * (1 - (v - min) / range);
+    const y = padding + (height - padding * 2) * (1 - (v - min) / range);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
 
@@ -676,9 +757,10 @@ function Sparkline({ values, color }: SparklineProps) {
       width={width}
       height={height}
       role="img"
-      aria-label={`Trend ${values[0]} to ${values[values.length - 1]}`}
-      className="block"
+      aria-label={title ?? `Trend ${values[0]} to ${values[values.length - 1]}`}
+      className="block transition-transform duration-200 group-hover:scale-[1.04]"
     >
+      {title ? <title>{title}</title> : null}
       <path d={areaPath} fill={color} fillOpacity="0.12" />
       <path
         d={linePath}
@@ -688,7 +770,7 @@ function Sparkline({ values, color }: SparklineProps) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx={last[0]} cy={last[1]} r="1.6" fill={color} />
+      <circle cx={last[0]} cy={last[1]} r="1.8" fill={color} />
     </svg>
   );
 }
@@ -701,7 +783,8 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
   if (tool === "OpenWork") {
     return (
       <div
-        className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#fbfbfa] p-0.5 text-[#011627] ${sizeClass}`}
+        title={tool}
+        className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#fbfbfa] p-0.5 text-[#011627] transition-transform duration-150 group-hover:scale-[1.04] ${sizeClass}`}
       >
         <OpenWorkMark
           className={
@@ -761,7 +844,8 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
 
   return (
     <div
-      className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#f7f8fb] text-[#30405F] ${sizeClass}`}
+      title={tool}
+      className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#f7f8fb] text-[#30405F] transition-transform duration-150 group-hover:scale-[1.04] ${sizeClass}`}
     >
       {iconMap[tool] ?? (
         <Brain className={small ? "h-3 w-3" : "h-3.5 w-3.5 md:h-4 md:w-4"} />
@@ -772,14 +856,22 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
 
 function InitialPill({
   initials,
-  department
+  department,
+  name
 }: {
   initials: string;
   department: string;
+  name?: string;
 }) {
+  const tooltip = name
+    ? `${name} · ${department}`
+    : `${initials} · ${department}`;
+
   return (
     <div
-      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold tracking-[-0.02em] md:h-8 md:w-8 md:text-[12px] ${departmentColor(
+      title={tooltip}
+      aria-label={tooltip}
+      className={`flex h-7 w-7 shrink-0 cursor-default items-center justify-center rounded-full text-[11px] font-semibold tracking-[-0.02em] transition-transform duration-150 hover:z-10 hover:scale-110 hover:shadow-[0_0_0_3px_rgba(7,25,44,0.04)] md:h-8 md:w-8 md:text-[12px] ${departmentColor(
         department
       )}`}
     >
@@ -828,6 +920,21 @@ function sparklineColor(department: string) {
     default:
       return "#30405F";
   }
+}
+
+/**
+ * Color the adoption trend line by direction so users can scan up/down/flat at a glance.
+ * Uses 3-point rolling averages at each end to avoid false signals on a single spiky day.
+ */
+function trendDirectionColor(trend: number[]): string {
+  if (trend.length < 3) return "#637291";
+  const startAvg = (trend[0] + trend[1] + trend[2]) / 3;
+  const endAvg =
+    trend.slice(-3).reduce((a, b) => a + b, 0) / 3;
+  const delta = endAvg - startAvg;
+  if (delta > 0.5) return "#18A34A"; // green
+  if (delta < -0.5) return "#B43035"; // red
+  return "#637291"; // gray
 }
 
 function toneBg(tone: "violet" | "green" | "blue") {
