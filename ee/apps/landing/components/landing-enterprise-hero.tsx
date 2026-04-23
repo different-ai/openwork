@@ -9,7 +9,7 @@ import {
   Search,
   Users
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { OpenWorkMark } from "./openwork-mark";
 
 type DepartmentCategory = "Technical teams" | "Business teams";
@@ -26,9 +26,9 @@ type Department = {
 type ToolRow = {
   tool: string;
   penetration: string;
-  dailyActiveUsers: string;
-  topDepartments: string;
-  commonModels: string;
+  topDepartment: string;
+  topUsers: Array<{ initials: string; department: string }>;
+  featured?: boolean;
 };
 
 type PowerUser = {
@@ -106,37 +106,50 @@ const toolRows: ToolRow[] = [
   {
     tool: "OpenWork",
     penetration: "41%",
-    dailyActiveUsers: "54",
-    topDepartments: "Customer Support, Marketing, Product",
-    commonModels: "Kimi K2.5, GPT-5.4 Fast, Opus 4.7, GLM-5.1"
+    topDepartment: "Customer Support",
+    topUsers: [
+      { initials: "AL", department: "Data Science" },
+      { initials: "GH", department: "Engineering" },
+      { initials: "AC", department: "Sales" }
+    ],
+    featured: true
   },
   {
     tool: "Cursor",
     penetration: "24%",
-    dailyActiveUsers: "32",
-    topDepartments: "Engineering, Data Science",
-    commonModels: "Opus 4.7, Sonnet, GPT-5.4"
+    topDepartment: "Engineering",
+    topUsers: [
+      { initials: "JC", department: "Engineering" },
+      { initials: "LT", department: "Engineering" },
+      { initials: "AT", department: "Data Science" }
+    ]
   },
   {
     tool: "Figma AI",
     penetration: "11%",
-    dailyActiveUsers: "14",
-    topDepartments: "Product, Marketing",
-    commonModels: "GPT-5.4 Fast, Sonnet"
+    topDepartment: "Product",
+    topUsers: [
+      { initials: "HL", department: "Product" },
+      { initials: "RF", department: "Marketing" }
+    ]
   },
   {
     tool: "Notion AI",
     penetration: "9%",
-    dailyActiveUsers: "12",
-    topDepartments: "Product, Marketing, Legal",
-    commonModels: "GPT-5.4 Fast, Sonnet"
+    topDepartment: "Product",
+    topUsers: [
+      { initials: "DG", department: "Product" },
+      { initials: "AS", department: "Marketing" }
+    ]
   },
   {
     tool: "Zendesk AI",
     penetration: "7%",
-    dailyActiveUsers: "9",
-    topDepartments: "Customer Support",
-    commonModels: "Kimi K2.5, GLM-5.1"
+    topDepartment: "Customer Support",
+    topUsers: [
+      { initials: "MF", department: "Customer Support" },
+      { initials: "SG", department: "Customer Support" }
+    ]
   }
 ];
 
@@ -231,7 +244,7 @@ const powerUsers: PowerUser[] = [
   }
 ];
 
-type TabId = "departments" | "tools";
+type TabId = "departments" | "users" | "tools";
 
 type Props = {
   /** When true, the outer card renders its own rounded border + shadow. When false, the caller wraps it. */
@@ -240,24 +253,28 @@ type Props = {
 
 export function LandingEnterpriseHero({ standalone = false }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("departments");
-  const [selectedDepartment, setSelectedDepartment] = useState<string | null>(
-    null
-  );
-  const [selectedTool, setSelectedTool] = useState<string | null>("OpenWork");
-
-  const visibleTools = useMemo(() => {
-    if (!selectedDepartment) return toolRows;
-    return toolRows.filter((row) =>
-      row.topDepartments
-        .split(",")
-        .map((s) => s.trim())
-        .includes(selectedDepartment)
-    );
-  }, [selectedDepartment]);
 
   const shell = standalone
     ? "overflow-hidden rounded-[28px] border border-[#dde2ea] bg-[#fbfbfa] shadow-[0_18px_60px_rgba(7,25,44,0.08)]"
     : "overflow-hidden bg-[#fbfbfa]";
+
+  const tabCopy: Record<TabId, { crumb: string; description: string }> = {
+    departments: {
+      crumb: "Departments",
+      description:
+        "Where AI usage is concentrated across the org, by team."
+    },
+    users: {
+      crumb: "Power users",
+      description:
+        "The individuals driving the most AI usage. Use them to teach the rest of the org."
+    },
+    tools: {
+      crumb: "AI tools",
+      description:
+        "The tools people reach for, who uses them most, and who to ask for access."
+    }
+  };
 
   return (
     <div className={shell}>
@@ -275,17 +292,11 @@ export function LandingEnterpriseHero({ standalone = false }: Props) {
             </span>
             <span>AI Adoption</span>
             <ChevronRight className="h-3.5 w-3.5 text-[#637291]" />
-            <span>
-              {activeTab === "departments"
-                ? "Department view"
-                : "Tools view"}
-            </span>
+            <span>{tabCopy[activeTab].crumb}</span>
           </div>
 
           <p className="mt-2 text-[13px] leading-6 text-[#5A6886] md:text-[15px] md:leading-7">
-            {activeTab === "departments"
-              ? "See where AI usage is concentrated across departments and who's driving it."
-              : "Rank every tool that has been used at least once in the last 30 days."}
+            {tabCopy[activeTab].description}
           </p>
         </header>
 
@@ -316,39 +327,9 @@ export function LandingEnterpriseHero({ standalone = false }: Props) {
         </div>
 
         <div className="relative z-10 mt-4">
-          {activeTab === "departments" ? (
-            <div className="grid gap-4 lg:grid-cols-[0.76fr_1.24fr]">
-              <DepartmentTable
-                selectedDepartment={selectedDepartment}
-                onSelect={(name) =>
-                  setSelectedDepartment((prev) =>
-                    prev === name ? null : name
-                  )
-                }
-              />
-              <PowerUsersTable
-                rows={
-                  selectedDepartment
-                    ? powerUsers.filter(
-                        (u) => u.department === selectedDepartment
-                      )
-                    : powerUsers
-                }
-                selectedDepartment={selectedDepartment}
-                onClearDepartmentFilter={() => setSelectedDepartment(null)}
-              />
-            </div>
-          ) : (
-            <ToolsTable
-              rows={visibleTools}
-              selectedTool={selectedTool}
-              onSelect={(name) =>
-                setSelectedTool((prev) => (prev === name ? null : name))
-              }
-              selectedDepartment={selectedDepartment}
-              onClearDepartmentFilter={() => setSelectedDepartment(null)}
-            />
-          )}
+          {activeTab === "departments" ? <DepartmentsTable /> : null}
+          {activeTab === "users" ? <PowerUsersTable /> : null}
+          {activeTab === "tools" ? <ToolsTable /> : null}
         </div>
       </div>
     </div>
@@ -429,14 +410,15 @@ type TabBarProps = {
 
 function TabBar({ activeTab, onChange }: TabBarProps) {
   const tabs: Array<{ id: TabId; label: string }> = [
-    { id: "departments", label: "Department view" },
-    { id: "tools", label: "Most used AI tools" }
+    { id: "departments", label: "Departments" },
+    { id: "users", label: "Power users" },
+    { id: "tools", label: "AI tools" }
   ];
 
   return (
     <div
       role="tablist"
-      aria-label="Enterprise dashboard views"
+      aria-label="Enterprise AI leaderboard"
       className="inline-flex items-center gap-1 rounded-full border border-[#e3e7ee] bg-white/80 p-1 shadow-[0_1px_0_rgba(7,25,44,0.02)]"
     >
       {tabs.map((tab) => {
@@ -447,7 +429,6 @@ function TabBar({ activeTab, onChange }: TabBarProps) {
             type="button"
             role="tab"
             aria-selected={selected}
-            aria-controls={`enterprise-tab-${tab.id}`}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.id)}
             className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors md:text-[13px] ${
@@ -464,15 +445,7 @@ function TabBar({ activeTab, onChange }: TabBarProps) {
   );
 }
 
-type DepartmentTableProps = {
-  selectedDepartment: string | null;
-  onSelect: (name: string) => void;
-};
-
-function DepartmentTable({
-  selectedDepartment,
-  onSelect
-}: DepartmentTableProps) {
+function DepartmentsTable() {
   const grouped = departments.reduce<Record<DepartmentCategory, Department[]>>(
     (acc, row) => {
       acc[row.category].push(row);
@@ -486,18 +459,11 @@ function DepartmentTable({
 
   return (
     <div
-      id="enterprise-tab-departments"
       role="tabpanel"
-      aria-label="Top AI adoption departments"
+      aria-label="Departments leaderboard"
       className="overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px]"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-[#e9edf3] px-4 py-3 md:px-5 md:py-4">
-        <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] md:text-[16px]">
-          Top AI adoption departments
-        </h3>
-      </div>
-
-      <div className="grid grid-cols-[1.1fr_0.9fr_0.55fr_0.7fr_0.9fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-5 md:text-[12.5px]">
+      <div className="grid grid-cols-[1.4fr_0.7fr_0.6fr_0.7fr_1.2fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12.5px]">
         <div>Team</div>
         <div>Daily active</div>
         <div>Spend</div>
@@ -507,92 +473,61 @@ function DepartmentTable({
 
       {(["Technical teams", "Business teams"] as const).map((group) => (
         <div key={group}>
-          <div className="border-b border-[#eef1f5] bg-white/60 px-4 py-2 text-[11px] font-medium text-[#5A6886] md:px-5 md:text-[12.5px]">
+          <div className="border-b border-[#eef1f5] bg-white/60 px-4 py-2 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12.5px]">
             {group}
           </div>
 
-          {grouped[group].map((row) => {
-            const isSelected = selectedDepartment === row.name;
-            return (
-              <button
-                key={row.name}
-                type="button"
-                onClick={() => onSelect(row.name)}
-                aria-pressed={isSelected}
-                className={`grid w-full grid-cols-[1.1fr_0.9fr_0.55fr_0.7fr_0.9fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 text-left transition-colors last:border-b-0 md:px-5 md:py-3.5 ${
-                  isSelected
-                    ? "bg-[#F4F1FF]"
-                    : "hover:bg-[#F7F8FC] focus-visible:bg-[#F7F8FC]"
-                }`}
-              >
-                <div className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
-                  {row.name}
-                </div>
-                <div className="text-[13px] text-[#30405F] md:text-[14px]">
-                  {row.dailyActive}
-                </div>
-                <div className="text-[13px] text-[#30405F] md:text-[14px]">
-                  {row.spend}
-                </div>
-                <div className="text-[13px] text-[#30405F] md:text-[14px]">
-                  {row.avgPerPerson}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {row.powerUsers.map((user) =>
-                    user.startsWith("+") ? (
-                      <span
-                        key={user}
-                        className="text-[12px] text-[#5A6886] md:text-[13px]"
-                      >
-                        {user}
-                      </span>
-                    ) : (
-                      <InitialPill
-                        key={user}
-                        department={row.name}
-                        initials={user}
-                      />
-                    )
-                  )}
-                </div>
-              </button>
-            );
-          })}
+          {grouped[group].map((row) => (
+            <div
+              key={row.name}
+              className="grid grid-cols-[1.4fr_0.7fr_0.6fr_0.7fr_1.2fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-3.5"
+            >
+              <div className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
+                {row.name}
+              </div>
+              <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
+                {row.dailyActive}
+              </div>
+              <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
+                {row.spend}
+              </div>
+              <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
+                {row.avgPerPerson}
+              </div>
+              <div className="flex items-center gap-1.5">
+                {row.powerUsers.map((user) =>
+                  user.startsWith("+") ? (
+                    <span
+                      key={user}
+                      className="text-[12px] text-[#5A6886] md:text-[13px]"
+                    >
+                      {user}
+                    </span>
+                  ) : (
+                    <InitialPill
+                      key={user}
+                      department={row.name}
+                      initials={user}
+                    />
+                  )
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       ))}
     </div>
   );
 }
 
-type PowerUsersTableProps = {
-  rows: PowerUser[];
-  selectedDepartment: string | null;
-  onClearDepartmentFilter: () => void;
-};
-
-function PowerUsersTable({
-  rows,
-  selectedDepartment,
-  onClearDepartmentFilter
-}: PowerUsersTableProps) {
+function PowerUsersTable() {
   return (
-    <div className="overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px]">
-      <div className="flex items-center justify-between gap-3 border-b border-[#e9edf3] px-4 py-3 md:px-5 md:py-4">
-        <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] md:text-[16px]">
-          Power users
-        </h3>
-        {selectedDepartment ? (
-          <button
-            type="button"
-            onClick={onClearDepartmentFilter}
-            className="inline-flex items-center gap-1 rounded-full border border-[#e3e7ee] bg-[#F4F1FF] px-2.5 py-0.5 text-[11px] font-medium text-[#6F3DFF] transition-colors hover:bg-[#EDE4FF] md:text-[12px]"
-          >
-            {selectedDepartment} · clear
-          </button>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-[1.75fr_1.1fr_0.8fr_0.55fr_0.75fr_0.75fr_0.65fr] gap-2 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-5 md:text-[12px]">
+    <div
+      role="tabpanel"
+      aria-label="Power users leaderboard"
+      className="overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px]"
+    >
+      <div className="grid grid-cols-[1.6fr_1fr_0.85fr_0.55fr_0.7fr_0.7fr_0.6fr] gap-2 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12px]">
         <div>Name</div>
         <div>Top tool</div>
         <div>Trend</div>
@@ -602,10 +537,10 @@ function PowerUsersTable({
         <div className="text-right">Cost</div>
       </div>
 
-      {rows.map((user) => (
+      {powerUsers.map((user) => (
         <div
           key={user.name}
-          className="grid grid-cols-[1.75fr_1.1fr_0.8fr_0.55fr_0.75fr_0.75fr_0.65fr] items-center gap-2 border-b border-[#eef1f5] px-4 py-3 text-left last:border-b-0 md:px-5 md:py-3.5"
+          className="grid grid-cols-[1.6fr_1fr_0.85fr_0.55fr_0.7fr_0.7fr_0.6fr] items-center gap-2 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-3.5"
         >
           <div className="flex min-w-0 items-center gap-2.5">
             <InitialPill
@@ -650,118 +585,54 @@ function PowerUsersTable({
           </div>
         </div>
       ))}
-
-      {rows.length === 0 ? (
-        <div className="px-5 py-6 text-center text-[12px] text-[#637291] md:text-[13px]">
-          No power users in {selectedDepartment}. {" "}
-          <button
-            type="button"
-            onClick={onClearDepartmentFilter}
-            className="font-medium text-[#6F3DFF] underline-offset-2 hover:underline"
-          >
-            Clear filter
-          </button>
-          .
-        </div>
-      ) : null}
     </div>
   );
 }
 
-type ToolsTableProps = {
-  rows: ToolRow[];
-  selectedTool: string | null;
-  onSelect: (name: string) => void;
-  selectedDepartment: string | null;
-  onClearDepartmentFilter: () => void;
-};
-
-function ToolsTable({
-  rows,
-  selectedTool,
-  onSelect,
-  selectedDepartment,
-  onClearDepartmentFilter
-}: ToolsTableProps) {
+function ToolsTable() {
   return (
     <div
-      id="enterprise-tab-tools"
       role="tabpanel"
-      aria-label="Most used AI tools"
+      aria-label="AI tools leaderboard"
       className="overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90 shadow-[0_1px_0_rgba(7,25,44,0.02)] md:rounded-[20px]"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-[#e9edf3] px-4 py-3 md:px-5 md:py-4">
-        <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C] md:text-[16px]">
-          Most used AI tools
-        </h3>
-        {selectedDepartment ? (
-          <button
-            type="button"
-            onClick={onClearDepartmentFilter}
-            className="inline-flex items-center gap-1 rounded-full border border-[#e3e7ee] bg-[#F4F1FF] px-2.5 py-0.5 text-[11px] font-medium text-[#6F3DFF] transition-colors hover:bg-[#EDE4FF] md:text-[12px]"
-          >
-            {selectedDepartment} · clear
-          </button>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-[1.4fr_0.7fr_0.8fr_1.5fr_1.8fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-5 md:text-[12.5px]">
+      <div className="grid grid-cols-[1.4fr_0.7fr_1.2fr_1fr] gap-3 border-b border-[#e9edf3] px-4 py-3 text-[11px] font-medium text-[#5A6886] md:px-6 md:text-[12.5px]">
         <div>Tool</div>
         <div>Penetration</div>
-        <div>Daily active users</div>
-        <div>Top departments</div>
-        <div>Common models</div>
+        <div>Top department</div>
+        <div>Power users</div>
       </div>
 
-      {rows.map((row) => {
-        const isSelected = selectedTool === row.tool;
-        return (
-          <button
-            key={row.tool}
-            type="button"
-            onClick={() => onSelect(row.tool)}
-            aria-pressed={isSelected}
-            className={`grid w-full grid-cols-[1.4fr_0.7fr_0.8fr_1.5fr_1.8fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 text-left transition-colors last:border-b-0 md:px-5 md:py-4 ${
-              isSelected
-                ? "bg-[#EEF3FF]"
-                : "hover:bg-[#F7F8FC] focus-visible:bg-[#F7F8FC]"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <ToolGlyph tool={row.tool} />
-              <span className="truncate text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
-                {row.tool}
-              </span>
-            </div>
-            <div className="text-[13px] text-[#30405F] md:text-[14px]">
-              {row.penetration}
-            </div>
-            <div className="text-[13px] text-[#30405F] md:text-[14px]">
-              {row.dailyActiveUsers}
-            </div>
-            <div className="text-[12px] leading-5 text-[#30405F] md:text-[13px] md:leading-6">
-              {row.topDepartments}
-            </div>
-            <div className="text-[12px] leading-5 text-[#30405F] md:text-[13px] md:leading-6">
-              {row.commonModels}
-            </div>
-          </button>
-        );
-      })}
-
-      {rows.length === 0 ? (
-        <div className="px-5 py-6 text-center text-[12px] text-[#637291] md:text-[13px]">
-          No tools match {selectedDepartment}. {" "}
-          <button
-            type="button"
-            onClick={onClearDepartmentFilter}
-            className="font-medium text-[#6F3DFF] underline-offset-2 hover:underline"
-          >
-            Clear filter
-          </button>
-          .
+      {toolRows.map((row) => (
+        <div
+          key={row.tool}
+          className={`grid grid-cols-[1.4fr_0.7fr_1.2fr_1fr] items-center gap-3 border-b border-[#eef1f5] px-4 py-3 last:border-b-0 md:px-6 md:py-4 ${
+            row.featured ? "bg-[#EEF3FF]" : ""
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <ToolGlyph tool={row.tool} />
+            <span className="truncate text-[13px] font-medium tracking-[-0.01em] text-[#07192C] md:text-[14px]">
+              {row.tool}
+            </span>
+          </div>
+          <div className="text-[13px] tabular-nums text-[#30405F] md:text-[14px]">
+            {row.penetration}
+          </div>
+          <div className="text-[13px] text-[#30405F] md:text-[14px]">
+            {row.topDepartment}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {row.topUsers.map((user) => (
+              <InitialPill
+                key={user.initials}
+                department={user.department}
+                initials={user.initials}
+              />
+            ))}
+          </div>
         </div>
-      ) : null}
+      ))}
     </div>
   );
 }
@@ -833,7 +704,9 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
         className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#fbfbfa] p-0.5 text-[#011627] ${sizeClass}`}
       >
         <OpenWorkMark
-          className={small ? "h-3.5 w-[18px]" : "h-4 w-5 md:h-[18px] md:w-[22px]"}
+          className={
+            small ? "h-3.5 w-[18px]" : "h-4 w-5 md:h-[18px] md:w-[22px]"
+          }
         />
       </div>
     );
@@ -841,22 +714,46 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
 
   const iconMap: Record<string, React.ReactNode> = {
     Cursor: (
-      <span className={small ? "text-[11px] font-semibold" : "text-[12px] font-semibold md:text-[13px]"}>
+      <span
+        className={
+          small
+            ? "text-[11px] font-semibold"
+            : "text-[12px] font-semibold md:text-[13px]"
+        }
+      >
         C
       </span>
     ),
     "Figma AI": (
-      <span className={small ? "text-[11px] font-semibold" : "text-[12px] font-semibold md:text-[13px]"}>
+      <span
+        className={
+          small
+            ? "text-[11px] font-semibold"
+            : "text-[12px] font-semibold md:text-[13px]"
+        }
+      >
         F
       </span>
     ),
     "Notion AI": (
-      <span className={small ? "text-[11px] font-semibold" : "text-[12px] font-semibold md:text-[13px]"}>
+      <span
+        className={
+          small
+            ? "text-[11px] font-semibold"
+            : "text-[12px] font-semibold md:text-[13px]"
+        }
+      >
         N
       </span>
     ),
     "Zendesk AI": (
-      <span className={small ? "text-[11px] font-semibold" : "text-[12px] font-semibold md:text-[13px]"}>
+      <span
+        className={
+          small
+            ? "text-[11px] font-semibold"
+            : "text-[12px] font-semibold md:text-[13px]"
+        }
+      >
         Z
       </span>
     )
