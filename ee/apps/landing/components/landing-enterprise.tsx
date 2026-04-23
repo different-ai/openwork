@@ -118,7 +118,7 @@ export function LandingEnterprise(props: Props) {
               </div>
             </div>
 
-            <div className="mt-12 overflow-hidden rounded-[2rem] border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16">
+            <div className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16">
               <img
                 src="/enterprise-hero.png"
                 alt="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
