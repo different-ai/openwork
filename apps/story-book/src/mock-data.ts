@@ -1,7 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import type { MessageWithParts } from "../../app/src/app/types";
-import type { WorkspaceInfo } from "../../app/src/app/lib/tauri";
+import type { WorkspaceInfo } from "../../app/src/app/lib/desktop";
 
 export type StoryScreen = "session" | "settings" | "components" | "onboarding";
 

@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
+  Cable,
   CreditCard,
   Cpu,
   FileText,
@@ -13,8 +14,10 @@ import {
   KeyRound,
   LogOut,
   MessageSquare,
+  Puzzle,
   Share2,
   SlidersHorizontal,
+  Store,
   Users,
 } from "lucide-react";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -29,6 +32,7 @@ import {
   getMembersRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
+  getMarketplacesRoute,
   getPluginsRoute,
   getSharedSetupsRoute,
   getSkillHubsRoute,
@@ -117,6 +121,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
   }
+  if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
+    return "Marketplaces";
+  }
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Integrations";
   }
@@ -171,16 +178,32 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       icon: Bot,
       badge: "Alpha",
     },
-      {
-        href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
-        label: "LLM Providers",
-        icon: Cpu,
-        badge: "New",
-      },
+    {
+      href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
+      label: "LLM Providers",
+      icon: Cpu,
+    },
     {
       href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
       label: "Skill Hubs",
       icon: BookOpen,
+    },
+    {
+      href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
+      label: "Integrations",
+      icon: Cable,
+      badge: "New",
+    },
+    {
+      href: activeOrg ? getMarketplacesRoute(activeOrg.slug) : "#",
+      label: "Marketplaces",
+      icon: Store,
+      badge: "New",
+    },
+    {
+      href: activeOrg ? getPluginsRoute(activeOrg.slug) : "#",
+      label: "Plugins",
+      icon: Puzzle,
       badge: "New",
     },
     {
