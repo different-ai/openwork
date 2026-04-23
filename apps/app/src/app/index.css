@@ -44,6 +44,10 @@ body {
   height: 100%;
 }
 
+#root {
+  height: 100%;
+}
+
 html {
   font-size: var(--openwork-font-size, 16px);
 }

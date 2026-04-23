@@ -27,6 +27,19 @@ Use this shape for new entries:
 
 ## Current entries
 
+## 2026-04-21 Step 2 - GitHub App connect + repo selection slice
+- The existing Den `/integrations` UI already had the right shell, but the GitHub path was a pure client-side preview. The cleanest upgrade path is to keep Bitbucket on the mock dialog for now while sending GitHub through a real App install redirect and a dedicated post-return repo-selection screen.
+- GitHub App install does not need the normal Better Auth GitHub social login flow. The updated working slice is: den-web calls `POST /v1/connectors/github/install/start`, GitHub redirects the browser to the Den Web setup page, then den-web calls `POST /v1/connectors/github/install/complete` with `installation_id + state` so den-api can validate the signed state and load repos.
+- A signed state token based on `BETTER_AUTH_SECRET` is enough for the current redirect round-trip and is simpler than introducing a new persistence table for short-lived install state in this phase.
+- The GitHub App `Setup URL` should point at a real web page in Den Web, e.g. `/dashboard/integrations/github`, not a backend callback route.
+- Workspace dependency installation was the original gating build blocker, but after `pnpm install` the den-api build, den-web typecheck, and focused den-api tests all run in this worktree.
+
+## 2026-04-21 Step 1 - Live GitHub App admin validation
+- The GitHub-specific admin path was more stubbed than it looked: `listGithubRepositories()` only echoed cached connector-account metadata and `validateGithubTarget()` only checked whether `ref === refs/heads/${branch}` without contacting GitHub.
+- A small dedicated helper module at `ee/apps/den-api/src/routes/org/plugin-system/github-app.ts` keeps the real GitHub App mechanics isolated: normalize multiline private keys, mint an app JWT, exchange it for an installation token, then call GitHub APIs for repository listing and branch validation.
+- For real connector setup testing, the minimally required live server secrets are `GITHUB_CONNECTOR_APP_ID`, `GITHUB_CONNECTOR_APP_PRIVATE_KEY`, and `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`; `GITHUB_CONNECTOR_APP_CLIENT_ID` / `CLIENT_SECRET` are still part of the app registration but are not yet consumed by the current den-api admin flow.
+- Workspace dependency installation is still a gating factor for broader den-api tests in this worktree: pure helper tests can run with Bun, but route/store tests that import `hono` or `@openwork-ee/den-db/*` still fail until the workspace dependencies are installed.
+
 ## 2026-04-17 Post-step cleanup - Type tightening and naming
 - The route directory is now `ee/apps/den-api/src/routes/org/plugin-system/`; `plugin-arch` was only the planning nickname and was too confusing as a long-lived API module name.
 - The plugin-system route wrapper can stay type-safe enough without `@ts-nocheck` by isolating Hono middleware registration behind a tiny `withPluginArchOrgContext()` helper and using explicit request-part adapters for `param`, `query`, and `json` reads.

@@ -15,7 +15,7 @@ Normal authenticated admin APIs are documented in `prds/new-plugin-arch/admin-ap
 
 ### GitHub webhook ingress
 
-- `POST /api/webhooks/connectors/github`
+- `POST /v1/webhooks/connectors/github`
 
 Purpose:
 

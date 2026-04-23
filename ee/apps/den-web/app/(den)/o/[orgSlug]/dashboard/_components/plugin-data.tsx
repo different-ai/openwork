@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import {
   type ConnectedIntegration,
   integrationQueryKeys,
@@ -85,16 +86,22 @@ export type PluginSource =
   | { type: "github"; repo: string }
   | { type: "local"; path: string };
 
+export type PluginMarketplaceRef = {
+  id: string;
+  name: string;
+};
+
 export type DenPlugin = {
   id: string;
   name: string;
   slug: string;
   description: string;
-  version: string;
+  version: string | null;
   author: string;
   category: PluginCategory;
   installed: boolean;
   source: PluginSource;
+  marketplaces?: PluginMarketplaceRef[];
   skills: PluginSkill[];
   hooks: PluginHook[];
   mcps: PluginMcp[];
@@ -427,28 +434,190 @@ export const pluginQueryKeys = {
   detail: (id: string) => [...pluginQueryKeys.all, "detail", id] as const,
 };
 
+function slugifyPluginName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "plugin";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseMembershipConfigObject(entry: unknown) {
+  if (!isRecord(entry) || !isRecord(entry.configObject)) {
+    return null;
+  }
+
+  const configObject = entry.configObject;
+  const id = asString(configObject.id);
+  const title = asString(configObject.title);
+  const description = asString(configObject.description) ?? "Imported from a connected repository.";
+  const objectType = asString(configObject.objectType);
+  const currentRelativePath = asString(configObject.currentRelativePath);
+  const latestVersion = isRecord(configObject.latestVersion) ? configObject.latestVersion : null;
+  const normalizedPayload = latestVersion && isRecord(latestVersion.normalizedPayloadJson)
+    ? latestVersion.normalizedPayloadJson
+    : null;
+
+  if (!id || !title || !objectType) {
+    return null;
+  }
+
+  return {
+    currentRelativePath,
+    description,
+    id,
+    normalizedPayload,
+    objectType,
+    title,
+  };
+}
+
+function derivePluginCategory(input: { agents: PluginAgent[]; commands: PluginCommand[]; hooks: PluginHook[]; mcps: PluginMcp[]; skills: PluginSkill[] }): PluginCategory {
+  if (input.mcps.length > 0 || input.hooks.length > 0) {
+    return "integrations";
+  }
+  if (input.agents.length > 0 || input.commands.length > 0 || input.skills.length > 0) {
+    return "workflows";
+  }
+  return "output-styles";
+}
+
+function parsePluginHookEvent(value: string | null): PluginHookEvent {
+  switch (value) {
+    case "PreToolUse":
+    case "PostToolUse":
+    case "SessionStart":
+    case "SessionEnd":
+    case "UserPromptSubmit":
+    case "Notification":
+    case "Stop":
+      return value;
+    default:
+      return "Notification";
+  }
+}
+
+async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
+  const [pluginResult, membershipsResult] = await Promise.all([
+    requestJson(`/v1/plugins/${encodeURIComponent(id)}`, { method: "GET" }, 15000),
+    requestJson(`/v1/plugins/${encodeURIComponent(id)}/resolved`, { method: "GET" }, 15000),
+  ]);
+
+  if (!pluginResult.response.ok) {
+    throw new Error(getErrorMessage(pluginResult.payload, `Failed to load plugin (${pluginResult.response.status}).`));
+  }
+  if (!membershipsResult.response.ok) {
+    throw new Error(getErrorMessage(membershipsResult.payload, `Failed to load plugin contents (${membershipsResult.response.status}).`));
+  }
+
+  const pluginItem = isRecord(pluginResult.payload) && isRecord(pluginResult.payload.item) ? pluginResult.payload.item : null;
+  if (!pluginItem) {
+    return null;
+  }
+
+  const pluginId = asString(pluginItem.id);
+  const name = asString(pluginItem.name);
+  if (!pluginId || !name) {
+    return null;
+  }
+
+  const membershipItems = isRecord(membershipsResult.payload) && Array.isArray(membershipsResult.payload.items)
+    ? membershipsResult.payload.items.map(parseMembershipConfigObject).filter((value): value is NonNullable<typeof value> => Boolean(value))
+    : [];
+
+  const skills = membershipItems
+    .filter((item) => item.objectType === "skill")
+    .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginSkill));
+  const agents = membershipItems
+    .filter((item) => item.objectType === "agent")
+    .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginAgent));
+  const commands = membershipItems
+    .filter((item) => item.objectType === "command")
+    .map((item) => ({ id: item.id, name: item.currentRelativePath?.split("/").pop()?.replace(/\.md$/i, "") ?? item.title, description: item.description } satisfies PluginCommand));
+  const hooks = membershipItems
+    .filter((item) => item.objectType === "hook")
+    .map((item) => ({
+      description: item.description,
+      event: parsePluginHookEvent(asString(item.normalizedPayload?.event) ?? item.title),
+      id: item.id,
+      matcher: asString(item.normalizedPayload?.matcher),
+    } satisfies PluginHook));
+  const mcps = membershipItems
+    .filter((item) => item.objectType === "mcp")
+    .map((item) => ({
+      description: item.description,
+      id: item.id,
+      name: item.title,
+      toolCount: typeof item.normalizedPayload?.toolCount === "number" ? item.normalizedPayload.toolCount : 0,
+      transport: (asString(item.normalizedPayload?.transport) as PluginMcpTransport | null) ?? "stdio",
+    } satisfies PluginMcp));
+
+  const marketplaces = Array.isArray(pluginItem.marketplaces)
+    ? pluginItem.marketplaces.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const id = asString(entry.id);
+        const marketplaceName = asString(entry.name);
+        if (!id || !marketplaceName) return [];
+        return [{ id, name: marketplaceName } satisfies PluginMarketplaceRef];
+      })
+    : [];
+
+  return {
+    agents,
+    author: "Connected repository",
+    category: derivePluginCategory({ agents, commands, hooks, mcps, skills }),
+    commands,
+    description: asString(pluginItem.description) ?? "Imported from a connected repository.",
+    hooks,
+    id: pluginId,
+    installed: true,
+    marketplaces,
+    mcps,
+    name,
+    requiresProvider: "github",
+    skills,
+    slug: slugifyPluginName(name),
+    source: marketplaces[0]
+      ? { type: "marketplace", marketplace: marketplaces[0].name }
+      : { type: "github", repo: "Connected repository" },
+    updatedAt: asString(pluginItem.updatedAt) ?? new Date().toISOString(),
+    version: null,
+  } satisfies DenPlugin;
+}
+
 export function usePlugins() {
-  const queryClient = useQueryClient();
   return useQuery({
     queryKey: pluginQueryKeys.list(),
     queryFn: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 180));
-      const connectedProviders = readConnectedProviders(queryClient);
-      return filterByConnectedProviders(MOCK_PLUGINS, connectedProviders);
+      const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100", { method: "GET" }, 20000);
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      }
+
+      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
+      const pluginIds = items.flatMap((entry) => {
+        const id = isRecord(entry) ? asString(entry.id) : null;
+        return id ? [id] : [];
+      });
+
+      const plugins = await Promise.all(pluginIds.map((id) => fetchResolvedPlugin(id)));
+      return plugins.filter((plugin): plugin is DenPlugin => Boolean(plugin));
     },
   });
 }
 
 export function usePlugin(id: string) {
-  const queryClient = useQueryClient();
   return useQuery({
     queryKey: pluginQueryKeys.detail(id),
-    queryFn: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      const connectedProviders = readConnectedProviders(queryClient);
-      const visible = filterByConnectedProviders(MOCK_PLUGINS, connectedProviders);
-      return visible.find((plugin) => plugin.id === id) ?? null;
-    },
+    queryFn: async () => fetchResolvedPlugin(id),
     enabled: Boolean(id),
   });
 }

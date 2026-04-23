@@ -1,6 +1,6 @@
 import { parse } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
-import { readOpencodeConfig, writeOpencodeConfig } from "./lib/tauri";
+import { readOpencodeConfig, writeOpencodeConfig } from "./lib/desktop";
 import { CHROME_DEVTOOLS_MCP_COMMAND, CHROME_DEVTOOLS_MCP_ID } from "./constants";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;

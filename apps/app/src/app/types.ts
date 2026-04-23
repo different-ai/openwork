@@ -7,7 +7,7 @@ import type {
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
-import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/tauri";
+import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/desktop";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -153,6 +153,17 @@ export type SessionCompactionState = {
 export type View = "settings" | "session" | "signin";
 
 export type StartupPreference = "local" | "server";
+
+/**
+ * Release channel the desktop app is subscribed to.
+ *
+ * - "stable": default. Auto-updates from the rolling stable GitHub release.
+ * - "alpha": macOS-only. Auto-updates from the rolling alpha release that
+ *   every merge to `dev` publishes to.
+ *
+ * See `apps/app/src/app/lib/release-channels.ts` for URL resolution.
+ */
+export type ReleaseChannel = "stable" | "alpha";
 
 export type EngineRuntime = "direct" | "openwork-orchestrator";
 

@@ -13,7 +13,7 @@ export default {
   "app.error.install_failed": "La instal·lació d'OpenCode ha fallat. Mira els registres de més amunt.",
   "app.error.pick_workspace_folder": "Tria primer una carpeta de workspace.",
   "app.error.remote_base_url_required": "Afegeix l’URL del servidor per continuar.",
-  "app.error.tauri_required": "Aquesta acció requereix el temps d'execució de l'aplicació Tauri.",
+  "app.error.tauri_required": "Aquesta acció requereix el temps d'execució de l'aplicació d'escriptori d'OpenWork.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_auth_failed": "L'autenticació ha fallat",
   "app.error_auto_compact_scope": "La compactació automàtica del context només es pot canviar per a un workspace local o per a un workspace d'un servidor OpenWork amb permisos d'escriptura.",

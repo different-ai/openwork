@@ -1,7 +1,7 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
-import { isTauriRuntime } from "../utils";
-import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./tauri";
+import { desktopFetch } from "./desktop";
+import { isDesktopRuntime } from "../utils";
+import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./desktop";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -751,8 +751,22 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
   return headers;
 }
 
-// Use Tauri's fetch when running in the desktop app to avoid CORS issues
-const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+// Use Tauri's fetch when running in the desktop app to avoid CORS issues.
+// Stream URLs (SSE) bypass the plugin because its `fetch_read_body` IPC call
+// blocks until the body closes — that freezes the webview for infinite bodies.
+const OPENWORK_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
+
+function isStreamUrl(url: string): boolean {
+  return OPENWORK_STREAM_URL_RE.test(url);
+}
+
+const resolveFetch = (url?: string) => {
+  if (!isDesktopRuntime()) return globalThis.fetch;
+  if (url && isStreamUrl(url)) {
+    return typeof window !== "undefined" ? window.fetch.bind(window) : globalThis.fetch;
+  }
+  return desktopFetch;
+};
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 
@@ -803,7 +817,7 @@ async function requestJson<T>(
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -833,7 +847,7 @@ async function requestJsonRaw<T>(
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -862,7 +876,7 @@ async function requestMultipartRaw(
   options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -883,7 +897,7 @@ async function requestBinary(
   options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
+  const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,

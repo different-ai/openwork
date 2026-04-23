@@ -1,15 +1,26 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { normalizeDesktopConfig, type DesktopConfig as SharedDesktopConfig } from "@openwork/types/den/desktop-app-restrictions";
+import {
+  normalizeDesktopConfig,
+  type DesktopConfig as SharedDesktopConfig,
+} from "@openwork/types/den/desktop-app-restrictions";
+
+// Re-export the shared schema under the local alias so React consumers
+// (e.g. the cloud domain's desktop-config provider) can import it alongside
+// the helpers they need. Solid references it internally only; the React
+// port wants it as part of the public surface of this module.
+export type { SharedDesktopConfig };
+export { normalizeDesktopConfig };
+
 import { isDesktopDeployment } from "./openwork-deployment";
 import {
   dispatchDenSettingsChanged,
 } from "./den-session-events";
 import {
+  desktopFetch,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
-} from "./tauri";
-import { isTauriRuntime } from "../utils";
+} from "./desktop";
+import { isDesktopRuntime } from "../utils";
 import type { DenOrgSkillCard } from "../types";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
@@ -398,7 +409,7 @@ export function readDenBootstrapConfig(): DenBootstrapConfig {
 }
 
 export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig> {
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     desktopBootstrapConfig = resolveDenBootstrapConfig({
       baseUrl: BUILD_DEN_BASE_URL,
       apiBaseUrl: BUILD_DEN_API_BASE_URL,
@@ -427,7 +438,7 @@ export async function setDenBootstrapConfig(
 ): Promise<DenBootstrapConfig> {
   const normalized = resolveDenBootstrapConfig(next);
 
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
       apiBaseUrl: normalized.apiBaseUrl,
@@ -1019,7 +1030,7 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
   };
 }
 
-const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+const resolveFetch = () => (isDesktopRuntime() ? desktopFetch : globalThis.fetch);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

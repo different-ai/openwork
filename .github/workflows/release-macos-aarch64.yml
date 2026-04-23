@@ -53,6 +53,11 @@ on:
         required: false
         type: boolean
         default: true
+      publish_electron:
+        description: "Build + publish Electron desktop artifacts (macOS) alongside Tauri"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -605,7 +610,58 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
-  release-orchestrator-sidecars:
+  publish-electron:
+    name: Build + publish Electron desktop (macOS)
+    # Runs alongside the Tauri jobs so the same release carries both
+    # latest.json (Tauri updater) AND latest-mac.yml (electron-updater).
+    # Gated on RELEASE_PUBLISH_ELECTRON=true (repo var) OR the workflow
+    # input of the same name so opt-in during rollout, opt-out if a
+    # non-migration release doesn't want Electron artifacts.
+    needs: [resolve-release, verify-release]
+    if: ${{ vars.RELEASE_PUBLISH_ELECTRON == 'true' || github.event.inputs.publish_electron == 'true' }}
+    runs-on: macos-14
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + package Electron app
+        env:
+          # electron-builder reads these to codesign + notarize the .app.
+          # Reuses the same secrets the Tauri path already uses.
+          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # electron-builder needs this to upload artifacts + the updater
+          # feed manifest (latest-mac.yml) to the GitHub release.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @openwork/desktop package:electron --publish always
     name: Build + Upload openwork-orchestrator Sidecars
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.publish_sidecars == 'true'
