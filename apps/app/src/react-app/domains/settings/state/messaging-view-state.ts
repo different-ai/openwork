@@ -89,7 +89,7 @@ type UseMessagingViewPropsOptions = {
   openworkServerClient: OpenworkServerClient | null;
   openworkReconnectBusy: boolean;
   reconnectOpenworkServer: () => Promise<boolean>;
-  restartLocalServer: () => Promise<boolean>;
+  restartMessagingWorker: () => Promise<boolean>;
   workspaceId: string | null;
   selectedWorkspaceRoot: string;
 };
@@ -569,7 +569,7 @@ export function useMessagingViewProps(
     setMessagingError(null);
     setMessagingStatus(null);
     try {
-      const ok = await options.restartLocalServer();
+      const ok = await options.restartMessagingWorker();
       if (!ok) {
         setMessagingError(t("identities.restart_failed"));
         return;
@@ -584,7 +584,7 @@ export function useMessagingViewProps(
     } finally {
       setMessagingRestartBusy(false);
     }
-  }, [messagingRestartBusy, options, refreshAll]);
+  }, [messagingRestartBusy, options.restartMessagingWorker, refreshAll]);
 
   const upsertTelegram = useCallback(async (access: "public" | "private") => {
     if (telegramSaving) return;

@@ -50,6 +50,8 @@ import {
 import {
   openworkServerInfo,
   openworkServerRestart,
+  opencodeRouterInfo,
+  opencodeRouterRestart,
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
@@ -891,6 +893,25 @@ export function SettingsRoute() {
     }
   }, [openworkServerStore, refreshRouteState]);
 
+  const handleRestartMessagingWorker = useCallback(async () => {
+    if (!isDesktopRuntime()) return false;
+    const workspacePath = selectedWorkspaceRoot.trim();
+    if (!workspacePath) return false;
+
+    try {
+      const info = await opencodeRouterInfo().catch(() => null);
+      await opencodeRouterRestart({
+        workspacePath,
+        opencodeUrl: info?.opencodeUrl ?? undefined,
+      });
+      await openworkServerStore.reconnectOpenworkServer();
+      await refreshRouteState();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [openworkServerStore, refreshRouteState, selectedWorkspaceRoot]);
+
   const messagingViewProps = useMessagingViewProps({
     busy,
     openworkServerStatus: openworkServerSnapshot.openworkServerStatus,
@@ -899,7 +920,7 @@ export function SettingsRoute() {
       openworkClient ?? openworkServerSnapshot.openworkServerClient,
     openworkReconnectBusy: openworkServerSnapshot.openworkReconnectBusy,
     reconnectOpenworkServer: handleReconnectMessagingServer,
-    restartLocalServer: handleRestartLocalServer,
+    restartMessagingWorker: handleRestartMessagingWorker,
     workspaceId: selectedWorkspace?.id ?? null,
     selectedWorkspaceRoot,
   });
