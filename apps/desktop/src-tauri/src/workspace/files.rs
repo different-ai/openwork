@@ -399,14 +399,18 @@ fn seed_commands(commands_dir: &PathBuf, preset: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), String> {
+pub fn ensure_workspace_files(
+    workspace_path: &str,
+    preset: &str,
+    starter_bootstrap_enabled: bool,
+) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
     let skill_root = root.join(".opencode").join("skills");
     fs::create_dir_all(&skill_root)
         .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
     seed_workspace_guide(&skill_root)?;
-    if preset == "starter" {
+    if preset == "starter" && starter_bootstrap_enabled {
         seed_get_started_skill(&skill_root)?;
         spawn_enterprise_creator_skills_seed(root.clone(), skill_root.clone());
     }
@@ -419,7 +423,14 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     let commands_dir = root.join(".opencode").join("commands");
     fs::create_dir_all(&commands_dir)
         .map_err(|e| format!("Failed to create .opencode/commands: {e}"))?;
-    seed_commands(&commands_dir, preset)?;
+    seed_commands(
+        &commands_dir,
+        if starter_bootstrap_enabled {
+            preset
+        } else {
+            "minimal"
+        },
+    )?;
 
     let config_path_jsonc = root.join("opencode.jsonc");
     let config_path_json = root.join("opencode.json");
@@ -466,12 +477,12 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     }
 
     let required_plugins: Vec<&str> = match preset {
-        "starter" => vec!["opencode-scheduler"],
+        "starter" if starter_bootstrap_enabled => vec!["opencode-scheduler"],
         "automation" => vec!["opencode-scheduler"],
         _ => vec![],
     };
 
-    let should_seed_chrome_mcp = matches!(preset, "starter");
+    let should_seed_chrome_mcp = matches!(preset, "starter") && starter_bootstrap_enabled;
 
     if !required_plugins.is_empty() {
         let plugins_value = config

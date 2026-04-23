@@ -4,6 +4,7 @@ import { ArrowUpRight, LifeBuoy, MessageCircle, PlugZap } from "lucide-react";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
+import { useStarterBootstrapEnabled } from "../../../kernel/starter-bootstrap";
 import {
   AuthorizedFoldersPanel,
   type AuthorizedFoldersPanelProps,
@@ -54,6 +55,32 @@ function providerSourceLabel(source?: ConnectedProvider["source"]) {
   if (source === "config") return t("settings.provider_source_config");
   if (source === "custom") return t("settings.provider_source_custom");
   return null;
+}
+
+function StarterBootstrapPanel({ busy }: { busy: boolean }) {
+  const [enabled, setEnabled] = useStarterBootstrapEnabled();
+  return (
+    <div className={`${settingsPanelClass} space-y-4`}>
+      <div>
+        <div className="text-sm font-medium text-gray-12">{t("settings.starter_bootstrap_title")}</div>
+        <div className="text-xs text-gray-10">{t("settings.starter_bootstrap_desc")}</div>
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
+        <div className="min-w-0">
+          <div className="text-sm text-gray-12">{t("settings.starter_bootstrap_toggle")}</div>
+          <div className="text-xs text-gray-7">{t("settings.starter_bootstrap_toggle_desc")}</div>
+        </div>
+        <Button
+          variant="outline"
+          className="h-8 shrink-0 px-3 py-0 text-xs"
+          onClick={() => setEnabled(!enabled)}
+          disabled={busy}
+        >
+          {enabled ? t("settings.on") : t("settings.off")}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export function GeneralSettingsView(props: GeneralSettingsViewProps) {
@@ -219,6 +246,8 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
           </Button>
         </div>
       </div>
+
+      <StarterBootstrapPanel busy={props.busy} />
 
       <div className="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
         <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />

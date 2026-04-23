@@ -237,6 +237,7 @@ pub fn workspace_create(
     folder_path: String,
     name: String,
     preset: String,
+    starter_bootstrap_enabled: Option<bool>,
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
@@ -262,7 +263,11 @@ pub fn workspace_create(
 
     let id = stable_workspace_id(&folder);
 
-    ensure_workspace_files(&folder, &preset)?;
+    ensure_workspace_files(
+        &folder,
+        &preset,
+        starter_bootstrap_enabled.unwrap_or(true),
+    )?;
 
     let mut state = load_workspace_state(&app)?;
 

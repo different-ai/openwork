@@ -1411,6 +1411,9 @@ function createRoutes(
     const folderPath = typeof body.folderPath === "string" ? body.folderPath.trim() : "";
     const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : basename(folderPath || "Workspace");
     const preset = typeof body.preset === "string" && body.preset.trim() ? body.preset.trim() : "starter";
+    const starterBootstrapEnabled = typeof body.starterBootstrapEnabled === "boolean"
+      ? body.starterBootstrapEnabled
+      : true;
 
     if (!folderPath) {
       throw new ApiError(400, "invalid_payload", "folderPath is required");
@@ -1418,7 +1421,7 @@ function createRoutes(
 
     const workspacePath = resolve(folderPath);
     await ensureDir(workspacePath);
-    await ensureWorkspaceFiles(workspacePath, preset);
+    await ensureWorkspaceFiles(workspacePath, preset, starterBootstrapEnabled);
 
     const workspace: WorkspaceInfo = {
       id: workspaceIdForPath(workspacePath),

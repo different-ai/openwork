@@ -136,64 +136,69 @@ type WorkspaceOpenworkConfig = {
   } | null;
 };
 
-function buildDefaultWorkspaceBlueprint(_preset: string): Record<string, unknown> {
-  return {
-    emptyState: {
-      title: "What do you want to do?",
-      body: "Pick a starting point or just type below.",
-      starters: [
-        {
-          id: "csv-help",
-          kind: "prompt",
-          title: "Work on a CSV",
-          description: "Clean up or generate spreadsheet data.",
-          prompt: "Help me create or edit CSV files on this computer.",
+function buildDefaultWorkspaceBlueprint(preset: string): Record<string, unknown> | null {
+  switch (normalizePreset(preset)) {
+    case "starter":
+      return {
+        emptyState: {
+          title: "What do you want to do?",
+          body: "Pick a starting point or just type below.",
+          starters: [
+            {
+              id: "csv-help",
+              kind: "prompt",
+              title: "Work on a CSV",
+              description: "Clean up or generate spreadsheet data.",
+              prompt: "Help me create or edit CSV files on this computer.",
+            },
+            {
+              id: "starter-connect-openai",
+              kind: "action",
+              title: "Connect ChatGPT",
+              description: "Add your OpenAi provider so ChatGPT models are ready in new sessions.",
+              action: "connect-openai",
+            },
+            {
+              id: "browser-automation",
+              kind: "session",
+              title: "Automate Chrome",
+              description: "Start a browser automation conversation right away.",
+              prompt: "Help me connect to Chrome and automate a repetitive task.",
+            },
+          ],
         },
-        {
-          id: "starter-connect-openai",
-          kind: "action",
-          title: "Connect ChatGPT",
-          description: "Add your OpenAi provider so ChatGPT models are ready in new sessions.",
-          action: "connect-openai",
-        },
-        {
-          id: "browser-automation",
-          kind: "session",
-          title: "Automate Chrome",
-          description: "Start a browser automation conversation right away.",
-          prompt: "Help me connect to Chrome and automate a repetitive task.",
-        },
-      ],
-    },
-    sessions: [
-      {
-        id: "welcome-to-openwork",
-        title: "Welcome to OpenWork",
-        openOnFirstLoad: true,
-        messages: [
+        sessions: [
           {
-            role: "assistant",
-            text:
-              "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to Chrome and automate repetitive tasks, and sync contacts to Notion.\n\nBut the only limit is your imagination.\n\nWhat would you want to do?",
+            id: "welcome-to-openwork",
+            title: "Welcome to OpenWork",
+            openOnFirstLoad: true,
+            messages: [
+              {
+                role: "assistant",
+                text:
+                  "Hi welcome to OpenWork!\n\nPeople use us to write .csv files on their computer, connect to Chrome and automate repetitive tasks, and sync contacts to Notion.\n\nBut the only limit is your imagination.\n\nWhat would you want to do?",
+              },
+            ],
+          },
+          {
+            id: "csv-playbook",
+            title: "CSV workflow ideas",
+            messages: [
+              {
+                role: "assistant",
+                text: "I can help you generate, clean, merge, and summarize CSV files. What kind of CSV work do you want to automate?",
+              },
+              {
+                role: "user",
+                text: "I want to combine exports from multiple tools into one clean CSV.",
+              },
+            ],
           },
         ],
-      },
-      {
-        id: "csv-playbook",
-        title: "CSV workflow ideas",
-        messages: [
-          {
-            role: "assistant",
-            text: "I can help you generate, clean, merge, and summarize CSV files. What kind of CSV work do you want to automate?",
-          },
-          {
-            role: "user",
-            text: "I want to combine exports from multiple tools into one clean CSV.",
-          },
-        ],
-      },
-    ],
-  };
+      };
+    default:
+      return null;
+  }
 }
 
 function normalizePreset(preset: string | null | undefined): string {
@@ -220,14 +225,18 @@ async function ensureOpenworkAgent(workspaceRoot: string): Promise<void> {
   await writeFile(agentPath, OPENWORK_AGENT.endsWith("\n") ? OPENWORK_AGENT : `${OPENWORK_AGENT}\n`, "utf8");
 }
 
-async function ensureStarterSkills(workspaceRoot: string, preset: string): Promise<void> {
+async function ensureStarterSkills(
+  workspaceRoot: string,
+  preset: string,
+  starterBootstrapEnabled: boolean,
+): Promise<void> {
   await ensureDir(projectSkillsDir(workspaceRoot));
   await upsertSkill(workspaceRoot, {
     name: "workspace-guide",
     description: "Workspace guide to introduce OpenWork and onboard new users.",
     content: WORKSPACE_GUIDE,
   });
-  if (preset === "starter") {
+  if (preset === "starter" && starterBootstrapEnabled) {
     await upsertSkill(workspaceRoot, {
       name: "get-started",
       description: "Guide users through the get started setup and Chrome DevTools demo.",
@@ -236,7 +245,11 @@ async function ensureStarterSkills(workspaceRoot: string, preset: string): Promi
   }
 }
 
-async function ensureStarterCommands(workspaceRoot: string, preset: string): Promise<void> {
+async function ensureStarterCommands(
+  workspaceRoot: string,
+  preset: string,
+  starterBootstrapEnabled: boolean,
+): Promise<void> {
   await ensureDir(projectCommandsDir(workspaceRoot));
   await upsertCommand(workspaceRoot, {
     name: "learn-files",
@@ -253,7 +266,7 @@ async function ensureStarterCommands(workspaceRoot: string, preset: string): Pro
     description: "What plugins are and how to install them",
     template: "Explain what plugins are and how to install them in this workspace.",
   });
-  if (preset === "starter") {
+  if (preset === "starter" && starterBootstrapEnabled) {
     await upsertCommand(workspaceRoot, {
       name: "get-started",
       description: "Get started",
@@ -262,7 +275,11 @@ async function ensureStarterCommands(workspaceRoot: string, preset: string): Pro
   }
 }
 
-async function ensureOpencodeConfig(workspaceRoot: string, preset: string): Promise<void> {
+async function ensureOpencodeConfig(
+  workspaceRoot: string,
+  preset: string,
+  starterBootstrapEnabled: boolean,
+): Promise<void> {
   const path = opencodeConfigPath(workspaceRoot);
   const { data } = await readJsoncFile<Record<string, unknown>>(path, {
     $schema: "https://opencode.ai/config.json",
@@ -275,7 +292,7 @@ async function ensureOpencodeConfig(workspaceRoot: string, preset: string): Prom
     next.default_agent = "openwork";
   }
 
-  const requiredPlugins = preset === "starter" || preset === "automation"
+  const requiredPlugins = (preset === "starter" && starterBootstrapEnabled) || preset === "automation"
     ? ["opencode-scheduler"]
     : [];
   if (requiredPlugins.length > 0) {
@@ -287,7 +304,7 @@ async function ensureOpencodeConfig(workspaceRoot: string, preset: string): Prom
     next.plugin = mergePlugins(currentPlugins, requiredPlugins);
   }
 
-  if (preset === "starter") {
+  if (preset === "starter" && starterBootstrapEnabled) {
     const currentMcp = next.mcp && typeof next.mcp === "object" && !Array.isArray(next.mcp)
       ? { ...(next.mcp as Record<string, unknown>) }
       : {};
@@ -303,7 +320,11 @@ async function ensureOpencodeConfig(workspaceRoot: string, preset: string): Prom
   await writeJsoncFile(path, next);
 }
 
-async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): Promise<void> {
+async function ensureWorkspaceOpenworkConfig(
+  workspaceRoot: string,
+  preset: string,
+  starterBootstrapEnabled: boolean,
+): Promise<void> {
   const path = openworkConfigPath(workspaceRoot);
   if (await exists(path)) return;
   const now = Date.now();
@@ -315,24 +336,28 @@ async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: stri
       preset,
     },
     authorizedRoots: [workspaceRoot],
-    blueprint: buildDefaultWorkspaceBlueprint(preset),
+    blueprint: starterBootstrapEnabled ? buildDefaultWorkspaceBlueprint(preset) : null,
     reload: null,
   };
   await ensureDir(join(workspaceRoot, ".opencode"));
   await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
-export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<void> {
+export async function ensureWorkspaceFiles(
+  workspaceRoot: string,
+  presetInput: string,
+  starterBootstrapEnabled = true,
+): Promise<void> {
   const preset = normalizePreset(presetInput);
   if (!workspaceRoot.trim()) {
     throw new ApiError(400, "invalid_workspace_path", "workspace path is required");
   }
   await ensureDir(workspaceRoot);
-  await ensureStarterSkills(workspaceRoot, preset);
+  await ensureStarterSkills(workspaceRoot, preset, starterBootstrapEnabled);
   await ensureOpenworkAgent(workspaceRoot);
-  await ensureStarterCommands(workspaceRoot, preset);
-  await ensureOpencodeConfig(workspaceRoot, preset);
-  await ensureWorkspaceOpenworkConfig(workspaceRoot, preset);
+  await ensureStarterCommands(workspaceRoot, preset, starterBootstrapEnabled);
+  await ensureOpencodeConfig(workspaceRoot, preset, starterBootstrapEnabled);
+  await ensureWorkspaceOpenworkConfig(workspaceRoot, preset, starterBootstrapEnabled);
 }
 
 export async function readRawOpencodeConfig(path: string): Promise<{ exists: boolean; content: string | null }> {
