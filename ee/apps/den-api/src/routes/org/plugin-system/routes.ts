@@ -24,11 +24,20 @@ import {
   connectorAccountDisconnectSchema,
   connectorAccountListQuerySchema,
   connectorAccountListResponseSchema,
+  connectorAccountDisconnectResponseSchema,
   connectorAccountMutationResponseSchema,
+  connectorInstanceAutoImportSchema,
+  connectorInstanceConfigurationResponseSchema,
+  connectorInstanceRemoveResponseSchema,
   connectorAccountParamsSchema,
   connectorAccountRepositoryParamsSchema,
   connectorInstanceAccessGrantParamsSchema,
   connectorInstanceCreateSchema,
+  githubConnectorDiscoveryResponseSchema,
+  githubDiscoveryApplyResponseSchema,
+  githubDiscoveryApplySchema,
+  githubDiscoveryTreeQuerySchema,
+  githubDiscoveryTreeResponseSchema,
   connectorInstanceDetailResponseSchema,
   connectorInstanceListQuerySchema,
   connectorInstanceListResponseSchema,
@@ -54,6 +63,10 @@ import {
   connectorTargetParamsSchema,
   connectorTargetUpdateSchema,
   githubConnectorAccountCreateSchema,
+  githubInstallCompleteResponseSchema,
+  githubInstallCompleteSchema,
+  githubInstallStartResponseSchema,
+  githubInstallStartSchema,
   githubRepositoryListQuerySchema,
   githubRepositoryListResponseSchema,
   githubSetupResponseSchema,
@@ -68,6 +81,7 @@ import {
   marketplaceMutationResponseSchema,
   marketplaceParamsSchema,
   marketplacePluginListResponseSchema,
+  marketplaceResolvedResponseSchema,
   marketplacePluginMutationResponseSchema,
   marketplacePluginParamsSchema,
   marketplacePluginWriteSchema,
@@ -112,6 +126,7 @@ import {
   getConnectorTargetDetail,
   getLatestConfigObjectVersion,
   getMarketplaceDetail,
+  getMarketplaceResolved,
   getPluginDetail,
   githubSetup,
   listConfigObjectPlugins,
@@ -129,6 +144,13 @@ import {
   listPlugins,
   listResourceAccess,
   attachPluginToMarketplace,
+  completeGithubConnectorInstall,
+  applyGithubConnectorDiscovery,
+  getConnectorInstanceConfiguration,
+  getGithubConnectorDiscovery,
+  getGithubConnectorDiscoveryTree,
+  removeConnectorInstance,
+  setConnectorInstanceAutoImport,
   queueConnectorTargetResync,
   removeConfigObjectFromPlugin,
   removePluginFromMarketplace,
@@ -138,6 +160,7 @@ import {
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
   setPluginLifecycle,
+  startGithubConnectorInstall,
   updateConnectorInstance,
   updateConnectorMapping,
   updateConnectorTarget,
@@ -196,6 +219,62 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  withPluginArchOrgContext(
+    app,
+    "post",
+    pluginArchRoutePaths.githubInstallStart,
+    jsonValidator(githubInstallStartSchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Start GitHub install",
+      description: "Builds a GitHub App install redirect URL for the current organization.",
+      responses: {
+        200: jsonResponse("GitHub install redirect returned successfully.", githubInstallStartResponseSchema),
+        400: jsonResponse("The GitHub install request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to connect GitHub.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to connect GitHub.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "connector_account.create")
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await startGithubConnectorInstall({ context, returnPath: body.returnPath }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    },
+  )
+
+  withPluginArchOrgContext(
+    app,
+    "post",
+    pluginArchRoutePaths.githubInstallComplete,
+    jsonValidator(githubInstallCompleteSchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Complete GitHub install",
+      description: "Completes a GitHub App installation for the current organization and returns visible repositories.",
+      responses: {
+        200: jsonResponse("GitHub installation completed successfully.", githubInstallCompleteResponseSchema),
+        400: jsonResponse("The GitHub install completion request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to complete GitHub connection.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to complete GitHub connection.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "connector_account.create")
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await completeGithubConnectorInstall({ context, installationId: body.installationId, state: body.state }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    },
+  )
+
   withPluginArchOrgContext(
     app,
     "get",
@@ -958,6 +1037,28 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.marketplaceResolved,
+    paramValidator(marketplaceParamsSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Get marketplace resolved",
+      description: "Returns marketplace detail with plugins and derived source info.",
+      responses: {
+        200: jsonResponse("Marketplace resolved detail returned successfully.", marketplaceResolvedResponseSchema),
+        400: jsonResponse("The marketplace path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view marketplaces.", unauthorizedSchema),
+        404: jsonResponse("The marketplace could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ ok: true, item: await getMarketplaceResolved({ context: actorContext(c), marketplaceId: params.marketplaceId }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.marketplacePlugins,
     paramValidator(marketplaceParamsSchema),
     jsonValidator(marketplacePluginWriteSchema),
@@ -1146,9 +1247,9 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Connectors"],
       summary: "Disconnect connector account",
-      description: "Marks a connector account as disconnected.",
+      description: "Disconnects a connector account and cleans up all associated connector-managed records.",
       responses: {
-        200: jsonResponse("Connector account disconnected successfully.", connectorAccountMutationResponseSchema),
+        200: jsonResponse("Connector account disconnected and cleaned up successfully.", connectorAccountDisconnectResponseSchema),
         400: jsonResponse("The connector account disconnect request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to manage connector accounts.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to manage connector accounts.", forbiddenSchema),
@@ -1279,6 +1380,150 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         }
       })
   }
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorInstanceConfiguration,
+    paramValidator(connectorInstanceParamsSchema),
+    describeRoute({
+      tags: ["Connectors"],
+      summary: "Get connector instance configuration",
+      description: "Returns the currently configured plugins and import stats for a connector instance.",
+      responses: {
+        200: jsonResponse("Connector instance configuration returned successfully.", connectorInstanceConfigurationResponseSchema),
+        400: jsonResponse("The connector instance path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to inspect connector instances.", unauthorizedSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        return c.json({ ok: true, item: await getConnectorInstanceConfiguration({ connectorInstanceId: validParam<any>(c).connectorInstanceId, context: actorContext(c) }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorInstanceRemove,
+    paramValidator(connectorInstanceParamsSchema),
+    describeRoute({
+      tags: ["Connectors"],
+      summary: "Remove connector instance",
+      description: "Removes a connector instance and deletes the plugins, mappings, config objects, and bindings associated with it.",
+      responses: {
+        200: jsonResponse("Connector instance removed and cleaned up successfully.", connectorInstanceRemoveResponseSchema),
+        400: jsonResponse("The connector instance path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to remove connector instances.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to remove this connector instance.", forbiddenSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        return c.json({ ok: true, item: await removeConnectorInstance({ connectorInstanceId: validParam<any>(c).connectorInstanceId, context }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorInstanceAutoImport,
+    paramValidator(connectorInstanceParamsSchema),
+    jsonValidator(connectorInstanceAutoImportSchema),
+    describeRoute({
+      tags: ["Connectors"],
+      summary: "Set connector instance auto-import",
+      description: "Enables or disables auto-import of new plugins on future push webhooks for a connector instance.",
+      responses: {
+        200: jsonResponse("Connector instance auto-import updated successfully.", connectorInstanceConfigurationResponseSchema),
+        400: jsonResponse("The auto-import request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to configure connector instances.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to configure this connector instance.", forbiddenSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await setConnectorInstanceAutoImport({ autoImportNewPlugins: Boolean(body.autoImportNewPlugins), connectorInstanceId: params.connectorInstanceId, context }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorInstanceDiscovery,
+    paramValidator(connectorInstanceParamsSchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Get GitHub connector discovery",
+      description: "Analyzes a GitHub connector target and returns discovered plugin candidates.",
+      responses: {
+        200: jsonResponse("GitHub connector discovery returned successfully.", githubConnectorDiscoveryResponseSchema),
+        400: jsonResponse("The connector instance path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to inspect GitHub discovery.", unauthorizedSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        return c.json({ ok: true, item: await getGithubConnectorDiscovery({ connectorInstanceId: validParam<any>(c).connectorInstanceId, context: actorContext(c) }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorInstanceDiscoveryTree,
+    paramValidator(connectorInstanceParamsSchema),
+    queryValidator(githubDiscoveryTreeQuerySchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "List GitHub discovery tree entries",
+      description: "Pages through the normalized GitHub repository tree used during discovery.",
+      responses: {
+        200: jsonResponse("GitHub discovery tree returned successfully.", githubDiscoveryTreeResponseSchema),
+        400: jsonResponse("The discovery tree request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to inspect GitHub discovery tree entries.", unauthorizedSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const query = validQuery<any>(c)
+        return c.json(await getGithubConnectorDiscoveryTree({ connectorInstanceId: params.connectorInstanceId, context: actorContext(c), cursor: query.cursor, limit: query.limit, prefix: query.prefix }))
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorInstanceDiscoveryApply,
+    paramValidator(connectorInstanceParamsSchema),
+    jsonValidator(githubDiscoveryApplySchema),
+    describeRoute({
+      tags: ["GitHub"],
+      summary: "Apply GitHub discovery selection",
+      description: "Creates OpenWork plugins and connector mappings from selected discovery candidates.",
+      responses: {
+        200: jsonResponse("GitHub discovery selection applied successfully.", githubDiscoveryApplyResponseSchema),
+        400: jsonResponse("The discovery apply request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to apply discovery selections.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this connector instance.", forbiddenSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        const context = actorContext(c)
+        if (Array.isArray(body.selectedKeys) && body.selectedKeys.length > 0) {
+          await requirePluginArchCapability(context, "plugin.create")
+        }
+        return c.json({ ok: true, item: await applyGithubConnectorDiscovery({ autoImportNewPlugins: Boolean(body.autoImportNewPlugins), connectorInstanceId: params.connectorInstanceId, context, selectedKeys: body.selectedKeys }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
 
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.connectorInstanceAccess,
     paramValidator(connectorInstanceParamsSchema),
@@ -1713,6 +1958,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       const body = validJson<any>(c)
-      return c.json({ ok: true, item: await validateGithubTarget({ branch: body.branch, ref: body.ref, repositoryFullName: body.repositoryFullName }) })
+      return c.json({ ok: true, item: await validateGithubTarget({ branch: body.branch, installationId: body.installationId, ref: body.ref, repositoryFullName: body.repositoryFullName, repositoryId: body.repositoryId }) })
     })
 }

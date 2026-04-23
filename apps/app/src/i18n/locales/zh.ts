@@ -16,7 +16,7 @@ export default {
   "app.error.install_failed": "OpenCode安装失败。请查看上方日志。",
   "app.error.pick_workspace_folder": "请先选择一个工作区文件夹。",
   "app.error.remote_base_url_required": "请先填写服务器地址。",
-  "app.error.tauri_required": "此操作需要Tauri应用运行时。",
+  "app.error.tauri_required": "此操作需要OpenWork桌面应用运行时。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_auth_failed": "认证失败",
   "app.error_auto_compact_scope": "自动上下文压缩仅适用于本地工作区或可写的OpenWork服务器工作区。",

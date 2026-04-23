@@ -1,0 +1,63 @@
+name: Build Electron Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+    paths:
+      - apps/app/**
+      - apps/desktop/**
+      - packages/ui/**
+      - constants.json
+      - pnpm-lock.yaml
+      - package.json
+      - .github/workflows/build-electron-desktop.yml
+
+jobs:
+  build-electron:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macos
+          - os: ubuntu-latest
+            artifact: linux
+          - os: windows-latest
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm must be installed BEFORE setup-node so setup-node can find the
+      # pnpm binary on PATH. Matches the pattern in build-desktop.yml so
+      # the two workflows share the same bootstrap story.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Electron desktop (unpacked)
+        run: pnpm --filter @openwork/desktop package:electron:dir
+
+      - name: Upload Electron artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-electron-${{ matrix.artifact }}
+          path: apps/desktop/dist-electron/**

@@ -13,7 +13,7 @@ export default {
   "app.error.install_failed": "ติดตั้ง OpenCode ไม่สำเร็จ ดู logs ด้านบน",
   "app.error.pick_workspace_folder": "เลือกโฟลเดอร์พื้นที่ทำงานก่อน",
   "app.error.remote_base_url_required": "เพิ่ม URL ของเซิร์ฟเวอร์เพื่อดำเนินการต่อ",
-  "app.error.tauri_required": "การดำเนินการนี้ต้องใช้ Tauri app runtime",
+  "app.error.tauri_required": "การดำเนินการนี้ต้องใช้รันไทม์ของแอปเดสก์ท็อป OpenWork",
   "app.error_audit_load": "โหลดบันทึกการตรวจสอบไม่สำเร็จ",
   "app.error_auth_failed": "การยืนยันตัวตนล้มเหลว",
   "app.error_auto_compact_scope": "การบีบอัดบริบทอัตโนมัติสามารถเปลี่ยนได้เฉพาะสำหรับพื้นที่ทำงานภายในเครื่องหรือ OpenWork server ที่เขียนได้",

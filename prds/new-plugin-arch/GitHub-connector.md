@@ -204,7 +204,7 @@ So the recommended shape is:
 
 Recommended public endpoint:
 
-- `POST /api/webhooks/connectors/github`
+- `POST /v1/webhooks/connectors/github`
 
 Recommended internal handler split:
 
@@ -222,7 +222,7 @@ If we want subpath-style organization inside the app, we can still do that after
 
 Example internal structure:
 
-- public ingress: `POST /api/webhooks/connectors/github`
+- public ingress: `POST /v1/webhooks/connectors/github`
 - internal modules:
   - `webhooks/connectors/github/push`
   - `webhooks/connectors/github/installation`
@@ -401,7 +401,7 @@ This is the recommended API contract shape around the webhook ingress and async 
 
 Endpoint:
 
-- `POST /api/webhooks/connectors/github`
+- `POST /v1/webhooks/connectors/github`
 
 Input:
 

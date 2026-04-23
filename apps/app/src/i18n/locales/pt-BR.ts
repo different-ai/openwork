@@ -13,7 +13,7 @@ export default {
   "app.error.install_failed": "Falha na instalação do OpenCode. Veja os logs acima.",
   "app.error.pick_workspace_folder": "Selecione primeiro uma pasta de workspace.",
   "app.error.remote_base_url_required": "Adicione uma URL de servidor para continuar.",
-  "app.error.tauri_required": "Esta ação requer o runtime do app Tauri.",
+  "app.error.tauri_required": "Esta ação requer o runtime do app desktop do OpenWork.",
   "app.error_audit_load": "Falha ao carregar o log de auditoria.",
   "app.error_auth_failed": "Falha na autenticação",
   "app.error_auto_compact_scope": "A compactação automática de contexto só pode ser alterada para um workspace local ou um workspace de servidor OpenWork com permissão de escrita.",

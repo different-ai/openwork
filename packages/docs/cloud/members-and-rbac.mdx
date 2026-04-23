@@ -29,6 +29,17 @@ Only `Owner` can change member roles, remove members, or create, edit, and delet
 
 Invites are tied to the invited email address.
 
+## Restrict who can join
+
+If you only want teammates from specific companies or domains to join:
+
+1. Open `Org settings`.
+2. Turn on `Restrict allowed email domains`.
+3. Add each approved domain to the `Domain allowlist`.
+4. Click `Save settings`.
+
+When this is enabled, OpenWork Cloud only lets people join with email addresses from the approved domains. Existing invites still target a specific email address, so both checks apply: the invitee must use the invited email address and that address must match the allowlist.
+
 ## Create teams
 
 1. Open `Members -> Teams`.
@@ -60,4 +71,5 @@ A simple setup that works well for most orgs:
 
 - You cannot change the org owner's role or remove the owner.
 - Owners and admins can manage teams and invitations, but only owners can handle the sensitive RBAC changes.
+- Only owners can change `Org settings`, including allowed email domains and desktop restrictions.
 - You cannot delete a custom role while members or pending invitations still use it.

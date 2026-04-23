@@ -12,7 +12,7 @@ export default {
   "app.error.install_failed": "OpenCodeのインストールに失敗しました。上のログをご確認ください。",
   "app.error.pick_workspace_folder": "最初にワークスペースフォルダを選択してください。",
   "app.error.remote_base_url_required": "続行するにはサーバーURLを追加してください。",
-  "app.error.tauri_required": "この操作にはTauriアプリランタイムが必要です。",
+  "app.error.tauri_required": "この操作にはOpenWorkデスクトップアプリのランタイムが必要です。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_auth_failed": "認証に失敗しました",
   "app.error_auto_compact_scope": "自動コンテキスト圧縮は、ローカルワークスペースまたは書き込み可能なOpenWorkサーバーワークスペースでのみ変更できます。",

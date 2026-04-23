@@ -1,6 +1,6 @@
 import type { WorkspaceDisplay } from "../types";
 import { parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 import type { BundleImportTarget, BundleV1 } from "./types";
 
 export function buildImportPayloadFromBundle(bundle: BundleV1): {
