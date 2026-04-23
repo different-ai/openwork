@@ -349,8 +349,28 @@ export function getPluginRoute(orgSlug: string | null | undefined, pluginId: str
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
 
+export function getMarketplacesRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/marketplaces`;
+}
+
+export function getMarketplaceRoute(orgSlug: string | null | undefined, marketplaceId: string): string {
+  return `${getMarketplacesRoute(orgSlug)}/${encodeURIComponent(marketplaceId)}`;
+}
+
 export function getIntegrationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/integrations`;
+}
+
+export function getGithubIntegrationRoute(orgSlug?: string | null): string {
+  return `${getIntegrationsRoute(orgSlug)}/github`;
+}
+
+export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {
+  return `${getGithubIntegrationRoute(orgSlug)}?connectorInstanceId=${encodeURIComponent(connectorInstanceId)}`;
+}
+
+export function getGithubIntegrationAccountRoute(orgSlug: string | null | undefined, connectorAccountId: string): string {
+  return `${getGithubIntegrationRoute(orgSlug)}?connectorAccountId=${encodeURIComponent(connectorAccountId)}`;
 }
 
 export function parseOrgListPayload(payload: unknown): {
