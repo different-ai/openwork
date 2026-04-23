@@ -2714,7 +2714,10 @@ function mappingSelectorMatchesPath(selector: string, path: string) {
   return normalizedPath === normalizedSelector
 }
 
-function importableGithubPathsForMapping(input: { mapping: ReturnType<typeof serializeConnectorMapping>; treeEntries: GithubDiscoveryTreeEntry[] }) {
+function importableGithubPathsForMapping(input: {
+  mapping: Pick<ReturnType<typeof serializeConnectorMapping>, "objectType" | "selector">
+  treeEntries: GithubDiscoveryTreeEntry[]
+}) {
   const matchingBlobs = input.treeEntries
     .filter((entry) => entry.kind === "blob")
     .filter((entry) => mappingSelectorMatchesPath(input.mapping.selector, entry.path))
