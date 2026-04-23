@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
 import { SUGGESTED_PLUGINS } from "../../app/constants";
-import { createClient } from "../../app/lib/opencode";
+import { createClient, unwrap } from "../../app/lib/opencode";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -65,6 +65,8 @@ import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
 import { recordInspectorEvent } from "./app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
+import { saveSessionDraft } from "../domains/session/sync/draft-store";
+import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -463,9 +465,9 @@ export function SettingsRoute() {
         selectedWorkspaceRoot: () => routeStateRef.current.selectedWorkspaceRoot,
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         openworkServer: openworkServerStore,
-        schedulerPluginInstalled: () => false,
+        schedulerPluginInstalled: () => extensionsStore.isPluginInstalledByName("opencode-scheduler"),
       }),
-    [openworkServerStore],
+    [extensionsStore, openworkServerStore],
   );
 
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
@@ -473,6 +475,7 @@ export function SettingsRoute() {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useExtensionsStoreSnapshot(extensionsStore);
   useAutomationsStoreSnapshot(automationsStore);
+  const schedulerInstalled = extensionsStore.isPluginInstalledByName("opencode-scheduler");
 
   const debugViewProps = useDebugViewModel({
     developerMode,
@@ -738,6 +741,7 @@ export function SettingsRoute() {
     extensionsStore,
     openworkServerStore,
     providerAuthStore,
+    schedulerInstalled,
     selectedWorkspace?.id,
     selectedWorkspace?.workspaceType,
     selectedWorkspaceRoot,
@@ -754,6 +758,40 @@ export function SettingsRoute() {
     void providerAuthStore.refreshProviders();
     void connectionsStore.refreshMcpServers();
   }, [activeClient, connectionsStore, providerAuthStore, selectedWorkspace?.id]);
+
+  const handleCreateSessionAndOpen = async (initialPrompt?: string) => {
+    const workspace = selectedWorkspace;
+    if (!workspace || !token || !baseUrl) return undefined;
+
+    const workspaceRoot = workspace.path?.trim() || undefined;
+    const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
+    const workspaceClient = createClient(
+      workspaceOpencodeBaseUrl,
+      workspaceRoot,
+      { token, mode: "openwork" },
+    );
+
+    const session = unwrap(
+      await workspaceClient.session.create({ directory: workspaceRoot }),
+    );
+
+    if (initialPrompt) {
+      saveSessionDraft(workspace.id, session.id, {
+        text: initialPrompt,
+        mode: "prompt",
+      });
+    }
+
+    setSelectedWorkspaceId(workspace.id);
+    writeActiveWorkspaceId(workspace.id);
+    writeLastSessionFor(workspace.id, session.id);
+    if (isDesktopRuntime()) {
+      await workspaceSetSelected(workspace.id).catch(() => undefined);
+      await workspaceSetRuntimeActive(workspace.id).catch(() => undefined);
+    }
+    navigate(`/session/${session.id}`);
+    return session.id;
+  };
 
   if (route.redirectPath) {
     return <Navigate to={route.redirectPath} replace />;
@@ -930,18 +968,17 @@ export function SettingsRoute() {
             automations={automationsStore}
             busy={busy}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
-            createSessionAndOpen={async () => undefined}
+            createSessionAndOpen={handleCreateSessionAndOpen}
             newTaskDisabled={!opencodeClient}
-            schedulerInstalled={false}
+            schedulerInstalled={schedulerInstalled}
             canEditPlugins={!isRemoteWorkspace}
-            addPlugin={async () => {
-              setRouteError("Scheduler plugin install is not wired into the React settings route yet.");
-            }}
+            addPlugin={(pluginNameOverride) => extensionsStore.addPlugin(pluginNameOverride)}
             reloadWorkspaceEngine={async () => {
-              setRouteError("Workspace reload is not wired into the React settings route yet.");
+              await openworkServerStore.reconnectOpenworkServer();
+              await automationsStore.refresh({ force: true });
             }}
             reloadBusy={false}
-            canReloadWorkspace={false}
+            canReloadWorkspace={isDesktopRuntime()}
             openLink={(url) => platform.openLink(url)}
           />
         );

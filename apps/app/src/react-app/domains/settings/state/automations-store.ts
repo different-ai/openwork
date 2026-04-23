@@ -148,7 +148,11 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
     const workspaceId = options.selectedWorkspaceId().trim();
     const root = normalizeDirectoryPath(options.selectedWorkspaceRoot().trim());
     const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
-    return `local:${workspaceId}:${root}:${runtimeWorkspaceId}`;
+    const source = getScheduledJobsSource();
+    const schedulerReady = options.schedulerPluginInstalled()
+      ? "scheduler-on"
+      : "scheduler-off";
+    return `${source}:${workspaceId}:${root}:${runtimeWorkspaceId}:${schedulerReady}`;
   };
 
   const getServerSnapshot = () => options.openworkServer.getSnapshot();
@@ -343,7 +347,7 @@ export function createAutomationsStore(options: CreateAutomationsStoreOptions) {
     lastContextKey = getScheduledJobsContextKey();
     openworkServerUnsubscribe = options.openworkServer.subscribe(() => {
       if (disposed) return;
-      emitChange();
+      syncFromOptions();
     });
     syncFromOptions();
   };
