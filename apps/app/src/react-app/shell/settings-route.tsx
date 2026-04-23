@@ -65,7 +65,10 @@ import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef, WorkspaceConnectionState } from "../../app/types";
 import { recordInspectorEvent } from "./app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { testRemoteWorkspaceConnection } from "../domains/workspace/remote-connection";
+import {
+  recoverRemoteWorkspace,
+  testRemoteWorkspaceConnection,
+} from "../domains/workspace/remote-connection";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -883,7 +886,31 @@ export function SettingsRoute() {
   };
 
   const handleRecoverWorkspace = async (workspaceId: string) => {
-    return handleTestWorkspaceConnection(workspaceId);
+    const workspace = workspacesRef.current.find((item) => item.id === workspaceId) ?? null;
+    if (!workspace) return false;
+
+    setConnectingWorkspaceId(workspaceId);
+    setWorkspaceConnectionStateById((current) => ({
+      ...current,
+      [workspaceId]: { status: "connecting", message: null, checkedAt: current[workspaceId]?.checkedAt ?? null },
+    }));
+
+    try {
+      const result = await recoverRemoteWorkspace(
+        workspace,
+        workspace.openworkToken?.trim() || readOpenworkServerSettings().token || token,
+      );
+      setWorkspaceConnectionStateById((current) => ({
+        ...current,
+        [workspaceId]: { status: result.ok ? "connected" : "error", message: result.message, checkedAt: Date.now() },
+      }));
+      if (result.ok) {
+        void refreshRouteState();
+      }
+      return result.ok;
+    } finally {
+      setConnectingWorkspaceId((current) => (current === workspaceId ? null : current));
+    }
   };
 
   const handleCreateRemoteWorkspace = async (input: {
