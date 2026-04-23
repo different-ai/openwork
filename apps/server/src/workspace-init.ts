@@ -326,8 +326,27 @@ async function ensureWorkspaceOpenworkConfig(
   starterBootstrapEnabled: boolean,
 ): Promise<void> {
   const path = openworkConfigPath(workspaceRoot);
-  if (await exists(path)) return;
   const now = Date.now();
+  const desiredBlueprint = starterBootstrapEnabled ? buildDefaultWorkspaceBlueprint(preset) : null;
+
+  if (await exists(path)) {
+    // File already written by the desktop layer (Tauri/Electron) before the
+    // server is called. Patch the blueprint field if missing so the toggle
+    // actually takes effect end-to-end.
+    try {
+      const raw = await readFile(path, "utf8");
+      const parsed = JSON.parse(raw) as Partial<WorkspaceOpenworkConfig> & Record<string, unknown>;
+      if (!("blueprint" in parsed) || parsed.blueprint === undefined) {
+        parsed.blueprint = desiredBlueprint;
+        await writeFile(path, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+      }
+    } catch {
+      // If the file is unreadable or invalid JSON, leave it alone; the
+      // desktop writer owns the canonical shape.
+    }
+    return;
+  }
+
   const config: WorkspaceOpenworkConfig = {
     version: 1,
     workspace: {
@@ -336,7 +355,7 @@ async function ensureWorkspaceOpenworkConfig(
       preset,
     },
     authorizedRoots: [workspaceRoot],
-    blueprint: starterBootstrapEnabled ? buildDefaultWorkspaceBlueprint(preset) : null,
+    blueprint: desiredBlueprint,
     reload: null,
   };
   await ensureDir(join(workspaceRoot, ".opencode"));

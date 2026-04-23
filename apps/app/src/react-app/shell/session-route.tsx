@@ -58,7 +58,7 @@ import { isDesktopRuntime, isSandboxWorkspace, normalizeDirectoryPath, safeStrin
 import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
-import { getStarterBootstrapEnabled } from "../kernel/starter-bootstrap";
+import { effectivePreset, getStarterBootstrapEnabled } from "../kernel/starter-bootstrap";
 import { SessionPage } from "../domains/session/chat/session-page";
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
@@ -1215,10 +1215,11 @@ export function SessionRoute() {
     try {
       const workspaceName = folderNameFromPath(folder);
       const starterBootstrapEnabled = getStarterBootstrapEnabled();
+      const resolvedPreset = effectivePreset(preset, starterBootstrapEnabled) as WorkspacePreset;
       const list = await workspaceCreate({
         folderPath: folder,
         name: workspaceName,
-        preset,
+        preset: resolvedPreset,
         starterBootstrapEnabled,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
@@ -1233,7 +1234,7 @@ export function SessionRoute() {
       // write only updates desktop-side state).
       if (client) {
         await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset, starterBootstrapEnabled })
+          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset: resolvedPreset, starterBootstrapEnabled })
           .catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);

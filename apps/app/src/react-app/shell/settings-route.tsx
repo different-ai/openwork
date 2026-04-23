@@ -39,7 +39,7 @@ import { createAutomationsStore, useAutomationsStoreSnapshot } from "../domains/
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/settings/state/extensions-store";
 import { usePlatform } from "../kernel/platform";
 import { useLocal } from "../kernel/local-provider";
-import { getStarterBootstrapEnabled } from "../kernel/starter-bootstrap";
+import { effectivePreset, getStarterBootstrapEnabled } from "../kernel/starter-bootstrap";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
@@ -807,10 +807,11 @@ export function SettingsRoute() {
     try {
       const workspaceName = folderNameFromPath(folder);
       const starterBootstrapEnabled = getStarterBootstrapEnabled();
+      const resolvedPreset = effectivePreset(preset, starterBootstrapEnabled) as WorkspacePreset;
       const list = await workspaceCreate({
         folderPath: folder,
         name: workspaceName,
-        preset,
+        preset: resolvedPreset,
         starterBootstrapEnabled,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
@@ -825,7 +826,7 @@ export function SettingsRoute() {
       // write only updates desktop-side state).
       if (openworkClient) {
         await openworkClient
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset, starterBootstrapEnabled })
+          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset: resolvedPreset, starterBootstrapEnabled })
           .catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);
