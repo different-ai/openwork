@@ -12,6 +12,7 @@ import { ServerProvider } from "../kernel/server-provider";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
+import { MigrationPrompt } from "./migration-prompt";
 
 function resolveDefaultServerUrl(): string {
   if (isDesktopRuntime()) return "http://127.0.0.1:4096";
@@ -66,6 +67,7 @@ export function AppProviders({ children }: AppProvidersProps) {
             </RestrictionNoticeProvider>
           </DesktopConfigProvider>
         </DenAuthProvider>
+        <MigrationPrompt />
       </ServerProvider>
     </BootStateProvider>
   );

@@ -139,3 +139,78 @@ export async function ingestMigrationSnapshotOnElectronBoot(): Promise<number> {
 
   return hydrated;
 }
+
+export type MigrateToElectronRequest = {
+  /**
+   * Download URL for the matching Electron artifact. On macOS a .zip.
+   * On Windows, an NSIS .exe (TODO — stubbed today). On Linux, an AppImage
+   * (TODO — stubbed today).
+   */
+  url: string;
+  /** Optional sha256 to verify before touching the filesystem. */
+  sha256?: string;
+  /**
+   * Override where the Electron .app ends up (macOS). Defaults to
+   * replacing the currently-running .app bundle in place.
+   */
+  targetAppPath?: string;
+};
+
+/**
+ * Tauri-only. Hand off to the new Electron build:
+ *   1. Download + verify the installer
+ *   2. Replace the running .app bundle
+ *   3. Relaunch into the Electron binary
+ *   4. Quit this Tauri process
+ *
+ * Callers should invoke `writeMigrationSnapshotFromTauri()` first so the
+ * new Electron shell can hydrate localStorage on first launch.
+ */
+export async function migrateToElectron(
+  request: MigrateToElectronRequest,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    await invoke("migrate_to_electron", { request });
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+// Localstorage key that stores a "don't ask again until" epoch-ms.
+// Users who click "Later" get a 24h reprieve; after that we nudge again.
+export const MIGRATION_DEFER_KEY = "openwork.migration.deferredUntil";
+export const MIGRATION_DEFAULT_DEFER_MS = 24 * 60 * 60 * 1000;
+
+export function isMigrationDeferred(now: number = Date.now()): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(MIGRATION_DEFER_KEY);
+    if (!raw) return false;
+    const until = Number.parseInt(raw, 10);
+    return Number.isFinite(until) && until > now;
+  } catch {
+    return false;
+  }
+}
+
+export function deferMigration(ms: number = MIGRATION_DEFAULT_DEFER_MS): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MIGRATION_DEFER_KEY, String(Date.now() + ms));
+  } catch {
+    // non-fatal
+  }
+}
+
+export function clearMigrationDefer(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(MIGRATION_DEFER_KEY);
+  } catch {
+    // non-fatal
+  }
+}

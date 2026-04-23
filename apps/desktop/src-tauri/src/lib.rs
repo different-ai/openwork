@@ -24,7 +24,7 @@ use commands::desktop_bootstrap::{get_desktop_bootstrap_config, set_desktop_boot
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
-use commands::migration::write_migration_snapshot;
+use commands::migration::{migrate_to_electron, write_migration_snapshot};
 use commands::misc::{
     app_build_info, nuke_openwork_and_opencode_config_and_exit, opencode_mcp_auth,
     reset_opencode_cache, reset_openwork_state,
@@ -209,6 +209,7 @@ pub fn run() {
             get_desktop_bootstrap_config,
             set_desktop_bootstrap_config,
             updater_environment,
+            migrate_to_electron,
             write_migration_snapshot,
             app_build_info,
             nuke_openwork_and_opencode_config_and_exit,
