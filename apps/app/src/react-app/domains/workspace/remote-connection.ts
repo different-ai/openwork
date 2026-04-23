@@ -316,7 +316,28 @@ export async function recoverRemoteWorkspace(
         host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
     });
 
-    return { ok: true, message: null };
+    const verify = await testRemoteWorkspaceConnection(
+      {
+        ...workspace,
+        remoteType: "openwork",
+        baseUrl: resolved.opencodeBaseUrl,
+        directory: resolved.directory || workspacePath,
+        openworkHostUrl: resolved.hostUrl,
+        openworkToken: host.ownerToken?.trim() || host.token,
+        openworkClientToken: host.token,
+        openworkHostToken: host.hostToken,
+        openworkWorkspaceId: resolved.workspace.id,
+        openworkWorkspaceName:
+          resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+        sandboxBackend:
+          host.sandboxBackend ?? workspace.sandboxBackend ?? "docker",
+        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
+        sandboxContainerName:
+          host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
+      },
+      host.ownerToken?.trim() || host.token,
+    );
+    return verify;
   } catch (error) {
     const message = error instanceof Error ? error.message : safeStringify(error);
     return { ok: false, message: formatRemoteConnectionError(workspace, message) };
