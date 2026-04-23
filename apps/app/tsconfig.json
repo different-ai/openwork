@@ -4,8 +4,8 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -14,5 +14,19 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": [
+    "src/index.react.tsx",
+    "src/i18n/**/*",
+    "src/react-app/**/*",
+    "src/app/lib/**/*",
+    "src/app/bundles/**/*",
+    "src/app/cloud/**/*",
+    "src/app/data/**/*",
+    "src/app/utils/**/*",
+    "src/app/constants.ts",
+    "src/app/types.ts",
+    "src/app/theme.ts",
+    "src/app/mcp.ts",
+    "vite.config.ts"
+  ]
 }
