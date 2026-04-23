@@ -45,6 +45,7 @@ import {
   type GithubMarketplaceInfo,
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
+import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -85,6 +86,7 @@ type ConnectorMappingId = ConnectorMappingRow["id"]
 type ConnectorSyncEventId = ConnectorSyncEventRow["id"]
 type MemberRow = typeof MemberTable.$inferSelect
 type OrganizationRow = typeof OrganizationTable.$inferSelect
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 type CursorPage<TItem extends { id: string }> = {
   items: TItem[]
@@ -1737,36 +1739,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
     }
 
-    if (connectorPluginIds.length > 0) {
-      const remainingMemberships = await tx
-        .select({ pluginId: PluginConfigObjectTable.pluginId })
-        .from(PluginConfigObjectTable)
-        .where(inArray(PluginConfigObjectTable.pluginId, connectorPluginIds))
-      const pluginsWithOtherContent = new Set(remainingMemberships.map((entry) => entry.pluginId))
-      const pluginIdsToDelete = connectorPluginIds.filter((pluginId) => !pluginsWithOtherContent.has(pluginId))
-
-      if (pluginIdsToDelete.length > 0) {
-        await tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
-      }
-
-      const marketplaceRows = await tx
-        .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
-        .from(MarketplacePluginTable)
-      const marketplacesWithMembers = new Set(marketplaceRows.map((entry) => entry.marketplaceId))
-      const orphanMarketplaces = await tx
-        .select({ id: MarketplaceTable.id })
-        .from(MarketplaceTable)
-        .where(eq(MarketplaceTable.organizationId, organizationId))
-      const orphanIds = orphanMarketplaces
-        .map((entry) => entry.id)
-        .filter((marketplaceId) => !marketplacesWithMembers.has(marketplaceId))
-      if (orphanIds.length > 0) {
-        await tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, orphanIds))
-        await tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, orphanIds))
-      }
-    }
+    await cleanupConnectorImportedResources({ seedPluginIds: connectorPluginIds, tx })
 
     await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.id, row.id))
   })
@@ -1902,6 +1875,129 @@ function commonSelectorRootPath(selectors: string[]): string | null {
   return ""
 }
 
+async function assertConnectorImportedResourceCleanup(input: {
+  marketplaceIdsToDelete: MarketplaceId[]
+  pluginIdsToDelete: PluginId[]
+  tx: DbTransaction
+}) {
+  if (input.pluginIdsToDelete.length > 0) {
+    const [remainingPlugins, remainingPluginMappings, remainingPluginMemberships, remainingPluginGrants] = await Promise.all([
+      input.tx.select({ id: PluginTable.id }).from(PluginTable).where(inArray(PluginTable.id, input.pluginIdsToDelete)),
+      input.tx.select({ id: ConnectorMappingTable.id }).from(ConnectorMappingTable).where(inArray(ConnectorMappingTable.pluginId, input.pluginIdsToDelete)),
+      input.tx.select({ id: PluginConfigObjectTable.id }).from(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.pluginId, input.pluginIdsToDelete)),
+      input.tx.select({ id: PluginAccessGrantTable.id }).from(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, input.pluginIdsToDelete)),
+    ])
+
+    if (remainingPlugins.length > 0 || remainingPluginMappings.length > 0 || remainingPluginMemberships.length > 0 || remainingPluginGrants.length > 0) {
+      throw new Error("Connector cleanup left plugin records behind.")
+    }
+  }
+
+  if (input.marketplaceIdsToDelete.length > 0) {
+    const [remainingMarketplaces, remainingMarketplaceMemberships, remainingMarketplaceGrants] = await Promise.all([
+      input.tx.select({ id: MarketplaceTable.id }).from(MarketplaceTable).where(inArray(MarketplaceTable.id, input.marketplaceIdsToDelete)),
+      input.tx.select({ id: MarketplacePluginTable.id }).from(MarketplacePluginTable).where(inArray(MarketplacePluginTable.marketplaceId, input.marketplaceIdsToDelete)),
+      input.tx.select({ id: MarketplaceAccessGrantTable.id }).from(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, input.marketplaceIdsToDelete)),
+    ])
+
+    if (remainingMarketplaces.length > 0 || remainingMarketplaceMemberships.length > 0 || remainingMarketplaceGrants.length > 0) {
+      throw new Error("Connector cleanup left marketplace records behind.")
+    }
+  }
+}
+
+async function cleanupConnectorImportedResources(input: {
+  seedPluginIds: PluginId[]
+  tx: DbTransaction
+}) {
+  const seedPluginIds = uniqueIds(input.seedPluginIds)
+  if (seedPluginIds.length === 0) {
+    return { deletedMarketplaceCount: 0, deletedPluginCount: 0 }
+  }
+
+  const connectorMarketplaceRows = await input.tx
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
+    .from(MarketplacePluginTable)
+    .where(and(
+      inArray(MarketplacePluginTable.pluginId, seedPluginIds),
+      eq(MarketplacePluginTable.membershipSource, "connector"),
+      isNull(MarketplacePluginTable.removedAt),
+    ))
+  const candidateMarketplaceIds = uniqueIds(connectorMarketplaceRows.map((row) => row.marketplaceId))
+
+  const activeMarketplaceMemberships = candidateMarketplaceIds.length === 0
+    ? []
+    : await input.tx
+      .select({
+        marketplaceId: MarketplacePluginTable.marketplaceId,
+        membershipSource: MarketplacePluginTable.membershipSource,
+        pluginId: MarketplacePluginTable.pluginId,
+      })
+      .from(MarketplacePluginTable)
+      .where(and(
+        inArray(MarketplacePluginTable.marketplaceId, candidateMarketplaceIds),
+        isNull(MarketplacePluginTable.removedAt),
+      ))
+
+  const candidatePluginIds = uniqueIds([
+    ...seedPluginIds,
+    ...activeMarketplaceMemberships
+      .filter((membership) => membership.membershipSource === "connector")
+      .map((membership) => membership.pluginId),
+  ])
+
+  const activePluginMembershipRows = candidatePluginIds.length === 0
+    ? []
+    : await input.tx
+      .select({ pluginId: PluginConfigObjectTable.pluginId })
+      .from(PluginConfigObjectTable)
+      .where(and(
+        inArray(PluginConfigObjectTable.pluginId, candidatePluginIds),
+        isNull(PluginConfigObjectTable.removedAt),
+      ))
+
+  const activeMappingRows = candidatePluginIds.length === 0
+    ? []
+    : await input.tx
+      .select({ pluginId: ConnectorMappingTable.pluginId })
+      .from(ConnectorMappingTable)
+      .where(inArray(ConnectorMappingTable.pluginId, candidatePluginIds))
+
+  const { marketplaceIdsToDelete, pluginIdsToDelete } = planConnectorImportedResourceCleanup({
+    activeMarketplaceMemberships,
+    activeMappingPluginIds: activeMappingRows
+      .map((row) => row.pluginId)
+      .filter((pluginId): pluginId is PluginId => Boolean(pluginId)),
+    activePluginMembershipPluginIds: activePluginMembershipRows.map((row) => row.pluginId),
+    candidateMarketplaceIds,
+    candidatePluginIds,
+  })
+
+  if (pluginIdsToDelete.length > 0) {
+    await input.tx.delete(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
+  }
+
+  if (marketplaceIdsToDelete.length > 0) {
+    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.marketplaceId, marketplaceIdsToDelete))
+    await input.tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIdsToDelete))
+    await input.tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIdsToDelete))
+  }
+
+  await assertConnectorImportedResourceCleanup({
+    marketplaceIdsToDelete,
+    pluginIdsToDelete,
+    tx: input.tx,
+  })
+
+  return {
+    deletedMarketplaceCount: marketplaceIdsToDelete.length,
+    deletedPluginCount: pluginIdsToDelete.length,
+  }
+}
+
 export async function getConnectorInstanceConfiguration(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const instance = await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
   const mappings = await db
@@ -1994,7 +2090,6 @@ export async function setConnectorInstanceAutoImport(input: { autoImportNewPlugi
 }
 
 export async function removeConnectorInstance(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const organizationId = input.context.organizationContext.organization.id
   const instance = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
 
   const mappingRows = await db
@@ -2031,36 +2126,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
 
-    if (pluginIds.length > 0) {
-      const remainingMemberships = await tx
-        .select({ pluginId: PluginConfigObjectTable.pluginId })
-        .from(PluginConfigObjectTable)
-        .where(inArray(PluginConfigObjectTable.pluginId, pluginIds))
-      const pluginsWithOtherContent = new Set(remainingMemberships.map((entry) => entry.pluginId))
-      const pluginIdsToDelete = pluginIds.filter((pluginId) => !pluginsWithOtherContent.has(pluginId))
-
-      if (pluginIdsToDelete.length > 0) {
-        await tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
-      }
-
-      const marketplaceMembershipRows = await tx
-        .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
-        .from(MarketplacePluginTable)
-      const marketplacesWithMembers = new Set(marketplaceMembershipRows.map((entry) => entry.marketplaceId))
-      const orphanMarketplaces = await tx
-        .select({ id: MarketplaceTable.id })
-        .from(MarketplaceTable)
-        .where(eq(MarketplaceTable.organizationId, organizationId))
-      const orphanIds = orphanMarketplaces
-        .map((entry) => entry.id)
-        .filter((marketplaceId) => !marketplacesWithMembers.has(marketplaceId))
-      if (orphanIds.length > 0) {
-        await tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, orphanIds))
-        await tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, orphanIds))
-      }
-    }
+    await cleanupConnectorImportedResources({ seedPluginIds: pluginIds, tx })
   })
 
   return {
