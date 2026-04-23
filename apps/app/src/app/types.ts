@@ -174,6 +174,7 @@ export type SettingsTab =
   | "den"
   | "skills"
   | "extensions"
+  | "environment"
   | "advanced"
   | "appearance"
   | "updates"

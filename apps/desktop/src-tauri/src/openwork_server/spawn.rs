@@ -224,6 +224,11 @@ pub fn spawn_openwork_server(
         .unwrap_or_else(|| Path::new("."));
     let mut command = command.args(args).current_dir(cwd);
 
+    // User env first so it can never override OPENWORK_TOKEN / credentials.
+    for (key, value) in crate::env_file::load_user_env_file() {
+        command = command.env(key, value);
+    }
+
     command = command
         .env("OPENWORK_TOKEN", token)
         .env("OPENWORK_HOST_TOKEN", host_token);

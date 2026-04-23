@@ -22,6 +22,7 @@ import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
+import { EnvService, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import {
@@ -204,13 +205,14 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
+  const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const restartReloadWatchers = () => {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
-  const routes = createRoutes(config, approvals, tokens, restartReloadWatchers);
+  const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -1007,6 +1009,7 @@ function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
   tokens: TokenService,
+  env: EnvService,
   onWorkspacesChanged: () => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1257,6 +1260,62 @@ function createRoutes(
     const ok = await tokens.revoke(ctx.params.id);
     if (!ok) {
       throw new ApiError(404, "token_not_found", "Token not found");
+    }
+    return jsonResponse({ ok: true });
+  });
+
+  // User-level env vars (see apps/app/pr/environment-variables.md). All routes
+  // are host-auth: the desktop shell is the only legitimate caller. Values are
+  // returned raw because there is no remote exposure — the React pane masks
+  // for display. Reload semantics are driven from the UI after a write;
+  // this surface is user-scoped, not workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host", async () => {
+    const items = await env.list();
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "PUT", "/env", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const rawEntries = Array.isArray(body.entries)
+      ? body.entries
+      : [{ key: body.key, value: body.value }];
+    const entries: Array<{ key: string; value: string }> = [];
+    for (const raw of rawEntries) {
+      if (!raw || typeof raw !== "object") {
+        throw new ApiError(400, "invalid_entry", "Each entry must be an object");
+      }
+      const candidate = raw as { key?: unknown; value?: unknown };
+      const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
+      const value = typeof candidate.value === "string" ? candidate.value : "";
+      if (!isValidEnvKey(key)) {
+        throw new ApiError(400, "invalid_env_key", `Invalid environment variable name: ${key || "<empty>"}`);
+      }
+      entries.push({ key, value });
+    }
+    if (entries.length === 0) {
+      throw new ApiError(400, "no_entries", "No entries provided");
+    }
+    try {
+      await env.upsertMany(entries);
+    } catch (error) {
+      if (error instanceof InvalidEnvKeyError) {
+        throw new ApiError(400, error.code, error.message);
+      }
+      throw error;
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "DELETE", "/env/:key", "host", async (ctx) => {
+    ensureWritable(config);
+    const key = ctx.params.key;
+    if (!isValidEnvKey(key)) {
+      throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+    }
+    const removed = await env.delete(key);
+    if (!removed) {
+      throw new ApiError(404, "env_not_found", "Environment variable not found");
     }
     return jsonResponse({ ok: true });
   });

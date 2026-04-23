@@ -19,10 +19,10 @@ import {
   writeFile,
   realpath,
 } from "node:fs/promises";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
-import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
+import { homedir, hostname, networkInterfaces, platform, tmpdir } from "node:os";
 import {
   basename,
   delimiter,
@@ -1673,21 +1673,67 @@ function resolveExtraPathEntries(): string[] {
   return entries;
 }
 
+// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
+// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+function resolveUserEnvFilePath(): string {
+  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return resolve(override);
+  if (platform() === "win32") {
+    const appData = (process.env.APPDATA ?? "").trim();
+    const root = appData || join(homedir(), "AppData", "Roaming");
+    return join(root, "openwork", "env.json");
+  }
+  return join(homedir(), ".config", "openwork", "env.json");
+}
+
+const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+
+// Synchronous, best-effort, never throws. Absent or malformed files return {}.
+// Reads on every spawn so UI edits are picked up on the next child start.
+function loadUserEnvFile(): Record<string, string> {
+  try {
+    const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
+    const parsed = JSON.parse(raw) as { variables?: unknown };
+    if (!Array.isArray(parsed.variables)) return {};
+    const out: Record<string, string> = {};
+    for (const entry of parsed.variables) {
+      if (!entry || typeof entry !== "object") continue;
+      const { key, value } = entry as { key?: unknown; value?: unknown };
+      if (typeof key !== "string" || typeof value !== "string") continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function buildSpawnEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const base = env ?? process.env;
+  // User env is layered first so existing process.env / caller overrides
+  // always win. This is what makes Linux GUI launches work: the shell env
+  // is empty for ANTHROPIC_API_KEY, the user file supplies it, but anything
+  // the shell or spawn-site already set (OPENWORK_TOKEN, etc.) is untouched.
+  const merged: NodeJS.ProcessEnv = { ...loadUserEnvFile() };
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined) merged[key] = value;
+  }
   const pathKey =
-    Object.prototype.hasOwnProperty.call(base, "PATH") ||
-    !Object.prototype.hasOwnProperty.call(base, "Path")
+    Object.prototype.hasOwnProperty.call(merged, "PATH") ||
+    !Object.prototype.hasOwnProperty.call(merged, "Path")
       ? "PATH"
       : "Path";
-  const currentPath = pathKey === "PATH" ? base.PATH : base.Path;
+  const currentPath = pathKey === "PATH" ? merged.PATH : merged.Path;
   const entries = [
     ...resolveExtraPathEntries(),
     ...splitPathEntries(currentPath),
   ];
   const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
-  if (!deduped.length) return { ...base };
-  return { ...base, [pathKey]: deduped.join(delimiter) };
+  if (!deduped.length) return merged;
+  return { ...merged, [pathKey]: deduped.join(delimiter) };
 }
 
 function resolveSidecarTarget(): SidecarTarget | null {

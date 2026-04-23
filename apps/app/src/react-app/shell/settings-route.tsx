@@ -25,6 +25,7 @@ import { AdvancedView } from "../domains/settings/pages/advanced-view";
 import { AppearanceView } from "../domains/settings/pages/appearance-view";
 import { DebugView } from "../domains/settings/pages/debug-view";
 import { DenView } from "../domains/settings/pages/den-view";
+import { EnvironmentView } from "../domains/settings/pages/environment-view";
 import { ExtensionsView } from "../domains/settings/pages/extensions-view";
 import { McpView } from "../domains/settings/pages/mcp-view";
 import { RecoveryView } from "../domains/settings/pages/recovery-view";
@@ -1233,6 +1234,14 @@ export function SettingsRoute() {
             onCleanupOpenworkDockerContainers={() => {
               setRouteError("Docker cleanup is not wired into the React settings route yet.");
             }}
+          />
+        );
+      case "environment":
+        return (
+          <EnvironmentView
+            client={openworkServerSnapshot.openworkServerClient}
+            isRemoteWorkspace={isRemoteWorkspace}
+            onStatusMessage={setConfigActionStatus}
           />
         );
       case "debug":

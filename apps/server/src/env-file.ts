@@ -1,0 +1,178 @@
+import { homedir, platform } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+
+import { ensureDir, exists } from "./utils.js";
+
+// User-level environment variables, persisted so the desktop shell can inject
+// them into every spawned child (OpenCode, OpenWork server, opencode-router).
+// Motivation: Linux GUI launches don't inherit shell env, so users set
+// ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
+// Scope: user/machine, not workspace. Not synced to the cloud.
+
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Keys that are reserved for internal wiring by the shell/orchestrator/server.
+// We refuse writes to these and strip them when reading for injection, so a
+// user can never accidentally (or intentionally) shadow auth credentials,
+// token paths, or process identity.
+const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+
+export type EnvRecord = {
+  key: string;
+  value: string;
+  updatedAt: number;
+};
+
+type EnvStoreFile = {
+  schemaVersion: number;
+  updatedAt: number;
+  variables: EnvRecord[];
+};
+
+export function isValidEnvKey(key: string): boolean {
+  return ENV_KEY_PATTERN.test(key);
+}
+
+export function isReservedEnvKey(key: string): boolean {
+  return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+// Deterministic, matches what the Rust/Node shells compute independently.
+// Do NOT key this off ServerConfig.configPath — the shell resolves the path
+// before the server config exists, and must agree with us byte-for-byte.
+export function resolveDefaultEnvStorePath(): string {
+  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return resolve(override);
+
+  if (platform() === "win32") {
+    const appData = (process.env.APPDATA ?? "").trim();
+    const root = appData || join(homedir(), "AppData", "Roaming");
+    return join(root, "openwork", "env.json");
+  }
+  return join(homedir(), ".config", "openwork", "env.json");
+}
+
+function parseRecord(raw: unknown): EnvRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Partial<EnvRecord>;
+  const key = typeof record.key === "string" ? record.key : "";
+  const value = typeof record.value === "string" ? record.value : "";
+  if (!isValidEnvKey(key)) return null;
+  return {
+    key,
+    value,
+    updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
+  };
+}
+
+async function readStore(path: string): Promise<EnvStoreFile> {
+  if (!(await exists(path))) {
+    return { schemaVersion: 1, updatedAt: Date.now(), variables: [] };
+  }
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as Partial<EnvStoreFile>;
+    const variables = Array.isArray(parsed.variables)
+      ? parsed.variables.map(parseRecord).filter((entry): entry is EnvRecord => Boolean(entry))
+      : [];
+    return {
+      schemaVersion: typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 1,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+      variables,
+    };
+  } catch {
+    return { schemaVersion: 1, updatedAt: Date.now(), variables: [] };
+  }
+}
+
+async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
+  await ensureDir(dirname(path));
+  const payload: EnvStoreFile = {
+    schemaVersion: 1,
+    updatedAt: Date.now(),
+    variables,
+  };
+  await writeFile(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  try {
+    await chmod(path, 0o600);
+  } catch {
+    // chmod is a no-op on Windows; values may still contain secrets.
+  }
+}
+
+export type EnvEntry = { key: string; value: string };
+
+export class EnvService {
+  private readonly path: string;
+  private loaded = false;
+  private variables: EnvRecord[] = [];
+
+  constructor(options?: { path?: string }) {
+    this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath();
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (this.loaded) return;
+    const store = await readStore(this.path);
+    this.variables = store.variables;
+    this.loaded = true;
+  }
+
+  async list(): Promise<EnvRecord[]> {
+    await this.ensureLoaded();
+    return this.variables.slice();
+  }
+
+  async upsertMany(entries: EnvEntry[]): Promise<void> {
+    await this.ensureLoaded();
+    const now = Date.now();
+    const next = new Map(this.variables.map((entry) => [entry.key, entry] as const));
+    for (const entry of entries) {
+      if (!isValidEnvKey(entry.key)) {
+        throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
+      }
+      if (isReservedEnvKey(entry.key)) {
+        throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
+      }
+      next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
+    }
+    this.variables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
+    await writeStore(this.path, this.variables);
+  }
+
+  async delete(key: string): Promise<boolean> {
+    await this.ensureLoaded();
+    const before = this.variables.length;
+    this.variables = this.variables.filter((entry) => entry.key !== key);
+    if (this.variables.length === before) return false;
+    await writeStore(this.path, this.variables);
+    return true;
+  }
+
+  // Used by the Electron + orchestrator shells at spawn time. The Tauri Rust
+  // shell has its own equivalent in src-tauri/src/env_file.rs — keep the two
+  // readers byte-for-byte in sync on path resolution and reserved-keys policy.
+  static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
+    const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
+    const store = await readStore(path);
+    const out: Record<string, string> = {};
+    for (const entry of store.variables) {
+      if (isReservedEnvKey(entry.key)) continue;
+      out[entry.key] = entry.value;
+    }
+    return out;
+  }
+}
+
+export class InvalidEnvKeyError extends Error {
+  readonly code: "invalid_env_key" | "reserved_env_key";
+  constructor(key: string, code: "invalid_env_key" | "reserved_env_key") {
+    super(
+      code === "reserved_env_key"
+        ? `Environment variable name is reserved for OpenWork internals: ${key}`
+        : `Invalid environment variable name: ${key}`,
+    );
+    this.code = code;
+  }
+}

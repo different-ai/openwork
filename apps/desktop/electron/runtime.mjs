@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -275,6 +275,45 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   }
 }
 
+// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
+// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+function resolveUserEnvFilePath() {
+  const override = String(process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return path.resolve(override);
+  if (process.platform === "win32") {
+    const appData = String(process.env.APPDATA ?? "").trim();
+    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(root, "openwork", "env.json");
+  }
+  return path.join(os.homedir(), ".config", "openwork", "env.json");
+}
+
+const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
+
+// Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
+// are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
+function loadUserEnvFile() {
+  try {
+    const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.variables)) return {};
+    const out = {};
+    for (const entry of parsed.variables) {
+      if (!entry || typeof entry !== "object") continue;
+      const { key, value } = entry;
+      if (typeof key !== "string" || typeof value !== "string") continue;
+      if (!USER_ENV_KEY_PATTERN.test(key)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
@@ -459,7 +498,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function buildChildEnv(extra = {}) {
     /** @type {NodeJS.ProcessEnv} */
-    const env = { ...process.env, BUN_CONFIG_DNS_RESULT_ORDER: "verbatim", ...extra };
+    // User env is layered first so process.env + any caller overrides always
+    // win. See apps/server/src/env-file.ts and src-tauri/src/env_file.rs —
+    // all three loaders must agree on path + reserved-keys policy.
+    const env = {
+      ...loadUserEnvFile(),
+      ...process.env,
+      BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
+      ...extra,
+    };
     const pathEnv = prependedPath(sidecarDirs);
     if (pathEnv) {
       env.PATH = pathEnv;

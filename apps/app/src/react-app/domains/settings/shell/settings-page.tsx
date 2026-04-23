@@ -17,6 +17,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_skills");
     case "extensions":
       return t("settings.tab_extensions");
+    case "environment":
+      return t("settings.tab_environment");
     case "advanced":
       return t("settings.tab_advanced");
     case "appearance":
@@ -40,6 +42,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_skills");
     case "extensions":
       return t("settings.tab_description_extensions");
+    case "environment":
+      return t("settings.tab_description_environment");
     case "advanced":
       return t("settings.tab_description_advanced");
     case "appearance":
@@ -60,7 +64,7 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["den", "appearance", "updates", "recovery"];
+  const tabs: SettingsTab[] = ["den", "appearance", "environment", "updates", "recovery"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }

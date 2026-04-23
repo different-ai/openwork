@@ -1152,6 +1152,32 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
+
+    // User-level env vars (host-auth only — desktop shell is the sole caller).
+    // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
+    listUserEnv: () =>
+      requestJson<{ items: Array<{ key: string; value: string; updatedAt: number }> }>(
+        baseUrl,
+        "/env",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    upsertUserEnv: (entries: Array<{ key: string; value: string }>) =>
+      requestJson<{ ok: true; count: number }>(baseUrl, "/env", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: { entries },
+        timeoutMs: timeouts.config,
+      }),
+
+    deleteUserEnv: (key: string) =>
+      requestJson<{ ok: true }>(baseUrl, `/env/${encodeURIComponent(key)}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.config,
+      }),
   };
 }
 
