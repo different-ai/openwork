@@ -108,7 +108,9 @@ export function IntegrationsScreen() {
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{meta.description}</p>
+                    {!isConnected ? (
+                      <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{meta.description}</p>
+                    ) : null}
                   </div>
 
                   <div className="shrink-0">
