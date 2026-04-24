@@ -21,7 +21,7 @@ export function AppearanceView(props: AppearanceViewProps) {
       <div className={`${settingsPanelClass} space-y-4`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.appearance_title")}</div>
-          <div className="text-xs text-gray-9">{t("settings.appearance_hint")}</div>
+          <div className="text-xs text-gray-11">{t("settings.appearance_hint")}</div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -53,7 +53,7 @@ export function AppearanceView(props: AppearanceViewProps) {
 
         <div className="space-y-2">
           <div className="text-xs font-medium text-gray-11">{t("settings.language")}</div>
-          <div className="text-xs text-gray-9">{t("settings.language.description")}</div>
+          <div className="text-xs text-gray-11">{t("settings.language.description")}</div>
           <div className="flex flex-wrap gap-2">
             {LANGUAGE_OPTIONS.map((option) => (
               <Button
@@ -69,20 +69,20 @@ export function AppearanceView(props: AppearanceViewProps) {
           </div>
         </div>
 
-        <div className="text-xs text-gray-8">{t("settings.theme_system_hint")}</div>
+        <div className="text-xs text-gray-11">{t("settings.theme_system_hint")}</div>
       </div>
 
       {isDesktopRuntime() ? (
         <div className="space-y-3 rounded-2xl border border-gray-6/50 bg-gray-2/30 p-5">
           <div>
             <div className="text-sm font-medium text-gray-12">{t("settings.appearance_title")}</div>
-            <div className="text-xs text-gray-10">{t("settings.window_appearance_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.window_appearance_desc")}</div>
           </div>
 
           <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
             <div className="min-w-0">
               <div className="text-sm text-gray-12">{t("settings.hide_titlebar")}</div>
-              <div className="text-xs text-gray-7">{t("settings.hide_titlebar_desc")}</div>
+              <div className="text-xs text-gray-11">{t("settings.hide_titlebar_desc")}</div>
             </div>
             <Button
               variant="outline"

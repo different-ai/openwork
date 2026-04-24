@@ -154,8 +154,8 @@ function SlackIcon({ size = 20 }: { size?: number }) {
 function StatusPill(props: { label: string; value: string; ok: boolean }) {
   return (
     <div className="flex-1 rounded-lg border border-gray-4 bg-gray-1 px-3.5 py-2.5">
-      <div className="mb-0.5 text-[11px] text-gray-9">{props.label}</div>
-      <div className={`text-[13px] font-semibold ${props.ok ? "text-gray-12" : "text-gray-8"}`}>
+      <div className="mb-0.5 text-[11px] text-gray-11">{props.label}</div>
+      <div className={`text-[13px] font-semibold ${props.ok ? "text-gray-12" : "text-gray-11"}`}>
         {props.value}
       </div>
     </div>
@@ -233,22 +233,22 @@ export function MessagingView(props: MessagingViewProps) {
         </div>
 
         {props.showHeader !== false ? (
-          <p className="text-sm leading-relaxed text-gray-9">{t("identities.subtitle")}</p>
+          <p className="text-sm leading-relaxed text-gray-11">{t("identities.subtitle")}</p>
         ) : null}
 
-        <div className="mt-1.5 break-all font-mono text-[11px] text-gray-8">
+        <div className="mt-1.5 break-all font-mono text-[11px] text-gray-11">
           {t("identities.workspace_scope_prefix")} {workspaceScopeLabel}
         </div>
-        {props.reconnectStatus ? <div className="mt-1 text-[11px] text-gray-9">{props.reconnectStatus}</div> : null}
+        {props.reconnectStatus ? <div className="mt-1 text-[11px] text-gray-11">{props.reconnectStatus}</div> : null}
         {props.reconnectError ? <div className="mt-1 text-[11px] text-red-12">{props.reconnectError}</div> : null}
-        {props.messagingStatus ? <div className="mt-1 text-[11px] text-gray-9">{props.messagingStatus}</div> : null}
+        {props.messagingStatus ? <div className="mt-1 text-[11px] text-gray-11">{props.messagingStatus}</div> : null}
         {props.messagingError ? <div className="mt-1 text-[11px] text-red-12">{props.messagingError}</div> : null}
       </div>
 
       {!serverReady ? (
         <div className="rounded-xl border border-gray-4 bg-gray-1 p-5">
           <div className="text-sm font-semibold text-gray-12">{t("identities.connect_server_title")}</div>
-          <div className="mt-1 text-xs text-gray-10">{t("identities.connect_server_desc")}</div>
+          <div className="mt-1 text-xs text-gray-11">{t("identities.connect_server_desc")}</div>
         </div>
       ) : null}
 
@@ -266,7 +266,7 @@ export function MessagingView(props: MessagingViewProps) {
                 <button
                   type="button"
                   className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                    props.activeTab === "general" ? "bg-gray-12 text-gray-1" : "text-gray-10 hover:bg-gray-2"
+                    props.activeTab === "general" ? "bg-gray-12 text-gray-1" : "text-gray-11 hover:bg-gray-2"
                   }`}
                   onClick={() => props.onSelectTab("general")}
                 >
@@ -275,7 +275,7 @@ export function MessagingView(props: MessagingViewProps) {
                 <button
                   type="button"
                   className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                    props.activeTab === "advanced" ? "bg-gray-12 text-gray-1" : "text-gray-10 hover:bg-gray-2"
+                    props.activeTab === "advanced" ? "bg-gray-12 text-gray-1" : "text-gray-11 hover:bg-gray-2"
                   }`}
                   onClick={() => props.onSelectTab("advanced")}
                 >
@@ -296,8 +296,8 @@ export function MessagingView(props: MessagingViewProps) {
           {!props.messagingEnabled ? (
             <div className="space-y-3 rounded-xl border border-gray-4 bg-gray-1 px-4 py-4">
               <div className="text-sm font-semibold text-gray-12">{t("identities.messaging_disabled_title")}</div>
-              <p className="text-xs leading-relaxed text-gray-10">{t("identities.messaging_disabled_risk")}</p>
-              <p className="text-xs leading-relaxed text-gray-10">{t("identities.messaging_disabled_hint")}</p>
+              <p className="text-xs leading-relaxed text-gray-11">{t("identities.messaging_disabled_risk")}</p>
+              <p className="text-xs leading-relaxed text-gray-11">{t("identities.messaging_disabled_hint")}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="primary"
@@ -314,7 +314,7 @@ export function MessagingView(props: MessagingViewProps) {
           {props.activeTab === "general" && props.messagingEnabled ? (
             <>
               {props.messagingRestartRequired ? (
-                <div className="rounded-xl border border-gray-4 bg-gray-1 px-4 py-3 text-xs leading-relaxed text-gray-10">
+                <div className="rounded-xl border border-gray-4 bg-gray-1 px-4 py-3 text-xs leading-relaxed text-gray-11">
                   {t("identities.messaging_sidecar_not_running")}
                   <div className="mt-3">
                     <Button
@@ -384,7 +384,7 @@ export function MessagingView(props: MessagingViewProps) {
               </div>
 
               <div>
-                <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-gray-9">
+                <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-gray-11">
                   {t("identities.available_channels")}
                 </div>
 
@@ -409,11 +409,11 @@ export function MessagingView(props: MessagingViewProps) {
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-0.5 text-[13px] leading-snug text-gray-9">{t("identities.telegram_desc")}</div>
+                        <div className="mt-0.5 text-[13px] leading-snug text-gray-11">{t("identities.telegram_desc")}</div>
                       </div>
                       <ChevronRight
                         size={16}
-                        className={`shrink-0 text-gray-8 transition-transform ${
+                        className={`shrink-0 text-gray-11 transition-transform ${
                           props.expandedChannel === "telegram" ? "rotate-90" : ""
                         }`}
                       />
@@ -444,7 +444,7 @@ export function MessagingView(props: MessagingViewProps) {
                                         <span className="font-mono text-[12px]">{item.id}</span>
                                       </span>
                                     </div>
-                                    <div className="mt-0.5 pl-3.5 text-[11px] text-gray-9">
+                                    <div className="mt-0.5 pl-3.5 text-[11px] text-gray-11">
                                       {item.enabled ? t("identities.enabled_label") : t("identities.disabled_label")} · {item.running ? t("identities.running_label") : t("identities.stopped_label")} · {item.access === "private" ? t("identities.private_label") : t("identities.public_label")}
                                     </div>
                                   </div>
@@ -462,7 +462,7 @@ export function MessagingView(props: MessagingViewProps) {
 
                             <div className="flex gap-2.5">
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.status_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.status_label")}</div>
                                 <div className="flex items-center gap-1.5">
                                   <div
                                     className={`h-1.5 w-1.5 rounded-full ${
@@ -473,7 +473,7 @@ export function MessagingView(props: MessagingViewProps) {
                                     className={`text-[13px] font-semibold ${
                                       props.telegram.identities.some((item) => item.running)
                                         ? "text-emerald-11"
-                                        : "text-gray-10"
+                                        : "text-gray-11"
                                     }`}
                                   >
                                     {props.telegram.identities.some((item) => item.running)
@@ -483,20 +483,20 @@ export function MessagingView(props: MessagingViewProps) {
                                 </div>
                               </div>
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.identities_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.identities_label")}</div>
                                 <div className="text-[13px] font-semibold text-gray-12">
                                   {props.telegram.identities.length} {t("identities.configured_suffix")}
                                 </div>
                               </div>
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.channel_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.channel_label")}</div>
                                 <div className="text-[13px] font-semibold text-gray-12">
                                   {props.health?.channels.telegram ? t("common.on") : t("common.off")}
                                 </div>
                               </div>
                             </div>
 
-                            {props.telegram.status ? <div className="text-[11px] text-gray-9">{props.telegram.status}</div> : null}
+                            {props.telegram.status ? <div className="text-[11px] text-gray-11">{props.telegram.status}</div> : null}
                             {props.telegram.error ? <div className="text-[11px] text-red-12">{props.telegram.error}</div> : null}
                           </>
                         ) : null}
@@ -505,7 +505,7 @@ export function MessagingView(props: MessagingViewProps) {
                           {props.telegram.identities.length === 0 ? (
                             <div className="space-y-2.5 rounded-xl border border-gray-4 bg-gray-2/60 px-3.5 py-3">
                               <div className="text-[12px] font-semibold text-gray-12">{t("identities.quick_setup")}</div>
-                              <ol className="space-y-2 text-[12px] leading-relaxed text-gray-10">
+                              <ol className="space-y-2 text-[12px] leading-relaxed text-gray-11">
                                 <li className="flex items-start gap-2">
                                   <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
                                   <span>
@@ -551,7 +551,7 @@ export function MessagingView(props: MessagingViewProps) {
                             {t("identities.enabled_label")}
                           </label>
 
-                          <div className="rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[11px] leading-relaxed text-gray-10">
+                          <div className="rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[11px] leading-relaxed text-gray-11">
                             {t("identities.telegram_bot_access_desc")}
                           </div>
 
@@ -562,7 +562,7 @@ export function MessagingView(props: MessagingViewProps) {
                               disabled={props.telegram.saving || !scopedWorkspaceReady || !props.telegram.token.trim()}
                               className={`flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
                                 props.telegram.saving || !scopedWorkspaceReady || !props.telegram.token.trim()
-                                  ? "cursor-not-allowed border-gray-5 bg-gray-3 text-gray-8"
+                                  ? "cursor-not-allowed border-gray-5 bg-gray-3 text-gray-11"
                                   : "cursor-pointer border-gray-6 bg-gray-12 text-gray-1 hover:bg-gray-11"
                               }`}
                             >
@@ -632,7 +632,7 @@ export function MessagingView(props: MessagingViewProps) {
                           ) : null}
 
                           {props.telegram.identities.length === 0 && props.telegram.status ? (
-                            <div className="text-[11px] text-gray-9">{props.telegram.status}</div>
+                            <div className="text-[11px] text-gray-11">{props.telegram.status}</div>
                           ) : null}
                           {props.telegram.identities.length === 0 && props.telegram.error ? (
                             <div className="text-[11px] text-red-12">{props.telegram.error}</div>
@@ -662,11 +662,11 @@ export function MessagingView(props: MessagingViewProps) {
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-0.5 text-[13px] leading-snug text-gray-9">{t("identities.slack_desc")}</div>
+                        <div className="mt-0.5 text-[13px] leading-snug text-gray-11">{t("identities.slack_desc")}</div>
                       </div>
                       <ChevronRight
                         size={16}
-                        className={`shrink-0 text-gray-8 transition-transform ${
+                        className={`shrink-0 text-gray-11 transition-transform ${
                           props.expandedChannel === "slack" ? "rotate-90" : ""
                         }`}
                       />
@@ -697,7 +697,7 @@ export function MessagingView(props: MessagingViewProps) {
                                         <span className="font-mono text-[12px]">{item.id}</span>
                                       </span>
                                     </div>
-                                    <div className="mt-0.5 pl-3.5 text-[11px] text-gray-9">
+                                    <div className="mt-0.5 pl-3.5 text-[11px] text-gray-11">
                                       {item.enabled ? t("identities.enabled_label") : t("identities.disabled_label")} · {item.running ? t("identities.running_label") : t("identities.stopped_label")}
                                     </div>
                                   </div>
@@ -715,7 +715,7 @@ export function MessagingView(props: MessagingViewProps) {
 
                             <div className="flex gap-2.5">
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.status_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.status_label")}</div>
                                 <div className="flex items-center gap-1.5">
                                   <div
                                     className={`h-1.5 w-1.5 rounded-full ${
@@ -726,7 +726,7 @@ export function MessagingView(props: MessagingViewProps) {
                                     className={`text-[13px] font-semibold ${
                                       props.slack.identities.some((item) => item.running)
                                         ? "text-emerald-11"
-                                        : "text-gray-10"
+                                        : "text-gray-11"
                                     }`}
                                   >
                                     {props.slack.identities.some((item) => item.running)
@@ -736,27 +736,27 @@ export function MessagingView(props: MessagingViewProps) {
                                 </div>
                               </div>
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.identities_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.identities_label")}</div>
                                 <div className="text-[13px] font-semibold text-gray-12">
                                   {props.slack.identities.length} {t("identities.configured_suffix")}
                                 </div>
                               </div>
                               <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.channel_label")}</div>
+                                <div className="mb-0.5 text-[11px] text-gray-11">{t("identities.channel_label")}</div>
                                 <div className="text-[13px] font-semibold text-gray-12">
                                   {props.health?.channels.slack ? t("common.on") : t("common.off")}
                                 </div>
                               </div>
                             </div>
 
-                            {props.slack.status ? <div className="text-[11px] text-gray-9">{props.slack.status}</div> : null}
+                            {props.slack.status ? <div className="text-[11px] text-gray-11">{props.slack.status}</div> : null}
                             {props.slack.error ? <div className="text-[11px] text-red-12">{props.slack.error}</div> : null}
                           </>
                         ) : null}
 
                         <div className="space-y-2.5">
                           {props.slack.identities.length === 0 ? (
-                            <p className="text-[13px] leading-relaxed text-gray-10">{t("identities.slack_intro")}</p>
+                            <p className="text-[13px] leading-relaxed text-gray-11">{t("identities.slack_intro")}</p>
                           ) : null}
 
                           <div className="space-y-2">
@@ -807,7 +807,7 @@ export function MessagingView(props: MessagingViewProps) {
                           </button>
 
                           {props.slack.identities.length === 0 && props.slack.status ? (
-                            <div className="text-[11px] text-gray-9">{props.slack.status}</div>
+                            <div className="text-[11px] text-gray-11">{props.slack.status}</div>
                           ) : null}
                           {props.slack.identities.length === 0 && props.slack.error ? (
                             <div className="text-[11px] text-red-12">{props.slack.error}</div>
@@ -824,28 +824,28 @@ export function MessagingView(props: MessagingViewProps) {
           {props.activeTab === "advanced" && props.messagingEnabled ? (
             <>
               <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-9">
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-11">
                   {t("identities.message_routing_title")}
                 </div>
-                <p className="mb-3 text-[13px] leading-relaxed text-gray-9">{t("identities.message_routing_desc")}</p>
+                <p className="mb-3 text-[13px] leading-relaxed text-gray-11">{t("identities.message_routing_desc")}</p>
 
                 <div className="space-y-3 rounded-xl border border-gray-4 bg-gray-2/50 px-4 py-3.5">
                   <div className="flex items-center gap-2">
-                    <Shield size={16} className="text-gray-9" />
+                    <Shield size={16} className="text-gray-11" />
                     <span className="text-[13px] font-medium text-gray-11">{t("identities.default_routing")}</span>
                   </div>
                   <div className="flex items-center gap-2 pl-6">
                     <span className="rounded-md bg-gray-4 px-2.5 py-1 text-[12px] font-medium text-gray-11">
                       {t("identities.all_channels")}
                     </span>
-                    <ArrowRight size={14} className="text-gray-8" />
+                    <ArrowRight size={14} className="text-gray-11" />
                     <span className="rounded-md bg-dls-accent/10 px-2.5 py-1 text-[12px] font-medium text-dls-accent">
                       {defaultRoutingDirectory}
                     </span>
                   </div>
                 </div>
 
-                <div className="mt-2.5 text-xs text-gray-10">
+                <div className="mt-2.5 text-xs text-gray-11">
                   {t("identities.routing_override_prefix")}{" "}
                   <code className="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/dir &lt;path&gt;</code>{" "}
                   {t("identities.routing_override_suffix")}
@@ -856,15 +856,15 @@ export function MessagingView(props: MessagingViewProps) {
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-[13px] font-semibold text-gray-12">{t("identities.agent_behavior_title")}</div>
-                    <div className="mt-0.5 text-[12px] text-gray-9">{t("identities.agent_behavior_desc")}</div>
+                    <div className="mt-0.5 text-[12px] text-gray-11">{t("identities.agent_behavior_desc")}</div>
                   </div>
-                  <span className="rounded-md border border-gray-4 bg-gray-2/50 px-2 py-1 text-[11px] font-mono text-gray-10">
+                  <span className="rounded-md border border-gray-4 bg-gray-2/50 px-2 py-1 text-[11px] font-mono text-gray-11">
                     {agentFilePath}
                   </span>
                 </div>
 
                 {props.health?.agent ? (
-                  <div className="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-10">
+                  <div className="rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 text-[11px] text-gray-11">
                     {t("identities.agent_scope_status", undefined, {
                       status: props.health.agent.loaded ? t("identities.agent_status_loaded") : t("identities.agent_status_missing"),
                       agent: props.health.agent.selected || t("identities.agent_none"),
@@ -872,7 +872,7 @@ export function MessagingView(props: MessagingViewProps) {
                   </div>
                 ) : null}
 
-                {props.agent.loading ? <div className="text-[11px] text-gray-9">{t("identities.agent_loading")}</div> : null}
+                {props.agent.loading ? <div className="text-[11px] text-gray-11">{t("identities.agent_loading")}</div> : null}
 
                 {!props.agent.exists && !props.agent.loading ? (
                   <div className="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
@@ -915,23 +915,23 @@ export function MessagingView(props: MessagingViewProps) {
                     {props.agent.saving ? t("identities.saving") : t("identities.save_behavior")}
                   </Button>
                   {agentDirty && !props.agent.saving ? (
-                    <span className="text-[11px] text-gray-9">{t("identities.unsaved_changes")}</span>
+                    <span className="text-[11px] text-gray-11">{t("identities.unsaved_changes")}</span>
                   ) : null}
                 </div>
 
-                {props.agent.status ? <div className="text-[11px] text-gray-9">{props.agent.status}</div> : null}
+                {props.agent.status ? <div className="text-[11px] text-gray-11">{props.agent.status}</div> : null}
                 {props.agent.error ? <div className="text-[11px] text-red-12">{props.agent.error}</div> : null}
               </div>
 
               <div className="space-y-3 rounded-xl border border-gray-4 bg-gray-1 p-4">
                 <div>
                   <div className="text-[13px] font-semibold text-gray-12">{t("identities.send_test_title")}</div>
-                  <div className="mt-0.5 text-[12px] text-gray-9">{t("identities.send_test_desc")}</div>
+                  <div className="mt-0.5 text-[12px] text-gray-11">{t("identities.send_test_desc")}</div>
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-[12px] text-gray-9">{t("identities.channel_label")}</label>
+                    <label className="mb-1 block text-[12px] text-gray-11">{t("identities.channel_label")}</label>
                     <select
                       className="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12"
                       value={props.sendTest.channel}
@@ -975,7 +975,7 @@ export function MessagingView(props: MessagingViewProps) {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[12px] text-gray-9">{t("identities.message_label")}</label>
+                  <label className="mb-1 block text-[12px] text-gray-11">{t("identities.message_label")}</label>
                   <textarea
                     className="min-h-[90px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"
                     placeholder={t("identities.send_test_button")}
@@ -993,12 +993,12 @@ export function MessagingView(props: MessagingViewProps) {
                   >
                     {props.sendTest.busy ? t("identities.sending") : t("identities.send_test_button")}
                   </Button>
-                  {props.sendTest.status ? <span className="text-[11px] text-gray-9">{props.sendTest.status}</span> : null}
+                  {props.sendTest.status ? <span className="text-[11px] text-gray-11">{props.sendTest.status}</span> : null}
                 </div>
 
                 {props.sendTest.error ? <div className="text-[11px] text-red-12">{props.sendTest.error}</div> : null}
                 {props.sendTest.result ? (
-                  <div className="space-y-1 rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 font-mono text-[11px] text-gray-10">
+                  <div className="space-y-1 rounded-lg border border-gray-4 bg-gray-2/40 px-3 py-2 font-mono text-[11px] text-gray-11">
                     <div>
                       sent={props.sendTest.result.sent} attempted={props.sendTest.result.attempted}
                       {props.sendTest.result.failures?.length ? ` failures=${props.sendTest.result.failures.length}` : ""}

@@ -64,7 +64,7 @@ export function PluginsView(props: PluginsViewProps) {
             <div className="text-sm font-medium text-gray-12">
               {t("plugins.title")}
             </div>
-            <div className="text-xs text-gray-10">{t("plugins.desc")}</div>
+            <div className="text-xs text-gray-11">{t("plugins.desc")}</div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -72,7 +72,7 @@ export function PluginsView(props: PluginsViewProps) {
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 scope === "project"
                   ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
+                  : "text-gray-11 border-gray-6 hover:text-gray-12"
               }`}
               onClick={() => {
                 extensions.setPluginScope("project");
@@ -87,10 +87,10 @@ export function PluginsView(props: PluginsViewProps) {
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 scope === "global"
                   ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
+                  : "text-gray-11 border-gray-6 hover:text-gray-12"
               } ${
                 !props.canUseGlobalScope
-                  ? "opacity-40 cursor-not-allowed hover:text-gray-10"
+                  ? "opacity-40 cursor-not-allowed hover:text-gray-11"
                   : ""
               }`}
               onClick={() => {
@@ -110,15 +110,15 @@ export function PluginsView(props: PluginsViewProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-1 text-xs text-gray-10">
+        <div className="flex flex-col gap-1 text-xs text-gray-11">
           <div>{t("plugins.config_label")}</div>
-          <div className="text-gray-7 font-mono truncate">
+          <div className="text-gray-11 font-mono truncate">
             {extensions.pluginConfigPath() ??
               extensions.pluginConfig()?.path ??
               t("plugins.not_loaded_yet")}
           </div>
           {props.accessHint ? (
-            <div className="text-gray-9">{props.accessHint}</div>
+            <div className="text-gray-11">{props.accessHint}</div>
           ) : null}
         </div>
 
@@ -146,11 +146,11 @@ export function PluginsView(props: PluginsViewProps) {
                       <div className="text-sm font-medium text-gray-12 font-mono">
                         {plugin.name}
                       </div>
-                      <div className="text-xs text-gray-10 mt-1">
+                      <div className="text-xs text-gray-11 mt-1">
                         {plugin.description}
                       </div>
                       {plugin.packageName !== plugin.name ? (
-                        <div className="text-xs text-gray-7 font-mono mt-1">
+                        <div className="text-xs text-gray-11 font-mono mt-1">
                           {plugin.packageName}
                         </div>
                       ) : null}
@@ -202,7 +202,7 @@ export function PluginsView(props: PluginsViewProps) {
                           <div className="text-xs font-medium text-gray-11">
                             {idx + 1}. {step.title}
                           </div>
-                          <div className="text-xs text-gray-10">
+                          <div className="text-xs text-gray-11">
                             {step.description}
                           </div>
                           {step.command ? (
@@ -211,12 +211,12 @@ export function PluginsView(props: PluginsViewProps) {
                             </div>
                           ) : null}
                           {step.note ? (
-                            <div className="text-xs text-gray-10">
+                            <div className="text-xs text-gray-11">
                               {step.note}
                             </div>
                           ) : null}
                           {step.url ? (
-                            <div className="text-xs text-gray-10">
+                            <div className="text-xs text-gray-11">
                               Open:{" "}
                               <span className="font-mono text-gray-11">
                                 {step.url}
@@ -224,7 +224,7 @@ export function PluginsView(props: PluginsViewProps) {
                             </div>
                           ) : null}
                           {step.path ? (
-                            <div className="text-xs text-gray-10">
+                            <div className="text-xs text-gray-11">
                               Path:{" "}
                               <span className="font-mono text-gray-11">
                                 {step.path}
@@ -242,7 +242,7 @@ export function PluginsView(props: PluginsViewProps) {
         </div>
 
         {extensions.pluginList().length === 0 ? (
-          <div className="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-10">
+          <div className="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-11">
             {t("plugins.empty")}
           </div>
         ) : (
@@ -253,11 +253,11 @@ export function PluginsView(props: PluginsViewProps) {
                 className="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5"
               >
                 <div className="text-sm text-gray-12 font-mono flex items-center gap-2">
-                  <Cpu size={14} className="text-gray-10" />
+                  <Cpu size={14} className="text-gray-11" />
                   {pluginName}
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="text-[10px] uppercase tracking-wide text-gray-10">
+                  <div className="text-[10px] uppercase tracking-wide text-gray-11">
                     {t("plugins.enabled")}
                   </div>
                   <Button
@@ -301,7 +301,7 @@ export function PluginsView(props: PluginsViewProps) {
             </Button>
           </div>
           {extensions.pluginStatus() ? (
-            <div className="text-xs text-gray-10">
+            <div className="text-xs text-gray-11">
               {extensions.pluginStatus()}
             </div>
           ) : null}

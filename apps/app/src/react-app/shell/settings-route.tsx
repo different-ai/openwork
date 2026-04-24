@@ -302,7 +302,7 @@ function applyThemeMode(mode: PersistedThemeMode) {
 
 function PlaceholderSettingsView(props: { title: string; detail: string }) {
   return (
-    <div className="rounded-[28px] border border-dls-border bg-dls-surface p-5 text-sm text-gray-10 md:p-6">
+    <div className="rounded-[28px] border border-dls-border bg-dls-surface p-5 text-sm text-gray-11 md:p-6">
       <div className="font-medium text-gray-12">{props.title}</div>
       <div className="mt-2 leading-relaxed">{props.detail}</div>
     </div>

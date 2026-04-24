@@ -431,7 +431,7 @@ function FileCard(props: {
       ) : (
         <div
           className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-            props.tone === "user" ? "bg-gray-3/60 text-gray-11" : "bg-gray-2/60 text-gray-10"
+            props.tone === "user" ? "bg-gray-3/60 text-gray-11" : "bg-gray-2/60 text-gray-11"
           }`}
         >
           <FileIcon size={20} />
@@ -440,7 +440,7 @@ function FileCard(props: {
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium leading-snug text-gray-12">{title}</div>
         {badge ? (
-          <div className="mt-1 inline-flex rounded-md bg-gray-3/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-10">
+          <div className="mt-1 inline-flex rounded-md bg-gray-3/50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-11">
             {badge}
           </div>
         ) : null}
@@ -450,7 +450,7 @@ function FileCard(props: {
         <div className="relative">
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-xl text-gray-9 opacity-0 transition-all hover:bg-gray-3/60 hover:text-gray-12 group-hover:opacity-100"
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-gray-11 opacity-0 transition-all hover:bg-gray-3/60 hover:text-gray-12 group-hover:opacity-100"
             onClick={() => setMenuOpen((value) => !value)}
             title="File actions"
           >
@@ -525,14 +525,14 @@ function StepRow(props: {
       ? (props.part as { text: string }).text
       : "";
     return (
-      <div className="text-[14px] leading-[1.7] text-gray-9 whitespace-pre-wrap">
+      <div className="text-[14px] leading-[1.7] text-gray-11 whitespace-pre-wrap">
         <div className="max-w-[720px]">{cleanReasoningPreview(raw) || headline}</div>
       </div>
     );
   }
 
   return (
-    <div className="text-[14px] text-gray-9">
+    <div className="text-[14px] text-gray-11">
       <button
         type="button"
         className="w-full text-left transition-colors hover:text-dls-text disabled:cursor-default"
@@ -548,7 +548,7 @@ function StepRow(props: {
           {expandable ? (
             <ChevronDown
               size={14}
-              className={`mt-[2px] shrink-0 text-gray-8 transition-transform ${
+              className={`mt-[2px] shrink-0 text-gray-11 transition-transform ${
                 props.expanded ? "" : "-rotate-90"
               }`}
             />
@@ -559,16 +559,16 @@ function StepRow(props: {
         <div className="mt-3 ml-[22px] space-y-3">
           {hasStructuredValue(toolInput) ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Request</div>
-              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-11">Request</div>
+              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-11">
                 {formatStructuredValue(toolInput)}
               </pre>
             </div>
           ) : null}
           {hasStructuredValue(toolOutput) ? (
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Result</div>
-              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.12em] text-gray-11">Result</div>
+              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-11">
                 {formatStructuredValue(toolOutput)}
               </pre>
             </div>

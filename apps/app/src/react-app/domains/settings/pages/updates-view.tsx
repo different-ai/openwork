@@ -66,9 +66,9 @@ export function UpdatesView(props: UpdatesViewProps) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-sm font-medium text-gray-12">{t("settings.updates_title")}</div>
-            <div className="text-xs text-gray-10">{t("settings.updates_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.updates_desc")}</div>
           </div>
-          <div className="font-mono text-xs text-gray-7">{props.appVersion ? `v${props.appVersion}` : ""}</div>
+          <div className="font-mono text-xs text-gray-11">{props.appVersion ? `v${props.appVersion}` : ""}</div>
         </div>
 
         {props.webDeployment ? (
@@ -85,7 +85,7 @@ export function UpdatesView(props: UpdatesViewProps) {
               <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
                 <div className="space-y-0.5">
                   <div className="text-sm text-gray-12">Release channel</div>
-                  <div className="text-xs text-gray-7">
+                  <div className="text-xs text-gray-11">
                     Stable is the default. Alpha auto-updates from every merge to{" "}
                     <code className="rounded bg-gray-2 px-1 py-0.5 text-[11px]">dev</code>{" "}
                     (macOS only).
@@ -101,7 +101,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                         className={`rounded-full px-3 py-1 font-medium transition-colors ${
                           active
                             ? "bg-gray-12/12 text-gray-12 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]"
-                            : "text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                            : "text-gray-11 hover:bg-gray-2/70 hover:text-gray-12"
                         } ${!props.onReleaseChannelChange ? "cursor-default opacity-70" : ""}`}
                         onClick={() => props.onReleaseChannelChange?.(value)}
                         disabled={!props.onReleaseChannelChange}
@@ -116,14 +116,14 @@ export function UpdatesView(props: UpdatesViewProps) {
             <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
               <div className="space-y-0.5">
                 <div className="text-sm text-gray-12">{t("settings.background_checks_title")}</div>
-                <div className="text-xs text-gray-7">{t("settings.background_checks_desc")}</div>
+                <div className="text-xs text-gray-11">{t("settings.background_checks_desc")}</div>
               </div>
               <button
                 type="button"
                 className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                   props.updateAutoCheck
                     ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                    : "border-gray-6/60 bg-gray-1/70 text-gray-11 hover:bg-gray-2/70 hover:text-gray-12"
                 }`}
                 onClick={props.toggleUpdateAutoCheck}
               >
@@ -134,14 +134,14 @@ export function UpdatesView(props: UpdatesViewProps) {
             <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
               <div className="space-y-0.5">
                 <div className="text-sm text-gray-12">{t("settings.auto_update_title")}</div>
-                <div className="text-xs text-gray-7">{t("settings.auto_update_desc")}</div>
+                <div className="text-xs text-gray-11">{t("settings.auto_update_desc")}</div>
               </div>
               <button
                 type="button"
                 className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                   props.updateAutoDownload
                     ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                    : "border-gray-6/60 bg-gray-1/70 text-gray-11 hover:bg-gray-2/70 hover:text-gray-12"
                 }`}
                 onClick={props.toggleUpdateAutoDownload}
               >
@@ -167,7 +167,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                   </div>
 
                   {updateState === "idle" && updateLastCheckedAt ? (
-                    <div className="text-xs text-gray-7">
+                    <div className="text-xs text-gray-11">
                       {t("settings.update_last_checked", undefined, {
                         time: formatRelativeTime(updateLastCheckedAt),
                       })}
@@ -175,13 +175,13 @@ export function UpdatesView(props: UpdatesViewProps) {
                   ) : null}
 
                   {updateState === "available" && updateDate ? (
-                    <div className="text-xs text-gray-7">
+                    <div className="text-xs text-gray-11">
                       {t("settings.update_published", undefined, { date: updateDate })}
                     </div>
                   ) : null}
 
                   {updateState === "downloading" ? (
-                    <div className="text-xs text-gray-7">
+                    <div className="text-xs text-gray-11">
                       {formatBytes(updateDownloadedBytes ?? 0)}
                       {updateTotalBytes != null ? ` / ${formatBytes(updateTotalBytes)}` : ""}
                     </div>

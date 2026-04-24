@@ -273,10 +273,10 @@ export function ConfigView(props: ConfigViewProps) {
     <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
       <div className="min-w-0">
         <div className="text-xs font-medium text-gray-11">{label}</div>
-        <div className="text-xs text-gray-7 font-mono truncate">
+        <div className="text-xs text-gray-11 font-mono truncate">
           {visible ? tokenValue || "—" : tokenValue ? "••••••••••••" : "—"}
         </div>
-        <div className="text-[11px] text-gray-8 mt-1">{hint}</div>
+        <div className="text-[11px] text-gray-11 mt-1">{hint}</div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <Button
@@ -305,11 +305,11 @@ export function ConfigView(props: ConfigViewProps) {
         <div className="text-sm font-medium text-gray-12">
           {t("config.workspace_config_title")}
         </div>
-        <div className="text-xs text-gray-10">
+        <div className="text-xs text-gray-11">
           {t("config.workspace_config_desc")}
         </div>
         {props.runtimeWorkspaceId ? (
-          <div className="text-[11px] text-gray-7 font-mono truncate">
+          <div className="text-[11px] text-gray-11 font-mono truncate">
             {t("config.workspace_id_prefix")}
             {props.runtimeWorkspaceId}
           </div>
@@ -321,7 +321,7 @@ export function ConfigView(props: ConfigViewProps) {
           <div className="text-sm font-medium text-gray-12">
             {t("config.engine_reload_title")}
           </div>
-          <div className="text-xs text-gray-10">
+          <div className="text-xs text-gray-11">
             {t("config.engine_reload_desc")}
           </div>
         </div>
@@ -331,7 +331,7 @@ export function ConfigView(props: ConfigViewProps) {
             <div className="text-sm text-gray-12">
               {t("config.reload_now_title")}
             </div>
-            <div className="text-xs text-gray-7">
+            <div className="text-xs text-gray-11">
               {t("config.reload_now_desc")}
             </div>
             {props.anyActiveRuns ? (
@@ -343,7 +343,7 @@ export function ConfigView(props: ConfigViewProps) {
               <div className="text-[11px] text-red-11">{props.reloadError}</div>
             ) : null}
             {reloadAvailabilityReason ? (
-              <div className="text-[11px] text-gray-9">
+              <div className="text-[11px] text-gray-11">
                 {reloadAvailabilityReason}
               </div>
             ) : null}
@@ -370,7 +370,7 @@ export function ConfigView(props: ConfigViewProps) {
               <div className="text-sm font-medium text-gray-12">
                 {t("config.diagnostics_title")}
               </div>
-              <div className="text-xs text-gray-10">
+              <div className="text-xs text-gray-11">
                 {t("config.diagnostics_desc")}
               </div>
             </div>
@@ -400,7 +400,7 @@ export function ConfigView(props: ConfigViewProps) {
               <div className="text-sm font-medium text-gray-12">
                 {t("config.server_sharing_title")}
               </div>
-              <div className="text-xs text-gray-10">
+              <div className="text-xs text-gray-11">
                 {t("config.server_sharing_desc")}
               </div>
             </div>
@@ -417,11 +417,11 @@ export function ConfigView(props: ConfigViewProps) {
                 <div className="text-xs font-medium text-gray-11">
                   {t("config.server_url_label")}
                 </div>
-                <div className="text-xs text-gray-7 font-mono truncate">
+                <div className="text-xs text-gray-11 font-mono truncate">
                   {hostConnectUrl || t("config.starting_server")}
                 </div>
                 {hostConnectUrl ? (
-                  <div className="text-[11px] text-gray-8 mt-1">
+                  <div className="text-[11px] text-gray-11 mt-1">
                     {!hostRemoteAccessEnabled
                       ? t("config.remote_access_off_hint")
                       : hostConnectUrlUsesMdns
@@ -474,7 +474,7 @@ export function ConfigView(props: ConfigViewProps) {
             )}
           </div>
 
-          <div className="text-xs text-gray-9">
+          <div className="text-xs text-gray-11">
             {t("config.server_sharing_menu_hint")}
           </div>
         </div>
@@ -486,7 +486,7 @@ export function ConfigView(props: ConfigViewProps) {
             <div className="text-sm font-medium text-gray-12">
               {t("config.server_section_title")}
             </div>
-            <div className="text-xs text-gray-10">
+            <div className="text-xs text-gray-11">
               {t("config.server_section_desc")}
             </div>
           </div>
@@ -529,18 +529,18 @@ export function ConfigView(props: ConfigViewProps) {
                 {openworkTokenVisible ? t("common.hide") : t("common.show")}
               </Button>
             </div>
-            <div className="mt-1 text-xs text-gray-10">
+            <div className="mt-1 text-xs text-gray-11">
               {t("config.token_hint")}
             </div>
           </label>
         </div>
 
         <div className="space-y-1">
-          <div className="text-[11px] text-gray-7 font-mono truncate">
+          <div className="text-[11px] text-gray-11 font-mono truncate">
             {t("config.resolved_worker_url")}
             {resolvedWorkspaceUrl || t("config.not_set")}
           </div>
-          <div className="text-[11px] text-gray-8 font-mono truncate">
+          <div className="text-[11px] text-gray-11 font-mono truncate">
             {t("config.worker_id")}
             {resolvedWorkspaceId || t("config.unavailable")}
           </div>
@@ -581,7 +581,7 @@ export function ConfigView(props: ConfigViewProps) {
                 ? "text-green-11"
                 : openworkTestState === "error"
                   ? "text-red-11"
-                  : "text-gray-9"
+                  : "text-gray-11"
             }`}
             role="status"
             aria-live="polite"
@@ -593,7 +593,7 @@ export function ConfigView(props: ConfigViewProps) {
         ) : null}
 
         {openworkStatusLabel !== t("config.status_connected") ? (
-          <div className="text-xs text-gray-9">
+          <div className="text-xs text-gray-11">
             {t("config.server_needed_hint")}
           </div>
         ) : null}
@@ -603,13 +603,13 @@ export function ConfigView(props: ConfigViewProps) {
         <div className="text-sm font-medium text-gray-12">
           {t("config.messaging_identities_title")}
         </div>
-        <div className="text-xs text-gray-10">
+        <div className="text-xs text-gray-11">
           {t("config.messaging_identities_desc")}
         </div>
       </div>
 
       {!isDesktopRuntime() ? (
-        <div className="text-xs text-gray-9">
+        <div className="text-xs text-gray-11">
           {t("config.desktop_only_hint")}
         </div>
       ) : null}

@@ -69,10 +69,10 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center text-gray-10">
+              <div className="flex items-center text-gray-11">
                 <button
                   type="button"
-                  className="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+                  className="flex h-9 w-9 items-center justify-center rounded-md text-gray-11 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
                   onClick={props.onClose}
                   title={t("dashboard.close_settings")}
                   aria-label={t("dashboard.close_settings")}

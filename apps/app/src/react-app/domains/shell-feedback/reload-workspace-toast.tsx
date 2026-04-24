@@ -115,7 +115,7 @@ export function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
               </div>
 
               {bodyHasContent ? (
-                <div className="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
+                <div className="mt-1 space-y-1 text-sm leading-relaxed text-gray-11">
                   <div>
                     {props.hasActiveRuns ? (
                       <span className="font-medium text-amber-11">
@@ -136,7 +136,7 @@ export function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
                     </div>
                   ) : null}
                   {props.blockedReason ? (
-                    <div className="text-xs text-gray-9">
+                    <div className="text-xs text-gray-11">
                       Blocked: {props.blockedReason}
                     </div>
                   ) : null}
@@ -147,7 +147,7 @@ export function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
             <button
               type="button"
               onClick={() => props.onDismiss()}
-              className="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
+              className="rounded-full p-1 text-gray-11 transition hover:bg-gray-3 hover:text-gray-12"
               aria-label={props.dismissLabel}
             >
               <X size={16} />

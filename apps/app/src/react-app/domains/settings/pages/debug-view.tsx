@@ -164,7 +164,7 @@ function formatUptime(ms: number) {
 
 function renderLines(lines: string[]) {
   return lines.map((line, index) => (
-    <div key={`${line}-${index}`} className="text-[11px] font-mono text-gray-7 truncate">
+    <div key={`${line}-${index}`} className="text-[11px] font-mono text-gray-11 truncate">
       {line}
     </div>
   ));
@@ -193,7 +193,7 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-gray-12">{t("settings.runtime_debug_title")}</div>
-              <div className="text-xs text-gray-10">{t("settings.runtime_debug_desc")}</div>
+              <div className="text-xs text-gray-11">{t("settings.runtime_debug_desc")}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button variant="outline" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onCopyRuntimeDebugReport()}>
@@ -227,14 +227,14 @@ export function DebugView(props: DebugViewProps) {
             </div>
           </div>
           <pre className={settingsMonoPreClass}>{props.runtimeDebugReportJson}</pre>
-          {props.runtimeDebugStatus ? <div className="text-xs text-gray-10">{props.runtimeDebugStatus}</div> : null}
+          {props.runtimeDebugStatus ? <div className="text-xs text-gray-11">{props.runtimeDebugStatus}</div> : null}
         </div>
 
         <div className={settingsCardClass}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-gray-12">Developer log stream</div>
-              <div className="text-xs text-gray-10">
+              <div className="text-xs text-gray-11">
                 Captures dev-mode app, workspace, session, and perf logs while Developer Mode is enabled.
               </div>
             </div>
@@ -252,18 +252,18 @@ export function DebugView(props: DebugViewProps) {
               </Button>
             </div>
           </div>
-          <div className="text-[11px] text-gray-8">
+          <div className="text-[11px] text-gray-11">
             Showing the latest {props.developerLogRecordCount} retained records.
           </div>
           <pre className={settingsMonoPreClass}>{props.developerLogText || "No developer logs captured yet."}</pre>
-          {props.developerLogStatus ? <div className="text-xs text-gray-10">{props.developerLogStatus}</div> : null}
+          {props.developerLogStatus ? <div className="text-xs text-gray-11">{props.developerLogStatus}</div> : null}
         </div>
 
         <div className={settingsCardClass}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-gray-12">{t("settings.sandbox_probe_title")}</div>
-              <div className="text-xs text-gray-10">{t("settings.sandbox_probe_desc")}</div>
+              <div className="text-xs text-gray-11">{t("settings.sandbox_probe_desc")}</div>
             </div>
             <Button
               variant="secondary"
@@ -288,8 +288,8 @@ export function DebugView(props: DebugViewProps) {
               ) : null}
             </div>
           ) : null}
-          {props.sandboxProbeStatus ? <div className="text-xs text-gray-10">{props.sandboxProbeStatus}</div> : null}
-          <div className="text-[11px] text-gray-7">{t("settings.sandbox_export_hint")}</div>
+          {props.sandboxProbeStatus ? <div className="text-xs text-gray-11">{props.sandboxProbeStatus}</div> : null}
+          <div className="text-[11px] text-gray-11">{t("settings.sandbox_export_hint")}</div>
         </div>
 
         <div className={settingsCardClass}>
@@ -321,14 +321,14 @@ export function DebugView(props: DebugViewProps) {
             <RefreshCcw size={14} className="opacity-80 transition-transform group-hover:rotate-180" />
           </Button>
 
-          <p className="text-xs text-gray-7">{t("settings.startup_reset_hint")}</p>
+          <p className="text-xs text-gray-11">{t("settings.startup_reset_hint")}</p>
         </div>
 
         {isDesktop && (isLocalPreference || props.developerMode) ? (
           <div className={settingsCardClass}>
             <div>
               <div className="text-sm font-medium text-gray-12">{t("settings.engine_title")}</div>
-              <div className="text-xs text-gray-10">{t("settings.engine_desc")}</div>
+              <div className="text-xs text-gray-11">{t("settings.engine_desc")}</div>
             </div>
 
             {!isLocalPreference ? (
@@ -338,7 +338,7 @@ export function DebugView(props: DebugViewProps) {
             ) : null}
 
             <div className="space-y-3">
-              <div className="text-xs text-gray-10">{t("settings.engine_source_debug")}</div>
+              <div className="text-xs text-gray-11">{t("settings.engine_source_debug")}</div>
               <div className={props.developerMode ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
                 <Button
                   variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
@@ -364,15 +364,15 @@ export function DebugView(props: DebugViewProps) {
                   </Button>
                 ) : null}
               </div>
-              <div className="text-[11px] text-gray-7">{t("settings.engine_bundled_hint")}</div>
+              <div className="text-[11px] text-gray-11">{t("settings.engine_bundled_hint")}</div>
             </div>
 
             {props.developerMode && props.engineSource === "custom" ? (
               <div className="space-y-2">
-                <div className="text-xs text-gray-10">{t("settings.custom_binary_label")}</div>
+                <div className="text-xs text-gray-11">{t("settings.custom_binary_label")}</div>
                 <div className="flex items-center gap-2">
                   <div
-                    className="min-w-0 flex-1 truncate rounded-xl border border-gray-6 bg-gray-1 p-3 font-mono text-[11px] text-gray-7"
+                    className="min-w-0 flex-1 truncate rounded-xl border border-gray-6 bg-gray-1 p-3 font-mono text-[11px] text-gray-11"
                     title={props.engineCustomBinPathLabel}
                   >
                     {props.engineCustomBinPathLabel}
@@ -395,13 +395,13 @@ export function DebugView(props: DebugViewProps) {
                     {t("settings.clear")}
                   </Button>
                 </div>
-                <div className="text-[11px] text-gray-7">{t("settings.custom_binary_hint")}</div>
+                <div className="text-[11px] text-gray-11">{t("settings.custom_binary_hint")}</div>
               </div>
             ) : null}
 
             {props.developerMode ? (
               <div className="space-y-3">
-                <div className="text-xs text-gray-10">{t("settings.engine_runtime_label")}</div>
+                <div className="text-xs text-gray-11">{t("settings.engine_runtime_label")}</div>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
@@ -418,7 +418,7 @@ export function DebugView(props: DebugViewProps) {
                     {t("settings.runtime_orchestrator")}
                   </Button>
                 </div>
-                <div className="text-[11px] text-gray-7">{t("settings.runtime_applies_hint")}</div>
+                <div className="text-[11px] text-gray-11">{t("settings.runtime_applies_hint")}</div>
               </div>
             ) : null}
           </div>
@@ -427,13 +427,13 @@ export function DebugView(props: DebugViewProps) {
         <div className={settingsCardClass}>
           <div>
             <div className="text-sm font-medium text-gray-12">{t("settings.reset_recovery_title")}</div>
-            <div className="text-xs text-gray-10">{t("settings.reset_recovery_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.reset_recovery_desc")}</div>
           </div>
 
           <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
             <div className="min-w-0">
               <div className="text-sm text-gray-12">{t("settings.reset_onboarding_title")}</div>
-              <div className="text-xs text-gray-7">{t("settings.reset_onboarding_description")}</div>
+              <div className="text-xs text-gray-11">{t("settings.reset_onboarding_description")}</div>
             </div>
             <Button
               variant="outline"
@@ -449,7 +449,7 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
             <div className="min-w-0">
               <div className="text-sm text-gray-12">{t("settings.reset_app_data_title")}</div>
-              <div className="text-xs text-gray-7">{t("settings.reset_app_data_description")}</div>
+              <div className="text-xs text-gray-11">{t("settings.reset_app_data_description")}</div>
             </div>
             <Button
               variant="danger"
@@ -462,19 +462,19 @@ export function DebugView(props: DebugViewProps) {
             </Button>
           </div>
 
-          <div className="text-xs text-gray-7">{t("settings.reset_requires_confirm")}</div>
+          <div className="text-xs text-gray-11">{t("settings.reset_requires_confirm")}</div>
         </div>
 
         <div className={settingsCardClass}>
           <div>
             <div className="text-sm font-medium text-gray-12">{t("settings.devtools_title")}</div>
-            <div className="text-xs text-gray-10">{t("settings.devtools_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.devtools_desc")}</div>
           </div>
 
           <div className={`${settingsSoftCardClass} space-y-3`}>
             <div>
               <div className="text-sm font-medium text-gray-12">{t("settings.service_restarts_title")}</div>
-              <div className="text-xs text-gray-10">{t("settings.service_restarts_desc")}</div>
+              <div className="text-xs text-gray-11">{t("settings.service_restarts_desc")}</div>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               <Button
@@ -530,7 +530,7 @@ export function DebugView(props: DebugViewProps) {
             <div className={`${settingsSoftCardClass} space-y-3`}>
               <div>
                 <div className="text-sm font-medium text-gray-12">{t("settings.versions_title")}</div>
-                <div className="text-xs text-gray-10">{t("settings.versions_desc")}</div>
+                <div className="text-xs text-gray-11">{t("settings.versions_desc")}</div>
               </div>
               <div className="space-y-1">{renderLines([
                 t("settings.debug_desktop_app", undefined, { version: props.runtimeSummary.appVersionLabel }),
@@ -546,7 +546,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-12">{t("settings.opencode_engine_sidecar")}</div>
-                  <div className="text-xs text-gray-10">{t("settings.opencode_engine_sidecar_desc")}</div>
+                  <div className="text-xs text-gray-11">{t("settings.opencode_engine_sidecar_desc")}</div>
                 </div>
                 <div className={`rounded-full border px-2 py-1 text-xs ${props.engineCard.className}`}>
                   {props.engineCard.label}
@@ -555,11 +555,11 @@ export function DebugView(props: DebugViewProps) {
               <div className="space-y-1">{renderLines(props.engineCard.lines)}</div>
               <div className="grid gap-2">
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stdout")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stdout")}</div>
                   <pre className={settingsMiniPreClass}>{props.engineCard.stdout || "—"}</pre>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stderr")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stderr")}</div>
                   <pre className={settingsMiniPreClass}>{props.engineCard.stderr || "—"}</pre>
                 </div>
               </div>
@@ -569,7 +569,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-12">{t("settings.orchestrator_daemon_title")}</div>
-                  <div className="text-xs text-gray-10">{t("settings.orchestrator_daemon_layer_desc")}</div>
+                  <div className="text-xs text-gray-11">{t("settings.orchestrator_daemon_layer_desc")}</div>
                 </div>
                 <div className={`rounded-full border px-2 py-1 text-xs ${props.orchestratorCard.className}`}>
                   {props.orchestratorCard.label}
@@ -578,7 +578,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="space-y-1">{renderLines(props.orchestratorCard.lines)}</div>
               {props.orchestratorCard.error ? (
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_error")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_error")}</div>
                   <pre className={settingsMiniPreClass}>{props.orchestratorCard.error}</pre>
                 </div>
               ) : null}
@@ -588,7 +588,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-12">{t("settings.opencode_sdk_title")}</div>
-                  <div className="text-xs text-gray-10">{t("settings.opencode_sdk_desc")}</div>
+                  <div className="text-xs text-gray-11">{t("settings.opencode_sdk_desc")}</div>
                 </div>
                 <div className={`rounded-full border px-2 py-1 text-xs ${props.opencodeConnectCard.className}`}>
                   {props.opencodeConnectCard.label}
@@ -602,7 +602,7 @@ export function DebugView(props: DebugViewProps) {
               ) : null}
               {props.opencodeConnectCard.error ? (
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_error")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_error")}</div>
                   <pre className={settingsMiniPreClass}>{props.opencodeConnectCard.error}</pre>
                 </div>
               ) : null}
@@ -612,7 +612,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-12">{t("settings.openwork_server_label")}</div>
-                  <div className="text-xs text-gray-10">{t("settings.openwork_config_sidecar_desc")}</div>
+                  <div className="text-xs text-gray-11">{t("settings.openwork_config_sidecar_desc")}</div>
                 </div>
                 <div className={`rounded-full border px-2 py-1 text-xs ${props.openworkCard.className}`}>
                   {props.openworkCard.label}
@@ -621,11 +621,11 @@ export function DebugView(props: DebugViewProps) {
               <div className="space-y-1">{renderLines(props.openworkCard.lines)}</div>
               <div className="grid gap-2">
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stdout")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stdout")}</div>
                   <pre className={settingsMiniPreClass}>{props.openworkCard.stdout || "—"}</pre>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stderr")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stderr")}</div>
                   <pre className={settingsMiniPreClass}>{props.openworkCard.stderr || "—"}</pre>
                 </div>
               </div>
@@ -635,7 +635,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-12">{t("settings.opencode_router_sidecar")}</div>
-                  <div className="text-xs text-gray-10">{t("settings.messaging_bridge_service")}</div>
+                  <div className="text-xs text-gray-11">{t("settings.messaging_bridge_service")}</div>
                 </div>
                 <div className={`rounded-full border px-2 py-1 text-xs ${props.opencodeRouterCard.className}`}>
                   {props.opencodeRouterCard.label}
@@ -670,11 +670,11 @@ export function DebugView(props: DebugViewProps) {
               ) : null}
               <div className="grid gap-2">
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stdout")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stdout")}</div>
                   <pre className={settingsMiniPreClass}>{props.opencodeRouterCard.stdout || "—"}</pre>
                 </div>
                 <div>
-                  <div className="mb-1 text-[11px] text-gray-9">{t("settings.last_stderr")}</div>
+                  <div className="mb-1 text-[11px] text-gray-11">{t("settings.last_stderr")}</div>
                   <pre className={settingsMiniPreClass}>{props.opencodeRouterCard.stderr || "—"}</pre>
                 </div>
               </div>
@@ -684,7 +684,7 @@ export function DebugView(props: DebugViewProps) {
           <div className={`${settingsSoftCardClass} space-y-3`}>
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-medium text-gray-12">{t("settings.openwork_diagnostics_title")}</div>
-              <div className="truncate font-mono text-[11px] text-gray-8">
+              <div className="truncate font-mono text-[11px] text-gray-11">
                 {props.openworkServerDiagnostics?.version ?? "—"}
               </div>
             </div>
@@ -730,14 +730,14 @@ export function DebugView(props: DebugViewProps) {
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-gray-9">{t("settings.diagnostics_unavailable")}</div>
+              <div className="text-xs text-gray-11">{t("settings.diagnostics_unavailable")}</div>
             )}
           </div>
 
           <div className={`${settingsSoftCardClass} space-y-3`}>
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-medium text-gray-12">{t("settings.capabilities_title")}</div>
-              <div className="truncate font-mono text-[11px] text-gray-8">
+              <div className="truncate font-mono text-[11px] text-gray-11">
                 {props.runtimeWorkspaceId
                   ? t("settings.worker_id_label", undefined, { id: props.runtimeWorkspaceId })
                   : t("settings.worker_unresolved")}
@@ -787,19 +787,19 @@ export function DebugView(props: DebugViewProps) {
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-gray-9">{t("settings.capabilities_unavailable")}</div>
+              <div className="text-xs text-gray-11">{t("settings.capabilities_unavailable")}</div>
             )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className={settingsSoftCardClass}>
-              <div className="mb-2 text-xs text-gray-10">{t("settings.pending_permissions")}</div>
+              <div className="mb-2 text-xs text-gray-11">{t("settings.pending_permissions")}</div>
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-12">
                 {props.safeStringify(props.pendingPermissions)}
               </pre>
             </div>
             <div className={settingsSoftCardClass}>
-              <div className="mb-2 text-xs text-gray-10">{t("settings.recent_events")}</div>
+              <div className="mb-2 text-xs text-gray-11">{t("settings.recent_events")}</div>
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-gray-12">
                 {props.safeStringify(props.events)}
               </pre>
@@ -808,7 +808,7 @@ export function DebugView(props: DebugViewProps) {
 
           <div className={settingsSoftCardClass}>
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="text-xs text-gray-10">{t("settings.workspace_debug_events_label")}</div>
+              <div className="text-xs text-gray-11">{t("settings.workspace_debug_events_label")}</div>
               <Button
                 variant="outline"
                 className="h-7 shrink-0 px-2 py-0 text-xs"
@@ -837,18 +837,18 @@ export function DebugView(props: DebugViewProps) {
                   <div key={entry.id} className="flex items-start justify-between gap-4 py-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm text-gray-12">{entry.summary}</div>
-                      <div className="truncate text-[11px] text-gray-9">
+                      <div className="truncate text-[11px] text-gray-11">
                         {entry.action} · {entry.target} · {formatActor(entry)}
                       </div>
                     </div>
-                    <div className="whitespace-nowrap text-[11px] text-gray-9">
+                    <div className="whitespace-nowrap text-[11px] text-gray-11">
                       {entry.timestamp ? formatRelativeTime(entry.timestamp) : "—"}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-xs text-gray-9">{t("settings.no_audit_entries")}</div>
+              <div className="text-xs text-gray-11">{t("settings.no_audit_entries")}</div>
             )}
           </div>
         </div>
@@ -858,7 +858,7 @@ export function DebugView(props: DebugViewProps) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-gray-12">{t("settings.reset_openwork_title")}</div>
-                <div className="text-xs text-gray-10">
+                <div className="text-xs text-gray-11">
                   {props.opencodeDevModeEnabled
                     ? t("settings.reset_openwork_desc_dev")
                     : t("settings.reset_openwork_desc_prod")}
@@ -868,7 +868,7 @@ export function DebugView(props: DebugViewProps) {
                 className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
                   props.opencodeDevModeEnabled
                     ? "border-blue-7/35 bg-blue-3/25 text-blue-11"
-                    : "border-gray-6 bg-gray-2 text-gray-10"
+                    : "border-gray-6 bg-gray-2 text-gray-11"
                 }`}
               >
                 {props.opencodeDevModeEnabled
@@ -877,7 +877,7 @@ export function DebugView(props: DebugViewProps) {
               </div>
             </div>
 
-            <div className="text-[11px] text-gray-8">{t("settings.quit_hint")}</div>
+            <div className="text-[11px] text-gray-11">{t("settings.quit_hint")}</div>
 
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -891,7 +891,7 @@ export function DebugView(props: DebugViewProps) {
                   ? t("settings.removing_local_state")
                   : t("settings.delete_local_config")}
               </button>
-              <div className="text-xs text-gray-10">{t("settings.nuke_hint")}</div>
+              <div className="text-xs text-gray-11">{t("settings.nuke_hint")}</div>
             </div>
 
             {props.nukeConfigStatus ? <div className="text-xs text-red-11">{props.nukeConfigStatus}</div> : null}

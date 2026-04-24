@@ -1377,7 +1377,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
           {authError ? <div className={errorBannerClass}>{authError}</div> : null}
 
-          <div className={`${settingsPanelSoftClass} text-sm text-gray-10`}>
+          <div className={`${settingsPanelSoftClass} text-sm text-gray-11`}>
             {tr("den.auto_reconnect_hint")}
           </div>
         </div>

@@ -662,7 +662,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 {errorMessage}
               </div>
             ) : props.loading ? (
-              <div className="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
+              <div className="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-11 animate-pulse">
                 Loading providers...
               </div>
             ) : null}
@@ -673,7 +673,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               {resolvedView === "list" ? (
                 <div className="space-y-3" onKeyDown={handleListKeyDown}>
                   <div className="relative flex items-center mb-1">
-                    <Search size={16} className="absolute left-3 text-gray-9" />
+                    <Search size={16} className="absolute left-3 text-gray-11" />
                     <input
                       ref={searchInputRef}
                       type="text"
@@ -721,14 +721,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                                   Connected
                                 </div>
                               ) : (
-                                <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
+                                <div className="text-[12px] font-medium text-gray-11 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
                                   Connect
                                   <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
                                 </div>
                               )}
                             </div>
                           </div>
-                          <div className="text-[11px] text-gray-9 font-mono truncate mt-0.5 opacity-60 group-hover:opacity-80 transition-opacity">
+                          <div className="text-[11px] text-gray-11 font-mono truncate mt-0.5 opacity-60 group-hover:opacity-80 transition-opacity">
                             {entry.id}
                           </div>
 
@@ -752,12 +752,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </button>
                     ))
                   ) : (
-                    <div className="text-sm text-gray-10 pt-2">
+                    <div className="text-sm text-gray-11 pt-2">
                       {entries.length ? "No providers match your search." : "No providers available."}
                     </div>
                   )}
 
-                  <div className="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                  <div className="text-[11px] text-gray-11">Arrow keys to navigate, Enter to select.</div>
                 </div>
               ) : null}
 
@@ -766,7 +766,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Choose how you'd like to connect.</div>
+                      <div className="text-xs text-gray-11 mt-1">Choose how you'd like to connect.</div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
@@ -786,7 +786,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         disabled={actionDisabled}
                       >
                         <div className="text-sm font-medium text-gray-12">{methodLabel(method)}</div>
-                        <div className="mt-1 text-xs text-gray-10">{methodDescription(selectedEntry, method)}</div>
+                        <div className="mt-1 text-xs text-gray-11">{methodDescription(selectedEntry, method)}</div>
                       </button>
                     ))}
                   </div>
@@ -798,7 +798,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Paste your API key to connect.</div>
+                      <div className="text-xs text-gray-11 mt-1">Paste your API key to connect.</div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
@@ -819,12 +819,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     disabled={actionDisabled}
                   />
                   {selectedEntry.env.length > 0 ? (
-                    <div className="text-[11px] text-gray-9">
+                    <div className="text-[11px] text-gray-11">
                       Env vars: <span className="font-mono">{selectedEntry.env.join(", ")}</span>
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
+                    <div className="text-[11px] text-gray-11">Keys are stored locally by OpenCode.</div>
                     <Button
                       variant="secondary"
                       onClick={handleApiSubmit}
@@ -841,27 +841,27 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Connect with the provider managed by your organization.</div>
+                      <div className="text-xs text-gray-11 mt-1">Connect with the provider managed by your organization.</div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
                     </Button>
                   </div>
-                  <div className="text-xs text-gray-9">
+                  <div className="text-xs text-gray-11">
                     {selectedCloudMethod.description ?? "Use the provider and credential managed by your organization."}
                   </div>
                   {(selectedCloudMethod.modelCount ?? 0) > 0 ? (
-                    <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9">
+                    <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-11">
                       {(selectedCloudMethod.modelCount ?? 0)} curated model{(selectedCloudMethod.modelCount ?? 0) === 1 ? "" : "s"} will be added to this workspace.
                     </div>
                   ) : null}
                   {(selectedCloudMethod.env?.length ?? 0) > 0 ? (
-                    <div className="text-[11px] text-gray-9">
+                    <div className="text-[11px] text-gray-11">
                       Env vars: <span className="font-mono">{selectedCloudMethod.env?.join(", ")}</span>
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] text-gray-9">
+                    <div className="text-[11px] text-gray-11">
                       OpenWork will install the provider config and use the credential stored for your org.
                     </div>
                     <Button variant="secondary" onClick={handleCloudSubmit} disabled={actionDisabled}>
@@ -876,17 +876,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Finish OAuth by pasting the authorization code.</div>
+                      <div className="text-xs text-gray-11 mt-1">Finish OAuth by pasting the authorization code.</div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
                     </Button>
                   </div>
-                  <div className="text-xs text-gray-9">
+                  <div className="text-xs text-gray-11">
                     Complete sign-in in your browser, then paste the code here.
                   </div>
                   {oauthInstructions ? (
-                    <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9 font-mono break-all">
+                    <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-11 font-mono break-all">
                       {oauthInstructions}
                     </div>
                   ) : null}
@@ -934,28 +934,28 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Waiting for browser confirmation.</div>
+                      <div className="text-xs text-gray-11 mt-1">Waiting for browser confirmation.</div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
                     </Button>
                   </div>
                   {isOpenAiHeadlessSession ? (
-                    <div className="space-y-2 text-xs text-gray-9">
+                    <div className="space-y-2 text-xs text-gray-11">
                       <div>You'll need to sign in to your OpenAI account and provide the code below.</div>
                       <div>The first time you do this you'll need to enable Device auth in your account settings.</div>
                       <div>ChatGPT &gt; Account Settings &gt; Security &gt; Enable device code authorization</div>
                       <div>When you're ready, copy the code below, and click &quot;Open Browser&quot;.</div>
                     </div>
                   ) : (
-                    <div className="text-xs text-gray-9">
+                    <div className="text-xs text-gray-11">
                       Sign in in the browser tab we just opened. We will complete the connection automatically.
                     </div>
                   )}
                   {oauthDisplayCode ? (
                     <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
+                        <div className="text-[10px] uppercase tracking-wide text-gray-11">Confirmation code</div>
                         <div className="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode}</div>
                       </div>
                       <Button variant="ghost" className="text-xs shrink-0" onClick={() => void copyOauthDisplayCode()}>
@@ -964,11 +964,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   ) : null}
                   {isOpenAiHeadlessSession && !oauthBrowserOpened ? (
-                    <div className="flex items-center gap-2 text-xs text-gray-9">
+                    <div className="flex items-center gap-2 text-xs text-gray-11">
                       <span>Authorization checks will start after you click Open Browser.</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 text-xs text-gray-9">
+                    <div className="flex items-center gap-2 text-xs text-gray-11">
                       <Loader2 size={14} className={props.submitting || pollingBusy || oauthAutoBusy ? "animate-spin" : ""} />
                       <span>Checking connection status automatically...</span>
                     </div>
@@ -986,7 +986,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           : "Open Browser"
                         : "Open browser again"}
                     </Button>
-                    <div className="text-[11px] text-gray-9 text-right">
+                    <div className="text-[11px] text-gray-11 text-right">
                       This window will close once the provider is connected.
                     </div>
                   </div>
@@ -997,7 +997,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         </div>
 
         <div className="px-6 pt-4 pb-6 border-t border-gray-6/50 flex flex-col gap-3">
-          <div className="min-h-[16px] text-xs text-gray-10">
+          <div className="min-h-[16px] text-xs text-gray-11">
             {props.submitting ? submittingLabel() : null}
           </div>
           <Button variant="ghost" onClick={handleClose} disabled={actionDisabled}>

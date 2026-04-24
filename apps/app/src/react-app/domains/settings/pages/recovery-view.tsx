@@ -28,8 +28,8 @@ export function RecoveryView(props: RecoveryViewProps) {
     <div className="space-y-6">
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="text-sm font-medium text-gray-12">{t("settings.workspace_config_title")}</div>
-        <div className="text-xs text-gray-10">{t("settings.workspace_config_desc")}</div>
-        <div className="break-all font-mono text-[11px] text-gray-7">
+        <div className="text-xs text-gray-11">{t("settings.workspace_config_desc")}</div>
+        <div className="break-all font-mono text-[11px] text-gray-11">
           {props.workspaceConfigPath || t("settings.no_active_workspace")}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -54,14 +54,14 @@ export function RecoveryView(props: RecoveryViewProps) {
           </Button>
         </div>
         {props.configActionStatus ? (
-          <div className="text-xs text-gray-10">{props.configActionStatus}</div>
+          <div className="text-xs text-gray-11">{props.configActionStatus}</div>
         ) : null}
       </div>
 
       <div className="flex flex-col gap-4 rounded-2xl border border-gray-6/50 bg-gray-2/30 p-4 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="text-sm text-gray-12">{t("settings.opencode_cache")}</div>
-          <div className="text-xs text-gray-7">{t("settings.opencode_cache_description")}</div>
+          <div className="text-xs text-gray-11">{t("settings.opencode_cache_description")}</div>
           {props.cacheRepairResult ? (
             <div className="mt-2 text-xs text-gray-11">{props.cacheRepairResult}</div>
           ) : null}
@@ -80,7 +80,7 @@ export function RecoveryView(props: RecoveryViewProps) {
       <div className="flex flex-col gap-4 rounded-2xl border border-gray-6/50 bg-gray-2/30 p-4 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
           <div className="text-sm text-gray-12">{t("settings.docker_containers_title")}</div>
-          <div className="text-xs text-gray-7">{t("settings.docker_containers_desc")}</div>
+          <div className="text-xs text-gray-11">{t("settings.docker_containers_desc")}</div>
           {props.dockerCleanupResult ? (
             <div className="mt-2 text-xs text-gray-11">{props.dockerCleanupResult}</div>
           ) : null}

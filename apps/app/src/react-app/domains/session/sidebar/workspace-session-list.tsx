@@ -345,7 +345,7 @@ export function WorkspaceSessionList(props: Props) {
           className={`group flex min-h-9 w-full items-center justify-between rounded-xl px-3 py-1.5 text-left text-[13px] transition-colors ${
             isSelected
               ? "bg-gray-3 text-gray-12"
-              : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11"
+              : "text-gray-11 hover:bg-gray-1/70 hover:text-gray-11"
           }`}
           style={{ marginLeft: `${Math.min(row.depth, 4) * 16}px` }}
           onPointerEnter={prefetchSession}
@@ -362,7 +362,7 @@ export function WorkspaceSessionList(props: Props) {
             {hasChildren ? (
               <button
                 type="button"
-                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-11 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={isExpanded ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -391,7 +391,7 @@ export function WorkspaceSessionList(props: Props) {
             {canManageSession ? (
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-11 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={t("workspace_list.session_actions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -476,7 +476,7 @@ export function WorkspaceSessionList(props: Props) {
               ? taskLoadError.tone === "offline"
                 ? "text-amber-11"
                 : "text-red-11"
-              : "text-gray-9";
+              : "text-gray-11";
             const rootSessions = getRootSessions(group.sessions);
             const sessionRows = flattenSessionRows(
               group.sessions,
@@ -495,7 +495,7 @@ export function WorkspaceSessionList(props: Props) {
                     className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-[13px] transition-colors ${
                       props.selectedWorkspaceId === workspace.id
                         ? "bg-gray-2/70 text-gray-12"
-                        : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-12"
+                        : "text-gray-11 hover:bg-gray-1/70 hover:text-gray-12"
                     } ${isConnecting ? "opacity-75" : ""}`}
                     onClick={() => {
                       expandWorkspace(workspace.id);
@@ -528,7 +528,7 @@ export function WorkspaceSessionList(props: Props) {
 
                     <div className="ml-4 flex shrink-0 items-center gap-1.5">
                       {group.status === "loading" || isConnecting ? (
-                        <Loader2 size={14} className="animate-spin text-gray-9" />
+                        <Loader2 size={14} className="animate-spin text-gray-11" />
                       ) : null}
 
                       <div
@@ -540,7 +540,7 @@ export function WorkspaceSessionList(props: Props) {
                       >
                         <button
                           type="button"
-                          className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
+                          className="rounded-md p-1 text-gray-11 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
                             props.onCreateTaskInWorkspace(workspace.id);
@@ -553,7 +553,7 @@ export function WorkspaceSessionList(props: Props) {
 
                         <button
                           type="button"
-                          className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
+                          className="rounded-md p-1 text-gray-11 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
                             setWorkspaceMenuId((current) => (current === workspace.id ? null : workspace.id));
@@ -566,7 +566,7 @@ export function WorkspaceSessionList(props: Props) {
 
                       <button
                         type="button"
-                        className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
+                        className="rounded-md p-1 text-gray-11 hover:bg-gray-3/80 hover:text-gray-11"
                         aria-label={
                           expandedWorkspaceIds.has(workspace.id)
                             ? t("sidebar.collapse")
@@ -695,7 +695,7 @@ export function WorkspaceSessionList(props: Props) {
                           ))}
                         </div>
                       ) : group.status === "loading" && group.sessions.length === 0 ? (
-                        <div className="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
+                        <div className="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-11">
                           {t("workspace.loading_tasks")}
                         </div>
                       ) : group.sessions.length > 0 ? (
@@ -705,7 +705,7 @@ export function WorkspaceSessionList(props: Props) {
                           {group.sessions.length === 0 && group.status === "ready" ? (
                             <button
                               type="button"
-                              className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-11 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
                               onClick={() => props.onCreateTaskInWorkspace(workspace.id)}
                               disabled={props.newTaskDisabled}
                             >
@@ -719,7 +719,7 @@ export function WorkspaceSessionList(props: Props) {
                           {rootSessions.length > previewCount(workspace.id) ? (
                             <button
                               type="button"
-                              className="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              className="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-11 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
                               onClick={() => showMoreSessions(workspace.id, rootSessions.length)}
                             >
                               {showMoreLabel(workspace.id, rootSessions.length)}
@@ -740,7 +740,7 @@ export function WorkspaceSessionList(props: Props) {
                       ) : (
                         <button
                           type="button"
-                          className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                          className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-11 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
                           onClick={() => props.onCreateTaskInWorkspace(workspace.id)}
                           disabled={props.newTaskDisabled}
                         >

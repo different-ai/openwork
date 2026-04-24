@@ -75,7 +75,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     `px-3 py-1 rounded-full text-xs font-medium border transition-colors flex items-center gap-2 ${
       active
         ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-        : "text-gray-10 border-gray-6 hover:text-gray-12"
+        : "text-gray-11 border-gray-6 hover:text-gray-12"
     }`;
 
   return (

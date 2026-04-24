@@ -97,7 +97,7 @@ export function SettingsPage(props: SettingsPageProps) {
     <section className="space-y-6 md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-8 md:space-y-0">
       <aside className="space-y-6 md:sticky md:top-4 md:self-start">
         <div className={settingsRailClass}>
-          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
+          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-11">
             {t("settings.group_workspace")}
           </div>
           <div className="space-y-1">
@@ -108,7 +108,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
                   props.activeTab === tab
                     ? "bg-dls-surface text-dls-text shadow-sm"
-                    : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
+                    : "text-gray-11 hover:bg-dls-surface/50 hover:text-dls-text"
                 }`}
                 onClick={() => props.onSelectTab(tab)}
               >
@@ -119,7 +119,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </div>
 
         <div className={settingsRailClass}>
-          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
+          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-11">
             {t("settings.group_global")}
           </div>
           <div className="space-y-1">
@@ -130,7 +130,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
                   props.activeTab === tab
                     ? "bg-dls-surface text-dls-text shadow-sm"
-                    : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
+                    : "text-gray-11 hover:bg-dls-surface/50 hover:text-dls-text"
                 }`}
                 onClick={() => props.onSelectTab(tab)}
               >
@@ -147,7 +147,7 @@ export function SettingsPage(props: SettingsPageProps) {
             <h2 className="text-lg font-semibold tracking-tight text-gray-12">
               {getSettingsTabLabel(props.activeTab)}
             </h2>
-            <p className="text-sm text-gray-9">
+            <p className="text-sm text-gray-11">
               {getSettingsTabDescription(props.activeTab)}
             </p>
           </div>

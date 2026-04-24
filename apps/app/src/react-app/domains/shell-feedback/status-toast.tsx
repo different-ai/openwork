@@ -50,7 +50,7 @@ export function StatusToast(props: StatusToastProps) {
                 {props.title}
               </div>
               {props.description?.trim() ? (
-                <p className="mt-1 text-sm leading-relaxed text-gray-10">
+                <p className="mt-1 text-sm leading-relaxed text-gray-11">
                   {props.description}
                 </p>
               ) : null}
@@ -59,7 +59,7 @@ export function StatusToast(props: StatusToastProps) {
             <button
               type="button"
               onClick={props.onDismiss}
-              className="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
+              className="rounded-full p-1 text-gray-11 transition hover:bg-gray-3 hover:text-gray-12"
               aria-label={props.dismissLabel ?? "Dismiss"}
             >
               <X size={16} />

@@ -284,7 +284,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             ? "bg-gray-3 text-gray-12"
             : isKeyboardActive
               ? "bg-gray-2 text-gray-12"
-              : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11",
+              : "text-gray-11 hover:bg-gray-1/70 hover:text-gray-11",
         ].join(" ")}
         onMouseEnter={() => setActiveIndex(index)}
         onClick={() =>
@@ -311,7 +311,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               "mt-[1px] shrink-0 transition-colors",
               active
                 ? "text-gray-12"
-                : "text-gray-10 group-hover:text-gray-11",
+                : "text-gray-11 group-hover:text-gray-11",
             ].join(" ")}
           />
           <div className="flex-1 min-w-0">
@@ -327,8 +327,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               className={[
                 "mt-0.5 flex items-center gap-3 text-[11px]",
                 active
-                  ? "text-gray-10"
-                  : "text-gray-9 group-hover:text-gray-10",
+                  ? "text-gray-11"
+                  : "text-gray-11 group-hover:text-gray-11",
               ].join(" ")}
             >
               <span className="truncate">
@@ -343,8 +343,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 className={[
                   "text-[11px] mt-1",
                   active
-                    ? "text-gray-10"
-                    : "text-gray-8 group-hover:text-gray-9",
+                    ? "text-gray-11"
+                    : "text-gray-11 group-hover:text-gray-11",
                 ].join(" ")}
               >
                 {opt.footer}
@@ -355,7 +355,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 className="mt-3 flex items-center gap-2"
                 onKeyDown={(event) => event.stopPropagation()}
               >
-                <span className="text-[11px] font-medium text-gray-10 mr-1">
+                <span className="text-[11px] font-medium text-gray-11 mr-1">
                   {opt.behaviorTitle}:
                 </span>
                 <div
@@ -370,7 +370,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                         "text-[11px] transition-colors",
                         opt.behaviorValue === option.value
                           ? "text-gray-12 font-semibold"
-                          : "text-gray-10 hover:text-gray-12",
+                          : "text-gray-11 hover:text-gray-12",
                       ].join(" ")}
                       onClick={(event) => {
                         event.preventDefault();
@@ -413,7 +413,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           "group w-full text-left rounded-xl px-3 py-2.5 transition-colors cursor-pointer",
           isKeyboardActive
             ? "bg-gray-2 text-gray-12"
-            : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11",
+            : "text-gray-11 hover:bg-gray-1/70 hover:text-gray-11",
         ].join(" ")}
         onMouseEnter={() => setActiveIndex(provider.index)}
         onClick={() => {
@@ -436,7 +436,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               "mt-[1px] shrink-0 transition-colors",
               isKeyboardActive
                 ? "text-gray-12"
-                : "text-gray-10 group-hover:text-gray-11",
+                : "text-gray-11 group-hover:text-gray-11",
             ].join(" ")}
           />
           <div className="flex-1 min-w-0">
@@ -447,8 +447,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               className={[
                 "mt-0.5 flex items-center gap-3 text-[11px]",
                 isKeyboardActive
-                  ? "text-gray-10"
-                  : "text-gray-9 group-hover:text-gray-10",
+                  ? "text-gray-11"
+                  : "text-gray-11 group-hover:text-gray-11",
               ].join(" ")}
             >
               <span className="truncate">
@@ -492,7 +492,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)]"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-11 transition-colors hover:bg-[var(--dls-hover)]"
               onClick={() => props.onClose()}
             >
               <X size={16} />
@@ -527,7 +527,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           <div className="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
             {recommendedOptions.length > 0 ? (
               <section className="space-y-2">
-                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-11">
                   {translate("model_picker.recommended")}
                 </div>
                 {recommendedOptions.map(({ opt, index }) =>
@@ -538,7 +538,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
             {otherEnabledOptions.length > 0 ? (
               <section className="space-y-2">
-                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-11">
                   {translate("model_picker.other_connected_models")}
                 </div>
                 {otherEnabledOptions.map(({ opt, index }) =>
@@ -549,7 +549,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
             {otherOptions.length > 0 ? (
               <section className="space-y-2">
-                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-11">
                   {translate("model_picker.more_providers")}
                 </div>
                 {otherOptions.map(renderProviderLink)}
@@ -557,7 +557,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             ) : null}
 
             {renderedItems.length === 0 ? (
-              <div className="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
+              <div className="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-11">
                 {translate("model_picker.no_results")}
               </div>
             ) : null}

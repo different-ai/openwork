@@ -87,7 +87,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
   const expandable = hasStructuredValue(input) || hasStructuredValue(output) || Boolean(diff) || Boolean(error);
 
   return (
-    <div className="grid gap-3 text-[14px] text-gray-9">
+    <div className="grid gap-3 text-[14px] text-gray-11">
       <button
         type="button"
         className="w-full text-left transition-colors hover:text-dls-text disabled:cursor-default"
@@ -150,7 +150,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
           {hasStructuredValue(input) ? (
             <div>
               <div className="mb-1 flex items-center justify-between gap-2">
-                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool request</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-11">Tool request</div>
                 <button
                   type="button"
                   className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
@@ -159,7 +159,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
                   Copy
                 </button>
               </div>
-              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
+              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-11">
                 {formatStructuredValue(input)}
               </pre>
             </div>
@@ -168,7 +168,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
           {hasStructuredValue(output) && normalizeToolText(output) !== normalizeToolText(diff) ? (
             <div>
               <div className="mb-1 flex items-center justify-between gap-2">
-                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-8">Tool result</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-gray-11">Tool result</div>
                 <button
                   type="button"
                   className="rounded-full border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
@@ -177,7 +177,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
                   Copy
                 </button>
               </div>
-              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
+              <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-11">
                 {formatStructuredValue(output)}
               </pre>
             </div>
@@ -186,7 +186,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
           {error ? <div className="rounded-lg bg-red-1/40 p-2 text-xs text-red-12">{error}</div> : null}
 
           {props.developerMode && !expandable ? (
-            <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-10">
+            <pre className="overflow-x-auto rounded-[16px] border border-dls-border/70 bg-dls-surface px-4 py-3 text-[12px] leading-6 text-gray-11">
               {safeStringify({ input, output, error, state: props.part.state })}
             </pre>
           ) : null}

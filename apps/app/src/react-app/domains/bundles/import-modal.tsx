@@ -72,7 +72,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
                 <h3 className="text-lg font-semibold text-gray-12">
                   {props.title}
                 </h3>
-                <p className="mt-1 text-sm leading-relaxed text-gray-10">
+                <p className="mt-1 text-sm leading-relaxed text-gray-11">
                   {props.description}
                 </p>
               </div>
@@ -81,7 +81,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
               type="button"
               onClick={props.onClose}
               disabled={busy}
-              className="rounded-full p-1 text-gray-10 transition hover:bg-gray-4 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full p-1 text-gray-11 transition hover:bg-gray-4 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Close"
             >
               <X size={18} />
@@ -128,7 +128,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
                 <div className="text-sm font-semibold text-gray-12">
                   Create new worker
                 </div>
-                <div className="mt-1 text-sm text-gray-10">
+                <div className="mt-1 text-sm text-gray-11">
                   Open the existing new worker flow, then import this bundle into
                   it.
                 </div>
@@ -149,21 +149,21 @@ export function BundleImportModal(props: BundleImportModalProps) {
                 <div className="text-sm font-semibold text-gray-12">
                   Add to existing worker
                 </div>
-                <div className="mt-1 text-sm text-gray-10">
+                <div className="mt-1 text-sm text-gray-11">
                   Pick an existing worker and import this bundle there.
                 </div>
               </div>
               {showWorkers ? (
-                <ChevronDown size={18} className="text-gray-10" />
+                <ChevronDown size={18} className="text-gray-11" />
               ) : (
-                <ChevronRight size={18} className="text-gray-10" />
+                <ChevronRight size={18} className="text-gray-11" />
               )}
             </button>
 
             {showWorkers ? (
               <div className="space-y-3 border-t border-gray-6 px-4 py-4">
                 {props.workers.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-6 px-4 py-5 text-sm text-gray-10">
+                  <div className="rounded-xl border border-dashed border-gray-6 px-4 py-5 text-sm text-gray-11">
                     No configured workers are available yet. Create a new worker
                     to import this bundle.
                   </div>
@@ -185,7 +185,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
                               <span className="text-sm font-semibold text-gray-12">
                                 {worker.label}
                               </span>
-                              <span className="rounded-full border border-gray-6 bg-gray-3 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-10">
+                              <span className="rounded-full border border-gray-6 bg-gray-3 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-11">
                                 {worker.badge}
                               </span>
                               {worker.current ? (
@@ -194,7 +194,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
                                 </span>
                               ) : null}
                             </div>
-                            <div className="mt-1 truncate text-sm text-gray-10">
+                            <div className="mt-1 truncate text-sm text-gray-11">
                               {worker.detail}
                             </div>
                             {disabledReason ? (
@@ -205,7 +205,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
                           </div>
                           <ChevronRight
                             size={18}
-                            className="mt-0.5 shrink-0 text-gray-10"
+                            className="mt-0.5 shrink-0 text-gray-11"
                           />
                         </div>
                       </button>

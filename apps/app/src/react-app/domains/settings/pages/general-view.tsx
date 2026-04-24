@@ -70,7 +70,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
                 {t("settings.providers_title")}
               </div>
             </div>
-            <div className="mt-1 text-xs text-gray-9">{t("settings.providers_desc")}</div>
+            <div className="mt-1 text-xs text-gray-11">{t("settings.providers_desc")}</div>
           </div>
           <div className={`rounded-full border px-2 py-1 text-xs ${props.providerStatusStyle}`}>
             {props.providerStatusLabel}
@@ -87,7 +87,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
               ? t("settings.loading_providers")
               : t("settings.connect_provider")}
           </Button>
-          <div className="text-xs text-gray-10">{props.providerSummary}</div>
+          <div className="text-xs text-gray-11">{props.providerSummary}</div>
         </div>
 
         {props.connectedProviders.length > 0 ? (
@@ -101,9 +101,9 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
                   <ProviderIcon providerId={provider.id} size={18} className="text-gray-12" />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-gray-12">{provider.name}</div>
-                    <div className="truncate font-mono text-[11px] text-gray-8">{provider.id}</div>
+                    <div className="truncate font-mono text-[11px] text-gray-11">{provider.id}</div>
                     {providerSourceLabel(provider.source) ? (
-                      <div className="mt-1 truncate text-[11px] text-gray-9">
+                      <div className="mt-1 truncate text-[11px] text-gray-11">
                         {providerSourceLabel(provider.source)}
                       </div>
                     ) : null}
@@ -137,7 +137,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
           </div>
         ) : null}
         {props.providerDisconnectStatus ? (
-          <div className={`${settingsPanelSoftClass} px-3 py-2 text-xs text-gray-10`}>
+          <div className={`${settingsPanelSoftClass} px-3 py-2 text-xs text-gray-11`}>
             {props.providerDisconnectStatus}
           </div>
         ) : null}
@@ -147,19 +147,19 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
           </div>
         ) : null}
 
-        <div className="text-[11px] text-gray-9">{t("settings.api_keys_info")}</div>
+        <div className="text-[11px] text-gray-11">{t("settings.api_keys_info")}</div>
       </div>
 
       <div className={`${settingsPanelClass} space-y-4`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.model_title")}</div>
-          <div className="text-xs text-gray-10">{t("settings.model_section_desc")}</div>
+          <div className="text-xs text-gray-11">{t("settings.model_section_desc")}</div>
         </div>
 
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="truncate text-sm text-gray-12">{props.defaultModelLabel}</div>
-            <div className="truncate font-mono text-xs text-gray-7">{props.defaultModelRef}</div>
+            <div className="truncate font-mono text-xs text-gray-11">{props.defaultModelRef}</div>
           </div>
           <Button
             variant="outline"
@@ -174,7 +174,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="text-sm text-gray-12">{t("settings.show_model_reasoning")}</div>
-            <div className="text-xs text-gray-7">{t("settings.show_model_reasoning_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.show_model_reasoning_desc")}</div>
           </div>
           <Button
             variant="outline"
@@ -189,8 +189,8 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="text-sm text-gray-12">{t("settings.model_behavior")}</div>
-            <div className="truncate text-xs text-gray-7">{t("settings.model_behavior_desc")}</div>
-            <div className="mt-1 truncate text-xs font-medium text-gray-8">
+            <div className="truncate text-xs text-gray-11">{t("settings.model_behavior_desc")}</div>
+            <div className="mt-1 truncate text-xs font-medium text-gray-11">
               {props.defaultModelVariantLabel}
             </div>
           </div>
@@ -207,7 +207,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="text-sm text-gray-12">{t("settings.auto_compact")}</div>
-            <div className="text-xs text-gray-7">{t("settings.auto_compact_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.auto_compact_desc")}</div>
           </div>
           <Button
             variant="outline"
@@ -226,18 +226,18 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
 
         <div className="relative space-y-4">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-12">
               <LifeBuoy size={12} />
               {t("settings.feedback_badge")}
             </div>
             <div className="text-sm font-semibold text-gray-12">{t("settings.feedback_title")}</div>
-            <div className="max-w-[58ch] text-xs text-gray-10">{t("settings.feedback_desc")}</div>
+            <div className="max-w-[58ch] text-xs text-gray-11">{t("settings.feedback_desc")}</div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-transparent bg-blue-9 px-4 text-xs font-semibold text-blue-1 transition-colors duration-150 active:scale-[0.98] hover:bg-blue-10 focus:outline-none focus:ring-2 focus:ring-blue-7/30"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-transparent bg-dls-accent px-4 text-xs font-semibold text-white transition-colors duration-150 active:scale-[0.98] hover:bg-[var(--dls-accent-hover)] focus:outline-none focus:ring-2 focus:ring-blue-7/30"
               onClick={props.onSendFeedback}
             >
               <MessageCircle size={14} />
@@ -256,7 +256,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
 
             <button
               type="button"
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-10 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-11 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
               onClick={props.onReportIssue}
             >
               {t("settings.report_issue")}

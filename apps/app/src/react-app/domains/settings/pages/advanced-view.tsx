@@ -56,7 +56,7 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
         </div>
         <div>
           <div className="text-sm font-medium text-gray-12">{props.title}</div>
-          <div className="text-xs text-gray-9">{props.description}</div>
+          <div className="text-xs text-gray-11">{props.description}</div>
         </div>
       </div>
       <div
@@ -200,7 +200,7 @@ export function AdvancedView(props: AdvancedViewProps) {
       <div className={`${settingsPanelClass} space-y-4`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.runtime_title")}</div>
-          <div className="text-xs text-gray-9">{t("settings.runtime_desc")}</div>
+          <div className="text-xs text-gray-11">{t("settings.runtime_desc")}</div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -226,13 +226,13 @@ export function AdvancedView(props: AdvancedViewProps) {
       <div className={`${settingsPanelClass} space-y-3`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.opencode_section_label")}</div>
-          <div className="text-xs text-gray-9">{t("settings.opencode_runtime_desc")}</div>
+          <div className="text-xs text-gray-11">{t("settings.opencode_runtime_desc")}</div>
         </div>
 
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="text-sm text-gray-12">{t("settings.enable_exa")}</div>
-            <div className="text-xs text-gray-7">{t("settings.enable_exa_desc")}</div>
+            <div className="text-xs text-gray-11">{t("settings.enable_exa_desc")}</div>
           </div>
           <Button
             variant="outline"
@@ -244,13 +244,13 @@ export function AdvancedView(props: AdvancedViewProps) {
           </Button>
         </div>
 
-        <div className="text-[11px] text-gray-7">{t("settings.exa_restart_hint")}</div>
+        <div className="text-[11px] text-gray-11">{t("settings.exa_restart_hint")}</div>
       </div>
 
       <div className={`${settingsPanelClass} space-y-3`}>
         <div>
           <div className="text-sm font-medium text-gray-12">Feature flags</div>
-          <div className="text-xs text-gray-9">
+          <div className="text-xs text-gray-11">
             Experimental controls for sandbox and workspace behaviors.
           </div>
         </div>
@@ -258,7 +258,7 @@ export function AdvancedView(props: AdvancedViewProps) {
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
           <div className="min-w-0">
             <div className="text-sm text-gray-12">Create Sandbox uses microsandbox image</div>
-            <div className="text-xs text-gray-7">
+            <div className="text-xs text-gray-11">
               When enabled, Create Sandbox launches the detached worker with the microsandbox image
               flow instead of the default Docker image flow.
             </div>
@@ -276,7 +276,7 @@ export function AdvancedView(props: AdvancedViewProps) {
 
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="text-sm font-medium text-gray-12">{t("settings.developer_mode_title")}</div>
-        <div className="text-xs text-gray-9">{t("settings.developer_mode_desc")}</div>
+        <div className="text-xs text-gray-11">{t("settings.developer_mode_desc")}</div>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
             type="button"
@@ -292,7 +292,7 @@ export function AdvancedView(props: AdvancedViewProps) {
               ? t("settings.disable_developer_mode")
               : t("settings.enable_developer_mode")}
           </button>
-          <div className="text-xs text-gray-10">
+          <div className="text-xs text-gray-11">
             {props.developerMode
               ? t("settings.developer_panel_enabled")
               : t("settings.developer_panel_disabled")}
@@ -304,7 +304,7 @@ export function AdvancedView(props: AdvancedViewProps) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-gray-12">{t("settings.open_deeplink_title")}</div>
-                <div className="text-xs text-gray-9">{t("settings.open_deeplink_desc")}</div>
+                <div className="text-xs text-gray-11">{t("settings.open_deeplink_desc")}</div>
               </div>
               <button
                 type="button"
@@ -337,20 +337,20 @@ export function AdvancedView(props: AdvancedViewProps) {
                   >
                     {debugDeepLinkBusy ? t("settings.opening") : t("settings.open_deeplink_action")}
                   </Button>
-                  <div className="text-[11px] text-gray-8">{t("settings.deeplink_hint")}</div>
+                  <div className="text-[11px] text-gray-11">{t("settings.deeplink_hint")}</div>
                 </div>
               </div>
             ) : null}
 
-            {debugDeepLinkStatus ? <div className="text-xs text-gray-10">{debugDeepLinkStatus}</div> : null}
+            {debugDeepLinkStatus ? <div className="text-xs text-gray-11">{debugDeepLinkStatus}</div> : null}
           </div>
         ) : null}
       </div>
 
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="text-sm font-medium text-gray-12">{t("settings.connection_title")}</div>
-        <div className="text-xs text-gray-9">{props.headerStatus}</div>
-        <div className="break-all font-mono text-xs text-gray-8">{props.baseUrl}</div>
+        <div className="text-xs text-gray-11">{props.headerStatus}</div>
+        <div className="break-all font-mono text-xs text-gray-11">{props.baseUrl}</div>
         <div className="flex flex-wrap gap-2 pt-2">
           <button
             type="button"
@@ -398,9 +398,9 @@ export function AdvancedView(props: AdvancedViewProps) {
           ) : null}
         </div>
 
-        {openworkReconnectStatus ? <div className="text-xs text-gray-10">{openworkReconnectStatus}</div> : null}
+        {openworkReconnectStatus ? <div className="text-xs text-gray-11">{openworkReconnectStatus}</div> : null}
         {openworkReconnectError ? <div className="text-xs text-red-11">{openworkReconnectError}</div> : null}
-        {openworkRestartStatus ? <div className="text-xs text-gray-10">{openworkRestartStatus}</div> : null}
+        {openworkRestartStatus ? <div className="text-xs text-gray-11">{openworkRestartStatus}</div> : null}
         {openworkRestartError ? <div className="text-xs text-red-11">{openworkRestartError}</div> : null}
       </div>
 

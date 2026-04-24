@@ -12,7 +12,7 @@ const buttonBaseClass =
 const outlineButtonClass = `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`;
 const dangerButtonClass = `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`;
 const ghostIconButtonClass =
-  "inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)] disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-11 transition-colors hover:bg-[var(--dls-hover)] disabled:cursor-not-allowed disabled:opacity-60";
 
 export type ResetModalProps = {
   open: boolean;

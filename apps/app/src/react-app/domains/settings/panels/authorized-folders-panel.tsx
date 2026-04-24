@@ -297,22 +297,22 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     <div className={`${panelClass} space-y-4`}>
       <div className="space-y-1">
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-12">
-          <FolderLock size={16} className="text-gray-10" />
+          <FolderLock size={16} className="text-gray-11" />
           {t("context_panel.authorized_folders")}
         </div>
-        <div className="max-w-[65ch] text-xs leading-relaxed text-gray-9">
+        <div className="max-w-[65ch] text-xs leading-relaxed text-gray-11">
           {t("context_panel.authorized_folders_desc")}
         </div>
       </div>
 
       {!canReadConfig ? (
-        <div className={`${softPanelClass} px-3 py-3 text-xs text-gray-10`}>
+        <div className={`${softPanelClass} px-3 py-3 text-xs text-gray-11`}>
           {authorizedFoldersHint ?? t("context_panel.authorized_folders_no_access")}
         </div>
       ) : (
         <div className="flex flex-col overflow-hidden rounded-xl border border-gray-5/60 bg-gray-1/50 shadow-sm">
           {authorizedFoldersHint ? (
-            <div className="border-b border-gray-5/40 bg-gray-2/60 px-3 py-2 text-[11px] text-gray-10">
+            <div className="border-b border-gray-5/40 bg-gray-2/60 px-3 py-2 text-[11px] text-gray-11">
               {authorizedFoldersHint}
             </div>
           ) : null}
@@ -342,7 +342,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                             </span>
                           ) : null}
                         </div>
-                        <span className="truncate font-mono text-[10px] text-gray-8">{folder}</span>
+                        <span className="truncate font-mono text-[10px] text-gray-11">{folder}</span>
                       </div>
                     </div>
                     {!isWorkspaceRoot ? (
@@ -356,7 +356,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                         <X size={16} className="text-current" />
                       </Button>
                     ) : (
-                      <span className="shrink-0 text-[10px] font-medium text-gray-8">
+                      <span className="shrink-0 text-[10px] font-medium text-gray-11">
                         {t("context_panel.always_available")}
                       </span>
                     )}
@@ -370,7 +370,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                 <Folder size={20} />
               </div>
               <div className="text-sm font-medium text-gray-11">{t("context_panel.no_external_folders")}</div>
-              <div className="mt-1 max-w-[40ch] text-[11px] text-gray-9">
+              <div className="mt-1 max-w-[40ch] text-[11px] text-gray-11">
                 {t("context_panel.add_folder_hint")}
               </div>
             </div>

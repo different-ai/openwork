@@ -383,12 +383,12 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
             </div>
 
-            <div className="flex items-center gap-1.5 text-gray-10">
+            <div className="flex items-center gap-1.5 text-gray-11">
               {props.history ? (
                 <>
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => void props.history?.onUndo()}
                     disabled={!props.history.canUndo || props.history.busyAction !== null}
                     title={t("session.undo_title")}
@@ -403,7 +403,7 @@ export function SessionPage(props: SessionPageProps) {
                   </button>
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => void props.history?.onRedo()}
                     disabled={!props.history.canRedo || props.history.busyAction !== null}
                     title={t("session.redo_title")}
@@ -511,13 +511,13 @@ export function SessionPage(props: SessionPageProps) {
               <div className="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
+                  className="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-11 transition-colors hover:bg-gray-2/50"
                   onClick={() => setTodoExpanded((current) => !current)}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-gray-11 font-medium">{todoLabel}</span>
                   </div>
-                  <Minimize2 size={12} className={`text-gray-8 transition-transform ${todoExpanded ? "" : "rotate-180"}`} />
+                  <Minimize2 size={12} className={`text-gray-11 transition-transform ${todoExpanded ? "" : "rotate-180"}`} />
                 </button>
                 {todoExpanded ? (
                   <div className="max-h-60 space-y-2.5 overflow-auto border-t border-dls-border px-4 pb-3">
@@ -535,15 +535,15 @@ export function SessionPage(props: SessionPageProps) {
                                   : active
                                     ? "border-amber-6 bg-amber-2 text-amber-11"
                                     : cancelled
-                                      ? "border-gray-6 bg-gray-2 text-gray-8"
-                                      : "border-gray-6 bg-gray-1 text-gray-8"
+                                      ? "border-gray-6 bg-gray-2 text-gray-11"
+                                      : "border-gray-6 bg-gray-1 text-gray-11"
                               }`}
                             >
                               {done ? <Check size={10} /> : active ? <span className="h-1.5 w-1.5 rounded-full bg-amber-9" /> : null}
                             </div>
                           </div>
-                          <div className={`flex-1 text-sm leading-relaxed ${cancelled ? "text-gray-9 line-through" : "text-gray-12"}`}>
-                            <span className="mr-1.5 text-gray-9">{index + 1}.</span>
+                          <div className={`flex-1 text-sm leading-relaxed ${cancelled ? "text-gray-11 line-through" : "text-gray-12"}`}>
+                            <span className="mr-1.5 text-gray-11">{index + 1}.</span>
                             {todo.content}
                           </div>
                         </div>
@@ -626,7 +626,7 @@ export function SessionPage(props: SessionPageProps) {
               </div>
 
               <div className="mb-6 rounded-xl border border-gray-6 bg-gray-1/50 p-4">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-10">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-11">
                   {t("session.permission_label")}
                 </div>
                 <div className="font-mono text-sm text-gray-12">{permissionPresentation.permissionLabel}</div>
@@ -635,7 +635,7 @@ export function SessionPage(props: SessionPageProps) {
                   <p className="mt-2 text-sm text-gray-11">{permissionPresentation.note}</p>
                 ) : null}
 
-                <div className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-gray-10">
+                <div className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-gray-11">
                   {permissionPresentation.scopeLabel}
                 </div>
                 <div className="flex items-center gap-2 rounded border border-amber-7/20 bg-amber-1/30 px-2 py-1 font-mono text-sm text-amber-12">

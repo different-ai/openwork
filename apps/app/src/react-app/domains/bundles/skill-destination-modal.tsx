@@ -124,7 +124,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
         <div className="border-b border-gray-6 bg-gray-1 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 space-y-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-10">
+              <div className="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">
                 <Sparkles size={12} />
                 {translate("share_skill_destination.skill_label")}
               </div>
@@ -134,7 +134,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                     <Sparkles size={17} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-9">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">
                       {translate("share_skill_destination.skill_label")}
                     </div>
                     <h3 className="mt-1 text-lg font-semibold text-gray-12 break-words">
@@ -142,12 +142,12 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                         translate("share_skill_destination.fallback_skill_name")}
                     </h3>
                     {props.skill?.description?.trim() ? (
-                      <p className="mt-1 text-sm leading-relaxed text-gray-10 break-words">
+                      <p className="mt-1 text-sm leading-relaxed text-gray-11 break-words">
                         {props.skill.description.trim()}
                       </p>
                     ) : null}
                     {props.skill?.trigger?.trim() ? (
-                      <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 py-1 text-[11px] text-gray-10">
+                      <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 py-1 text-[11px] text-gray-11">
                         <span className="font-semibold text-gray-12">
                           {translate("share_skill_destination.trigger_label")}
                         </span>
@@ -163,7 +163,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                 <h4 className="text-sm font-medium text-gray-12">
                   {translate("share_skill_destination.title")}
                 </h4>
-                <p className="mt-1 text-sm leading-relaxed text-gray-10">
+                <p className="mt-1 text-sm leading-relaxed text-gray-11">
                   {translate("share_skill_destination.subtitle")}
                 </p>
               </div>
@@ -172,7 +172,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
             <button
               onClick={props.onClose}
               disabled={footerBusy}
-              className={`rounded-full p-2 text-gray-9 transition hover:bg-gray-2 hover:text-gray-12 ${
+              className={`rounded-full p-2 text-gray-11 transition hover:bg-gray-2 hover:text-gray-12 ${
                 footerBusy ? "cursor-not-allowed opacity-50" : ""
               }`.trim()}
               aria-label={translate("common.close")}
@@ -189,14 +189,14 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                 {translate("share_skill_destination.existing_workers")}
               </div>
               {props.workspaces.length > 0 ? (
-                <span className="text-[11px] uppercase tracking-[0.18em] text-gray-9">
+                <span className="text-[11px] uppercase tracking-[0.18em] text-gray-11">
                   {props.workspaces.length}
                 </span>
               ) : null}
             </div>
 
             {props.workspaces.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-gray-6 bg-gray-2/20 px-4 py-5 text-sm leading-relaxed text-gray-10">
+              <div className="rounded-xl border border-dashed border-gray-6 bg-gray-2/20 px-4 py-5 text-sm leading-relaxed text-gray-11">
                 {translate("share_skill_destination.no_workers")}
               </div>
             ) : (
@@ -255,7 +255,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                             ) : null}
                           </div>
 
-                          <div className="mt-1 text-[11px] font-mono break-all text-gray-8/80">
+                          <div className="mt-1 text-[11px] font-mono break-all text-gray-11/80">
                             {subtitle(workspace)}
                           </div>
                           {isSelected ? (
@@ -267,14 +267,14 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                           ) : null}
                         </div>
 
-                        <div className="shrink-0 pt-0.5 text-gray-9">
+                        <div className="shrink-0 pt-0.5 text-gray-11">
                           {isBusy ? (
                             <Loader2 size={16} className="animate-spin" />
                           ) : (
                             <CheckCircle2
                               size={16}
                               className={
-                                isSelected ? "text-indigo-11" : "text-gray-7"
+                                isSelected ? "text-indigo-11" : "text-gray-11"
                               }
                             />
                           )}
@@ -310,7 +310,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                         <div className="text-sm font-semibold text-gray-12">
                           {translate("share_skill_destination.create_worker")}
                         </div>
-                        <div className="mt-1 text-sm text-gray-10">
+                        <div className="mt-1 text-sm text-gray-11">
                           {translate(
                             "share_skill_destination.create_worker_hint",
                           )}
@@ -337,7 +337,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                         <div className="text-sm font-semibold text-gray-12">
                           {translate("share_skill_destination.connect_remote")}
                         </div>
-                        <div className="mt-1 text-sm text-gray-10">
+                        <div className="mt-1 text-sm text-gray-11">
                           {translate(
                             "share_skill_destination.connect_remote_hint",
                           )}
@@ -354,11 +354,11 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
         <div className="border-t border-gray-6 bg-gray-1 px-6 py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {selectedWorkspace ? (
-              <div className="min-w-0 text-sm text-gray-10">
+              <div className="min-w-0 text-sm text-gray-11">
                 <span className="font-medium text-gray-12">
                   {displayName(selectedWorkspace, "Worker")}
                 </span>
-                <span className="mx-2 text-gray-8">·</span>
+                <span className="mx-2 text-gray-11">·</span>
                 <span className="truncate align-middle">
                   {subtitle(selectedWorkspace)}
                 </span>
