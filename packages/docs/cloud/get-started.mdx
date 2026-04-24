@@ -1,10 +1,10 @@
 ---
 title: "Get started with OpenWork Cloud"
-description: "Connect the desktop app to your OpenWork Cloud org and unlock shared workspaces, skill hubs, and shared providers"
+description: "Connect the desktop app to your OpenWork Cloud org and unlock shared workspaces, skill hubs, shared providers, and GitHub-backed plugin marketplaces"
 ---
 
 OpenWork Cloud requires an active subscription at [app.openworklabs.com](https://app.openworklabs.com/).
-It is intended for teams what want to share `SKILLs.md`, `MCPs` and `configs`. 
+It is intended for teams that want to share skills, MCP servers, providers, and hosted workspaces from one organization.
 
 
 First, you should connect your desktop app with Openwork Cloud.
@@ -30,7 +30,7 @@ Note: You need to be logged in as an `org_owner` in order to make modifications.
 3. Optional: enable `Restrict allowed email domains` and add the approved domains.
 4. Optional: change any `Desktop restrictions` that should apply after people sign in from the desktop app.
 
-These settings apply across the org. You can also create teams, share workspaces, install org skills or skill hubs, and import shared providers.
+These settings apply across the org. You can also create teams, share workspaces, install org skills or skill hubs, connect GitHub repositories, and import shared providers.
 
 Next, you want to make sure you can sign in the desktop app.
 
@@ -45,9 +45,22 @@ Next, you want to make sure you can sign in the desktop app.
 
 After sign-in, pick your org in `Settings -> Cloud -> Active org`.
 
+## Connect GitHub repositories
+
+Use this flow when your team keeps Claude-compatible plugins or marketplaces in GitHub and wants OpenWork Cloud to import them.
+
+1. Open your org dashboard and go to `Integrations`.
+2. Click `GitHub`, then complete the GitHub App install for the account or org that owns the repositories.
+3. After OpenWork Cloud returns you to the repository picker, choose a repository and click `Start discovery`.
+4. Select the discovered plugins you want to import, leave `Auto-import new plugins` enabled if future pushes should sync automatically, then click `Create plugins and mappings`.
+5. Open `Marketplaces` to review imported marketplace repositories, or `Plugins` to review individually imported plugins.
+
+OpenWork currently discovers Claude-compatible repositories that include `.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json`. If you rerun an import after a partial setup, OpenWork Cloud now cleans up empty connector records automatically instead of leaving placeholder imports behind.
+
 ## What to do next
 
 - Use [Skill hubs](/cloud/share-with-your-team/skill-hubs) to publish grouped skills for teams, or save a single skill directly from the desktop app and install it from `Skills -> Cloud`.
+- Use `Integrations -> GitHub` to add more repositories later, or `Marketplaces` to review imported Claude marketplace repositories and their access.
 - Use [Shared workspaces](/cloud/run-in-the-cloud/shared-workspace) to deploy hosted OpenWork runtimes that teammates can open from the desktop app.
 - Use [LLM providers](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM providers](/cloud/share-with-your-team/custom-llm-provider) to manage shared model access.
 - Use [Members and RBAC](/cloud/members-and-rbac) to invite people, create teams, and control access.
