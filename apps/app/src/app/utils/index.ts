@@ -344,7 +344,7 @@ export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error
     return {
       tone: "error" as const,
       label: "Error",
-      message: "Failed to load tasks",
+      message: raw && workspace.workspaceType === "remote" ? raw : "Failed to load tasks",
       title: fallbackTitle,
     };
   }

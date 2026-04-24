@@ -1,6 +1,16 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Settings2,
+} from "lucide-react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -164,6 +174,82 @@ const workspaceSwatchColor = (seed: string) => {
   }
   return WORKSPACE_SWATCHES[Math.abs(hash) % WORKSPACE_SWATCHES.length];
 };
+
+function RemoteConnectionIssueCard(props: {
+  message: string;
+  tone: "error" | "offline";
+  canRecover: boolean;
+  busy: boolean;
+  onRecover: () => void;
+  onTest: () => void;
+  onEdit: () => void;
+}) {
+  const isOffline = props.tone === "offline";
+  const shellClass = isOffline
+    ? "border-amber-7/35 bg-amber-2/45"
+    : "border-red-7/35 bg-red-1/40";
+  const iconClass = isOffline
+    ? "bg-amber-3/60 text-amber-11"
+    : "bg-red-3/60 text-red-11";
+  const detailClass = isOffline
+    ? "border-amber-7/25 bg-amber-1/40 text-amber-11"
+    : "border-red-7/25 bg-red-1/40 text-red-11";
+
+  return (
+    <div className={`w-full rounded-[15px] border px-3 py-3 text-left ${shellClass}`}>
+      <div className="flex items-start gap-2.5">
+        <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+          <AlertCircle size={14} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[12px] font-medium text-dls-text">
+            {t("workspace_list.remote_worker_unavailable")}
+          </div>
+          <div className="mt-1 text-[11px] leading-5 text-gray-10">
+            {t("workspace_list.remote_worker_unavailable_hint")}
+          </div>
+          <div
+            className={`mt-2 rounded-lg border px-2 py-1.5 text-[11px] leading-4 ${detailClass}`}
+            title={props.message}
+          >
+            {props.message}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {props.canRecover ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-gray-11 transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={props.onRecover}
+                disabled={props.busy}
+              >
+                <RotateCcw size={12} />
+                {t("workspace_list.recover")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-gray-11 transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={props.onTest}
+              disabled={props.busy}
+            >
+              <RefreshCw size={12} />
+              {t("workspace_list.test_connection")}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dls-border bg-dls-surface px-2 py-1 text-[11px] font-medium text-gray-11 transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={props.onEdit}
+              disabled={props.busy}
+            >
+              <Settings2 size={12} />
+              {t("common.edit")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function WorkspaceSessionList(props: Props) {
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
@@ -465,14 +551,28 @@ export function WorkspaceSessionList(props: Props) {
               workspace.workspaceType === "remote" && connectionState.status === "error";
             const isMenuOpen = workspaceMenuId === workspace.id;
             const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
+            const connectionIssueMessage =
+              connectionState.status === "error"
+                ? connectionState.message?.trim() || taskLoadError.message
+                : taskLoadError.message;
+            const showRemoteConnectionIssue =
+              workspace.workspaceType === "remote" &&
+              Boolean(connectionIssueMessage) &&
+              (connectionState.status === "error" || group.status === "error");
             const statusLabel = (() => {
+              const connectionMessage = connectionState.message?.trim() ?? "";
+              if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
+              if (connectionState.status === "error") return connectionMessage || taskLoadError.message;
+              if (connectionState.status === "connected") return connectionMessage || t("status.connected");
               if (group.status === "error") return taskLoadError.label;
               if (isConnectionActionBusy) return t("workspace_list.connecting");
               if (!props.developerMode) return "";
               if (props.selectedWorkspaceId === workspace.id) return t("workspace.selected");
               return workspaceKindLabel(workspace);
             })();
-            const statusTone = group.status === "error"
+            const statusTone = connectionState.status === "connected"
+              ? "text-green-11"
+              : connectionState.status === "error" || group.status === "error"
               ? taskLoadError.tone === "offline"
                 ? "text-amber-11"
                 : "text-red-11"
@@ -521,7 +621,9 @@ export function WorkspaceSessionList(props: Props) {
                           {workspaceLabel(workspace)}
                         </div>
                         {statusLabel ? (
-                          <div className={`mt-0.5 text-[11px] ${statusTone}`}>{statusLabel}</div>
+                          <div className={`mt-0.5 truncate text-[11px] ${statusTone}`} title={statusLabel}>
+                            {statusLabel}
+                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -680,6 +782,23 @@ export function WorkspaceSessionList(props: Props) {
                 {expandedWorkspaceIds.has(workspace.id) ? (
                   <div className="mt-3 px-1 pb-1">
                     <div className="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
+                      {showRemoteConnectionIssue ? (
+                        <RemoteConnectionIssueCard
+                          message={connectionIssueMessage}
+                          tone={taskLoadError.tone}
+                          canRecover={canRecover}
+                          busy={isConnectionActionBusy}
+                          onRecover={() => {
+                            void Promise.resolve(props.onRecoverWorkspace(workspace.id));
+                          }}
+                          onTest={() => {
+                            void Promise.resolve(props.onTestWorkspaceConnection(workspace.id));
+                          }}
+                          onEdit={() => {
+                            props.onEditWorkspaceConnection(workspace.id);
+                          }}
+                        />
+                      ) : null}
                       {props.showInitialLoading ? (
                         <div className="space-y-2">
                           {[0, 1, 2].map((idx) => (
@@ -726,7 +845,7 @@ export function WorkspaceSessionList(props: Props) {
                             </button>
                           ) : null}
                         </>
-                      ) : group.status === "error" ? (
+                      ) : showRemoteConnectionIssue ? null : group.status === "error" ? (
                         <div
                           className={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
                             taskLoadError.tone === "offline"

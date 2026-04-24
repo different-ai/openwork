@@ -14,8 +14,16 @@ import {
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
-import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspacePreset, WorkspaceSessionGroup } from "../../app/types";
-import { isSandboxWorkspace } from "../../app/utils";
+import type {
+  Client,
+  ProviderListItem,
+  SettingsTab,
+  WorkspaceConnectionState,
+  WorkspaceDisplay,
+  WorkspacePreset,
+  WorkspaceSessionGroup,
+} from "../../app/types";
+import { getWorkspaceTaskLoadErrorDisplay, isSandboxWorkspace } from "../../app/utils";
 import { currentLocale, t, setLocale, type Language } from "../../i18n";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/connections/store";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../domains/connections/openwork-server-store";
@@ -62,6 +70,10 @@ import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/d
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
 import { isDesktopRuntime, isElectronRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import {
+  diagnoseRemoteWorkspaceTaskLoadFailure,
+  testRemoteWorkspaceConnection,
+} from "../domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
 import { recordInspectorEvent } from "./app-inspector";
@@ -326,6 +338,7 @@ export function SettingsRoute() {
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
+  const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
@@ -396,6 +409,20 @@ export function SettingsRoute() {
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
     [selectedWorkspaceId, workspaces],
   );
+  const workspaceConnectionStateById = useMemo(() => {
+    const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
+    for (const workspace of workspaces) {
+      if (workspace.workspaceType !== "remote") continue;
+      const error = errorsByWorkspaceId[workspace.id]?.trim();
+      if (!error || next[workspace.id]?.status === "connecting") continue;
+      next[workspace.id] ??= {
+        status: "error",
+        message: getWorkspaceTaskLoadErrorDisplay(workspace, error).message || error,
+        checkedAt: null,
+      };
+    }
+    return next;
+  }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
   const selectedWorkspaceRoot = selectedWorkspace?.path?.trim() || "";
   const selectedWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () =>
@@ -765,12 +792,28 @@ export function SettingsRoute() {
                   normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
                 )
               : (response.items ?? []);
-            return { workspaceId: workspace.id, sessions: items, error: null as string | null };
+            return {
+              workspaceId: workspace.id,
+              sessions: items,
+              error: null as string | null,
+              connectionState: null as WorkspaceConnectionState | null,
+            };
           } catch (error) {
+            const fallback = error instanceof Error ? error.message : t("app.unknown_error");
+            if (workspace.workspaceType === "remote") {
+              const connectionState = await diagnoseRemoteWorkspaceTaskLoadFailure(workspace, fallback);
+              return {
+                workspaceId: workspace.id,
+                sessions: [],
+                error: connectionState.message ?? "Remote worker connection failed.",
+                connectionState,
+              };
+            }
             return {
               workspaceId: workspace.id,
               sessions: [],
-              error: error instanceof Error ? error.message : t("app.unknown_error"),
+              error: fallback,
+              connectionState: null,
             };
           }
         }),
@@ -782,6 +825,17 @@ export function SettingsRoute() {
       setWorkspaces(nextWorkspaces);
       setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
+      setWorkspaceConnectionOverrides((current) => {
+        const next = { ...current };
+        for (const entry of sessionEntries) {
+          if (entry.connectionState) {
+            next[entry.workspaceId] = entry.connectionState;
+          } else if (next[entry.workspaceId]?.status === "error") {
+            delete next[entry.workspaceId];
+          }
+        }
+        return next;
+      });
       setSelectedWorkspaceId((current) =>
         reconcileSelectedWorkspaceId(current, list, desktopList, nextWorkspaces),
       );
@@ -811,6 +865,43 @@ export function SettingsRoute() {
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
+
+  const runRemoteWorkspaceConnectionCheck = useCallback(
+    async (workspaceId: string, mode: "test" | "recover") => {
+      const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
+      if (!workspace || workspace.workspaceType !== "remote") return false;
+
+      setWorkspaceConnectionOverrides((current) => ({
+        ...current,
+        [workspaceId]: {
+          status: "connecting",
+          message: mode === "recover" ? "Checking connection..." : "Testing connection...",
+          checkedAt: null,
+        },
+      }));
+
+      const result = await testRemoteWorkspaceConnection(workspace);
+      setWorkspaceConnectionOverrides((current) => ({
+        ...current,
+        [workspaceId]: result.state,
+      }));
+
+      if (!result.ok) {
+        setErrorsByWorkspaceId((current) => ({
+          ...current,
+          [workspaceId]: result.state.message ?? "Remote worker connection failed.",
+        }));
+        return false;
+      }
+
+      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
+      if (mode === "recover") {
+        await refreshRouteState();
+      }
+      return true;
+    },
+    [refreshRouteState],
+  );
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;
@@ -1342,7 +1433,7 @@ export function SettingsRoute() {
           developerMode,
           selectedSessionId: null,
           connectingWorkspaceId: null,
-          workspaceConnectionStateById: {},
+          workspaceConnectionStateById,
           newTaskDisabled: !opencodeClient,
           onSelectWorkspace: async (workspaceId) => {
             setSelectedWorkspaceId(workspaceId);
@@ -1353,8 +1444,8 @@ export function SettingsRoute() {
           onOpenRenameWorkspace: () => {},
           onShareWorkspace: () => {},
           onRevealWorkspace: () => {},
-          onRecoverWorkspace: async () => true,
-          onTestWorkspaceConnection: async () => true,
+          onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
+          onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
           onEditWorkspaceConnection: () => {},
           onForgetWorkspace: () => {},
           onOpenCreateWorkspace: handleOpenCreateWorkspace,

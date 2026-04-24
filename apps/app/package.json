@@ -21,6 +21,7 @@
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
+    "test:remote-diagnostics": "bun test src/react-app/domains/workspace/remote-workspace-diagnostics.test.ts",
     "test:dev-log": "bun scripts/dev-log.ts",
     "test:session-error-recovery": "bun scripts/session-error-recovery.ts",
     "test:session-scope": "bun scripts/session-scope.ts",
