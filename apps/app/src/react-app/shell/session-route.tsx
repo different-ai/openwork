@@ -529,6 +529,22 @@ export function SessionRoute() {
     };
   }, [refreshRouteState]);
 
+  // Periodic session list refresh so that sessions created externally (e.g. by
+  // automations, messaging bots, or other clients) appear in the sidebar without
+  // requiring the user to rename a session or manually refresh the page. Only
+  // fires when the tab is visible to avoid unnecessary network requests. The
+  // existing refreshInFlightRef guard prevents overlapping calls.
+  // Fixes #1262
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      refreshInFlightRef.current = false;
+      void refreshRouteState();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [refreshRouteState]);
+
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     let cancelled = false;
