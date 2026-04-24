@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
+import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
@@ -47,6 +48,7 @@ function validateKey(key: string): string | null {
 export function EnvironmentView(props: EnvironmentViewProps) {
   const { client, isRemoteWorkspace, onStatusMessage } = props;
   const canEdit = !isRemoteWorkspace && client !== null;
+  const editorTitleId = useId();
 
   const [items, setItems] = useState<EnvItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,24 +57,32 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const [editor, setEditor] = useState<{ mode: "add" | "edit"; key: string; value: string } | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const refreshRequestId = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!client) {
+    const requestId = ++refreshRequestId.current;
+    if (!client || isRemoteWorkspace) {
       setItems([]);
+      setRevealed({});
+      setError(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
       const response = await client.listUserEnv();
+      if (requestId !== refreshRequestId.current) return;
       setItems(response.items);
     } catch (err) {
+      if (requestId !== refreshRequestId.current) return;
       setError(err instanceof Error ? err.message : t("app.unknown_error"));
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestId.current) setLoading(false);
     }
-  }, [client]);
+  }, [client, isRemoteWorkspace]);
 
   useEffect(() => {
     void refresh();
@@ -91,9 +101,19 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   };
 
   const closeEditor = () => {
+    if (saving) return;
     setEditor(null);
     setEditorError(null);
   };
+
+  useEffect(() => {
+    if (!editor) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeEditor();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editor, saving]);
 
   const submitEditor = async () => {
     if (!editor || !client) return;
@@ -120,14 +140,14 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     }
   };
 
-  const handleDelete = async (item: EnvItem) => {
-    if (!client) return;
-    const confirmed = window.confirm(t("settings.environment.confirm_delete").replace("{key}", item.key));
-    if (!confirmed) return;
-    setDeletingKey(item.key);
+  const confirmDelete = async () => {
+    if (!client || !deleteCandidate || deletingKey) return;
+    const key = deleteCandidate.key;
+    setDeletingKey(key);
     try {
-      await client.deleteUserEnv(item.key);
+      await client.deleteUserEnv(key);
       onStatusMessage(t("settings.environment.restart_required"));
+      setDeleteCandidate(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("app.unknown_error"));
@@ -172,7 +192,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
           </div>
         ) : null}
 
-        {loading && items.length === 0 ? (
+        {isRemoteWorkspace ? null : loading && items.length === 0 ? (
           <div className="py-6 text-center text-xs text-gray-10">
             {t("settings.environment.loading")}
           </div>
@@ -219,6 +239,10 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                         setRevealed((current) => ({ ...current, [item.key]: !current[item.key] }))
                       }
                       title={isRevealed ? t("settings.environment.hide") : t("settings.environment.reveal")}
+                      aria-label={(isRevealed
+                        ? t("settings.environment.hide_value")
+                        : t("settings.environment.reveal_value")
+                      ).replace("{key}", item.key)}
                     >
                       {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
                     </Button>
@@ -226,9 +250,10 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                       <Button
                         variant="ghost"
                         className="h-7 w-7 p-0 text-red-10 hover:text-red-11"
-                        onClick={() => void handleDelete(item)}
+                        onClick={() => setDeleteCandidate(item)}
                         disabled={deletingKey === item.key}
                         title={t("settings.environment.delete")}
+                        aria-label={t("settings.environment.delete_variable").replace("{key}", item.key)}
                       >
                         <Trash2 size={13} />
                       </Button>
@@ -240,27 +265,34 @@ export function EnvironmentView(props: EnvironmentViewProps) {
           </div>
         )}
 
-        <div className="text-[11px] text-gray-8">
+        {!isRemoteWorkspace ? <div className="text-[11px] text-gray-8">
           {t("settings.environment.footer_hint")}
-        </div>
+        </div> : null}
       </div>
 
       {editor ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={closeEditor}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" onClick={closeEditor} />
           <div
-            className="w-full max-w-md rounded-2xl border border-dls-border bg-dls-surface p-5 shadow-xl"
+            className="relative w-full max-w-md rounded-2xl border border-gray-6 bg-gray-2 p-5 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={editorTitleId}
           >
             <div className="flex items-center justify-between">
-              <div className="text-sm font-medium text-gray-12">
+              <div id={editorTitleId} className="text-sm font-medium text-gray-12">
                 {editor.mode === "add"
                   ? t("settings.environment.add_title")
                   : t("settings.environment.edit_title")}
               </div>
-              <Button variant="ghost" className="h-7 w-7 p-0" onClick={closeEditor}>
+              <Button
+                variant="ghost"
+                className="h-7 w-7 p-0"
+                onClick={closeEditor}
+                aria-label={t("settings.environment.close_editor")}
+                title={t("settings.environment.close_editor")}
+              >
                 <X size={14} />
               </Button>
             </div>
@@ -316,6 +348,20 @@ export function EnvironmentView(props: EnvironmentViewProps) {
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={deleteCandidate !== null}
+        title={t("settings.environment.delete_title")}
+        message={deleteCandidate ? t("settings.environment.confirm_delete").replace("{key}", deleteCandidate.key) : ""}
+        confirmLabel={deletingKey ? t("settings.environment.deleting") : t("settings.environment.delete")}
+        cancelLabel={t("settings.environment.cancel")}
+        variant="danger"
+        confirmButtonVariant="danger"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          if (!deletingKey) setDeleteCandidate(null);
+        }}
+      />
     </div>
   );
 }

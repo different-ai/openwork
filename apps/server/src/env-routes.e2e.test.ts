@@ -15,6 +15,7 @@ const HOST_TOKEN = "owt_env_host_token";
 const stops: Array<() => void | Promise<void>> = [];
 const dirs: string[] = [];
 const priorEnvStore = process.env.OPENWORK_ENV_STORE;
+const priorTokenStore = process.env.OPENWORK_TOKEN_STORE;
 
 function baseConfig(): ServerConfig {
   return {
@@ -54,6 +55,7 @@ beforeEach(() => {
   // Redirect the shared env.json path into a throwaway dir so the test never
   // touches the developer's real ~/.config/openwork/env.json.
   process.env.OPENWORK_ENV_STORE = join(dir, "env.json");
+  process.env.OPENWORK_TOKEN_STORE = join(dir, "tokens.json");
 });
 
 afterEach(async () => {
@@ -68,6 +70,11 @@ afterEach(async () => {
   } else {
     process.env.OPENWORK_ENV_STORE = priorEnvStore;
   }
+  if (priorTokenStore === undefined) {
+    delete process.env.OPENWORK_TOKEN_STORE;
+  } else {
+    process.env.OPENWORK_TOKEN_STORE = priorTokenStore;
+  }
 });
 
 describe("env routes", () => {
@@ -75,6 +82,35 @@ describe("env routes", () => {
     const { base } = boot();
     const response = await fetch(`${base}/env`);
     expect(response.status).toBe(401);
+  });
+
+  test("rejects owner bearer tokens", async () => {
+    const { base } = boot();
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "test owner" }),
+    });
+    expect(issued.status).toBe(201);
+    const body = (await issued.json()) as { token: string };
+
+    const response = await fetch(`${base}/env`, {
+      headers: { authorization: `Bearer ${body.token}` },
+    });
+    expect(response.status).toBe(401);
+  });
+
+  test("CORS preflight allows PUT", async () => {
+    const { base } = boot();
+    const response = await fetch(`${base}/env`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "PUT",
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-methods")).toContain("PUT");
   });
 
   test("PUT + GET round-trips a single entry and returns raw values", async () => {

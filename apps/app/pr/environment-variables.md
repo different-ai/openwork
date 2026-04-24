@@ -29,8 +29,8 @@ Boundaries vs. adjacent features:
   credentials for LLM providers OpenCode directly supports (stored in
   `auth.json`). Users should keep using that for model keys where possible.
 - Not a replacement for Den's cloud `LLM Providers` push, which owns
-  org-wide distribution for signed-in users. The pane shows a
-  read-only "Managed by cloud LLM Providers" hint on remote workspaces.
+  org-wide distribution for signed-in users. On remote workspaces, the pane
+  shows a read-only hint and does not fetch or display local env values.
 - This fills the OSS / local-machine path for every other service skills
   and MCPs call into — ElevenLabs, Gemini image APIs, GitHub, Notion,
   LangSmith / OTEL exporters, proxy + CA-cert config, and so on.
@@ -62,8 +62,9 @@ Shape:
 ## Server
 
 `EnvService` at `apps/server/src/env-file.ts` — mirrors the `TokenService`
-pattern. Three host-auth routes on the OpenWork server (auth is `host`, so
-remote clients and OpenCode tools are structurally unable to reach them):
+pattern. Three desktop-host-token routes on the OpenWork server, so remote
+owner/collaborator/viewer clients and OpenCode tools are structurally unable to
+reach them:
 
 - `GET /env` → `{ items: [{ key, value, updatedAt }] }` (values raw; the UI masks presentationally)
 - `PUT /env` → single entry `{ key, value }` or batch `{ entries: [...] }`
@@ -99,7 +100,7 @@ line in each of `types.ts`, `settings-page.tsx`, `settings-route.tsx`.
   modal, delete-with-confirm.
 - Client-side key validation mirrors the server (`^[A-Za-z_][A-Za-z0-9_]*$`)
   + reserved-prefix check.
-- Remote workspaces show a read-only hint pointing at cloud LLM Providers.
+- Remote workspaces show a read-only hint and do not list local env values.
 
 ## Reload semantics
 
@@ -125,7 +126,7 @@ nothing ships as raw keys.
 | Layer | File | What |
 | --- | --- | --- |
 | Server unit | `apps/server/src/env-file.test.ts` | 12 tests — path resolution, validation, reserved keys, perms, round-trip, tampered-file defense |
-| Server HTTP e2e | `apps/server/src/env-routes.e2e.test.ts` | 9 tests — auth 401, PUT/GET round-trip, batch PUT, invalid key 400, reserved key 400, DELETE missing/found, restart persistence |
+| Server HTTP e2e | `apps/server/src/env-routes.e2e.test.ts` | 11 tests — auth 401, owner-bearer rejection, CORS PUT preflight, PUT/GET round-trip, batch PUT, invalid key 400, reserved key 400, DELETE missing/found, restart persistence |
 | Tauri Rust unit | `apps/desktop/src-tauri/src/env_file.rs` | 4 tests — missing file, malformed JSON, well-formed load, reserved-key strip |
 
 Bun picks up `*.e2e.test.ts` automatically — no CI wiring change.
@@ -135,16 +136,18 @@ Bun picks up `*.e2e.test.ts` automatically — no CI wiring change.
 ```
 pnpm install                                       # ok
 pnpm --filter openwork-server test                 # 104 pass, 0 fail
+bun test ./src/env-file.test.ts ./src/env-routes.e2e.test.ts # 23 pass, 0 fail
 pnpm --filter openwork-server typecheck            # clean
 pnpm --filter openwork-server build:bin            # ok (orchestrator-hosted runs)
 pnpm --filter openwork-orchestrator typecheck      # clean
 pnpm --filter @openwork/app typecheck              # clean
 pnpm typecheck                                     # clean (sdk:generate + app)
 pnpm test:e2e                                      # ok
-pnpm build:ui                                      # ok (production Vite)
+pnpm build:ui                                      # ok (production Vite; large chunk warning unchanged)
 cargo check                            (src-tauri) # ok
 cargo test --lib env_file              (src-tauri) # 4 pass, 0 fail
 node --check apps/desktop/electron/runtime.mjs     # ok
+git diff --check                                   # clean
 ```
 
 ## Non-goals (follow-ups)

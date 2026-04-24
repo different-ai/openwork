@@ -1,5 +1,5 @@
 import { homedir, platform } from "node:os";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { ensureDir, exists } from "./utils.js";
@@ -87,17 +87,42 @@ async function readStore(path: string): Promise<EnvStoreFile> {
 }
 
 async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
-  await ensureDir(dirname(path));
+  const dir = dirname(path);
+  await ensureDir(dir);
   const payload: EnvStoreFile = {
     schemaVersion: 1,
     updatedAt: Date.now(),
     variables,
   };
-  await writeFile(path, JSON.stringify(payload, null, 2) + "\n", "utf8");
+  const tempPath = join(
+    dir,
+    `.env.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  await writeFile(tempPath, JSON.stringify(payload, null, 2) + "\n", {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  try {
+    await chmod(tempPath, 0o600);
+  } catch (error) {
+    // chmod is a no-op on Windows; values may still contain secrets.
+    if (platform() !== "win32") {
+      await rm(tempPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+  try {
+    await rename(tempPath, path);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
   try {
     await chmod(path, 0o600);
-  } catch {
+  } catch (error) {
     // chmod is a no-op on Windows; values may still contain secrets.
+    if (platform() !== "win32") throw error;
   }
 }
 

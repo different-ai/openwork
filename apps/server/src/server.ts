@@ -141,7 +141,7 @@ function logRequest(input: {
   logger.log(level, message, attributes);
 }
 
-type AuthMode = "none" | "client" | "host";
+type AuthMode = "none" | "client" | "host" | "host-token";
 
 function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath: string } | null {
   if (!pathname.startsWith("/w/")) return null;
@@ -313,11 +313,14 @@ export function startServer(config: ServerConfig) {
 
       authMode = route.auth;
       try {
-        const actor = route.auth === "host"
-          ? await requireHost(request, config, tokens)
-          : route.auth === "client"
-            ? await requireClient(request, config, tokens)
-            : undefined;
+        const actor =
+          route.auth === "host-token"
+            ? requireHostToken(request, config)
+            : route.auth === "host"
+              ? await requireHost(request, config, tokens)
+              : route.auth === "client"
+                ? await requireClient(request, config, tokens)
+                : undefined;
         const response = await route.handler({
           request,
           url,
@@ -538,7 +541,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
     "Access-Control-Allow-Headers",
     "Authorization, Content-Type, X-OpenWork-Host-Token, X-OpenWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
-  headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }
@@ -556,6 +559,14 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   }
   const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
+}
+
+function requireHostToken(request: Request, config: ServerConfig): Actor {
+  const hostToken = request.headers.get("x-openwork-host-token");
+  if (hostToken && hostToken === config.hostToken) {
+    return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
+  }
+  throw new ApiError(401, "unauthorized", "Invalid host token");
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
@@ -1265,16 +1276,16 @@ function createRoutes(
   });
 
   // User-level env vars (see apps/app/pr/environment-variables.md). All routes
-  // are host-auth: the desktop shell is the only legitimate caller. Values are
-  // returned raw because there is no remote exposure — the React pane masks
-  // for display. Reload semantics are driven from the UI after a write;
-  // this surface is user-scoped, not workspace-scoped, so no audit.
-  addRoute(routes, "GET", "/env", "host", async () => {
+  // require the desktop host token (not owner bearer tokens) because values are
+  // returned raw; the React pane masks them only for display. Reload semantics
+  // are driven from the UI after a write; this surface is user-scoped, not
+  // workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host-token", async () => {
     const items = await env.list();
     return jsonResponse({ items });
   });
 
-  addRoute(routes, "PUT", "/env", "host", async (ctx) => {
+  addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
     const rawEntries = Array.isArray(body.entries)
@@ -1307,7 +1318,7 @@ function createRoutes(
     return jsonResponse({ ok: true, count: entries.length });
   });
 
-  addRoute(routes, "DELETE", "/env/:key", "host", async (ctx) => {
+  addRoute(routes, "DELETE", "/env/:key", "host-token", async (ctx) => {
     ensureWritable(config);
     const key = ctx.params.key;
     if (!isValidEnvKey(key)) {

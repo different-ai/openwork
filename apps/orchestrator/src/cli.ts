@@ -1853,6 +1853,21 @@ function addEnvPassThroughArgs(args: string[], names: string[]) {
   }
 }
 
+const SANDBOX_INTERNAL_ENV_NAMES = [
+  "OPENWORK_TOKEN",
+  "OPENWORK_HOST_TOKEN",
+  "OPENCODE_SERVER_USERNAME",
+  "OPENCODE_SERVER_PASSWORD",
+  "OPENWORK_OPENCODE_USERNAME",
+  "OPENWORK_OPENCODE_PASSWORD",
+] as const;
+
+function sandboxEnvPassThroughNames(userEnv: Record<string, string>): string[] {
+  return [...SANDBOX_INTERNAL_ENV_NAMES, ...Object.keys(userEnv).sort()].filter(
+    (name, index, names) => names.indexOf(name) === index,
+  );
+}
+
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
   const override =
     readFlag(flags, "sidecar-dir") ?? process.env.OPENWORK_SIDECAR_DIR;
@@ -4454,14 +4469,8 @@ async function startDockerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     const suffix = mount.readonly ? ":ro" : "";
@@ -4486,6 +4495,7 @@ async function startDockerSandbox(options: {
   const child = spawnProcess(options.dockerCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,
@@ -4642,14 +4652,8 @@ async function startAppleContainerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     if (mount.readonly) {
@@ -4672,6 +4676,7 @@ async function startAppleContainerSandbox(options: {
   const child = spawnProcess("container", args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,
