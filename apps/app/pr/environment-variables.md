@@ -4,14 +4,36 @@ Closes #1436.
 
 ## Why
 
-Linux GUI launches (and macOS Finder launches) don't source `.bashrc`/`.zshrc`,
-so users who set `ANTHROPIC_API_KEY`, `GCLOUD_*`, `GCP_*` etc. in a shell rc
-file hit silent auth failures until they discover the `gtk-launch`-from-terminal
-workaround. The requester is self-hosted; Den's cloud `LLM Providers` push
-covers org-signed-in users but leaves OSS users without a UI.
+Agentic workflows pull in secrets from every direction — LLM provider keys,
+ElevenLabs for TTS, Gemini / Nano Banana for images, GitHub tokens for repo
+automation, cloud project IDs, corporate proxies and CA certs. Skills and
+MCPs in a workspace assume those values exist in the process environment.
 
-This PR fills the OSS gap. It is orthogonal to Den's cloud push — the pane
-carries a "Managed by cloud LLM Providers" hint on remote workspaces.
+Today the only way to get them there is to edit shell rc files and launch
+OpenWork from a terminal, which:
+
+- **Breaks entirely on Linux GUI launches** (`.bashrc` isn't sourced) — the
+  concrete user report in #1436.
+- **Is invisible friction for non-technical teammates** (the "Susan" persona
+  called out in `AGENTS.md`).
+- Has no masking, no audit trail, no reserved-keys guardrail.
+
+This PR adds a first-class **Settings → Environment** pane. Credentials go
+in once, and every child OpenWork spawns — OpenCode, the OpenWork server,
+opencode-router, and any MCP or plugin those three launch — inherits them
+via OS process environment.
+
+Boundaries vs. adjacent features:
+
+- Not a replacement for OpenCode's native `provider auth` flow, which owns
+  credentials for LLM providers OpenCode directly supports (stored in
+  `auth.json`). Users should keep using that for model keys where possible.
+- Not a replacement for Den's cloud `LLM Providers` push, which owns
+  org-wide distribution for signed-in users. The pane shows a
+  read-only "Managed by cloud LLM Providers" hint on remote workspaces.
+- This fills the OSS / local-machine path for every other service skills
+  and MCPs call into — ElevenLabs, Gemini image APIs, GitHub, Notion,
+  LangSmith / OTEL exporters, proxy + CA-cert config, and so on.
 
 ## Storage
 
