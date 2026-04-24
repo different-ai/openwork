@@ -249,6 +249,7 @@ function parseSettingsPath(pathname: string): {
     case "skills":
     case "advanced":
     case "appearance":
+    case "environment":
     case "updates":
     case "recovery":
     case "debug":
