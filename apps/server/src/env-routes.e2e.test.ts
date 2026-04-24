@@ -130,6 +130,24 @@ describe("env routes", () => {
     expect(body.items[0]).toMatchObject({ key: "ANTHROPIC_API_KEY", value: "sk-ant-abc" });
   });
 
+  test("GET /env/keys returns names without values", async () => {
+    const { base } = boot();
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({
+        entries: [
+          { key: "ANTHROPIC_API_KEY", value: "sk-ant-abc" },
+          { key: "NBA_LIVE_KEY", value: "secret-value" },
+        ],
+      }),
+    });
+
+    const list = await fetch(`${base}/env/keys`, { headers: hostAuth() });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ keys: ["ANTHROPIC_API_KEY", "NBA_LIVE_KEY"] });
+  });
+
   test("PUT accepts a batch via entries[]", async () => {
     const { base } = boot();
     const put = await fetch(`${base}/env`, {

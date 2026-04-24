@@ -759,6 +759,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         writeOpenworkServerSettings({
           urlOverride: hostInfo.baseUrl,
           token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
+          hostToken: hostInfo.hostToken?.trim() || undefined,
           portOverride: hostInfo.port ?? undefined,
           remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
         });

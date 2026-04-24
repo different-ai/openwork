@@ -1,14 +1,22 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import {
+  readOpenworkEnvPendingChanges,
+  writeOpenworkEnvPendingChanges,
+} from "../../../../app/lib/openwork-env-runtime";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
+const rowIconButtonClass =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-7/80 bg-gray-2 text-gray-11 shadow-sm transition-colors hover:border-gray-8 hover:bg-gray-4 hover:text-gray-12 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-50";
+const rowDangerIconButtonClass =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-red-7/75 bg-red-3/40 text-red-10 shadow-sm transition-colors hover:border-red-8 hover:bg-red-4/80 hover:text-red-11 focus:outline-none focus:ring-2 focus:ring-red-7/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
@@ -19,6 +27,7 @@ export type EnvironmentViewProps = {
   client: OpenworkServerClient | null;
   isRemoteWorkspace: boolean;
   onStatusMessage: (message: string) => void;
+  onApplyChanges?: () => Promise<void>;
 };
 
 function maskValue(value: string): string {
@@ -59,6 +68,10 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const [saving, setSaving] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [pendingChanges, setPendingChanges] = useState(readOpenworkEnvPendingChanges);
+  const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
   const refreshRequestId = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -88,6 +101,12 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!isRemoteWorkspace) return;
+    setApplyConfirmOpen(false);
+    setApplyError(null);
+  }, [isRemoteWorkspace]);
+
   const existingKeys = useMemo(() => new Set(items.map((item) => item.key)), [items]);
 
   const openAdd = () => {
@@ -104,6 +123,13 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     if (saving) return;
     setEditor(null);
     setEditorError(null);
+  };
+
+  const markChangesPending = () => {
+    setPendingChanges(true);
+    writeOpenworkEnvPendingChanges(true);
+    setApplyError(null);
+    onStatusMessage(t("settings.environment.restart_required"));
   };
 
   useEffect(() => {
@@ -130,7 +156,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     setEditorError(null);
     try {
       await client.upsertUserEnv([{ key: editor.key.trim(), value: editor.value }]);
-      onStatusMessage(t("settings.environment.restart_required"));
+      markChangesPending();
       closeEditor();
       await refresh();
     } catch (err) {
@@ -146,13 +172,32 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     setDeletingKey(key);
     try {
       await client.deleteUserEnv(key);
-      onStatusMessage(t("settings.environment.restart_required"));
+      markChangesPending();
       setDeleteCandidate(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("app.unknown_error"));
     } finally {
       setDeletingKey(null);
+    }
+  };
+
+  const applyChanges = async () => {
+    if (!props.onApplyChanges || applyBusy) return;
+    setApplyBusy(true);
+    setApplyError(null);
+    try {
+      await props.onApplyChanges();
+      setPendingChanges(false);
+      writeOpenworkEnvPendingChanges(false);
+      setApplyConfirmOpen(false);
+      onStatusMessage(t("settings.environment.apply_success"));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t("app.unknown_error");
+      setApplyError(message);
+      onStatusMessage(message);
+    } finally {
+      setApplyBusy(false);
     }
   };
 
@@ -189,6 +234,44 @@ export function EnvironmentView(props: EnvironmentViewProps) {
         {error ? (
           <div className="rounded-lg border border-red-7 bg-red-3/40 px-3 py-2 text-xs text-red-11">
             {error}
+          </div>
+        ) : null}
+
+        {pendingChanges && !isRemoteWorkspace ? (
+          <div className="rounded-xl border border-amber-7/50 bg-amber-3/30 px-3 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-4/70 text-amber-11">
+                  <RefreshCw size={14} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-gray-12">
+                    {t("settings.environment.apply_pending_title")}
+                  </div>
+                  <p className="mt-0.5 max-w-[54ch] text-xs text-gray-10">
+                    {props.onApplyChanges
+                      ? t("settings.environment.apply_pending_body")
+                      : t("settings.environment.apply_pending_body_manual")}
+                  </p>
+                  {applyError ? (
+                    <div className="mt-2 rounded-lg border border-red-7 bg-red-3/40 px-3 py-2 text-xs text-red-11">
+                      {applyError}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {props.onApplyChanges ? (
+                <Button
+                  variant="primary"
+                  className="h-8 shrink-0 px-3 py-0 text-xs"
+                  onClick={() => setApplyConfirmOpen(true)}
+                  disabled={applyBusy}
+                >
+                  <RefreshCw size={13} className={applyBusy ? "animate-spin" : ""} />
+                  {applyBusy ? t("settings.environment.applying") : t("settings.environment.apply_button")}
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -232,31 +315,32 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      className="h-7 w-7 p-0"
+                    <button
+                      type="button"
+                      className={rowIconButtonClass}
                       onClick={() =>
                         setRevealed((current) => ({ ...current, [item.key]: !current[item.key] }))
                       }
                       title={isRevealed ? t("settings.environment.hide") : t("settings.environment.reveal")}
+                      aria-pressed={isRevealed}
                       aria-label={(isRevealed
                         ? t("settings.environment.hide_value")
                         : t("settings.environment.reveal_value")
                       ).replace("{key}", item.key)}
                     >
-                      {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </Button>
+                      {isRevealed ? <EyeOff className="h-4 w-4" strokeWidth={2.1} /> : <Eye className="h-4 w-4" strokeWidth={2.1} />}
+                    </button>
                     {canEdit ? (
-                      <Button
-                        variant="ghost"
-                        className="h-7 w-7 p-0 text-red-10 hover:text-red-11"
+                      <button
+                        type="button"
+                        className={rowDangerIconButtonClass}
                         onClick={() => setDeleteCandidate(item)}
                         disabled={deletingKey === item.key}
                         title={t("settings.environment.delete")}
                         aria-label={t("settings.environment.delete_variable").replace("{key}", item.key)}
                       >
-                        <Trash2 size={13} />
-                      </Button>
+                        <Trash2 className="h-4 w-4" strokeWidth={2.1} />
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -360,6 +444,20 @@ export function EnvironmentView(props: EnvironmentViewProps) {
         onConfirm={() => void confirmDelete()}
         onCancel={() => {
           if (!deletingKey) setDeleteCandidate(null);
+        }}
+      />
+
+      <ConfirmModal
+        open={applyConfirmOpen}
+        title={t("settings.environment.apply_title")}
+        message={t("settings.environment.apply_confirm_body")}
+        confirmLabel={applyBusy ? t("settings.environment.applying") : t("settings.environment.apply_button")}
+        cancelLabel={t("settings.environment.cancel")}
+        variant="warning"
+        confirmButtonVariant="primary"
+        onConfirm={() => void applyChanges()}
+        onCancel={() => {
+          if (!applyBusy) setApplyConfirmOpen(false);
         }}
       />
     </div>

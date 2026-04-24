@@ -62,11 +62,12 @@ Shape:
 ## Server
 
 `EnvService` at `apps/server/src/env-file.ts` — mirrors the `TokenService`
-pattern. Three desktop-host-token routes on the OpenWork server, so remote
+pattern. Four desktop-host-token routes on the OpenWork server, so remote
 owner/collaborator/viewer clients and OpenCode tools are structurally unable to
 reach them:
 
 - `GET /env` → `{ items: [{ key, value, updatedAt }] }` (values raw; the UI masks presentationally)
+- `GET /env/keys` → `{ keys: [...] }` (names only, used for agent context)
 - `PUT /env` → single entry `{ key, value }` or batch `{ entries: [...] }`
 - `DELETE /env/:key`
 
@@ -100,18 +101,42 @@ line in each of `types.ts`, `settings-page.tsx`, `settings-route.tsx`.
   modal, delete-with-confirm.
 - Client-side key validation mirrors the server (`^[A-Za-z_][A-Za-z0-9_]*$`)
   + reserved-prefix check.
+- Writes are saved immediately and then marked as pending. The user can click
+  **Apply changes** to restart the local agents so the new environment is
+  active without a full app relaunch.
 - Remote workspaces show a read-only hint and do not list local env values.
 
 ## Reload semantics
 
-Env vars are fixed in a process's environment at spawn time. The existing
-"reload required" popup only triggers OpenCode's `/instance/dispose`, which
-does not respawn the OpenCode child. So the pane does NOT hook into that
-popup. Instead, after a successful write it surfaces:
+Env vars are fixed in a process's environment at spawn time, so saving the
+file alone cannot update an already-running OpenCode/server/router child. The
+pane makes that explicit: after a successful write it shows a pending state and
+an **Apply changes** action. Applying restarts the local OpenWork runtime with
+the sidecar orchestrator path, preserves the local workspace list and remote
+access setting, reconnects the client, then clears the pending state.
 
-> "Saved. Quit and relaunch OpenWork for changes to take effect."
+Until pending changes are applied, the app does not inject newly saved key names
+into agent system context. That avoids the agent claiming a key is configured
+before the running processes can actually read it.
 
-via the existing `setConfigActionStatus` channel. Honest and correct.
+The same restart boundary is used for delete: removed key names stop appearing
+after **Apply changes**.
+
+## Agent context
+
+The app never sends secret values to the model. When there are no pending
+environment changes, it calls `GET /env/keys` and sends only configured key
+names as per-message system context:
+
+```text
+OpenWork environment variables configured:
+- EXAMPLE_API_KEY
+
+Only names are shown; values are secret. Use these names when relevant.
+```
+
+This is not written into `AGENTS.md`; OpenCode combines it with its normal
+instruction sources for that prompt.
 
 ## i18n
 
@@ -126,29 +151,32 @@ nothing ships as raw keys.
 | Layer | File | What |
 | --- | --- | --- |
 | Server unit | `apps/server/src/env-file.test.ts` | 12 tests — path resolution, validation, reserved keys, perms, round-trip, tampered-file defense |
-| Server HTTP e2e | `apps/server/src/env-routes.e2e.test.ts` | 11 tests — auth 401, owner-bearer rejection, CORS PUT preflight, PUT/GET round-trip, batch PUT, invalid key 400, reserved key 400, DELETE missing/found, restart persistence |
+| Server HTTP e2e | `apps/server/src/env-routes.e2e.test.ts` | 12 tests — auth 401, owner-bearer rejection, CORS PUT preflight, PUT/GET round-trip, key-name-only route, batch PUT, invalid key 400, reserved key 400, DELETE missing/found, restart persistence |
 | Tauri Rust unit | `apps/desktop/src-tauri/src/env_file.rs` | 4 tests — missing file, malformed JSON, well-formed load, reserved-key strip |
 
 Bun picks up `*.e2e.test.ts` automatically — no CI wiring change.
 
-## Verification ran
+## Verification ran in latest review
 
 ```
-pnpm install                                       # ok
-pnpm --filter openwork-server test                 # 104 pass, 0 fail
-bun test ./src/env-file.test.ts ./src/env-routes.e2e.test.ts # 23 pass, 0 fail
-pnpm --filter openwork-server typecheck            # clean
-pnpm --filter openwork-server build:bin            # ok (orchestrator-hosted runs)
-pnpm --filter openwork-orchestrator typecheck      # clean
-pnpm --filter @openwork/app typecheck              # clean
-pnpm typecheck                                     # clean (sdk:generate + app)
-pnpm test:e2e                                      # ok
-pnpm build:ui                                      # ok (production Vite; large chunk warning unchanged)
-cargo check                            (src-tauri) # ok
-cargo test --lib env_file              (src-tauri) # 4 pass, 0 fail
-node --check apps/desktop/electron/runtime.mjs     # ok
-git diff --check                                   # clean
+pnpm --filter openwork-server test                                    # 107 pass, 0 fail
+bun test ./src/env-file.test.ts ./src/env-routes.e2e.test.ts          # 24 pass, 0 fail
+pnpm --filter openwork-server typecheck                               # clean
+pnpm --filter openwork-server build:bin                               # ok
+pnpm --filter openwork-orchestrator typecheck                         # clean
+pnpm --filter @openwork/app typecheck                                 # clean
+pnpm build:ui                                                         # ok (production Vite; large chunk warning unchanged)
+node --check apps/desktop/electron/runtime.mjs                        # ok
+node --check apps/desktop/scripts/prepare-sidecar.mjs                 # ok
+node --check apps/desktop/scripts/tauri-before-dev.mjs                # ok
+PATH="$HOME/.cargo/bin:$PATH" cargo test env_file                     # 4 pass, 0 fail
+git diff --check                                                      # clean
 ```
+
+## Evidence
+
+- Screenshot: `apps/app/pr/environment-variables-dark.png`
+- Demo recording: `apps/app/pr/environment-variables-demo.mp4`
 
 ## Non-goals (follow-ups)
 

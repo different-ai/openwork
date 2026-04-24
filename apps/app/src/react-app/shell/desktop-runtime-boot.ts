@@ -12,7 +12,11 @@ import {
   workspaceSetSelected,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
-import { hydrateOpenworkServerSettingsFromEnv, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import {
+  hydrateOpenworkServerSettingsFromEnv,
+  readOpenworkServerSettings,
+  writeOpenworkServerSettings,
+} from "../../app/lib/openwork-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
@@ -160,6 +164,7 @@ export function useDesktopRuntimeBoot() {
                   fresh.ownerToken?.trim() ||
                   fresh.clientToken?.trim() ||
                   undefined,
+                hostToken: fresh.hostToken?.trim() || undefined,
                 portOverride: fresh.port ?? undefined,
                 remoteAccessEnabled: fresh.remoteAccessEnabled === true,
               });
@@ -197,6 +202,7 @@ export function useDesktopRuntimeBoot() {
         let engineStartResult = await engineStart(workspaceRoot, {
           runtime: "direct",
           workspacePaths: workspacePathsFor(workspaceRoot),
+          openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
@@ -217,6 +223,7 @@ export function useDesktopRuntimeBoot() {
             engineStartResult = await engineStart(fallbackRoot, {
               runtime: "direct",
               workspacePaths: workspacePathsFor(fallbackRoot).filter((path) => path !== workspaceRoot),
+              openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
             }).catch((error) => {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
@@ -244,6 +251,7 @@ export function useDesktopRuntimeBoot() {
                   freshInfo.ownerToken?.trim() ||
                   freshInfo.clientToken?.trim() ||
                   undefined,
+                hostToken: freshInfo.hostToken?.trim() || undefined,
                 portOverride: freshInfo.port ?? undefined,
                 remoteAccessEnabled: freshInfo.remoteAccessEnabled === true,
               });

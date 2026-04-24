@@ -7,6 +7,7 @@ import { createClient } from "../../app/lib/opencode";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  isLoopbackOpenworkServerUrl,
   readOpenworkServerSettings,
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
@@ -45,6 +46,7 @@ import {
   useWorkspaceShellLayout,
 } from "./workspace-shell-layout";
 import {
+  engineStart,
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
@@ -183,15 +185,6 @@ function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? "workspace";
-}
-
-function isLoopbackServerUrl(raw: string) {
-  try {
-    const parsed = new URL(raw);
-    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "::1";
-  } catch {
-    return false;
-  }
 }
 
 type PersistedThemeMode = "light" | "dark" | "system";
@@ -487,8 +480,8 @@ export function SettingsRoute() {
           // server connection preference.
           if (!isDesktopRuntime()) return "server";
           const stored = readOpenworkServerSettings();
-          const urlOverride = stored.urlOverride?.trim() ?? "";
-          return urlOverride && !isLoopbackServerUrl(urlOverride) ? "server" : "local";
+          const storedUrl = stored.urlOverride?.trim() ?? "";
+          return storedUrl && !isLoopbackOpenworkServerUrl(storedUrl) ? "server" : "local";
         },
         documentVisible: () => typeof document === "undefined" || document.visibilityState === "visible",
         developerMode: () => routeStateRef.current.developerMode,
@@ -707,7 +700,7 @@ export function SettingsRoute() {
           desktopWorkspaces = workspacesRef.current;
         }
       }
-      const { normalizedBaseUrl, resolvedToken } = await resolveOpenworkConnection();
+      const { normalizedBaseUrl, resolvedToken, resolvedHostToken } = await resolveOpenworkConnection();
 
       if (!normalizedBaseUrl || !resolvedToken) {
         setOpenworkClient(null);
@@ -720,7 +713,11 @@ export function SettingsRoute() {
         return;
       }
 
-      const client = createOpenworkServerClient({ baseUrl: normalizedBaseUrl, token: resolvedToken });
+      const client = createOpenworkServerClient({
+        baseUrl: normalizedBaseUrl,
+        token: resolvedToken,
+        hostToken: resolvedHostToken || undefined,
+      });
       const list = await client.listWorkspaces();
       const serverWorkspaceIds = new Set(list.items.map((workspace) => workspace.id));
       const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
@@ -910,6 +907,37 @@ export function SettingsRoute() {
         config: { read: true, write: true },
       }
     : null;
+
+  const handleApplyEnvironmentChanges = async () => {
+    if (!isDesktopRuntime()) {
+      throw new Error(t("settings.environment.apply_unavailable"));
+    }
+    if (!selectedWorkspaceRoot) {
+      throw new Error(t("settings.environment.apply_no_local_workspace"));
+    }
+    const workspacePaths = Array.from(
+      new Set(
+        workspaces
+          .filter((workspace) => workspace.workspaceType !== "remote")
+          .map((workspace) => workspace.path?.trim() ?? "")
+          .filter((path) => path.length > 0),
+      ),
+    );
+    if (!workspacePaths.includes(selectedWorkspaceRoot)) {
+      workspacePaths.unshift(selectedWorkspaceRoot);
+    }
+    await engineStart(selectedWorkspaceRoot, {
+      preferSidecar: true,
+      runtime: "openwork-orchestrator",
+      workspacePaths,
+      openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+    });
+    const reconnected = await openworkServerStore.reconnectOpenworkServer();
+    if (!reconnected) {
+      throw new Error(t("settings.restart_failed"));
+    }
+    await refreshRouteState();
+  };
 
   const handleOpenCreateWorkspace = () => {
     setCreateWorkspaceError(null);
@@ -1243,6 +1271,7 @@ export function SettingsRoute() {
             client={openworkServerSnapshot.openworkServerClient}
             isRemoteWorkspace={isRemoteWorkspace}
             onStatusMessage={setConfigActionStatus}
+            onApplyChanges={isDesktopRuntime() && !isRemoteWorkspace ? handleApplyEnvironmentChanges : undefined}
           />
         );
       case "debug":

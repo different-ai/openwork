@@ -59,6 +59,7 @@ import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictio
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
+import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-context";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { useRemoteAccessRestart } from "../domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
@@ -488,7 +489,7 @@ export function SessionRoute() {
         }
       }
 
-      const { normalizedBaseUrl, resolvedToken, hostInfo } = await resolveOpenworkConnection();
+      const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await resolveOpenworkConnection();
       setOpenworkServerHostInfoState(hostInfo);
       if (!normalizedBaseUrl || !resolvedToken) {
         setClient(null);
@@ -504,6 +505,7 @@ export function SessionRoute() {
       const openworkClient = createOpenworkServerClient({
         baseUrl: normalizedBaseUrl,
         token: resolvedToken,
+        hostToken: resolvedHostToken || undefined,
       });
       const list = await openworkClient.listWorkspaces();
       const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
@@ -1157,12 +1159,14 @@ export function SessionRoute() {
         }
 
         const parts = await draftToParts(draft, selectedWorkspaceRoot);
+        const envSystemContext = await buildOpenworkEnvSystemContext(client);
         const result = await opencodeClient.session.promptAsync({
           sessionID: selectedSessionId,
           parts,
           model: local.prefs.defaultModel ?? undefined,
           agent: selectedAgent ?? undefined,
           ...(local.prefs.modelVariant ? { variant: local.prefs.modelVariant } : {}),
+          ...(envSystemContext ? { system: envSystemContext } : {}),
         });
         if (result.error) {
           throw new Error(serializeSDKError(result.error));

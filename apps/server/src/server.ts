@@ -1285,6 +1285,11 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  addRoute(routes, "GET", "/env/keys", "host-token", async () => {
+    const items = await env.list();
+    return jsonResponse({ keys: items.map((item) => item.key) });
+  });
+
   addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
