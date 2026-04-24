@@ -13,6 +13,7 @@ import {
 import type { ReloadReason, ReloadTrigger } from "../../app/types";
 import { t } from "../../i18n";
 import { ReloadWorkspaceToast } from "../domains/shell-feedback/reload-workspace-toast";
+import { StatusToastsViewport } from "../domains/shell-feedback/status-toasts";
 import { useSystemState } from "../kernel/system-state";
 
 type ReloadSession = { id: string; title: string };
@@ -112,7 +113,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   return (
     <ReloadCoordinatorContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed right-4 top-4 z-50 w-[min(24rem,calc(100vw-1.5rem))] max-w-full sm:right-6 sm:top-6">
+      <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
         <div className="pointer-events-auto">
           <ReloadWorkspaceToast
             open={systemState.reload.reloadPending && activeSessions.length === 0}
@@ -135,6 +136,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
             onDismiss={systemState.clearReloadRequired}
           />
         </div>
+        <StatusToastsViewport />
       </div>
     </ReloadCoordinatorContext.Provider>
   );

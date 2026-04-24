@@ -1,16 +1,24 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import type { UIMessage } from "ai";
 import type {
   AgentPartInput,
   ConfigProvidersResponse,
   FilePartInput,
   ProviderListResponse,
+  Session,
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../app/lib/opencode";
-import { listCommands, shellInSession } from "../../app/lib/opencode-session";
+import {
+  abortSessionSafe,
+  listCommands,
+  revertSession,
+  shellInSession,
+  unrevertSession,
+} from "../../app/lib/opencode-session";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -61,6 +69,10 @@ import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-prov
 import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
 import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-context";
+import {
+  seedSessionState,
+  transcriptKey as reactTranscriptKey,
+} from "../domains/session/sync/session-sync";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { useRemoteAccessRestart } from "../domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
@@ -86,6 +98,8 @@ import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/pr
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
+import { getReactQueryClient } from "../infra/query-client";
+import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -167,6 +181,31 @@ function describeWorkspaceCreateError(error: unknown) {
     return `${message}\n\nOpenWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
   }
   return message;
+}
+
+const emptyTranscript: UIMessage[] = [];
+
+function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
+  const queryClient = getReactQueryClient();
+  return useSyncExternalStore(
+    (callback) => (queryKey ? queryClient.getQueryCache().subscribe(callback) : () => {}),
+    () => (queryKey ? queryClient.getQueryData<T>(queryKey) ?? fallback : fallback),
+    () => fallback,
+  );
+}
+
+function upsertSessionForWorkspace(
+  current: Record<string, any[]>,
+  workspaceId: string,
+  session: Session,
+) {
+  const list = current[workspaceId] ?? [];
+  const index = list.findIndex((item: any) => item?.id === session.id);
+  if (index < 0) return { ...current, [workspaceId]: [session, ...list] };
+
+  const nextList = [...list];
+  nextList[index] = { ...list[index], ...session };
+  return { ...current, [workspaceId]: nextList };
 }
 
 function mergeRouteWorkspaces(
@@ -312,6 +351,7 @@ export function SessionRoute() {
   const platform = usePlatform();
   const local = useLocal();
   const reloadCoordinator = useReloadCoordinator();
+  const { showToast } = useStatusToasts();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
   const params = useParams<{ sessionId?: string }>();
@@ -370,6 +410,7 @@ export function SessionRoute() {
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
+  const [historyBusyAction, setHistoryBusyAction] = useState<"undo" | "redo" | null>(null);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
 
   const openworkServerSettings = useMemo(
@@ -893,6 +934,109 @@ export function SessionRoute() {
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError,
   );
+  const selectedSession = useMemo<Session | null>(() => {
+    if (!selectedWorkspaceId || !selectedSessionId) return null;
+    return ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).find(
+      (session: any) => session?.id === selectedSessionId,
+    ) ?? null) as Session | null;
+  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
+  const transcriptQueryKey = useMemo(
+    () =>
+      selectedWorkspaceId && selectedSessionId
+        ? reactTranscriptKey(selectedWorkspaceId, selectedSessionId)
+        : null,
+    [selectedSessionId, selectedWorkspaceId],
+  );
+  const transcriptMessages = useQueryCacheState<UIMessage[]>(transcriptQueryKey, emptyTranscript);
+  const userMessages = useMemo(
+    () => transcriptMessages.filter((message) => message.role === "user"),
+    [transcriptMessages],
+  );
+  const selectedSessionRevertMessageId = selectedSession?.revert?.messageID?.trim() ?? "";
+  const canUndoLastUserMessage = Boolean(opencodeClient && selectedSessionId && userMessages.length > 0);
+  const canRedoLastUserMessage = Boolean(opencodeClient && selectedSessionId && selectedSessionRevertMessageId);
+  const refreshSelectedSessionSnapshot = useCallback(async () => {
+    if (!client || !selectedWorkspaceId || !selectedSessionId) return;
+    const response = await client.getSessionSnapshot(selectedWorkspaceId, selectedSessionId, { limit: 140 });
+    if (!response.item) return;
+    seedSessionState(selectedWorkspaceId, response.item);
+    setSessionsByWorkspaceId((current) =>
+      upsertSessionForWorkspace(current, selectedWorkspaceId, response.item.session),
+    );
+  }, [client, selectedSessionId, selectedWorkspaceId]);
+
+  const handleUndoLastUserMessage = useCallback(async () => {
+    if (historyBusyAction || !opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
+
+    const target = userMessages[userMessages.length - 1];
+    if (!target?.id) {
+      showToast({ title: t("session.nothing_to_undo"), tone: "info" });
+      return;
+    }
+
+    setHistoryBusyAction("undo");
+    try {
+      await abortSessionSafe(opencodeClient, selectedSessionId);
+      const nextSession = await revertSession(opencodeClient, selectedSessionId, target.id);
+      setSessionsByWorkspaceId((current) =>
+        upsertSessionForWorkspace(current, selectedWorkspaceId, nextSession),
+      );
+      await refreshSelectedSessionSnapshot();
+      showToast({ title: t("session.reverted_last_message"), tone: "success" });
+    } catch (error) {
+      showToast({
+        title: t("session.failed_to_undo"),
+        description: describeRouteError(error),
+        tone: "error",
+      });
+    } finally {
+      setHistoryBusyAction(null);
+    }
+  }, [
+    historyBusyAction,
+    opencodeClient,
+    refreshSelectedSessionSnapshot,
+    selectedSessionId,
+    selectedWorkspaceId,
+    showToast,
+    userMessages,
+  ]);
+
+  const handleRedoLastUserMessage = useCallback(async () => {
+    if (historyBusyAction || !opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
+
+    if (!selectedSessionRevertMessageId) {
+      showToast({ title: t("session.nothing_to_redo"), tone: "info" });
+      return;
+    }
+
+    setHistoryBusyAction("redo");
+    try {
+      await abortSessionSafe(opencodeClient, selectedSessionId);
+      const nextSession = await unrevertSession(opencodeClient, selectedSessionId);
+      setSessionsByWorkspaceId((current) =>
+        upsertSessionForWorkspace(current, selectedWorkspaceId, nextSession),
+      );
+      await refreshSelectedSessionSnapshot();
+      showToast({ title: t("session.restored_message"), tone: "success" });
+    } catch (error) {
+      showToast({
+        title: t("session.failed_to_redo"),
+        description: describeRouteError(error),
+        tone: "error",
+      });
+    } finally {
+      setHistoryBusyAction(null);
+    }
+  }, [
+    historyBusyAction,
+    opencodeClient,
+    refreshSelectedSessionSnapshot,
+    selectedSessionId,
+    selectedSessionRevertMessageId,
+    selectedWorkspaceId,
+    showToast,
+  ]);
   const showPreparingStatus =
     effectiveLoading ||
     (!canCreateTask && !routeError && !selectedWorkspaceError);
@@ -1689,11 +1833,11 @@ export function SessionRoute() {
       }}
       surface={surfaceProps}
       history={{
-        canUndo: false,
-        canRedo: false,
-        busyAction: null,
-        onUndo: () => {},
-        onRedo: () => {},
+        canUndo: canUndoLastUserMessage,
+        canRedo: canRedoLastUserMessage,
+        busyAction: historyBusyAction,
+        onUndo: handleUndoLastUserMessage,
+        onRedo: handleRedoLastUserMessage,
       }}
       todos={[] satisfies TodoItem[]}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
