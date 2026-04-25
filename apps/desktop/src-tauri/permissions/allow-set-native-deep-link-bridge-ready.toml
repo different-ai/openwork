@@ -1,0 +1,6 @@
+[[permission]]
+identifier = "allow-set-native-deep-link-bridge-ready"
+description = "Enables the front-end to flush native OpenWork handoff deep links that arrived before the web deep-link bridge subscribed."
+commands.allow = [
+  "set_native_deep_link_bridge_ready",
+]

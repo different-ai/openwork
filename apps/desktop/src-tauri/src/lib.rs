@@ -20,6 +20,7 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
+use commands::deep_link;
 use commands::desktop_bootstrap::{get_desktop_bootstrap_config, set_desktop_bootstrap_config};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
@@ -56,10 +57,8 @@ use engine::manager::EngineManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use workspace::watch::WorkspaceWatchState;
-
-const NATIVE_DEEP_LINK_EVENT: &str = "openwork:deep-link-native";
 
 #[cfg(target_os = "macos")]
 fn set_dev_app_name() {
@@ -96,17 +95,10 @@ fn forwarded_deep_links(args: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn emit_native_deep_links(app_handle: &AppHandle, urls: Vec<String>) {
-    if urls.is_empty() {
-        return;
-    }
-
-    let _ = app_handle.emit(NATIVE_DEEP_LINK_EVENT, urls);
-}
 
 fn emit_forwarded_deep_links(app_handle: &AppHandle, args: &[String]) {
     let urls = forwarded_deep_links(args);
-    emit_native_deep_links(app_handle, urls);
+    deep_link::emit_native(app_handle, urls);
 }
 
 fn show_main_window(app_handle: &AppHandle) {
@@ -160,6 +152,7 @@ pub fn run() {
         .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
         .invoke_handler(tauri::generate_handler![
+            deep_link::set_native_deep_link_bridge_ready,
             engine_start,
             engine_stop,
             engine_info,
@@ -246,7 +239,7 @@ pub fn run() {
                 .map(|url| url.to_string())
                 .collect::<Vec<_>>();
             show_main_window(&app_handle);
-            emit_native_deep_links(&app_handle, urls);
+            deep_link::emit_native(&app_handle, urls);
         }
         // Always raise/refocus the main window on dock-icon clicks, even if
         // it's already visible but behind other apps or on another Space.

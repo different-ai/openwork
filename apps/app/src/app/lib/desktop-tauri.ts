@@ -51,30 +51,41 @@ export async function setDesktopZoomFactor(value: number): Promise<boolean> {
 export async function subscribeDesktopDeepLinks(
   handler: (urls: string[]) => void,
 ): Promise<() => void> {
-  const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
+  const [{ getCurrent, onOpenUrl }, { listen }, { invoke }] = await Promise.all([
     import("@tauri-apps/plugin-deep-link"),
     import("@tauri-apps/api/event"),
+    import("@tauri-apps/api/core"),
   ]);
 
-  const startUrls = await getCurrent().catch(() => null);
-  if (Array.isArray(startUrls)) {
-    handler(startUrls);
-  }
-
-  const deepLinkUnlisten = await onOpenUrl((urls) => {
-    handler(urls);
-  }).catch(() => () => undefined);
-
-  const eventUnlisten = await listen<string[]>(nativeDeepLinkEvent, (event) => {
-    if (Array.isArray(event.payload)) {
-      handler(event.payload);
+  let deepLinkUnlisten: (() => void) | undefined;
+  let eventUnlisten: (() => void) | undefined;
+  try {
+    const startUrls = await getCurrent().catch(() => null);
+    if (Array.isArray(startUrls)) {
+      handler(startUrls);
     }
-  }).catch(() => () => undefined);
 
-  return () => {
-    void deepLinkUnlisten();
-    void eventUnlisten();
-  };
+    deepLinkUnlisten = await onOpenUrl((urls) => {
+      handler(urls);
+    }).catch(() => () => undefined);
+
+    eventUnlisten = await listen<string[]>(nativeDeepLinkEvent, (event) => {
+      if (Array.isArray(event.payload)) {
+        handler(event.payload);
+      }
+    }).catch(() => () => undefined);
+
+    return () => {
+      void deepLinkUnlisten?.();
+      void eventUnlisten?.();
+    };
+  } finally {
+    try {
+      await invoke("set_native_deep_link_bridge_ready");
+    } catch {
+      // Best-effort: the shell still delivers URLs via the deep-link plugin after this.
+    }
+  }
 }
 
 export type EngineInfo = {

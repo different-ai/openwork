@@ -4,6 +4,7 @@
   "description": "Default OpenWork capability (UI permissions)",
   "windows": ["*"],
   "permissions": [
+    "openwork:allow-set-native-deep-link-bridge-ready",
     "core:default",
     "core:webview:allow-set-webview-zoom",
     "deep-link:default",
