@@ -11,6 +11,7 @@ import type { ServerConfig } from "./types.js";
 import {
   buildWorkspaceImportPreview,
   publicWorkspaceImportPreview,
+  summarizeWorkspaceImportApplied,
   summarizeWorkspaceImportPreview,
   workspaceImportPreviewApprovalPaths,
 } from "./workspace-import-preview.js";
@@ -199,6 +200,7 @@ describe("workspace import preview", () => {
       path: "opencode.jsonc",
     });
     expect(summarizeWorkspaceImportPreview(preview)).toBe("Import workspace config (update 1)");
+    expect(summarizeWorkspaceImportApplied(preview)).toBe("Imported workspace config (update 1)");
   });
 
   test("rejects unsafe portable file paths before import", async () => {
@@ -297,6 +299,79 @@ describe("workspace import preview", () => {
       expect(await readFile(join(workspace, ".opencode", "skills", "demo", "SKILL.md"), "utf8")).toContain("Demo skill");
       expect(await readFile(join(workspace, ".opencode", "agents", "demo.md"), "utf8")).toBe("Demo agent\n");
       expect(await readFile(auditLogPath("workspace"), "utf8")).toContain("Imported workspace config");
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
+
+  test("replace import route removes extra skills, commands, and portable files", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+
+    const keepSkill = {
+      name: "keep",
+      description: "Keep skill",
+      content: "Use this skill for stable setup.",
+    };
+    const keepCommand = {
+      name: "keep-command",
+      description: "Keep command",
+      template: "run stable setup",
+    };
+    const keepSkillContent = buildSkillContent(keepSkill).content;
+    const keepCommandContent = buildCommandContent(keepCommand).content;
+
+    await mkdir(join(workspace, ".opencode", "skills", "keep"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "skills", "remove-me"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "commands"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "tools"), { recursive: true });
+    await writeFile(join(workspace, ".opencode", "skills", "keep", "SKILL.md"), keepSkillContent, "utf8");
+    await writeFile(join(workspace, ".opencode", "skills", "remove-me", "SKILL.md"), "legacy skill\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "commands", "keep-command.md"), keepCommandContent, "utf8");
+    await writeFile(join(workspace, ".opencode", "commands", "remove-me.md"), "legacy command\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "tools", "shared.ts"), "shared tool\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "tools", "remove-me.ts"), "legacy tool\n", "utf8");
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: { skills: "replace", commands: "replace", files: "replace" },
+          skills: [keepSkill],
+          commands: [keepCommand],
+          files: [{ path: ".opencode/tools/shared.ts", content: "shared tool\n" }],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        preview: { summary: { delete: number; unchanged: number } };
+      };
+      expect(body.preview.summary.delete).toBe(3);
+      expect(body.preview.summary.unchanged).toBe(3);
+      expect(await pathExists(join(workspace, ".opencode", "skills", "remove-me"))).toBe(false);
+      expect(await pathExists(join(workspace, ".opencode", "commands", "remove-me.md"))).toBe(false);
+      expect(await pathExists(join(workspace, ".opencode", "tools", "remove-me.ts"))).toBe(false);
+      expect(await readFile(join(workspace, ".opencode", "skills", "keep", "SKILL.md"), "utf8")).toBe(keepSkillContent);
+      expect(await readFile(join(workspace, ".opencode", "commands", "keep-command.md"), "utf8")).toBe(keepCommandContent);
+      expect(await readFile(join(workspace, ".opencode", "tools", "shared.ts"), "utf8")).toBe("shared tool\n");
+      expect(await readFile(auditLogPath("workspace"), "utf8")).toContain("Imported workspace config (remove 3)");
     } finally {
       server.stop(true);
       if (originalDataDir === undefined) {

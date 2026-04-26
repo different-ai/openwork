@@ -38,6 +38,7 @@ import {
   buildWorkspaceImportPreview,
   normalizeWorkspaceImportPayload,
   publicWorkspaceImportPreview,
+  summarizeWorkspaceImportApplied,
   summarizeWorkspaceImportPreview,
   type WorkspaceImportPlan,
   workspaceImportPreviewApprovalPaths,
@@ -2838,7 +2839,7 @@ function createRoutes(
       actor: ctx.actor ?? { type: "remote" },
       action: "config.import",
       target: "workspace",
-      summary: summarizeWorkspaceImportPreview(preview).replace(/^Import/, "Imported"),
+      summary: summarizeWorkspaceImportApplied(preview),
       timestamp: Date.now(),
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));

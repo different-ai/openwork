@@ -114,6 +114,23 @@ async function walkPortableFiles(root: string, currentPath: string, output: Port
   }
 }
 
+async function walkPortableFilePaths(root: string, currentPath: string, output: string[]): Promise<void> {
+  const entries = await readdir(currentPath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const absolutePath = join(currentPath, entry.name);
+    if (entry.isDirectory()) {
+      await walkPortableFilePaths(root, absolutePath, output);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+
+    const relativePath = normalizePortablePath(absolutePath.slice(root.length + 1));
+    if (!isAllowedPortableFilePath(relativePath)) continue;
+    output.push(relativePath);
+  }
+}
+
 export async function listPortableFiles(workspaceRoot: string): Promise<PortableFile[]> {
   const root = resolve(workspaceRoot);
   const portableRoot = join(root, ".opencode");
@@ -122,6 +139,17 @@ export async function listPortableFiles(workspaceRoot: string): Promise<Portable
   const output: PortableFile[] = [];
   await walkPortableFiles(root, portableRoot, output);
   output.sort((a, b) => a.path.localeCompare(b.path));
+  return output;
+}
+
+export async function listPortableFilePaths(workspaceRoot: string): Promise<string[]> {
+  const root = resolve(workspaceRoot);
+  const portableRoot = join(root, ".opencode");
+  if (!(await exists(portableRoot))) return [];
+
+  const output: string[] = [];
+  await walkPortableFilePaths(root, portableRoot, output);
+  output.sort((a, b) => a.localeCompare(b));
   return output;
 }
 

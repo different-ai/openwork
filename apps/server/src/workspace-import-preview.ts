@@ -6,7 +6,7 @@ import { buildCommandContent } from "./commands.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { readJsoncFile } from "./jsonc.js";
-import { planPortableFiles, listPortableFiles, type PortableFile } from "./portable-files.js";
+import { planPortableFiles, listPortableFilePaths, type PortableFile } from "./portable-files.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { buildSkillContent } from "./skills.js";
 import { exists } from "./utils.js";
@@ -370,14 +370,14 @@ export async function buildWorkspaceImportPreview(
       });
     }
     if (input.modes.files === "replace") {
-      for (const file of await listPortableFiles(workspaceRoot)) {
-        if (incoming.has(file.path)) continue;
-        const path = join(workspaceRoot, file.path);
+      for (const filePath of await listPortableFilePaths(workspaceRoot)) {
+        if (incoming.has(filePath)) continue;
+        const path = join(workspaceRoot, filePath);
         changes.push({
           kind: "file",
           action: "delete",
-          label: file.path,
-          path: file.path,
+          label: filePath,
+          path: filePath,
           absolutePath: path,
         });
       }
@@ -412,12 +412,20 @@ function countLabel(verb: string, count: number): string | null {
   return `${verb} ${count}`;
 }
 
-export function summarizeWorkspaceImportPreview(preview: WorkspaceImportPreview): string {
+function summarizeWorkspaceImport(prefix: "Import" | "Imported", preview: WorkspaceImportPreview): string {
   const parts = [
     countLabel("add", preview.summary.create),
     countLabel("update", preview.summary.update + preview.summary.replace),
     countLabel("remove", preview.summary.delete),
   ].filter((part): part is string => Boolean(part));
 
-  return parts.length ? `Import workspace config (${parts.join(", ")})` : "Import workspace config (no changes)";
+  return parts.length ? `${prefix} workspace config (${parts.join(", ")})` : `${prefix} workspace config (no changes)`;
+}
+
+export function summarizeWorkspaceImportPreview(preview: WorkspaceImportPreview): string {
+  return summarizeWorkspaceImport("Import", preview);
+}
+
+export function summarizeWorkspaceImportApplied(preview: WorkspaceImportPreview): string {
+  return summarizeWorkspaceImport("Imported", preview);
 }
