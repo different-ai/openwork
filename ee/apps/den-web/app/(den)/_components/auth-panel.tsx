@@ -124,7 +124,7 @@ export function AuthPanel({
 
   const resolvedSignUpContent: PanelContent = {
     title: "Get started.",
-    copy: "Free to try. Team plans from $50/mo.",
+    copy: "Start with desktop, then add Cloud when your team needs shared setup.",
     submitLabel: "Create account",
     togglePrompt: "Have an account?",
     toggleActionLabel: "Sign in",

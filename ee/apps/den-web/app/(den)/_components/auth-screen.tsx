@@ -111,7 +111,7 @@ export function AuthScreen() {
                 <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
                   OpenWork Cloud
                 </span>
-                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white md:text-[3rem]">
+                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.98] tracking-normal text-white md:text-[3rem]">
                   One setup, every seat.
                 </h1>
                 <p className="max-w-[34rem] text-[15px] leading-7 text-white/80">

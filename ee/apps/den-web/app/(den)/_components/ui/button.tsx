@@ -8,9 +8,9 @@ export type ButtonVariant = "primary" | "secondary" | "destructive";
 export type ButtonSize = "md" | "sm";
 
 const variantClasses: Record<ButtonVariant, string> = {
-    primary: "bg-[#0f172a] text-white hover:bg-[#111c33]",
+    primary: "bg-[#533afd] text-white hover:bg-[#4434d4] shadow-[0_14px_24px_-18px_rgba(83,58,253,0.55)]",
     secondary:
-        "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900",
+        "border border-[#e5edf5] bg-white text-[#273951] hover:bg-[#f6f9fc] hover:border-[#d6d9fc] hover:text-[#061b31]",
     destructive:
         "border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300",
 };
@@ -37,7 +37,7 @@ export function buttonVariants({
     className?: string;
 } = {}): string {
     return [
-        "inline-flex items-center justify-center rounded-full font-medium transition-colors",
+        "inline-flex items-center justify-center rounded-lg font-medium transition-colors",
         variantClasses[variant],
         sizeClasses[size],
         className,
@@ -121,7 +121,7 @@ export function DenButton({
             type={rest.type ?? "button"}
             disabled={isDisabled}
             className={[
-                "relative flex flex-row gap-2 items-center justify-center rounded-full font-medium transition-colors",
+                "relative flex flex-row gap-2 items-center justify-center rounded-lg font-medium transition-colors",
                 variantClasses[variant],
                 sizeClasses[size],
                 isDisabled ? "cursor-not-allowed opacity-70" : "",

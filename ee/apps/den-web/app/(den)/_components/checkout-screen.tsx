@@ -1,15 +1,30 @@
 "use client";
 
+import {
+  CheckCircle2,
+  CreditCard,
+  Download,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { isSamePathname } from "../_lib/client-route";
-import { formatMoneyMinor } from "../_lib/den-flow";
+import { formatMoneyMinor, formatRecurringInterval, type BillingPrice } from "../_lib/den-flow";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 // For local layout testing (no deploy needed)
 // Enable with: NEXT_PUBLIC_DEN_MOCK_BILLING=1
 const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
+const MOCK_PRICE: BillingPrice = {
+  amount: 5000,
+  currency: "usd",
+  recurringInterval: "month",
+  recurringIntervalCount: 1,
+};
 
 function formatSubscriptionStatus(value: string | null | undefined) {
   if (!value) return "Purchase required";
@@ -24,10 +39,51 @@ function LoadingPanel({ title, body }: { title: string; body: string }) {
   return (
     <section className="den-page py-4">
       <div className="den-frame-soft grid max-w-[44rem] gap-4 p-6">
-        <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{title}</h1>
+        <h1 className="text-xl font-semibold tracking-normal text-[var(--dls-text-primary)]">{title}</h1>
         <p className="text-sm text-[var(--dls-text-secondary)]">{body}</p>
       </div>
     </section>
+  );
+}
+
+function getPlanLabels(price: BillingPrice | null) {
+  if (!price || price.amount === null) {
+    return {
+      amount: "Plan price unavailable",
+      cadence: "billing cycle",
+      inline: "Plan price unavailable",
+    };
+  }
+
+  const amount = formatMoneyMinor(price.amount, price.currency);
+  const cadence = formatRecurringInterval(price.recurringInterval, price.recurringIntervalCount);
+
+  return {
+    amount,
+    cadence,
+    inline: `${amount} ${cadence}`,
+  };
+}
+
+function FeatureLine({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: typeof CheckCircle2;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="flex gap-3">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#d6d9fc] bg-[#f6f4ff] text-[#533afd]">
+        <Icon className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+      </div>
+      <div className="grid min-w-0 gap-1">
+        <p className="m-0 text-sm font-semibold text-[var(--dls-text-primary)]">{title}</p>
+        <p className="m-0 break-words text-sm leading-6 text-[var(--dls-text-secondary)]">{body}</p>
+      </div>
+    </div>
   );
 }
 
@@ -54,14 +110,14 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   const mockMode = MOCK_BILLING && process.env.NODE_ENV !== "production";
 
-  const billingSummary = MOCK_BILLING
+  const billingSummary = mockMode
     ? {
         featureGateEnabled: true,
         hasActivePlan: false,
         checkoutRequired: true,
-              checkoutUrl: MOCK_CHECKOUT_URL,
-              portalUrl: null,
-              price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        checkoutUrl: MOCK_CHECKOUT_URL,
+        portalUrl: null,
+        price: MOCK_PRICE,
         subscription: null,
         invoices: [],
         productId: null,
@@ -182,53 +238,91 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   }
 
   const billingPrice = billingSummary?.price ?? null;
-  const showLoading = resuming || (billingBusy && !billingSummary && !MOCK_BILLING);
-  const checkoutHref = effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
-  const planAmountLabel =
-    billingPrice && billingPrice.amount !== null
-      ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)}/${billingPrice.recurringInterval}`
-      : "$50.00/month";
+  const showLoading = resuming || (billingBusy && !billingSummary && !mockMode);
+  const checkoutHref = effectiveCheckoutUrl ?? billingSummary?.checkoutUrl ?? (mockMode ? MOCK_CHECKOUT_URL : null);
+  const planLabels = getPlanLabels(billingPrice);
   const subscription = billingSummary?.subscription ?? null;
-  const subscriptionStatus = formatSubscriptionStatus(subscription?.status);
+  const hasActivePlan = Boolean(billingSummary?.hasActivePlan);
+  const subscriptionStatus = subscription
+    ? formatSubscriptionStatus(subscription.status)
+    : hasActivePlan
+      ? "Active"
+      : "Purchase required";
 
   return (
     <section className="den-page grid gap-6 py-4 lg:py-6">
-      <div className="den-frame grid gap-6 p-6 md:p-8 lg:p-10">
-        <div className="flex flex-col gap-4 lg:max-w-3xl">
-          <div className="grid gap-3">
+      <div className="den-frame overflow-hidden">
+        <div className="grid gap-8 p-6 md:p-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-10">
+          <div className="flex flex-col justify-center gap-5">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
+            <h1 className="den-title-xl max-w-[15ch]">Create your cloud workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Start with one workspace plan for $50/month. Each plan includes up to 5 members and 1 hosted worker.
+              Add the workspace plan to turn on hosted workers, shared team setup, and billing controls.
             </p>
-          </div>
 
-          <div className="flex flex-wrap gap-3">
-            {checkoutHref ? (
-              <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
-                Purchase plan — $50/month
+            <div className="flex flex-wrap gap-3">
+              {checkoutHref ? (
+                <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
+                  <CreditCard className="h-4 w-4" aria-hidden="true" />
+                  <span>Purchase plan</span>
+                  <span className="hidden sm:inline">- {planLabels.inline}</span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="den-button-primary w-full sm:w-auto"
+                  onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
+                  disabled={billingBusy || billingCheckoutBusy}
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  Refresh purchase link
+                </button>
+              )}
+              <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Use desktop only
               </a>
-            ) : (
-              <button
-                type="button"
-                className="den-button-primary w-full sm:w-auto"
-                onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
-                disabled={billingBusy || billingCheckoutBusy}
-              >
-                Refresh purchase link
-              </button>
-            )}
-            <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
-              Use desktop only
-            </a>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
+              <span>One workspace plan</span>
+              <span aria-hidden="true">•</span>
+              <span>{planLabels.inline}</span>
+              <span className="hidden sm:inline" aria-hidden="true">•</span>
+              <span className="hidden sm:inline">{user?.email ?? "Signed in"}</span>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-            <span>$50/month per workspace</span>
-            <span aria-hidden="true">•</span>
-            <span>{planAmountLabel} billed monthly</span>
-            <span aria-hidden="true">•</span>
-            <span>{user?.email ?? "Signed in"}</span>
+          <div className="rounded-2xl border border-[#162b45] bg-[#061b31] p-5 text-white shadow-[0_30px_45px_-30px_rgba(50,50,93,0.45)]">
+            <div className="mb-8 flex items-center justify-between gap-4">
+              <span className="rounded-md border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/75">
+                Workspace plan
+              </span>
+              <ShieldCheck className="h-5 w-5 text-white/70" aria-hidden="true" />
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-end gap-2">
+                <span className="text-4xl font-semibold leading-none">{planLabels.amount}</span>
+                <span className="pb-1 text-sm text-white/65">{planLabels.cadence}</span>
+              </div>
+              <p className="text-sm leading-6 text-white/70">
+                Includes up to 5 members and 1 hosted worker.
+              </p>
+            </div>
+            <div className="mt-6 grid gap-3 border-t border-white/10 pt-5 text-sm text-white/75">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#b9b9f9]" aria-hidden="true" />
+                Team setup sync
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#b9b9f9]" aria-hidden="true" />
+                Hosted worker runtime
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#b9b9f9]" aria-hidden="true" />
+                Billing portal access
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -241,52 +335,61 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       ) : null}
 
       {billingSummary ? (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_320px]">
-          <div className="grid gap-6">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid gap-6 lg:grid-cols-2">
             <article className="den-frame grid gap-6 p-6 md:p-7">
               <div className="grid gap-3">
                 <span className="den-kicker w-fit">OpenWork Cloud</span>
-                <h2 className="den-title-lg">Share your setup across your team.</h2>
+                <h2 className="den-title-lg">Share the setup.</h2>
                 <p className="den-copy">
-                  Manage your team&apos;s setup, invite teammates, and keep everything in sync.
+                  Keep teammates on the same tools, providers, and worker setup.
                 </p>
               </div>
 
-              <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers with team access controls</div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">Background agents</p>
-                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Keep selected workflows running in the background. Alpha.
-                  </p>
-                </div>
-                <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">LLM providers</p>
-                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Standardize provider access, model selection, and team rollout.
-                  </p>
-                </div>
+              <div className="grid gap-4">
+                <FeatureLine
+                  icon={Users}
+                  title="Team access"
+                  body="Invite teammates and manage the same workspace setup."
+                />
+                <FeatureLine
+                  icon={Server}
+                  title="Hosted runtime"
+                  body="Run selected workflows on a worker that stays available."
+                />
+                <FeatureLine
+                  icon={ShieldCheck}
+                  title="Org controls"
+                  body="Keep provider and billing controls in one place."
+                />
               </div>
             </article>
 
             <article className="den-frame-soft grid gap-5 p-6 md:p-7">
               <div className="grid gap-3">
                 <span className="den-kicker w-fit">Desktop app</span>
-                <h2 className="den-title-lg">Stay local when you need to.</h2>
+                <h2 className="den-title-lg">Stay local.</h2>
                 <p className="den-copy">
                   Run locally for free, keep your data on your machine, and add OpenWork Cloud when your team is ready.
                 </p>
               </div>
 
-              <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Run locally for free</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Keep data on your machine</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Move into OpenWork Cloud later</div>
+              <div className="grid gap-4">
+                <FeatureLine
+                  icon={Download}
+                  title="Free desktop app"
+                  body="Use the local app without starting a cloud workspace."
+                />
+                <FeatureLine
+                  icon={ShieldCheck}
+                  title="Local data"
+                  body="Keep local workflows and secrets on your machine."
+                />
+                <FeatureLine
+                  icon={CheckCircle2}
+                  title="Upgrade later"
+                  body="Move into OpenWork Cloud when team sharing matters."
+                />
               </div>
 
               <div className="mt-auto pt-2">
@@ -300,22 +403,22 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
           <aside className="den-frame-soft grid h-fit gap-4 p-5 md:p-6">
             <div className="grid gap-2">
               <p className="den-eyebrow">Billing status</p>
-              <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
+              <h2 className="text-2xl font-semibold tracking-normal text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
+                {hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
               </p>
             </div>
 
-            <div className="den-frame-inset grid gap-3 rounded-[1.5rem] px-4 py-4">
+            <div className="den-frame-inset grid gap-3 rounded-xl px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-[var(--dls-text-primary)]">Plan</span>
-                <span className={`den-status-pill ${billingSummary.hasActivePlan ? "is-positive" : "is-neutral"}`}>
+                <span className={`den-status-pill ${hasActivePlan ? "is-positive" : "is-neutral"}`}>
                   {subscriptionStatus}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <span>Price</span>
-                <span className="font-medium text-[var(--dls-text-primary)]">{planAmountLabel}</span>
+                <span className="font-medium text-[var(--dls-text-primary)]">{planLabels.inline}</span>
               </div>
               <div className="flex items-center justify-between gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <span>Invoices</span>
@@ -324,8 +427,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             </div>
 
             <div className="grid gap-3">
-              {checkoutHref && !billingSummary.hasActivePlan ? (
+              {checkoutHref && !hasActivePlan ? (
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full">
+                  <CreditCard className="h-4 w-4" aria-hidden="true" />
                   Purchase plan
                 </a>
               ) : null}
@@ -340,6 +444,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
                 disabled={billingBusy || billingCheckoutBusy}
               >
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 Refresh billing
               </button>
             </div>

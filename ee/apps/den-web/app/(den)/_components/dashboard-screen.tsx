@@ -558,7 +558,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                     {billingSummary?.featureGateEnabled
                       ? billingSummary.hasActivePlan
                         ? "Your account has active worker billing."
-                        : "Workers stay disabled until you purchase one for $50/month."
+                        : "Workers stay disabled until you purchase a workspace plan."
                       : "Billing gates are disabled in this environment."}
                   </p>
                   <Link

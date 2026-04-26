@@ -48,11 +48,11 @@ export function DashboardPageTemplate({
   children,
 }: DashboardPageTemplateProps) {
   return (
-    <div className="mx-auto max-w-[860px] p-8">
+    <div className="mx-auto max-w-[900px] p-6 md:p-8">
       {/* ── Gradient hero card ── */}
-      <div className="relative mb-8 flex h-[200px] items-center overflow-hidden rounded-3xl border border-gray-100 px-10">
+      <div className="relative mb-6 flex h-[176px] items-center overflow-hidden rounded-2xl border border-[#e5edf5] bg-white px-8 shadow-[0_24px_42px_-34px_rgba(50,50,93,0.28)]">
         {/* Background layers: mesh gradient wrapped in a dithering texture */}
-        <div className="absolute inset-0 z-0">
+        <div className="absolute inset-y-0 right-0 z-0 w-[42%] opacity-95">
           <Dithering
             speed={0}
             shape="warp"
@@ -63,7 +63,7 @@ export function DashboardPageTemplate({
             colorBack="#00000000"
             colorFront="#FEFEFE"
             style={{
-              backgroundColor: "#0f172a",
+              backgroundColor: "#061b31",
               width: "100%",
               height: "100%",
             }}
@@ -81,26 +81,26 @@ export function DashboardPageTemplate({
           </Dithering>
         </div>
 
-        {/* Icon — top right */}
-        <div className="absolute right-8 top-8 z-10 flex h-12 w-12 items-center justify-center rounded-xl border border-white/30 bg-white/20 backdrop-blur-md">
-          <Icon size={24} className="text-white" strokeWidth={1.5} />
-        </div>
+        <div className="absolute inset-y-0 right-[34%] z-0 w-36 bg-[linear-gradient(90deg,#fff,rgba(255,255,255,0.7),rgba(255,255,255,0))]" />
 
-        {/* Badge (optional) + Title — bottom left */}
-        <div className="absolute bottom-8 left-10 z-10 flex flex-col items-start gap-2">
+        {/* Icon + title */}
+        <div className="relative z-10 flex max-w-[28rem] flex-col items-start gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#d6d9fc] bg-[#f6f4ff] text-[#533afd]">
+            <Icon size={22} strokeWidth={1.7} />
+          </div>
           {badgeLabel ? (
-            <span className="rounded-full border border-white/20 bg-white/20 px-2.5 py-1 text-[10px] uppercase tracking-[1px] text-white backdrop-blur-md">
+            <span className="rounded-md border border-[#e5edf5] bg-[#f6f9fc] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-[#64748d]">
               {badgeLabel}
             </span>
           ) : null}
-          <h1 className="text-[28px] font-medium tracking-[-0.5px] text-white">
+          <h1 className="text-[28px] font-semibold tracking-normal text-[#061b31]">
             {title}
           </h1>
         </div>
       </div>
 
       {/* ── Description ── */}
-      <p className="mb-6 text-[14px] text-gray-500">{description}</p>
+      <p className="mb-6 max-w-[44rem] text-[14px] leading-6 text-[#64748d]">{description}</p>
 
       {/* ── Page content ── */}
       {children}

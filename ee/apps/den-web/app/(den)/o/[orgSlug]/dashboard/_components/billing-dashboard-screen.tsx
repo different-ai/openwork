@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { CreditCard } from "lucide-react";
+import { CreditCard, ExternalLink, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   formatIsoDate,
@@ -58,11 +58,14 @@ export function BillingDashboardScreen() {
 
   const billingPrice = billingSummary?.price ?? null;
   const subscription = billingSummary?.subscription ?? null;
+  const planAmount = billingPrice
+    ? formatMoneyMinor(billingPrice.amount, billingPrice.currency)
+    : "Not available";
+  const planCadence = billingPrice
+    ? formatRecurringInterval(billingPrice.recurringInterval, billingPrice.recurringIntervalCount)
+    : "billing cycle";
   const planAmountLabel = billingPrice
-    ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)} · ${formatRecurringInterval(
-        billingPrice.recurringInterval,
-        billingPrice.recurringIntervalCount,
-      )}`
+    ? `${planAmount} · ${planCadence}`
     : "Not available";
   const statusLabel = subscription
     ? formatSubscriptionStatus(subscription.status)
@@ -72,9 +75,9 @@ export function BillingDashboardScreen() {
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
-  const nextPaymentAmount = subscription?.amount
+  const nextPaymentAmount = subscription?.amount !== null && subscription?.amount !== undefined
     ? formatMoneyMinor(subscription.amount, subscription.currency)
-    : billingPrice
+    : billingPrice?.amount !== null && billingPrice?.amount !== undefined
       ? formatMoneyMinor(billingPrice.amount, billingPrice.currency)
       : "Not available";
 
@@ -91,13 +94,20 @@ export function BillingDashboardScreen() {
         </div>
       ) : null}
 
-      <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
-        <div className="mb-8 border-b border-gray-100 pb-6">
-            <p className="text-[15px] text-gray-700">
+      <div className="mb-6 rounded-2xl border border-[#e5edf5] bg-white p-6 md:p-8">
+        <div className="mb-8 flex flex-col justify-between gap-5 border-b border-[#e5edf5] pb-6 md:flex-row md:items-start">
+          <div className="max-w-[32rem]">
+            <p className="text-[15px] leading-7 text-[#64748d]">
               {billingSummary?.hasActivePlan
-                ? `This workspace's plan is currently ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
-                : "Workspace plans are $50/month and include up to 5 members plus 1 hosted worker."}
+                ? `This workspace's plan is ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
+                : `Workspace plans are ${planAmountLabel} and include up to 5 members plus 1 hosted worker.`}
             </p>
+          </div>
+          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] px-4 py-3 text-right">
+            <p className="text-[12px] font-medium text-[#64748d]">Plan cost</p>
+            <p className="mt-1 text-[24px] font-semibold text-[#061b31]">{planAmount}</p>
+            <p className="text-[12px] text-[#64748d]">{planCadence}</p>
+          </div>
         </div>
 
         <div className="mb-10 grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
@@ -144,12 +154,14 @@ export function BillingDashboardScreen() {
         <div className="flex flex-wrap items-center gap-3">
           {effectiveCheckoutUrl && !billingSummary?.hasActivePlan ? (
             <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "primary" })}>
+              <CreditCard size={15} strokeWidth={1.75} aria-hidden="true" />
               Purchase plan
             </a>
           ) : null}
 
           {billingSummary?.portalUrl ? (
             <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
+              <ExternalLink size={15} strokeWidth={1.75} aria-hidden="true" />
               Open billing portal
             </a>
           ) : null}
@@ -166,28 +178,30 @@ export function BillingDashboardScreen() {
         </div>
       </div>
 
-      <div className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
+      <div className="mb-6 rounded-2xl border border-[#e5edf5] bg-white p-6 md:p-8">
         <h2 className="mb-4 text-[15px] font-medium text-gray-900">Pricing</h2>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Solo</p>
             <p className="text-[20px] font-semibold text-gray-900">$0</p>
             <p className="mt-1 text-[13px] text-gray-500">Free forever · open source</p>
           </div>
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+          <div className="rounded-xl border border-[#d6d9fc] bg-[#f6f4ff] p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Workspace plan</p>
-            <p className="text-[20px] font-semibold text-gray-900">$50<span className="text-[13px] font-medium text-gray-500">/month</span></p>
+            <p className="text-[20px] font-semibold text-gray-900">
+              {planAmount}<span className="text-[13px] font-medium text-gray-500"> {planCadence}</span>
+            </p>
             <p className="mt-1 text-[13px] text-gray-500">5 members included · 1 hosted worker</p>
           </div>
-          <div className="rounded-[16px] border border-gray-100 bg-gray-50 p-4">
+          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
             <p className="text-[20px] font-semibold text-gray-900">Custom</p>
-            <p className="mt-1 text-[13px] text-gray-500">Windows included · talk to us</p>
+            <p className="mt-1 text-[13px] text-gray-500">SSO, RBAC, audit trails</p>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-[20px] border border-gray-100 bg-white p-6 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
+      <div className="flex items-center justify-between rounded-2xl border border-[#e5edf5] bg-white p-6">
         <div>
           <h2 className="mb-1 text-[15px] font-medium text-gray-900">Invoices</h2>
           <p className="text-[14px] text-gray-500">
@@ -197,12 +211,14 @@ export function BillingDashboardScreen() {
 
         {billingSummary?.portalUrl ? (
           <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+            <ExternalLink size={13} strokeWidth={1.75} aria-hidden="true" />
             View invoices
           </a>
         ) : (
           <DenButton
             variant="secondary"
             size="sm"
+            icon={RefreshCw}
             loading={billingBusy || billingCheckoutBusy}
             onClick={() => void refreshBilling({ includeCheckout: true, quiet: false })}
           >

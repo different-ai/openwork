@@ -47,7 +47,7 @@ function OrgMark({ name }: { name: string }) {
   }, [name]);
 
   return (
-    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#011627] text-xs font-semibold uppercase tracking-[0.08em] text-white">
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#061b31] text-xs font-semibold uppercase tracking-[0.08em] text-white">
       {initials}
     </div>
   );
@@ -226,16 +226,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     <div className="relative">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100"
+        className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-[#f6f9fc]"
         onClick={() => setSwitcherOpen((current) => !current)}
       >
         <div className="flex min-w-0 items-center gap-3">
           <OrgMark name={activeOrg?.name ?? "OpenWork"} />
           <div className="min-w-0">
-            <p className="truncate text-[14px] font-medium text-gray-900">
+            <p className="truncate text-[14px] font-medium text-[#061b31]">
               {activeOrg?.name ?? "Loading..."}
             </p>
-            <p className="truncate text-[12px] text-gray-500">
+            <p className="truncate text-[12px] text-[#64748d]">
               {activeOrg ? formatRoleLabel(activeOrg.role) : "Preparing workspace"}
             </p>
           </div>
@@ -249,17 +249,17 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </button>
 
       {switcherOpen ? (
-        <div className="absolute bottom-[calc(100%+0.5rem)] left-0 w-[240px] z-30 grid gap-1 rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]">
+        <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-30 grid w-[240px] gap-1 rounded-xl border border-[#e5edf5] bg-white py-2 shadow-[0_18px_30px_-24px_rgba(50,50,93,0.28)]">
           <div className="px-3 py-1.5">
-            <p className="truncate text-[13px] font-medium text-gray-900">
+            <p className="truncate text-[13px] font-medium text-[#061b31]">
               {user?.email ?? "OpenWork user"}
             </p>
           </div>
           
-          <div className="mx-2 h-px bg-gray-100 my-1" />
+          <div className="mx-2 my-1 h-px bg-[#e5edf5]" />
 
           <div className="px-3 pb-1 pt-1">
-            <p className="text-[11px] font-medium text-gray-500">
+            <p className="text-[11px] font-medium text-[#64748d]">
               Switch workspace
             </p>
           </div>
@@ -275,20 +275,20 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 }}
                 className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors ${
                   org.isActive
-                    ? "bg-gray-50 text-gray-900"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                    ? "bg-[#f0f4ff] text-[#061b31]"
+                    : "text-[#64748d] hover:bg-[#f6f9fc] hover:text-[#061b31]"
                 }`}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <div className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
-                    <span className="block truncate text-[12px] text-gray-500">
+                    <span className="block truncate text-[13px] font-medium tracking-normal">{org.name}</span>
+                    <span className="block truncate text-[12px] text-[#64748d]">
                       {org.role === "owner" ? "Creator plan" : "Free plan"} • 1 member
                     </span>
                   </div>
                 </div>
                 {org.isActive ? (
-                  <svg className="h-4 w-4 shrink-0 text-gray-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg className="h-4 w-4 shrink-0 text-[#533afd]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 ) : null}
@@ -299,22 +299,22 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           <div className="px-1.5 mt-0.5">
             <Link
               href="/organization"
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-[#64748d] transition-colors hover:bg-[#f6f9fc] hover:text-[#061b31]"
               onClick={() => setSwitcherOpen(false)}
             >
-              <span className="text-gray-400 text-[16px] leading-none">+</span> Create or join workspace
+              <span className="text-[16px] leading-none text-[#533afd]">+</span> Create or join workspace
             </Link>
           </div>
 
-          <div className="mx-2 h-px bg-gray-100 my-1" />
+          <div className="mx-2 my-1 h-px bg-[#e5edf5]" />
 
           <div className="px-1.5">
             <button
               type="button"
               onClick={() => void signOut()}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-[#64748d] transition-colors hover:bg-[#f6f9fc] hover:text-[#061b31]"
             >
-              <LogOut className="h-4 w-4 text-gray-400" />
+              <LogOut className="h-4 w-4 text-[#64748d]" />
               Sign out
             </button>
           </div>
@@ -324,10 +324,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafafa] md:flex-row">
-      <aside className="w-full shrink-0 border-b border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col md:border-b-0 md:border-r">
+    <div className="flex min-h-screen flex-col bg-[#f6f9fc] md:flex-row">
+      <aside className="w-full shrink-0 border-b border-[#e5edf5] bg-white md:flex md:min-h-screen md:w-[268px] md:flex-col md:border-b-0 md:border-r">
         <div className="flex flex-1 flex-col">
-          <div className="border-b border-gray-100 px-4 pb-4 pt-5">
+          <div className="border-b border-[#e5edf5] px-4 pb-4 pt-5">
             <div className="flex items-center justify-between gap-3">
               <OpenWorkMark />
               {orgBusy ? <span className="text-xs text-gray-400">Refreshing...</span> : null}
@@ -335,7 +335,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <nav className="flex-1 px-3 py-5">
-            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#64748d]">
               Navigation
             </p>
             <div className="space-y-1">
@@ -352,10 +352,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <Link
                     key={item.label}
                     href={item.href}
-                    className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
+                    className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-[13px] tracking-normal transition-colors ${
                       selected
-                        ? "bg-gray-100 text-gray-900"
-                        : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                        ? "border-[#d6d9fc] bg-[#f0f4ff] text-[#533afd]"
+                        : "border-transparent text-[#64748d] hover:border-[#e5edf5] hover:bg-[#f6f9fc] hover:text-[#061b31]"
                     }`}
                   >
                     <span className="flex items-center gap-3">
@@ -363,7 +363,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                       {item.label}
                     </span>
                     {item.badge ? (
-                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                      <span className="rounded-md border border-[#e5edf5] bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#64748d]">
                         {item.badge}
                       </span>
                     ) : null}
@@ -387,9 +387,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-5 md:px-6">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#e5edf5] bg-white px-5 md:px-6">
           <div className="flex items-center gap-2">
-            <span className="text-[14px] tracking-[-0.1px] text-gray-900">
+            <span className="text-[14px] tracking-normal text-[#061b31]">
               {pageTitle}
             </span>
           </div>
@@ -399,7 +399,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               href={feedbackHref}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-[#64748d] transition-colors hover:bg-[#f6f9fc] hover:text-[#061b31]"
             >
               <MessageSquare className="h-4 w-4" />
               Feedback
@@ -408,7 +408,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               href={OPENWORK_DOCS_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-[#64748d] transition-colors hover:bg-[#f6f9fc] hover:text-[#061b31]"
             >
               <FileText className="h-4 w-4" />
               Docs
@@ -416,7 +416,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-[#fafafa]">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-[#f6f9fc]">{children}</main>
       </div>
     </div>
   );

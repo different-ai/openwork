@@ -7,16 +7,16 @@
     --dls-surface: #ffffff;
     --dls-sidebar: #f6f9fc;
     --dls-app-bg: #f6f9fc;
-    --dls-border: #e5e7eb;
-    --dls-accent: #011627;
-    --dls-accent-hover: #000000;
-    --dls-accent-rgb: 1 22 39;
-    --dls-text-primary: #011627;
-    --dls-text-secondary: #667085;
-    --dls-hover: #f2f4f7;
-    --dls-active: #eef2f7;
-    --dls-shell-shadow: 0 18px 40px -30px rgba(15, 23, 42, 0.14);
-    --dls-card-shadow: 0 12px 24px -20px rgba(15, 23, 42, 0.1);
+    --dls-border: #e5edf5;
+    --dls-accent: #533afd;
+    --dls-accent-hover: #4434d4;
+    --dls-accent-rgb: 83 58 253;
+    --dls-text-primary: #061b31;
+    --dls-text-secondary: #64748d;
+    --dls-hover: #f6f9fc;
+    --dls-active: #f0f4ff;
+    --dls-shell-shadow: rgba(50, 50, 93, 0.18) 0 30px 45px -30px, rgba(0, 0, 0, 0.08) 0 18px 36px -18px;
+    --dls-card-shadow: rgba(50, 50, 93, 0.14) 0 18px 28px -24px, rgba(0, 0, 0, 0.06) 0 10px 20px -16px;
     --ow-bg: var(--dls-app-bg);
     --ow-ink: var(--dls-text-primary);
     --ow-muted: var(--dls-text-secondary);
@@ -55,21 +55,21 @@ body {
 .den-frame,
 .den-frame-soft,
 .den-frame-inset {
-    border-radius: 2rem;
+    border-radius: 1.25rem;
     border: 1px solid var(--dls-border);
 }
 
 .den-frame {
-    background: rgba(255, 255, 255, 0.96);
+    background: rgba(255, 255, 255, 0.98);
     box-shadow: var(--dls-shell-shadow);
 }
 
 .den-frame-soft {
-    background: rgba(255, 255, 255, 0.92);
+    background: rgba(255, 255, 255, 0.96);
 }
 
 .den-frame-inset {
-    background: rgba(248, 250, 252, 0.86);
+    background: #f8fbff;
 }
 
 .den-eyebrow {
@@ -82,18 +82,18 @@ body {
 
 .den-title-xl {
     margin: 0;
-    font-size: clamp(2.1rem, 5vw, 4rem);
-    line-height: 0.97;
-    letter-spacing: -0.06em;
+    font-size: 3.25rem;
+    line-height: 1.02;
+    letter-spacing: 0;
     font-weight: 600;
     color: var(--dls-text-primary);
 }
 
 .den-title-lg {
     margin: 0;
-    font-size: clamp(1.6rem, 3vw, 2.4rem);
-    line-height: 1;
-    letter-spacing: -0.05em;
+    font-size: 2rem;
+    line-height: 1.08;
+    letter-spacing: 0;
     font-weight: 600;
     color: var(--dls-text-primary);
 }
@@ -102,7 +102,17 @@ body {
     margin: 0;
     color: var(--dls-text-secondary);
     font-size: 0.96rem;
-    line-height: 1.75;
+    line-height: 1.65;
+}
+
+@media (max-width: 640px) {
+    .den-title-xl {
+        font-size: 2.35rem;
+    }
+
+    .den-title-lg {
+        font-size: 1.65rem;
+    }
 }
 
 .den-copy-strong {
@@ -117,9 +127,9 @@ body {
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    min-height: 48px;
-    padding: 0.75rem 1.25rem;
-    border-radius: 9999px;
+    min-height: 44px;
+    padding: 0.7rem 1.05rem;
+    border-radius: 0.625rem;
     font-size: 0.92rem;
     font-weight: 600;
     transition:
@@ -131,13 +141,13 @@ body {
 }
 
 .den-button-primary {
-    background: #011627;
+    background: var(--dls-accent);
     color: #fff;
-    box-shadow: 0 14px 32px -20px rgba(1, 22, 39, 0.45);
+    box-shadow: rgba(83, 58, 253, 0.24) 0 16px 32px -18px;
 }
 
 .den-button-primary:hover:not(:disabled) {
-    background: #000;
+    background: var(--dls-accent-hover);
     transform: translateY(-1px);
 }
 
@@ -185,7 +195,7 @@ body {
 .den-select,
 .den-textarea {
     width: 100%;
-    border-radius: 1rem;
+    border-radius: 0.625rem;
     border: 1px solid var(--dls-border);
     background: #fff;
     color: var(--dls-text-primary);
@@ -201,8 +211,8 @@ body {
 .den-select:focus,
 .den-textarea:focus {
     outline: none;
-    border-color: #cbd5e1;
-    box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.05);
+    border-color: #b9b9f9;
+    box-shadow: 0 0 0 4px rgba(83, 58, 253, 0.1);
 }
 
 .den-label {
@@ -226,10 +236,11 @@ body {
 }
 
 .den-stat-card {
-    border-radius: 1.5rem;
+    border-radius: 1rem;
     border: 1px solid var(--dls-border);
-    background: rgba(255, 255, 255, 0.92);
+    background: rgba(255, 255, 255, 0.96);
     padding: 1.25rem;
+    box-shadow: var(--dls-card-shadow);
 }
 
 .den-stat-label {
@@ -245,7 +256,7 @@ body {
     margin: 0.45rem 0 0;
     font-size: 2rem;
     line-height: 1;
-    letter-spacing: -0.05em;
+    letter-spacing: 0;
     font-weight: 600;
     color: var(--dls-text-primary);
 }
@@ -259,7 +270,7 @@ body {
 
 .den-list-shell {
     overflow: hidden;
-    border-radius: 1.75rem;
+    border-radius: 1rem;
     border: 1px solid var(--dls-border);
     background: rgba(255, 255, 255, 0.96);
 }
@@ -281,12 +292,10 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    border-radius: 9999px;
-    padding: 0.35rem 0.75rem;
-    background: rgba(255, 255, 255, 0.8);
-    box-shadow:
-        rgba(0, 0, 0, 0.06) 0 0 0 1px,
-        rgba(0, 0, 0, 0.04) 0 1px 2px 0;
+    border-radius: 0.5rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--dls-border);
+    background: rgba(255, 255, 255, 0.9);
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--dls-text-secondary);
@@ -296,7 +305,7 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9999px;
+    border-radius: 0.5rem;
     padding: 0.35rem 0.7rem;
     font-size: 0.72rem;
     font-weight: 700;
@@ -315,7 +324,7 @@ body {
 }
 
 .den-notice {
-    border-radius: 1.25rem;
+    border-radius: 0.75rem;
     padding: 0.9rem 1rem;
     font-size: 0.92rem;
     line-height: 1.6;
@@ -481,7 +490,7 @@ body {
 .ow-brand-text {
     font-size: 0.98rem;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
 }
 
 .ow-card {
@@ -574,9 +583,9 @@ body {
 
 .ow-title {
     margin: 0;
-    font-size: clamp(1.7rem, 5vw, 2.1rem);
+    font-size: 2rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
 }
 
 .ow-subtitle {

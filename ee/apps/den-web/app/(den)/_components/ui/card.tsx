@@ -13,9 +13,9 @@ export type DenCardSize = "comfortable" | "spacious";
 
 const sizeClasses: Record<DenCardSize, string> = {
   // Matches the original Members / API Keys inline card.
-  comfortable: "rounded-[30px] p-6",
+  comfortable: "rounded-2xl p-6",
   // Matches the editor-screen section card (LLM providers, skill hubs).
-  spacious: "rounded-[36px] p-8",
+  spacious: "rounded-3xl p-8",
 };
 
 export type DenCardProps = HTMLAttributes<HTMLDivElement> & {
@@ -48,7 +48,7 @@ export const DenCard = forwardRef<HTMLDivElement, DenCardProps>(function DenCard
       ref={ref}
       {...rest}
       className={[
-        "border border-gray-200 bg-white",
+        "border border-[#e5edf5] bg-white",
         sizeClasses[size],
         className ?? "",
       ]

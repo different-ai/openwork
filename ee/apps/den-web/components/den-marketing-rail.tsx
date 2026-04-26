@@ -81,7 +81,7 @@ function PricingCards() {
     <div className="grid gap-4 lg:grid-cols-2">
       <article className="flex h-full flex-col rounded-[1.6rem] border border-[#dbe1e8] bg-[linear-gradient(180deg,#ffffff,#f6f7f9)] px-4 py-4 shadow-[0_10px_26px_-22px_rgba(15,23,42,0.18)]">
         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#64748b]">Human repetitive work</div>
-        <div className="mt-3 text-[1.95rem] font-medium leading-[0.95] tracking-tight text-[#0f172a]">$2k-4k/mo</div>
+        <div className="mt-3 text-[1.95rem] font-medium leading-[0.95] tracking-normal text-[#0f172a]">$2k-4k/mo</div>
         <div className="mt-4 space-y-3 text-[13px] leading-6 text-[#64748b]">
           <div>Best when the work needs constant human judgment.</div>
           <div>Expensive for follow-through and reminders.</div>
@@ -95,7 +95,7 @@ function PricingCards() {
             Recommended
           </div>
         </div>
-        <div className="mt-3 text-[2rem] font-medium leading-[0.95] tracking-tight text-[#0f172a]">$50/mo</div>
+        <div className="mt-3 text-[2rem] font-medium leading-[0.95] tracking-normal text-[#0f172a]">Cloud plan</div>
         <div className="mt-4 space-y-3 text-[13px] leading-6 text-[#42526a]">
           <div>Handles repetitive work continuously instead of in bursts.</div>
           <div>Keeps humans focused on approvals and exceptions.</div>
@@ -113,7 +113,7 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
           OpenWork hosted
         </div>
         <div className="grid gap-4">
-          <h1 className="max-w-[12ch] text-[2.7rem] font-medium leading-[0.95] tracking-[-0.055em] text-[#011627] md:text-[3.5rem]">
+          <h1 className="max-w-[12ch] text-[2.7rem] font-medium leading-[0.98] tracking-normal text-[#011627] md:text-[3.5rem]">
             Always-on AI workers for you and your team.
           </h1>
           <p className="max-w-[38rem] text-[16px] leading-8 text-slate-600">
@@ -132,7 +132,7 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
             <article key={card.label} className="rounded-[1.7rem] border border-slate-200/80 bg-white/88 p-5 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.35)] backdrop-blur">
               <div className={`mb-4 h-3.5 w-3.5 rounded-full bg-gradient-to-br ${card.accent}`} />
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{card.label}</div>
-              <h2 className="text-[1.35rem] font-medium leading-[1.08] tracking-[-0.035em] text-[#011627]">{card.title}</h2>
+              <h2 className="text-[1.35rem] font-medium leading-[1.1] tracking-normal text-[#011627]">{card.title}</h2>
               <p className="mt-3 text-[14px] leading-7 text-slate-600">{card.body}</p>
               <div className="mt-5 font-mono text-[12px] text-slate-500">{card.detail}</div>
             </article>
@@ -146,8 +146,8 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
         <section className="grid gap-4 rounded-[2rem] border border-slate-200/80 bg-[radial-gradient(circle_at_top_right,rgba(15,23,42,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(244,246,248,0.98))] p-5 shadow-[0_28px_70px_-48px_rgba(15,23,42,0.28)]">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Pricing</div>
-            <p className="mt-3 max-w-[28rem] text-[2rem] font-medium leading-[1.02] tracking-[-0.045em] text-[#011627]">
-              Replace repetitive work with a $50 worker.
+            <p className="mt-3 max-w-[28rem] text-[2rem] font-medium leading-[1.06] tracking-normal text-[#011627]">
+              Replace repetitive work with a cloud worker.
             </p>
             <p className="mt-3 max-w-[38rem] text-[15px] leading-7 text-slate-600">
               Start free, then use Den Cloud billing when you need more capacity. The app handles checkout return flows and billing management without sending people back to marketing pages.
