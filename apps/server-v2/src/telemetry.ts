@@ -1,18 +1,3 @@
-/**
- * Optional OpenTelemetry bootstrap.
- *
- * Call initTelemetry() at process start (before any HTTP traffic)
- * when OTEL_EXPORTER_OTLP_ENDPOINT is set. If the env var is absent
- * or the SDK packages are not installed, this is a silent no-op.
- *
- * Install:
- *   pnpm add @opentelemetry/sdk-node \
- *            @opentelemetry/exporter-trace-otlp-http \
- *            @opentelemetry/resources \
- *            @opentelemetry/semantic-conventions \
- *            @opentelemetry/api
- */
-
 let shutdownFn: (() => Promise<void>) | null = null;
 
 export async function initTelemetry(serviceName = "openwork-server-v2"): Promise<void> {
@@ -21,7 +6,7 @@ export async function initTelemetry(serviceName = "openwork-server-v2"): Promise
   }
 
   if (shutdownFn) {
-    return; // already initialized
+    return;
   }
 
   try {
@@ -29,8 +14,6 @@ export async function initTelemetry(serviceName = "openwork-server-v2"): Promise
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
     const { resourceFromAttributes } = await import("@opentelemetry/resources");
 
-    // let the SDK read OTEL_EXPORTER_OTLP_ENDPOINT and
-    // OTEL_EXPORTER_OTLP_TRACES_ENDPOINT natively
     const sdk = new NodeSDK({
       resource: resourceFromAttributes({ "service.name": serviceName }),
       traceExporter: new OTLPTraceExporter(),

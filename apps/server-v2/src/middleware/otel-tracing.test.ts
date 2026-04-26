@@ -6,7 +6,6 @@ import { otelTracingMiddleware } from "./otel-tracing.js";
 function createTestApp() {
   const app = new Hono<AppBindings>();
 
-  // minimal requestId setup (otel-tracing reads it)
   app.use("*", async (c, next) => {
     c.set("requestId", "test-req-id");
     await next();

@@ -5,13 +5,6 @@ import { getTraceApi } from "./otel-api.js";
 
 const TRACER_NAME = "openwork-server-v2";
 
-/**
- * Wraps each request in an OpenTelemetry span. No-op when otel
- * packages are not installed, zero overhead in the default case.
- *
- * Enable by setting OTEL_EXPORTER_OTLP_ENDPOINT and installing
- * the otel sdk packages (see telemetry.ts).
- */
 export const otelTracingMiddleware: MiddlewareHandler<AppBindings> = async (c, next) => {
   const api = await getTraceApi();
   if (!api) {
@@ -35,7 +28,6 @@ export const otelTracingMiddleware: MiddlewareHandler<AppBindings> = async (c, n
 
       await next();
 
-      // update to low-cardinality route template (e.g. /workspaces/:workspaceId)
       const matched = getRoutePath(c);
       if (matched) {
         span.updateName(`${c.req.method} ${matched}`);
