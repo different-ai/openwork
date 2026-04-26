@@ -11,29 +11,19 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import {
+  buildLocalMockBillingSummary,
+  formatBillingPlanLabels,
+  getBillingStatusLabel,
+  getWorkspacePlanEntitlementCopy,
+  isLocalMockBillingEnabled,
+} from "../_lib/billing-display";
 import { isSamePathname } from "../_lib/client-route";
-import { formatMoneyMinor, formatRecurringInterval, type BillingPrice } from "../_lib/den-flow";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 // For local layout testing (no deploy needed)
 // Enable with: NEXT_PUBLIC_DEN_MOCK_BILLING=1
-const MOCK_BILLING = process.env.NEXT_PUBLIC_DEN_MOCK_BILLING === "1";
 const MOCK_CHECKOUT_URL = (process.env.NEXT_PUBLIC_DEN_MOCK_CHECKOUT_URL ?? "").trim() || null;
-const MOCK_PRICE: BillingPrice = {
-  amount: 5000,
-  currency: "usd",
-  recurringInterval: "month",
-  recurringIntervalCount: 1,
-};
-
-function formatSubscriptionStatus(value: string | null | undefined) {
-  if (!value) return "Purchase required";
-  return value
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-}
 
 function LoadingPanel({ title, body }: { title: string; body: string }) {
   return (
@@ -44,25 +34,6 @@ function LoadingPanel({ title, body }: { title: string; body: string }) {
       </div>
     </section>
   );
-}
-
-function getPlanLabels(price: BillingPrice | null) {
-  if (!price || price.amount === null) {
-    return {
-      amount: "Plan price unavailable",
-      cadence: "billing cycle",
-      inline: "Plan price unavailable",
-    };
-  }
-
-  const amount = formatMoneyMinor(price.amount, price.currency);
-  const cadence = formatRecurringInterval(price.recurringInterval, price.recurringIntervalCount);
-
-  return {
-    amount,
-    cadence,
-    inline: `${amount} ${cadence}`,
-  };
 }
 
 function FeatureLine({
@@ -108,22 +79,12 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
     resolveUserLandingRoute,
   } = useDenFlow();
 
-  const mockMode = MOCK_BILLING && process.env.NODE_ENV !== "production";
+  const mockMode = isLocalMockBillingEnabled({
+    flag: process.env.NEXT_PUBLIC_DEN_MOCK_BILLING,
+    nodeEnv: process.env.NODE_ENV,
+  });
 
-  const billingSummary = mockMode
-    ? {
-        featureGateEnabled: true,
-        hasActivePlan: false,
-        checkoutRequired: true,
-        checkoutUrl: MOCK_CHECKOUT_URL,
-        portalUrl: null,
-        price: MOCK_PRICE,
-        subscription: null,
-        invoices: [],
-        productId: null,
-        benefitId: null,
-      }
-    : realBillingSummary;
+  const billingSummary = mockMode ? buildLocalMockBillingSummary(MOCK_CHECKOUT_URL) : realBillingSummary;
 
   useEffect(() => {
     if (!sessionHydrated || resuming || user || mockMode) {
@@ -240,14 +201,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   const billingPrice = billingSummary?.price ?? null;
   const showLoading = resuming || (billingBusy && !billingSummary && !mockMode);
   const checkoutHref = effectiveCheckoutUrl ?? billingSummary?.checkoutUrl ?? (mockMode ? MOCK_CHECKOUT_URL : null);
-  const planLabels = getPlanLabels(billingPrice);
-  const subscription = billingSummary?.subscription ?? null;
+  const planLabels = formatBillingPlanLabels(billingPrice);
   const hasActivePlan = Boolean(billingSummary?.hasActivePlan);
-  const subscriptionStatus = subscription
-    ? formatSubscriptionStatus(subscription.status)
-    : hasActivePlan
-      ? "Active"
-      : "Purchase required";
+  const subscriptionStatus = getBillingStatusLabel(billingSummary);
 
   return (
     <section className="den-page grid gap-6 py-4 lg:py-6">
@@ -265,7 +221,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
                   <CreditCard className="h-4 w-4" aria-hidden="true" />
                   <span>Purchase plan</span>
-                  <span className="hidden sm:inline">- {planLabels.inline}</span>
+                  {planLabels.available ? <span className="hidden sm:inline">- {planLabels.inline}</span> : null}
                 </a>
               ) : (
                 <button
@@ -306,7 +262,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 <span className="pb-1 text-sm text-white/65">{planLabels.cadence}</span>
               </div>
               <p className="text-sm leading-6 text-white/70">
-                Includes up to 5 members and 1 hosted worker.
+                {getWorkspacePlanEntitlementCopy()}
               </p>
             </div>
             <div className="mt-6 grid gap-3 border-t border-white/10 pt-5 text-sm text-white/75">
@@ -331,6 +287,11 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
       {showLoading ? (
         <div className="den-frame-soft px-5 py-4 text-sm text-[var(--dls-text-secondary)]">
           Refreshing access state...
+        </div>
+      ) : null}
+      {!billingSummary && !showLoading ? (
+        <div className="den-notice is-info">
+          Billing details are unavailable. Refresh the purchase link to retry.
         </div>
       ) : null}
 

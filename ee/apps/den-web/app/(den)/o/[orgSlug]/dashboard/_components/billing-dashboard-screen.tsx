@@ -4,11 +4,13 @@ import { useEffect } from "react";
 import { CreditCard, ExternalLink, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
-  formatIsoDate,
-  formatMoneyMinor,
-  formatRecurringInterval,
-  formatSubscriptionStatus,
-} from "../../../../_lib/den-flow";
+  formatBillingAmountLabel,
+  formatBillingPlanLabels,
+  getBillingStatusLabel,
+  getWorkspacePlanEntitlementCopy,
+  getWorkspacePlanShortEntitlementCopy,
+} from "../../../../_lib/billing-display";
+import { formatIsoDate } from "../../../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 
@@ -58,28 +60,20 @@ export function BillingDashboardScreen() {
 
   const billingPrice = billingSummary?.price ?? null;
   const subscription = billingSummary?.subscription ?? null;
-  const planAmount = billingPrice
-    ? formatMoneyMinor(billingPrice.amount, billingPrice.currency)
-    : "Not available";
-  const planCadence = billingPrice
-    ? formatRecurringInterval(billingPrice.recurringInterval, billingPrice.recurringIntervalCount)
-    : "billing cycle";
-  const planAmountLabel = billingPrice
-    ? `${planAmount} · ${planCadence}`
-    : "Not available";
-  const statusLabel = subscription
-    ? formatSubscriptionStatus(subscription.status)
-    : billingSummary?.hasActivePlan
-      ? "Active"
-      : "Purchase required";
+  const planLabels = formatBillingPlanLabels(billingPrice);
+  const statusLabel = getBillingStatusLabel(billingSummary);
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
-  const nextPaymentAmount = subscription?.amount !== null && subscription?.amount !== undefined
-    ? formatMoneyMinor(subscription.amount, subscription.currency)
-    : billingPrice?.amount !== null && billingPrice?.amount !== undefined
-      ? formatMoneyMinor(billingPrice.amount, billingPrice.currency)
-      : "Not available";
+  const nextPaymentAmount = formatBillingAmountLabel(
+    subscription?.amount ?? billingPrice?.amount ?? null,
+    subscription?.currency ?? billingPrice?.currency ?? null,
+  );
+  const workspacePlanDescription = billingSummary?.hasActivePlan
+    ? `This workspace's plan is ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
+    : planLabels.available
+      ? `Workspace plans are ${planLabels.inline}. ${getWorkspacePlanEntitlementCopy()}`
+      : "Workspace plan pricing is unavailable. Refresh billing to retry.";
 
   return (
     <DashboardPageTemplate
@@ -93,20 +87,23 @@ export function BillingDashboardScreen() {
           {billingError}
         </div>
       ) : null}
+      {!billingSummary && !billingBusy && !billingCheckoutBusy ? (
+        <div className="mb-6 rounded-[20px] border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-700">
+          Billing details are unavailable. Refresh billing to retry.
+        </div>
+      ) : null}
 
       <div className="mb-6 rounded-2xl border border-[#e5edf5] bg-white p-6 md:p-8">
         <div className="mb-8 flex flex-col justify-between gap-5 border-b border-[#e5edf5] pb-6 md:flex-row md:items-start">
           <div className="max-w-[32rem]">
             <p className="text-[15px] leading-7 text-[#64748d]">
-              {billingSummary?.hasActivePlan
-                ? `This workspace's plan is ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
-                : `Workspace plans are ${planAmountLabel} and include up to 5 members plus 1 hosted worker.`}
+              {workspacePlanDescription}
             </p>
           </div>
           <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] px-4 py-3 text-right">
             <p className="text-[12px] font-medium text-[#64748d]">Plan cost</p>
-            <p className="mt-1 text-[24px] font-semibold text-[#061b31]">{planAmount}</p>
-            <p className="text-[12px] text-[#64748d]">{planCadence}</p>
+            <p className="mt-1 text-[24px] font-semibold text-[#061b31]">{planLabels.amount}</p>
+            <p className="text-[12px] text-[#64748d]">{planLabels.cadence}</p>
           </div>
         </div>
 
@@ -118,7 +115,7 @@ export function BillingDashboardScreen() {
 
           <div>
             <h2 className="mb-2 text-[13px] font-medium text-gray-500">Plan cost</h2>
-            <div className="text-[15px] font-medium text-gray-900">{planAmountLabel}</div>
+            <div className="text-[15px] font-medium text-gray-900">{planLabels.inline}</div>
           </div>
 
           <div>
@@ -134,12 +131,7 @@ export function BillingDashboardScreen() {
           <div>
             <h2 className="mb-2 text-[13px] font-medium text-gray-500">Billing period</h2>
             <span className="text-[15px] font-medium text-gray-900">
-              {billingPrice
-                ? formatRecurringInterval(
-                    billingPrice.recurringInterval,
-                    billingPrice.recurringIntervalCount,
-                  )
-                : "Not available"}
+              {planLabels.available ? planLabels.cadence : "Not available"}
             </span>
           </div>
 
@@ -189,9 +181,9 @@ export function BillingDashboardScreen() {
           <div className="rounded-xl border border-[#d6d9fc] bg-[#f6f4ff] p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Workspace plan</p>
             <p className="text-[20px] font-semibold text-gray-900">
-              {planAmount}<span className="text-[13px] font-medium text-gray-500"> {planCadence}</span>
+              {planLabels.amount}<span className="text-[13px] font-medium text-gray-500"> {planLabels.cadence}</span>
             </p>
-            <p className="mt-1 text-[13px] text-gray-500">5 members included · 1 hosted worker</p>
+            <p className="mt-1 text-[13px] text-gray-500">{getWorkspacePlanShortEntitlementCopy()}</p>
           </div>
           <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
