@@ -40,20 +40,20 @@ export function LandingSharePackageCard(props: Props) {
   return (
     <div
       className={[
-        "flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm",
+        "flex w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border-soft bg-surface-card shadow-sm",
         props.className,
       ]
         .filter(Boolean)
         .join(" ")}
     >
       {/* App chrome */}
-      <div className="flex items-center gap-3 border-b border-gray-100 bg-gray-50/80 px-4 py-2.5">
+      <div className="flex items-center gap-3 border-b border-border-soft bg-background-muted/80 px-4 py-2.5">
         <div className="flex gap-1.5">
           <div className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
           <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
           <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
         </div>
-        <div className="text-[12px] font-medium text-gray-500">OpenWork</div>
+        <div className="text-[12px] font-medium text-foreground/60">OpenWork</div>
       </div>
 
       <div className="flex flex-1 flex-col gap-3 p-4 text-left md:p-5">
@@ -61,12 +61,12 @@ export function LandingSharePackageCard(props: Props) {
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-500">
             Workspace Template
           </div>
-          <h3 className="text-lg font-medium tracking-tight text-[#011627]">
+          <h3 className="text-lg font-medium tracking-tight text-foreground">
             SDR for Acme Company
           </h3>
         </div>
 
-        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground/50">
           Included
         </div>
 
@@ -77,17 +77,17 @@ export function LandingSharePackageCard(props: Props) {
               className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-all ${
                 i === 0
                   ? "border-blue-300 bg-blue-50/60 shadow-sm"
-                  : "border-gray-100 bg-white"
+                  : "border-border-soft bg-surface-card"
               }`}
             >
               <span
                 className={`h-6 w-6 shrink-0 rounded-full ${dotClass[item.tone]}`}
               />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-[#011627]">
+                <span className="block truncate text-[13px] font-medium text-foreground">
                   {item.name}
                 </span>
-                <span className="block text-[11px] text-gray-500">
+                <span className="block text-[11px] text-foreground/60">
                   {item.type}
                 </span>
               </span>
@@ -97,7 +97,7 @@ export function LandingSharePackageCard(props: Props) {
 
         <button
           type="button"
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#011627] py-2 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-black"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-surface-inverse py-2 text-[13px] font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-primary"
         >
           <LinkIcon />
           Generate Share Link

@@ -68,7 +68,11 @@ function renderInline(text: string): ReactNode {
 
 /** Parse a markdown string and return React elements. */
 export function renderMarkdown(md: string): ReactNode {
-  const lines = md.split("\n");
+  // Split on \n and strip trailing \r so CRLF files (Windows) parse the same
+  // as LF files. Without this, headings like "# Foo\r" don't match the
+  // /^#{1,3}\s+(.+)$/ regex (`.` doesn't match `\r`), the line falls through
+  // every clause without advancing `i`, and the outer while loop spins forever.
+  const lines = md.split("\n").map((line) => line.replace(/\r$/, ""));
   const elements: ReactNode[] = [];
   let i = 0;
   let key = 0;

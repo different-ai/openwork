@@ -1,185 +1,238 @@
-"use client";
+import Link from "next/link";
+import { Button } from "./ui/button";
+import { DOWNLOAD_URL, GITHUB_URL } from "@/constants";
+import LogoSymbolIcon from "@/icons/logos/logo-symbol";
+import { cn } from "@/lib/utils";
 
-import { ArrowUpRight, Cloud, Download, Shield } from "lucide-react";
-import { ResponsiveGrain } from "./responsive-grain";
+type Variant = "primary" | "secondary";
+
+type Plan = {
+  id: string;
+  name: string;
+  price: string;
+  priceSuffix?: string;
+  cadence?: string;
+  badge?: string;
+  description: string;
+  ctaLabel: string;
+  href: string;
+  external?: boolean;
+  highlight: { label: string };
+  features: string[];
+  variant: Variant;
+};
 
 type PricingGridProps = {
   callUrl: string;
   showHeader?: boolean;
 };
 
-type PricingCard = {
-  id: string;
-  title: string;
-  price: string;
-  priceSub: string;
-  ctaLabel: string;
-  href: string;
-  external?: boolean;
-  features: Array<{ text: string; icon: typeof Download }>;
-  footer?: string;
-  gradientColors: string[];
-  gradientBack: string;
-  gradientShape: "corners" | "wave" | "dots" | "truchet" | "ripple" | "blob" | "sphere";
-  isCustomPricing?: boolean;
+const PricingCard = ({ plan }: { plan: Plan }) => {
+  const isSecondary = plan.variant === "secondary";
+
+  return (
+    <article
+      className={cn(
+        "bg-background-muted p-2xl gap-xl flex h-full flex-col rounded-sm",
+        isSecondary && "bg-primary text-white"
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <LogoSymbolIcon
+          className={cn("w-[4.4rem]", isSecondary && "text-white")}
+        />
+        {plan.badge ? (
+          <span
+            className={cn(
+              "px-base-sm py-xs rounded-full font-sans text-sm leading-none font-medium",
+              isSecondary ? "bg-white text-primary" : "bg-primary text-white"
+            )}
+          >
+            {plan.badge}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="flex flex-col">
+        <h2 className="mb-[1.2rem] font-sans text-lg font-medium tracking-tight">
+          {plan.name}
+        </h2>
+
+        <p className="gap-sm mb-[3.2rem] flex items-baseline font-sans text-[4.8rem] font-bold tracking-tight leading-none">
+          <span className="uppercase">{plan.price}</span>
+          {plan.priceSuffix ? (
+            <span className="font-sans text-[2.4rem] font-bold uppercase">
+              {plan.priceSuffix}
+            </span>
+          ) : null}
+          {plan.cadence ? (
+            <span
+              className={cn(
+                "gap-xs relative z-0 flex items-baseline font-serif text-lg font-light tracking-normal",
+                isSecondary ? "text-white/80" : "text-foreground/60"
+              )}
+            >
+              {plan.cadence}
+            </span>
+          ) : null}
+        </p>
+
+        <div
+          className={cn(
+            "mb-[1.2rem] h-[1px] w-full",
+            isSecondary ? "bg-white/20" : "bg-foreground/20"
+          )}
+        />
+
+        <p className="text-base-sm mb-[3.2rem] font-sans font-medium">
+          {plan.description}
+        </p>
+
+        <Button
+          asChild
+          className={cn(
+            "mb-[3.2rem] h-[4.8rem] rounded-full",
+            isSecondary && "bg-white text-primary hover:bg-white/90"
+          )}
+        >
+          {plan.external ? (
+            <a href={plan.href} target="_blank" rel="noreferrer">
+              {plan.ctaLabel}
+            </a>
+          ) : (
+            <Link href={plan.href}>{plan.ctaLabel}</Link>
+          )}
+        </Button>
+
+        <div className="gap-sm flex flex-col">
+          <h4 className="font-serif text-lg">What&apos;s Included:</h4>
+          <ul className="text-base-sm font-sans font-medium">
+            <li
+              className={cn(
+                "py-base gap-sm flex items-center border-b",
+                isSecondary ? "border-b-white/20" : "border-b-foreground/20"
+              )}
+            >
+              <span
+                className={cn(
+                  "px-base py-2xs rounded-full font-sans text-sm font-medium",
+                  isSecondary
+                    ? "bg-white text-primary"
+                    : "bg-primary text-white"
+                )}
+              >
+                {plan.highlight.label}
+              </span>
+            </li>
+            {plan.features.map(feature => (
+              <li
+                key={feature}
+                className={cn(
+                  "py-base gap-sm flex items-center border-b",
+                  isSecondary ? "border-b-white/20" : "border-b-foreground/20"
+                )}
+              >
+                <p>{feature}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </article>
+  );
 };
 
-function PricingCardView({ card }: { card: PricingCard }) {
-  return (
-    <div className="flex h-full flex-col relative group">
-      {/* ── Header card ── */}
-      <div className="relative p-5 rounded-[20px] overflow-hidden mb-6 flex-shrink-0 bg-[#F4F4F4] text-gray-900 group-hover:text-white transition-colors duration-300">
-        {/* Shader layer — hidden by default, revealed on hover */}
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-          <ResponsiveGrain
-            colors={card.gradientColors}
-            colorBack={card.gradientBack}
-            softness={0.6}
-            intensity={0.35}
-            noise={0.06}
-            shape={card.gradientShape}
-            speed={0.4}
-          />
-          <div className="absolute inset-0 bg-black/10 mix-blend-overlay" />
-        </div>
-
-        <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
-          <div>
-            <div className="flex justify-between items-start mb-6">
-              <h2 className="text-[17px] font-medium tracking-tight">{card.title}</h2>
-            </div>
-
-            {card.isCustomPricing ? (
-              <div className="text-[16px] font-semibold mt-4 mb-2">{card.price}</div>
-            ) : (
-              <div className="mt-4">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-[28px] font-semibold tracking-tight leading-none">{card.price}</span>
-                  <span className="text-[12px] font-medium text-gray-500 group-hover:text-white/80 transition-colors duration-300">
-                    {card.priceSub}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <a
-            href={card.href}
-            {...(card.external ? { rel: "noreferrer", target: "_blank" as const } : {})}
-            className="w-full mt-6 py-2.5 rounded-full text-[13px] font-medium bg-gray-950 text-white hover:bg-gray-900 shadow-sm transition-colors flex items-center justify-center gap-2"
-          >
-            {card.ctaLabel}
-            <ArrowUpRight size={14} />
-          </a>
-        </div>
-      </div>
-
-      {/* ── Features list ── */}
-      <div className="flex-1 pr-4">
-        <div className="flex flex-col">
-          {card.features.map((feature, idx) => {
-            const Icon = feature.icon;
-            return (
-              <div
-                key={idx}
-                className="flex items-start gap-3 py-3 border-b border-dotted border-gray-400/40 last:border-0 text-[13px] text-gray-700 font-medium"
-              >
-                <Icon className="w-[18px] h-[18px] text-gray-500 shrink-0 mt-0.5" strokeWidth={1.5} />
-                <span className="leading-snug">{feature.text}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Footer ── */}
-      {card.footer ? (
-        <div className="mt-auto pt-8">
-          <div className="text-[14px] font-medium text-gray-800">{card.footer}</div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function PricingGrid(props: PricingGridProps) {
-  const cards: PricingCard[] = [
+export function PricingGrid({ callUrl, showHeader = false }: PricingGridProps) {
+  const plans: Plan[] = [
     {
       id: "solo",
-      title: "Solo",
+      name: "Solo",
       price: "$0",
-      priceSub: "open source",
+      cadence: "free forever",
+      description:
+        "Open source desktop app. Your hardware, your keys, your workflows. MIT licensed.",
       ctaLabel: "Download free",
-      href: "/download",
+      href: DOWNLOAD_URL,
+      highlight: { label: "MIT licensed" },
       features: [
-        { text: "Open source desktop app", icon: Download },
-        { text: "macOS and Linux downloads", icon: Download },
-        { text: "Bring your own keys", icon: Download },
+        "All providers — Anthropic, OpenAI, Gemini, Mistral, Groq, Ollama",
+        "Skill Manager + MCP servers",
+        "macOS and Linux desktop",
+        "Bring your own keys",
+        "Community support on GitHub"
       ],
-      footer: "Free forever",
-      gradientColors: ["#7C3AED", "#A855F7", "#6D28D9", "#4338CA"],
-      gradientBack: "#1E1B4B",
-      gradientShape: "wave",
+      variant: "primary"
     },
     {
-      id: "cloud-workers",
-      title: "Team starter",
+      id: "team",
+      name: "Team Starter",
       price: "$50",
-      priceSub: "per month",
+      cadence: "per month",
+      badge: "Most Popular",
+      description:
+        "Distribute workflows, skills, and provider keys to a small team — without anyone touching their own .env.",
       ctaLabel: "Start team plan",
       href: "https://app.openworklabs.com/checkout",
       external: true,
+      highlight: { label: "5 seats included" },
       features: [
-        { text: "5 seats included", icon: Cloud },
-        { text: "API access", icon: Cloud },
-        { text: "Skill Hub Manager", icon: Cloud },
-        { text: "Bring your own LLM keys, distributed to your team", icon: Cloud },
+        "Skill Hub Manager for your org",
+        "API access",
+        "Distributed BYOK across the team",
+        "Cloud workers (Den sandbox)",
+        "Priority email support"
       ],
-      gradientColors: ["#2563EB", "#0284C7", "#0EA5E9", "#0F172A"],
-      gradientBack: "#0C1220",
-      gradientShape: "ripple",
+      variant: "secondary"
     },
     {
-      id: "enterprise-license",
-      title: "Enterprise",
-      price: "Custom pricing",
-      priceSub: "",
-      isCustomPricing: true,
+      id: "enterprise",
+      name: "Enterprise",
+      price: "Custom",
+      description:
+        "Self-hosted deployment, SSO, audit logs, LTS releases, and a dedicated rollout engineer.",
       ctaLabel: "Talk to us",
-      href: props.callUrl,
-      external: /^https?:\/\//.test(props.callUrl),
+      href: callUrl,
+      external: /^https?:\/\//.test(callUrl),
+      highlight: { label: "Custom terms" },
       features: [
-        { text: "Enterprise rollout support", icon: Shield },
-        { text: "Deployment guidance", icon: Shield },
-        { text: "Custom commercial terms", icon: Shield },
+        "Self-hosted on your infra",
+        "SSO / SAML and audit logs",
+        "LTS releases and SLA",
+        "Dedicated rollout engineer",
+        "Custom commercial terms"
       ],
-      footer: "For org-wide rollout and custom terms",
-      gradientColors: ["#F97316", "#E11D48", "#9333EA", "#4338CA"],
-      gradientBack: "#111827",
-      gradientShape: "corners",
-    },
+      variant: "primary"
+    }
   ];
 
   return (
-    <section className="grid gap-8">
-      {props.showHeader !== false ? (
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <h2 className="text-[40px] md:text-[46px] font-medium tracking-tight text-gray-900 leading-[1.1]">
-            Pricing
-          </h2>
-        </div>
+    <section className="gap-xl flex flex-col">
+      {showHeader ? (
+        <h2 className="h2 leading-[1.1] tracking-tight">Pricing</h2>
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 relative border-l border-t border-dotted border-gray-400/50">
-        {cards.map((card) => (
-          <div key={card.id} className="p-6 border-r border-b border-dotted border-gray-400/50 flex flex-col h-full">
-            <PricingCardView card={card} />
+      <div className="grid-12 gap-base">
+        {plans.map(plan => (
+          <div
+            key={plan.id}
+            className="col-span-12 sm:col-span-8 sm:col-start-3 md:col-span-4 md:col-start-auto"
+          >
+            <PricingCard plan={plan} />
           </div>
         ))}
       </div>
 
-      <p className="text-center text-[12px] font-medium text-gray-500">
-        Prices exclude taxes.
+      <p className="text-foreground/60 text-center font-sans text-sm font-medium">
+        Prices exclude taxes. Source on{" "}
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-4"
+        >
+          GitHub
+        </a>
+        .
       </p>
     </section>
   );

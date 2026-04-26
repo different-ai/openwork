@@ -24,7 +24,7 @@ export function WaitlistForm(props: Props) {
           />
         </svg>
       </a>
-      <p className="text-[13px] text-gray-500">
+      <p className="text-[13px] text-foreground/60">
         Cloud signup is temporarily paused while we onboard teams directly.
       </p>
     </div>

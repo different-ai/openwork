@@ -1,9 +1,8 @@
-import { LandingBackground } from "../../components/landing-background";
 import { PricingGrid } from "../../components/pricing-grid";
-import { SiteFooter } from "../../components/site-footer";
-import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
-import { getGithubData } from "../../lib/github";
+import FaqsSection from "../../components/ui/faqs-section";
+import PageHeading from "../../components/ui/page-heading";
+import { FAQS } from "../../constants/faqs";
 import { baseOpenGraph } from "../../lib/seo";
 
 const pricingSchema = {
@@ -61,40 +60,27 @@ export const metadata = {
   }
 };
 
-export default async function PricingPage() {
-  const github = await getGithubData();
+export default function PricingPage() {
   const callUrl = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
 
   return (
-    <div className="relative min-h-screen overflow-hidden text-[#011627]">
+    <main className="pricing-page flex flex-col gap-(--sections-gap) pt-(--page-pt)">
       <StructuredData data={pricingSchema} />
-      <LandingBackground />
 
-      <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
-        <div className="w-full">
-          <SiteNav
-            stars={github.stars}
-            callUrl={callUrl}
-            downloadHref={github.downloads.macos}
-            active="pricing"
+      <div className="grid-12 gap-y-[8rem] px-(--container-px)">
+        <div className="col-span-12 sm:col-span-8 sm:col-start-3 md:col-span-8 md:col-start-3">
+          <PageHeading
+            eyebrow="Plans designed around how you ship agents"
+            title="Choose your plan"
+            description="Free forever for solo. Bring your team in for $50 a month. Self-host the whole thing on enterprise. No hidden fees, no per-token surprises — open source all the way down."
           />
         </div>
-
-        <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
-          <section className="max-w-4xl pt-6 md:pt-10">
-            <h1 className="mb-6 text-4xl font-medium leading-[1.05] tracking-tight md:text-5xl lg:text-6xl">
-              OpenWork pricing — free, team, and enterprise
-            </h1>
-          </section>
-
-          <PricingGrid
-            callUrl={callUrl}
-            showHeader={false}
-          />
-
-          <SiteFooter />
-        </main>
+        <div className="col-span-12">
+          <PricingGrid callUrl={callUrl} showHeader={false} />
+        </div>
       </div>
-    </div>
+
+      <FaqsSection faqs={FAQS} />
+    </main>
   );
 }

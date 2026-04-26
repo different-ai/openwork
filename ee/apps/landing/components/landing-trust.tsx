@@ -1,6 +1,6 @@
-import { SiteFooter } from "./site-footer";
-import { LandingBackground } from "./landing-background";
-import { SiteNav } from "./site-nav";
+import Eyebrow from "@/components/ui/eyebrow";
+import DotsPattern from "@/components/ui/dots-pattern";
+import LogoSymbolIcon from "@/icons/logos/logo-symbol";
 import {
   dataHandlingRows,
   keyFacts,
@@ -23,7 +23,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
   return (
     <h2
       id={id}
-      className="scroll-mt-24 text-xl font-semibold tracking-tight text-[#011627]"
+      className="scroll-mt-24 font-sans text-[3.2rem] font-bold leading-[1.1] tracking-[-0.02em] text-foreground"
     >
       {children}
     </h2>
@@ -32,8 +32,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 
 function Bullet({ children }: { children: React.ReactNode }) {
   return (
-    <li className="flex gap-2.5">
-      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" />
+    <li className="border-foreground/10 gap-base flex items-start border-l-2 pl-base py-xs text-foreground/70 font-sans text-base leading-relaxed">
       <span>{children}</span>
     </li>
   );
@@ -41,7 +40,7 @@ function Bullet({ children }: { children: React.ReactNode }) {
 
 function Prose({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-3 text-[14px] leading-relaxed text-slate-600">{children}</p>
+    <p className="body-base mt-base">{children}</p>
   );
 }
 
@@ -49,303 +48,291 @@ function Prose({ children }: { children: React.ReactNode }) {
 /*  Main component                                                    */
 /* ------------------------------------------------------------------ */
 
-export function LandingTrustOverview(props: SharedProps) {
-  const callHref = props.calUrl || "/enterprise#book";
-
+export function LandingTrustOverview(_props: SharedProps) {
   return (
-    <div className="relative min-h-screen overflow-hidden text-[#011627]">
-      <LandingBackground />
-
-      <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
-        <div className="w-full">
-          <SiteNav
-            stars={props.stars}
-            callUrl={callHref}
-            downloadHref={props.downloadHref}
-          />
-        </div>
-
-        <main className="mx-auto w-full max-w-3xl flex-1 px-6 pb-16 md:px-8">
-          {/* ── Header ── */}
-          <section className="pt-8 md:pt-12">
-            <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-              Security &amp; Data Privacy
+    <div className="trust-page relative min-h-screen pt-(--page-pt)">
+      <main className="mx-auto flex w-full max-w-(--max-container) flex-col gap-[6.4rem] px-(--container-px) pb-[8rem]">
+        {/* ── Hero ── */}
+        <section className="grid-12 relative z-0 gap-y-base sm:gap-y-xl">
+          <DotsPattern className="opacity-40" />
+          <div className="col-span-12 md:col-span-8 md:col-start-3 flex flex-col items-center text-center gap-base sm:gap-xl">
+            <Eyebrow>Trust & Security</Eyebrow>
+            <h1 data-split="heading" className="h1">
+              Your servers. <span className="h1-serif">Your data.</span>
+              <br />
+              Your keys.
             </h1>
-            <Prose>
-              OpenWork enterprise runs on your servers. We don&apos;t see your code, your API
-              keys, or your prompts. There is no hosted control plane and no
-              phone-home telemetry.
-            </Prose>
-          </section>
+            <p className="body-base text-balance">
+              OpenWork enterprise runs on your servers. We don&apos;t see your code, your API keys, or your prompts.
+              No hosted control plane. No phone-home telemetry. Self-hosted by default — and that&apos;s the only mode
+              that exists.
+            </p>
+          </div>
 
-          {/* ── On this page ── */}
-          <nav className="mt-6 flex flex-wrap gap-x-1 gap-y-1 text-[12px]">
+          <nav className="col-span-12 md:col-span-10 md:col-start-2 mt-base flex flex-wrap items-center justify-center gap-x-base gap-y-sm font-sans text-base-sm font-medium text-foreground/60">
             {sectionAnchors.map((a, i) => (
-              <span key={a.id} className="flex items-center">
-                {i > 0 && <span className="mr-1 text-slate-300">·</span>}
+              <span key={a.id} className="flex items-center gap-base">
+                {i > 0 && <span className="text-foreground/20">·</span>}
                 <a
                   href={`#${a.id}`}
-                  className="text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-[#011627]"
+                  data-underline-link
+                  className="hover:text-primary transition-colors"
                 >
                   {a.label}
                 </a>
               </span>
             ))}
           </nav>
+        </section>
 
-          {/* ── Key Facts Grid ── */}
-          <section className="mt-8">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-              {keyFacts.map((fact) => {
-                const Icon = fact.icon;
-                return (
-                  <div
-                    key={fact.label}
-                    className="rounded-xl border border-slate-200/70 bg-white/80 p-4"
-                  >
-                    <Icon size={16} className="text-slate-400" />
-                    <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      {fact.label}
-                    </div>
-                    <div className="mt-1 text-[15px] font-semibold text-[#011627]">
-                      {fact.value}
-                    </div>
-                    <div className="mt-0.5 text-[12px] text-slate-500">
-                      {fact.detail}
-                    </div>
+        {/* ── Key Facts Grid ── */}
+        <section className="grid-12">
+          <div className="col-span-12 grid grid-cols-2 md:grid-cols-3 gap-base">
+            {keyFacts.map((fact) => {
+              const Icon = fact.icon;
+              return (
+                <div
+                  key={fact.label}
+                  data-cursor="accent"
+                  className="bg-background-muted relative z-0 flex flex-col gap-base p-lg rounded-sm overflow-hidden"
+                >
+                  <DotsPattern className="opacity-40" />
+                  <div className="border-primary text-primary grid size-[4.8rem] place-content-center rounded-full border border-dashed">
+                    <Icon size={20} />
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                  <div className="text-foreground/40 font-sans text-base-sm font-bold uppercase tracking-wide">
+                    {fact.label}
+                  </div>
+                  <div className="font-serif text-[2.8rem] font-light leading-none italic">
+                    {fact.value}
+                  </div>
+                  <div className="text-foreground/60 font-sans text-base-sm font-medium">
+                    {fact.detail}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
 
-          {/* ── Deployment Model ── */}
-          <section className="mt-14">
+        {/* ── Deployment Model ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>01</Eyebrow>
             <SectionHeading id="deployment">Deployment model</SectionHeading>
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
             <Prose>
-              OpenWork ships as a desktop app that you host on your own servers. You
-              bring your own LLM gateway and your own auth stack. Traffic between
-              your users and their LLM provider goes direct; we don&apos;t sit in the
-              middle.
+              OpenWork ships as a desktop app that you host on your own servers. You bring your own LLM gateway and
+              your own auth stack. Traffic between your users and their LLM provider goes direct — we don&apos;t sit in
+              the middle.
             </Prose>
-            <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
+            <ul className="gap-sm flex flex-col">
               <Bullet>
-                <strong>Desktop app</strong> runs on your servers. No data leaves
-                your infrastructure unless a user explicitly connects to an LLM
-                provider.
+                <strong className="text-foreground">Desktop app</strong> runs on your servers. No data leaves your
+                infrastructure unless a user explicitly connects to an LLM provider.
               </Bullet>
               <Bullet>
-                <strong>LLM gateway</strong> is your choice (LiteLLM, Cloudflare AI
-                Gateway, etc.). OpenWork doesn&apos;t proxy, store, or log API
-                traffic.
+                <strong className="text-foreground">LLM gateway</strong> is your choice (LiteLLM, Cloudflare AI
+                Gateway, etc.). OpenWork doesn&apos;t proxy, store, or log API traffic.
               </Bullet>
               <Bullet>
-                <strong>Authentication</strong> plugs into your existing SSO or SAML
+                <strong className="text-foreground">Authentication</strong> plugs into your existing SSO or SAML
                 provider.
               </Bullet>
             </ul>
-          </section>
+          </div>
+        </section>
 
-          {/* ── Data Handling ── */}
-          <section className="mt-14">
+        {/* ── Data Handling ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>02</Eyebrow>
             <SectionHeading id="data-handling">Data handling</SectionHeading>
-            <Prose>
-              We receive zero customer data in a self-hosted deployment.
-            </Prose>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
-              <table className="w-full text-[13px]">
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
+            <Prose>We receive zero customer data in a self-hosted deployment.</Prose>
+            <div className="bg-background-muted overflow-x-auto rounded-sm">
+              <table className="w-full font-sans text-base-sm">
                 <thead>
-                  <tr className="border-b border-slate-200/70 bg-slate-50/80">
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Data type
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Self-hosted
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Cloud
-                    </th>
+                  <tr className="border-foreground/10 border-b">
+                    <th className="px-base py-base text-left font-bold">Data type</th>
+                    <th className="px-base py-base text-left font-bold">Self-hosted</th>
+                    <th className="px-base py-base text-left font-bold">Cloud</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dataHandlingRows.map((row) => (
-                    <tr
-                      key={row.dataType}
-                      className="border-b border-slate-200/70 last:border-0"
-                    >
-                      <td className="px-4 py-2.5 font-medium text-[#011627]">
-                        {row.dataType}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-600">
-                        {row.selfHosted}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-600">{row.cloud}</td>
+                    <tr key={row.dataType} className="border-foreground/10 border-b last:border-0">
+                      <td className="px-base py-base font-medium text-foreground">{row.dataType}</td>
+                      <td className="px-base py-base text-foreground/60">{row.selfHosted}</td>
+                      <td className="px-base py-base text-foreground/60">{row.cloud}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </section>
+          </div>
+        </section>
 
-          {/* ── Data Residency ── */}
-          <section className="mt-14">
+        {/* ── Data Residency ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>03</Eyebrow>
             <SectionHeading id="data-residency">Data residency</SectionHeading>
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
             <Prose>
-              You pick the region, the network boundary, and the egress policy.
-              Nothing replicates outside your environment.
+              You pick the region, the network boundary, and the egress policy. Nothing replicates outside your
+              environment.
             </Prose>
-            <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
+            <ul className="gap-sm flex flex-col">
+              <Bullet>OpenWork doesn&apos;t impose a data region. You decide where things live.</Bullet>
               <Bullet>
-                OpenWork doesn&apos;t impose a data region. You decide where things
-                live.
-              </Bullet>
-              <Bullet>
-                Switching your LLM provider doesn&apos;t affect where data is stored.
-                The two decisions are independent.
+                Switching your LLM provider doesn&apos;t affect where data is stored. The two decisions are independent.
               </Bullet>
             </ul>
-          </section>
+          </div>
+        </section>
 
-          {/* ── Subprocessors ── */}
-          <section className="mt-14">
+        {/* ── Subprocessors ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>04</Eyebrow>
             <SectionHeading id="subprocessors">Subprocessors</SectionHeading>
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
             <Prose>
-              These vendors apply to the OpenWork website and cloud service only.
-              If you self-host, none of them touch your environment.
+              These vendors apply to the OpenWork website and cloud service only. If you self-host, none of them touch
+              your environment.
             </Prose>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
-              <table className="w-full text-[13px]">
+            <div className="bg-background-muted overflow-x-auto rounded-sm">
+              <table className="w-full font-sans text-base-sm">
                 <thead>
-                  <tr className="border-b border-slate-200/70 bg-slate-50/80">
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Vendor
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Purpose
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Category
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Region
-                    </th>
+                  <tr className="border-foreground/10 border-b">
+                    <th className="px-base py-base text-left font-bold">Vendor</th>
+                    <th className="px-base py-base text-left font-bold">Purpose</th>
+                    <th className="px-base py-base text-left font-bold">Category</th>
+                    <th className="px-base py-base text-left font-bold">Region</th>
                   </tr>
                 </thead>
                 <tbody>
                   {subprocessors.map((sp) => (
-                    <tr
-                      key={sp.name}
-                      className="border-b border-slate-200/70 last:border-0"
-                    >
-                      <td className="px-4 py-2.5 font-medium text-[#011627]">
+                    <tr key={sp.name} className="border-foreground/10 border-b last:border-0">
+                      <td className="px-base py-base font-medium text-foreground">
                         <a
                           href={sp.href}
                           target="_blank"
                           rel="noreferrer"
-                          className="underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                          className="hover:text-primary transition-colors"
+                          data-underline-link
                         >
                           {sp.name}
                         </a>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-600">{sp.purpose}</td>
-                      <td className="px-4 py-2.5 text-slate-600">{sp.category}</td>
-                      <td className="px-4 py-2.5 text-slate-600">{sp.location}</td>
+                      <td className="px-base py-base text-foreground/60">{sp.purpose}</td>
+                      <td className="px-base py-base text-foreground/60">{sp.category}</td>
+                      <td className="px-base py-base text-foreground/60">{sp.location}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </section>
+          </div>
+        </section>
 
-          {/* ── Incident Response ── */}
-          <section className="mt-14">
+        {/* ── Incident Response ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>05</Eyebrow>
             <SectionHeading id="incident-response">Incident response</SectionHeading>
-            <Prose>
-              Report security issues via email or GitHub issue. Our response
-              commitments:
-            </Prose>
-            <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
+            <Prose>Report security issues via email or GitHub issue. Our response commitments:</Prose>
+            <ul className="gap-sm flex flex-col">
               <Bullet>
-                Acknowledge receipt within <strong>3 business days</strong>
+                Acknowledge receipt within <strong className="text-foreground">3 business days</strong>
               </Bullet>
               <Bullet>
-                Initial triage and assessment within <strong>7 business days</strong>
+                Initial triage and assessment within <strong className="text-foreground">7 business days</strong>
               </Bullet>
               <Bullet>
                 Notify affected customers of any major security incident within{" "}
-                <strong>72 hours</strong>
+                <strong className="text-foreground">72 hours</strong>
               </Bullet>
             </ul>
-            <div className="mt-4 text-[13px] text-slate-500">
+            <p className="text-foreground/60 font-sans text-base-sm">
               See our{" "}
               <a
                 href="https://github.com/different-ai/openwork/blob/dev/SECURITY.md"
                 target="_blank"
                 rel="noreferrer"
-                className="underline decoration-slate-300 underline-offset-2 hover:text-[#011627]"
+                className="text-foreground hover:text-primary transition-colors"
+                data-underline-link
               >
                 security policy
               </a>{" "}
               for reporting guidelines.
-            </div>
-          </section>
+            </p>
+          </div>
+        </section>
 
-          {/* ── Compliance ── */}
-          <section className="mt-14">
+        {/* ── Compliance ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>06</Eyebrow>
             <SectionHeading id="compliance">Compliance</SectionHeading>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
-              <table className="w-full text-[13px]">
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
+            <div className="bg-background-muted overflow-x-auto rounded-sm">
+              <table className="w-full font-sans text-base-sm">
                 <thead>
-                  <tr className="border-b border-slate-200/70 bg-slate-50/80">
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Certification
-                    </th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-600">
-                      Status
-                    </th>
+                  <tr className="border-foreground/10 border-b">
+                    <th className="px-base py-base text-left font-bold">Certification</th>
+                    <th className="px-base py-base text-left font-bold">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-slate-200/70 last:border-0">
-                    <td className="px-4 py-2.5 font-medium text-[#011627]">
-                      SOC 2 Type II
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600">In progress</td>
+                  <tr className="border-foreground/10 border-b last:border-0">
+                    <td className="px-base py-base font-medium text-foreground">SOC 2 Type II</td>
+                    <td className="px-base py-base text-foreground/60">In progress</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <Prose>
-              If you need a DPA or help with a vendor security questionnaire, reach
-              out below.
+              If you need a DPA or help with a vendor security questionnaire, reach out below.
             </Prose>
-          </section>
+          </div>
+        </section>
 
-          {/* ── Security Contact ── */}
-          <section className="mt-14">
+        {/* ── Security Contact ── */}
+        <section className="grid-12 gap-y-base">
+          <div className="col-span-12 md:col-span-4 flex flex-col gap-base">
+            <Eyebrow>07</Eyebrow>
             <SectionHeading id="contact">Security contact</SectionHeading>
-            <Prose>
-              Security questions, vendor questionnaires, vulnerability reports:
-            </Prose>
-            <div className="mt-4 rounded-xl border border-slate-200/70 bg-white/80 px-4 py-3">
-              <div className="text-[14px] font-medium text-[#011627]">
-                {securityContact.name}
+          </div>
+          <div className="col-span-12 md:col-span-7 md:col-start-6 flex flex-col gap-base">
+            <Prose>Security questions, vendor questionnaires, vulnerability reports:</Prose>
+            <div className="bg-background-muted relative z-0 flex items-center gap-base p-lg rounded-sm overflow-hidden">
+              <DotsPattern className="opacity-40" />
+              <div className="border-primary grid size-[6.4rem] shrink-0 place-content-center rounded-full border border-dashed">
+                <LogoSymbolIcon className="w-[2.8rem]" />
               </div>
-              <a
-                href={`mailto:${securityContact.email}`}
-                className="text-[13px] text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-[#011627]"
-              >
-                {securityContact.email}
-              </a>
+              <div className="flex flex-col gap-2xs">
+                <div className="font-sans text-base-lg font-bold">{securityContact.name}</div>
+                <a
+                  href={`mailto:${securityContact.email}`}
+                  className="hover:text-primary text-foreground/60 font-sans text-base font-medium transition-colors"
+                  data-underline-link
+                >
+                  {securityContact.email}
+                </a>
+              </div>
             </div>
-          </section>
-
-        </main>
-
-        <div className="mx-auto w-full max-w-5xl px-6 pb-16 md:px-8">
-          <SiteFooter />
-        </div>
-      </div>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

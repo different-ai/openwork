@@ -130,21 +130,21 @@ export function AppFeedbackForm(props: Props) {
   return (
     <section className="landing-shell rounded-[2rem] p-6 md:p-8">
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-[1.5rem] border border-white/70 bg-white/85 p-6 shadow-sm backdrop-blur">
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <div className="rounded-[1.5rem] border border-border-soft bg-surface-card/85 p-6 shadow-sm backdrop-blur">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-border-soft bg-background-muted px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/60">
             <MessageSquareText size={12} />
             app feedback
           </div>
-          <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-[#011627] md:text-4xl">
+          <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
             Tell us what broke, felt rough, or needs polish.
           </h1>
-          <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">
+          <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-foreground/70">
             Your note goes to the OpenWork team with your contact details, app
             version, and runtime context already attached.
           </p>
 
           {state === "success" ? (
-            <div className="mt-6 rounded-[1.5rem] border border-emerald-200 bg-emerald-50/90 p-5 text-emerald-900">
+            <div className="mt-6 rounded-[1.5rem] border border-primary/30 bg-primary-soft/90 p-5 text-primary">
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
                 <div>
@@ -155,7 +155,7 @@ export function AppFeedbackForm(props: Props) {
                   <button
                     type="button"
                     onClick={reset}
-                    className="mt-4 inline-flex items-center rounded-full border border-emerald-300 bg-white px-4 py-2 text-[13px] font-medium text-emerald-900 transition hover:border-emerald-400 hover:bg-emerald-100"
+                    className="mt-4 inline-flex items-center rounded-full border border-primary/40 bg-surface-card px-4 py-2 text-[13px] font-medium text-primary transition hover:border-emerald-400 hover:bg-primary-soft"
                   >
                     Send another message
                   </button>
@@ -178,7 +178,7 @@ export function AppFeedbackForm(props: Props) {
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                     Your name
                   </label>
                   <input
@@ -186,14 +186,14 @@ export function AppFeedbackForm(props: Props) {
                     value={name}
                     onChange={(event) => setName(event.target.value)}
                     placeholder="Jane Doe"
-                    className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
+                    className="w-full rounded-[1.2rem] border border-border-soft bg-surface-card px-4 py-3 text-[15px] text-foreground outline-none transition focus:border-border-soft focus:ring-4 focus:ring-slate-100"
                     disabled={state === "loading"}
                     autoComplete="name"
                     required
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                     Your email
                   </label>
                   <input
@@ -201,7 +201,7 @@ export function AppFeedbackForm(props: Props) {
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="jane@company.com"
-                    className="w-full rounded-[1.2rem] border border-slate-200 bg-white px-4 py-3 text-[15px] text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
+                    className="w-full rounded-[1.2rem] border border-border-soft bg-surface-card px-4 py-3 text-[15px] text-foreground outline-none transition focus:border-border-soft focus:ring-4 focus:ring-slate-100"
                     disabled={state === "loading"}
                     autoComplete="email"
                     required
@@ -210,14 +210,14 @@ export function AppFeedbackForm(props: Props) {
               </div>
 
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                   What happened?
                 </label>
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="What were you trying to do? What did you expect? What actually happened?"
-                  className="min-h-[220px] w-full rounded-[1.5rem] border border-slate-200 bg-white px-4 py-4 text-[15px] leading-relaxed text-[#011627] outline-none transition focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
+                  className="min-h-[220px] w-full rounded-[1.5rem] border border-border-soft bg-surface-card px-4 py-4 text-[15px] leading-relaxed text-foreground outline-none transition focus:border-border-soft focus:ring-4 focus:ring-slate-100"
                   disabled={state === "loading"}
                   required
                 />
@@ -242,11 +242,11 @@ export function AppFeedbackForm(props: Props) {
           )}
         </div>
 
-        <aside className="rounded-[1.5rem] border border-slate-200/80 bg-[#0b1728] p-5 text-white shadow-sm">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-200/80">
+        <aside className="rounded-[1.5rem] border border-border-soft bg-surface-inverse p-5 text-on-inverse shadow-sm">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-on-inverse/70">
             Attached context
           </div>
-          <p className="mt-3 text-[14px] leading-relaxed text-slate-300">
+          <p className="mt-3 text-[14px] leading-relaxed text-foreground/40">
             These details are captured from the app link so the team can triage
             the issue faster.
           </p>
@@ -255,12 +255,12 @@ export function AppFeedbackForm(props: Props) {
             {contextItems.map((item) => (
               <div
                 key={item.label}
-                className="rounded-[1.15rem] border border-white/10 bg-white/5 px-4 py-3"
+                className="rounded-[1.15rem] border border-border-soft bg-surface-card/5 px-4 py-3"
               >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground/50">
                   {item.label}
                 </div>
-                <div className="mt-1 break-words font-mono text-[13px] text-white">
+                <div className="mt-1 break-words font-mono text-[13px] text-on-inverse">
                   {item.value}
                 </div>
               </div>

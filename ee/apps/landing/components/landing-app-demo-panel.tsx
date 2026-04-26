@@ -17,17 +17,17 @@ export function LandingAppDemoPanel(props: Props) {
 
   return (
     <div className={["relative z-10 flex flex-col gap-4 md:flex-row", props.className].filter(Boolean).join(" ")}>
-      <div className="flex w-full flex-col gap-1 rounded-xl border border-gray-100 bg-gray-50 p-2 md:w-1/3">
+      <div className="flex w-full flex-col gap-1 rounded-xl border border-border-soft bg-background-muted p-2 md:w-1/3">
         {activeFlow.agents.map((agent) => (
           <div
             key={agent.name}
-            className="flex cursor-pointer items-center justify-between rounded-xl p-3 transition-colors hover:bg-gray-50/80"
+            className="flex cursor-pointer items-center justify-between rounded-xl p-3 transition-colors hover:bg-background-muted/80"
           >
             <div className="flex items-center gap-3">
               <div className={`h-6 w-6 rounded-full ${agent.color}`}></div>
               <span className="text-sm font-medium">{agent.name}</span>
             </div>
-            {agent.desc ? <span className="text-xs text-gray-400">{agent.desc}</span> : null}
+            {agent.desc ? <span className="text-xs text-foreground/50">{agent.desc}</span> : null}
           </div>
         ))}
 
@@ -42,17 +42,17 @@ export function LandingAppDemoPanel(props: Props) {
                   type="button"
                   onClick={() => props.onSelectFlow(flow.id)}
                   className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] transition-colors ${
-                    isActive ? "bg-gray-100/80" : "hover:bg-gray-50/80"
+                    isActive ? "bg-gray-100/80" : "hover:bg-background-muted/80"
                   }`}
                 >
                   <span
                     className={`mr-2 truncate ${
-                      isActive ? "font-medium text-gray-700" : "text-gray-600"
+                      isActive ? "font-medium text-foreground/80" : "text-foreground/70"
                     }`}
                   >
                     {flow.tabLabel}
                   </span>
-                  <span className="whitespace-nowrap text-gray-400">
+                  <span className="whitespace-nowrap text-foreground/50">
                     {timesById[flow.id] ?? "Now"}
                   </span>
                 </button>
@@ -62,7 +62,7 @@ export function LandingAppDemoPanel(props: Props) {
         </div>
       </div>
 
-      <div className="flex min-h-[400px] w-full flex-col overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm md:w-2/3">
+      <div className="flex min-h-[400px] w-full flex-col overflow-hidden rounded-xl border border-border-soft bg-surface-card shadow-sm md:w-2/3">
         <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6 text-[13px]">
           {activeFlow.chatHistory.map((message, index) => {
             if (message.role === "user") {
@@ -80,7 +80,7 @@ export function LandingAppDemoPanel(props: Props) {
               return (
                 <div
                   key={`${message.role}-${index}`}
-                  className="ml-2 flex flex-col gap-3 text-xs text-gray-400"
+                  className="ml-2 flex flex-col gap-3 text-xs text-foreground/50"
                 >
                   {message.items.map((item) => (
                     <div key={item} className="flex items-center gap-2">
@@ -103,17 +103,17 @@ export function LandingAppDemoPanel(props: Props) {
           })}
         </div>
 
-        <div className="border-t border-white/50 bg-white/50 p-4">
-          <div className="mb-2 px-1 text-xs text-gray-400">Describe your task</div>
-          <div className="rounded-xl border border-gray-100 bg-white p-3.5 text-sm leading-relaxed text-[#011627] shadow-sm">
-            {activeFlow.task} <span className="text-gray-400">[task]</span> {activeFlow.context}{" "}
-            <span className="text-gray-400">[context]</span> {activeFlow.output}{" "}
-            <span className="text-gray-400">[result]</span>
+        <div className="border-t border-border-soft bg-surface-card/50 p-4">
+          <div className="mb-2 px-1 text-xs text-foreground/50">Describe your task</div>
+          <div className="rounded-xl border border-border-soft bg-surface-card p-3.5 text-sm leading-relaxed text-foreground shadow-sm">
+            {activeFlow.task} <span className="text-foreground/50">[task]</span> {activeFlow.context}{" "}
+            <span className="text-foreground/50">[context]</span> {activeFlow.output}{" "}
+            <span className="text-foreground/50">[result]</span>
           </div>
           <div className="mt-3 flex items-center justify-end px-1">
             <button
               type="button"
-              className="rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-black"
+              className="rounded-lg bg-surface-inverse px-4 py-2 text-xs font-medium text-white shadow-[0_1px_2px_rgba(17,24,39,0.12)] transition-colors hover:bg-primary"
             >
               Run Task
             </button>

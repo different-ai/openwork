@@ -81,26 +81,26 @@ export function BookCallForm() {
   };
 
   return (
-    <section id="book" className="rounded-[2rem] border border-gray-200 bg-white p-6 md:p-8">
-      <div className="rounded-[1.5rem] border border-slate-200/70 bg-white p-5 md:p-6">
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+    <section id="book" className="rounded-[2rem] border border-border-soft bg-surface-card p-6 md:p-8">
+      <div className="rounded-[1.5rem] border border-border-soft bg-surface-card p-5 md:p-6">
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border-soft bg-background-muted px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/60">
           <Mail size={12} />
           Get in touch with us
         </div>
-        <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
+        <h3 className="mb-3 text-2xl font-medium tracking-tight text-foreground">
           Tell us what you need.
         </h3>
-        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-slate-600">
+        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-foreground/70">
           Share your team context and we&apos;ll get back to you over email.
         </p>
 
         {state === "success" ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-[14px] leading-relaxed text-emerald-800">
+          <div className="rounded-2xl border border-primary/30 bg-primary-soft/80 p-4 text-[14px] leading-relaxed text-emerald-800">
             Thanks. We&apos;ve got your note and will follow up soon.
             <button
               type="button"
               onClick={reset}
-              className="mt-3 block text-[13px] font-medium text-emerald-700 transition hover:text-emerald-900"
+              className="mt-3 block text-[13px] font-medium text-primary transition hover:text-primary"
             >
               Send another message
             </button>
@@ -120,14 +120,14 @@ export function BookCallForm() {
                 </label>
               </div>
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                   Full name
                 </label>
                 <input
                   value={fields.fullName}
                   onChange={event => setField("fullName", event.target.value)}
                   placeholder="Jeff Bezos"
-                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  className="w-full rounded-2xl border border-border-soft bg-surface-card/90 px-4 py-3 text-[14px] text-foreground outline-none transition focus:border-border-soft focus:bg-surface-card"
                   autoComplete="name"
                   required
                   type="text"
@@ -135,7 +135,7 @@ export function BookCallForm() {
                 />
               </div>
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                   Company email
                 </label>
                 <input
@@ -144,7 +144,7 @@ export function BookCallForm() {
                     setField("companyEmail", event.target.value)
                   }
                   placeholder="jeff@amazon.com"
-                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  className="w-full rounded-2xl border border-border-soft bg-surface-card/90 px-4 py-3 text-[14px] text-foreground outline-none transition focus:border-border-soft focus:bg-surface-card"
                   autoComplete="email"
                   required
                   type="email"
@@ -154,14 +154,14 @@ export function BookCallForm() {
             </div>
 
             <div>
-              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground/60">
                 How can we help?
               </label>
               <textarea
                 value={fields.message}
                 onChange={event => setField("message", event.target.value)}
                 placeholder="Share more about what you want to accomplish"
-                className="min-h-[160px] w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                className="min-h-[160px] w-full rounded-2xl border border-border-soft bg-surface-card/90 px-4 py-3 text-[14px] text-foreground outline-none transition focus:border-border-soft focus:bg-surface-card"
                 required
                 disabled={state === "loading"}
               />
