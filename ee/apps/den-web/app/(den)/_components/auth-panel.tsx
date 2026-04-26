@@ -217,7 +217,7 @@ export function AuthPanel({
                   </button>
                 ) : null}
               </div>
-              <p className="m-0 text-xs leading-5 text-sky-800/80">
+              <p className="m-0 text-xs leading-5 text-[var(--dls-text-secondary)]">
                 If OpenWork does not open automatically, copy the sign-in link or one-time code and paste it into the OpenWork desktop app.
               </p>
             </div>

@@ -48,7 +48,7 @@ export const DenCard = forwardRef<HTMLDivElement, DenCardProps>(function DenCard
       ref={ref}
       {...rest}
       className={[
-        "border border-[#e5edf5] bg-white",
+        "border border-gray-200 bg-white",
         sizeClasses[size],
         className ?? "",
       ]

@@ -7,12 +7,20 @@ import {
   formatBillingAmountLabel,
   formatBillingPlanLabels,
   getBillingStatusLabel,
-  getWorkspacePlanEntitlementCopy,
   getWorkspacePlanShortEntitlementCopy,
 } from "../../../../_lib/billing-display";
 import { formatIsoDate } from "../../../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
+
+function BillingMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
+      <p className="mb-1 text-[12px] font-medium text-gray-500">{label}</p>
+      <p className="den-tabular text-[15px] font-medium text-gray-950">{value}</p>
+    </div>
+  );
+}
 
 export function BillingDashboardScreen() {
   const {
@@ -65,14 +73,13 @@ export function BillingDashboardScreen() {
   const nextBillingDate = subscription?.currentPeriodEnd
     ? formatIsoDate(subscription.currentPeriodEnd)
     : "Not available";
-  const nextPaymentAmount = formatBillingAmountLabel(
-    subscription?.amount ?? billingPrice?.amount ?? null,
-    subscription?.currency ?? billingPrice?.currency ?? null,
-  );
+  const nextPaymentAmount = subscription
+    ? formatBillingAmountLabel(subscription.amount, subscription.currency)
+    : "Not available";
   const workspacePlanDescription = billingSummary?.hasActivePlan
     ? `This workspace's plan is ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
     : planLabels.available
-      ? `Workspace plans are ${planLabels.inline}. ${getWorkspacePlanEntitlementCopy()}`
+      ? `Workspace plans are ${planLabels.inline} and include up to 5 members plus 1 hosted worker.`
       : "Workspace plan pricing is unavailable. Refresh billing to retry.";
 
   return (
@@ -88,62 +95,47 @@ export function BillingDashboardScreen() {
         </div>
       ) : null}
       {!billingSummary && !billingBusy && !billingCheckoutBusy ? (
-        <div className="mb-6 rounded-[20px] border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-700">
+        <div className="mb-6 rounded-[20px] border border-gray-200 bg-white px-4 py-3 text-[13px] text-gray-700">
           Billing details are unavailable. Refresh billing to retry.
         </div>
       ) : null}
 
-      <div className="mb-6 rounded-2xl border border-[#e5edf5] bg-white p-6 md:p-8">
-        <div className="mb-8 flex flex-col justify-between gap-5 border-b border-[#e5edf5] pb-6 md:flex-row md:items-start">
-          <div className="max-w-[32rem]">
-            <p className="text-[15px] leading-7 text-[#64748d]">
-              {workspacePlanDescription}
+      <div className="mb-6 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_40px_-34px_rgba(15,23,42,0.2)]">
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_260px]">
+          <div className="p-6 md:p-8">
+            <div className="mb-7 max-w-[36rem]">
+              <span className="mb-3 inline-flex rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                Workspace plan
+              </span>
+              <p className="text-[15px] leading-7 text-gray-500">
+                {workspacePlanDescription}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <BillingMetric label="Current plan" value={statusLabel} />
+              <BillingMetric label="Next billing date" value={nextBillingDate} />
+              <BillingMetric label="Next payment amount" value={nextPaymentAmount} />
+              <BillingMetric label="Invoices" value={billingSummary?.invoices.length ?? 0} />
+            </div>
+          </div>
+
+          <aside className="border-t border-gray-200 bg-gray-50 p-6 lg:border-l lg:border-t-0 md:p-8">
+            <p className="text-[12px] font-medium text-gray-500">Plan cost</p>
+            <p className="den-tabular mt-3 text-[36px] font-semibold leading-none text-gray-950">
+              {planLabels.amount}
             </p>
-          </div>
-          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] px-4 py-3 text-right">
-            <p className="text-[12px] font-medium text-[#64748d]">Plan cost</p>
-            <p className="mt-1 text-[24px] font-semibold text-[#061b31]">{planLabels.amount}</p>
-            <p className="text-[12px] text-[#64748d]">{planLabels.cadence}</p>
-          </div>
+            <p className="mt-2 text-[13px] text-gray-500">{planLabels.cadence}</p>
+            <div className="mt-8 rounded-2xl border border-gray-200 bg-white px-4 py-3">
+              <p className="text-[12px] text-gray-500">Billing period</p>
+              <p className="mt-1 text-[14px] font-medium text-gray-950">
+                {planLabels.available ? planLabels.cadence : "Not available"}
+              </p>
+            </div>
+          </aside>
         </div>
 
-        <div className="mb-10 grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Current plan</h2>
-            <div className="text-[15px] font-medium text-gray-900">{statusLabel}</div>
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Plan cost</h2>
-            <div className="text-[15px] font-medium text-gray-900">{planLabels.inline}</div>
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Next billing date</h2>
-            <div className="text-[15px] font-medium text-gray-900">{nextBillingDate}</div>
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Next payment amount</h2>
-            <div className="text-[15px] font-medium text-gray-900">{nextPaymentAmount}</div>
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Billing period</h2>
-            <span className="text-[15px] font-medium text-gray-900">
-              {planLabels.available ? planLabels.cadence : "Not available"}
-            </span>
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-[13px] font-medium text-gray-500">Invoices</h2>
-            <span className="text-[15px] font-medium text-gray-900">
-              {billingSummary?.invoices.length ?? 0}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 border-t border-gray-200 px-6 py-5 md:px-8">
           {effectiveCheckoutUrl && !billingSummary?.hasActivePlan ? (
             <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "primary" })}>
               <CreditCard size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -170,30 +162,35 @@ export function BillingDashboardScreen() {
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-[#e5edf5] bg-white p-6 md:p-8">
-        <h2 className="mb-4 text-[15px] font-medium text-gray-900">Pricing</h2>
+      <div className="mb-6 rounded-3xl border border-gray-200 bg-white p-6 md:p-8">
+        <div className="mb-6 flex flex-col justify-between gap-5 md:flex-row md:items-start">
+          <div className="max-w-[32rem]">
+            <h2 className="mb-2 text-[15px] font-medium text-gray-950">Pricing</h2>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] p-4">
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Solo</p>
-            <p className="text-[20px] font-semibold text-gray-900">$0</p>
+            <p className="den-tabular text-[20px] font-semibold text-gray-900">$0</p>
             <p className="mt-1 text-[13px] text-gray-500">Free forever · open source</p>
           </div>
-          <div className="rounded-xl border border-[#d6d9fc] bg-[#f6f4ff] p-4">
+          <div className="rounded-2xl border border-gray-950 bg-white p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Workspace plan</p>
-            <p className="text-[20px] font-semibold text-gray-900">
+            <p className="den-tabular text-[20px] font-semibold text-gray-900">
               {planLabels.amount}<span className="text-[13px] font-medium text-gray-500"> {planLabels.cadence}</span>
             </p>
             <p className="mt-1 text-[13px] text-gray-500">{getWorkspacePlanShortEntitlementCopy()}</p>
           </div>
-          <div className="rounded-xl border border-[#e5edf5] bg-[#f8fbff] p-4">
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
             <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-gray-500">Enterprise</p>
             <p className="text-[20px] font-semibold text-gray-900">Custom</p>
-            <p className="mt-1 text-[13px] text-gray-500">SSO, RBAC, audit trails</p>
+            <p className="mt-1 text-[13px] text-gray-500">Windows included · talk to us</p>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-2xl border border-[#e5edf5] bg-white p-6">
+      <div className="flex items-center justify-between rounded-3xl border border-gray-200 bg-white p-6">
         <div>
           <h2 className="mb-1 text-[15px] font-medium text-gray-900">Invoices</h2>
           <p className="text-[14px] text-gray-500">

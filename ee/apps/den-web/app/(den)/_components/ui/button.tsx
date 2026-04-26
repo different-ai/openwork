@@ -8,11 +8,11 @@ export type ButtonVariant = "primary" | "secondary" | "destructive";
 export type ButtonSize = "md" | "sm";
 
 const variantClasses: Record<ButtonVariant, string> = {
-    primary: "bg-[#533afd] text-white hover:bg-[#4434d4] shadow-[0_14px_24px_-18px_rgba(83,58,253,0.55)]",
+    primary: "bg-[#011627] text-white shadow-[0_14px_26px_-20px_rgba(1,22,39,0.5)] hover:bg-black",
     secondary:
-        "border border-[#e5edf5] bg-white text-[#273951] hover:bg-[#f6f9fc] hover:border-[#d6d9fc] hover:text-[#061b31]",
+        "border border-gray-200 bg-white text-gray-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-gray-300 hover:bg-gray-50 hover:text-gray-950",
     destructive:
-        "border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300",
+        "border border-red-200 bg-white text-red-600 hover:border-red-300 hover:bg-red-50",
 };
 
 // md is sized to match the Shared Workspaces reference buttons (px-5 py-2.5 ≈ h-10)
@@ -37,7 +37,7 @@ export function buttonVariants({
     className?: string;
 } = {}): string {
     return [
-        "inline-flex items-center justify-center rounded-lg font-medium transition-colors",
+        "inline-flex items-center justify-center rounded-full font-medium transition-colors",
         variantClasses[variant],
         sizeClasses[size],
         className,
@@ -121,7 +121,7 @@ export function DenButton({
             type={rest.type ?? "button"}
             disabled={isDisabled}
             className={[
-                "relative flex flex-row gap-2 items-center justify-center rounded-lg font-medium transition-colors",
+                "relative flex flex-row gap-2 items-center justify-center rounded-full font-medium transition-colors",
                 variantClasses[variant],
                 sizeClasses[size],
                 isDisabled ? "cursor-not-allowed opacity-70" : "",

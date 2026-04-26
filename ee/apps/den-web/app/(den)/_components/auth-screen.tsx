@@ -1,7 +1,5 @@
 "use client";
 
-import { PaperMeshGradient } from "@openwork/ui/react";
-import { Dithering } from "@paper-design/shaders-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isSamePathname } from "../_lib/client-route";
@@ -76,30 +74,10 @@ export function AuthScreen() {
       <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
         <div className="order-2 flex flex-col gap-6 lg:order-1">
           <div className="den-frame relative min-h-[300px] overflow-hidden px-7 py-8 md:px-10 md:py-10">
-            <div className="absolute inset-0 z-0">
-              <Dithering
-                speed={0}
-                shape="warp"
-                type="4x4"
-                size={2.5}
-                scale={1}
-                frame={30214.2}
-                colorBack="#00000000"
-                colorFront="#FEFEFE"
-                style={{ backgroundColor: "#142033", width: "100%", height: "100%" }}
-              >
-                <PaperMeshGradient
-                  speed={0.1}
-                  distortion={0.8}
-                  swirl={0.1}
-                  grainMixer={0}
-                  grainOverlay={0}
-                  frame={176868.9}
-                  colors={["#0F172A", "#1E40AF", "#4C1D95", "#0F766E"]}
-                  style={{ width: "100%", height: "100%" }}
-                />
-              </Dithering>
-            </div>
+            <div className="absolute inset-0 z-0 bg-[#011627]" />
+            <div className="absolute inset-0 z-0 bg-[linear-gradient(rgba(255,255,255,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:44px_44px]" />
+            <div className="absolute right-8 top-8 z-0 h-32 w-32 rounded-full border border-white/10" />
+            <div className="absolute bottom-8 right-12 z-0 h-20 w-44 rounded-2xl border border-white/10 bg-white/5" />
 
             <div className="relative z-10 flex h-full flex-col justify-between gap-10">
               <div className="flex items-center gap-3">
@@ -111,7 +89,7 @@ export function AuthScreen() {
                 <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
                   OpenWork Cloud
                 </span>
-                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.98] tracking-normal text-white md:text-[3rem]">
+                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-none tracking-normal text-white md:text-[3rem]">
                   One setup, every seat.
                 </h1>
                 <p className="max-w-[34rem] text-[15px] leading-7 text-white/80">

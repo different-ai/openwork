@@ -7,16 +7,16 @@
     --dls-surface: #ffffff;
     --dls-sidebar: #f6f9fc;
     --dls-app-bg: #f6f9fc;
-    --dls-border: #e5edf5;
-    --dls-accent: #533afd;
-    --dls-accent-hover: #4434d4;
-    --dls-accent-rgb: 83 58 253;
-    --dls-text-primary: #061b31;
-    --dls-text-secondary: #64748d;
-    --dls-hover: #f6f9fc;
-    --dls-active: #f0f4ff;
-    --dls-shell-shadow: rgba(50, 50, 93, 0.18) 0 30px 45px -30px, rgba(0, 0, 0, 0.08) 0 18px 36px -18px;
-    --dls-card-shadow: rgba(50, 50, 93, 0.14) 0 18px 28px -24px, rgba(0, 0, 0, 0.06) 0 10px 20px -16px;
+    --dls-border: #e5e7eb;
+    --dls-accent: #011627;
+    --dls-accent-hover: #000000;
+    --dls-accent-rgb: 1 22 39;
+    --dls-text-primary: #011627;
+    --dls-text-secondary: #667085;
+    --dls-hover: #f2f4f7;
+    --dls-active: #eef2f7;
+    --dls-shell-shadow: 0 24px 48px -36px rgba(15, 23, 42, 0.2);
+    --dls-card-shadow: 0 16px 32px -28px rgba(15, 23, 42, 0.14);
     --ow-bg: var(--dls-app-bg);
     --ow-ink: var(--dls-text-primary);
     --ow-muted: var(--dls-text-secondary);
@@ -42,8 +42,17 @@ body {
     margin: 0;
     font-family:
         var(--font-inter), "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    font-feature-settings: "ss01";
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     color: var(--ow-ink);
     background: var(--ow-bg);
+}
+
+.den-tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "ss01", "tnum";
 }
 
 .den-page {
@@ -55,7 +64,7 @@ body {
 .den-frame,
 .den-frame-soft,
 .den-frame-inset {
-    border-radius: 1.25rem;
+    border-radius: 1.5rem;
     border: 1px solid var(--dls-border);
 }
 
@@ -69,7 +78,7 @@ body {
 }
 
 .den-frame-inset {
-    background: #f8fbff;
+    background: #f8fafc;
 }
 
 .den-eyebrow {
@@ -82,8 +91,8 @@ body {
 
 .den-title-xl {
     margin: 0;
-    font-size: 3.25rem;
-    line-height: 1.02;
+    font-size: 3.35rem;
+    line-height: 1;
     letter-spacing: 0;
     font-weight: 600;
     color: var(--dls-text-primary);
@@ -127,11 +136,12 @@ body {
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    min-height: 44px;
-    padding: 0.7rem 1.05rem;
-    border-radius: 0.625rem;
+    min-height: 48px;
+    padding: 0.75rem 1.25rem;
+    border-radius: 9999px;
     font-size: 0.92rem;
     font-weight: 600;
+    letter-spacing: 0;
     transition:
         color 0.2s ease,
         background-color 0.2s ease,
@@ -141,13 +151,13 @@ body {
 }
 
 .den-button-primary {
-    background: var(--dls-accent);
+    background: #011627;
     color: #fff;
-    box-shadow: rgba(83, 58, 253, 0.24) 0 16px 32px -18px;
+    box-shadow: 0 14px 26px -20px rgba(1, 22, 39, 0.5);
 }
 
 .den-button-primary:hover:not(:disabled) {
-    background: var(--dls-accent-hover);
+    background: #000;
     transform: translateY(-1px);
 }
 
@@ -195,12 +205,13 @@ body {
 .den-select,
 .den-textarea {
     width: 100%;
-    border-radius: 0.625rem;
+    border-radius: 0.875rem;
     border: 1px solid var(--dls-border);
     background: #fff;
     color: var(--dls-text-primary);
     padding: 0.9rem 1rem;
     font-size: 0.95rem;
+    letter-spacing: 0;
     line-height: 1.4;
     transition:
         border-color 0.16s ease,
@@ -211,8 +222,8 @@ body {
 .den-select:focus,
 .den-textarea:focus {
     outline: none;
-    border-color: #b9b9f9;
-    box-shadow: 0 0 0 4px rgba(83, 58, 253, 0.1);
+    border-color: #cbd5e1;
+    box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.05);
 }
 
 .den-label {
@@ -236,7 +247,7 @@ body {
 }
 
 .den-stat-card {
-    border-radius: 1rem;
+    border-radius: 1.25rem;
     border: 1px solid var(--dls-border);
     background: rgba(255, 255, 255, 0.96);
     padding: 1.25rem;
@@ -270,7 +281,7 @@ body {
 
 .den-list-shell {
     overflow: hidden;
-    border-radius: 1rem;
+    border-radius: 1.25rem;
     border: 1px solid var(--dls-border);
     background: rgba(255, 255, 255, 0.96);
 }
@@ -292,10 +303,12 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    border-radius: 0.5rem;
-    padding: 0.35rem 0.65rem;
-    border: 1px solid var(--dls-border);
-    background: rgba(255, 255, 255, 0.9);
+    border-radius: 9999px;
+    padding: 0.35rem 0.75rem;
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow:
+        rgba(0, 0, 0, 0.06) 0 0 0 1px,
+        rgba(0, 0, 0, 0.04) 0 1px 2px 0;
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--dls-text-secondary);
@@ -305,7 +318,7 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 0.5rem;
+    border-radius: 9999px;
     padding: 0.35rem 0.7rem;
     font-size: 0.72rem;
     font-weight: 700;
@@ -324,7 +337,7 @@ body {
 }
 
 .den-notice {
-    border-radius: 0.75rem;
+    border-radius: 0.875rem;
     padding: 0.9rem 1rem;
     font-size: 0.92rem;
     line-height: 1.6;
@@ -586,6 +599,12 @@ body {
     font-size: 2rem;
     font-weight: 700;
     letter-spacing: 0;
+}
+
+@media (max-width: 640px) {
+    .ow-title {
+        font-size: 1.7rem;
+    }
 }
 
 .ow-subtitle {
