@@ -2205,11 +2205,19 @@ async function sha256File(path: string): Promise<string> {
   return createHash("sha256").update(data).digest("hex");
 }
 
+function shouldSkipBinaryIntegrity(): boolean {
+  const raw = (process.env.OPENWORK_SKIP_BINARY_INTEGRITY ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 async function verifyBinary(
   path: string,
   expected?: VersionInfo,
 ): Promise<void> {
   if (!expected) return;
+  if (shouldSkipBinaryIntegrity()) return;
   const hash = await sha256File(path);
   if (hash !== expected.sha256) {
     throw new Error(`Integrity check failed for ${path}`);
@@ -3730,6 +3738,7 @@ function printHelp(): void {
     "  --no-opencode-router             Disable opencodeRouter sidecar",
     "  --opencode-router-required       Exit if opencodeRouter stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
+    "  --skip-binary-integrity   Skip SHA-256 integrity checks on sidecar binaries (for system-package installs)",
     "  --sidecar-dir <path>      Cache directory for downloaded sidecars",
     "  --sidecar-base-url <url>  Base URL for sidecar downloads",
     "  --sidecar-manifest <url>  Override sidecar manifest URL",
@@ -5649,6 +5658,15 @@ async function spawnRouterDaemon(
     false,
     "OPENWORK_ALLOW_EXTERNAL",
   );
+  const skipBinaryIntegrity = readBool(
+    args.flags,
+    "skip-binary-integrity",
+    false,
+    "OPENWORK_SKIP_BINARY_INTEGRITY",
+  );
+  if (skipBinaryIntegrity) {
+    process.env.OPENWORK_SKIP_BINARY_INTEGRITY = "1";
+  }
   const sidecarSource =
     readFlag(args.flags, "sidecar-source") ??
     process.env.OPENWORK_SIDECAR_SOURCE;
@@ -5680,6 +5698,7 @@ async function spawnRouterDaemon(
     );
   if (corsValue) commandArgs.push("--cors", corsValue);
   if (allowExternal) commandArgs.push("--allow-external");
+  if (skipBinaryIntegrity) commandArgs.push("--skip-binary-integrity");
   if (sidecarSource) commandArgs.push("--sidecar-source", sidecarSource);
   if (opencodeSource) commandArgs.push("--opencode-source", opencodeSource);
   if (verbose) commandArgs.push("--verbose");
@@ -6010,6 +6029,16 @@ async function runRouterDaemon(args: ParsedArgs) {
     false,
     "OPENWORK_ALLOW_EXTERNAL",
   );
+  if (
+    readBool(
+      args.flags,
+      "skip-binary-integrity",
+      false,
+      "OPENWORK_SKIP_BINARY_INTEGRITY",
+    )
+  ) {
+    process.env.OPENWORK_SKIP_BINARY_INTEGRITY = "1";
+  }
   const manifest = await readVersionManifest();
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
@@ -7108,6 +7137,16 @@ async function runStart(args: ParsedArgs) {
     false,
     "OPENWORK_ALLOW_EXTERNAL",
   );
+  if (
+    readBool(
+      args.flags,
+      "skip-binary-integrity",
+      false,
+      "OPENWORK_SKIP_BINARY_INTEGRITY",
+    )
+  ) {
+    process.env.OPENWORK_SKIP_BINARY_INTEGRITY = "1";
+  }
   const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
   const sidecar = resolveSidecarConfigForTarget(
     args.flags,

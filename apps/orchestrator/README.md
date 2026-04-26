@@ -42,6 +42,11 @@ OpenCode Router is optional. If it exits, `openwork` continues running unless yo
 For development overrides only, set `OPENWORK_ALLOW_EXTERNAL=1` or pass `--allow-external` to use
 locally installed `openwork-server` or `opencode-router` binaries.
 
+System-package distributions (e.g. AUR) that rebuild sidecar binaries locally cannot match the
+upstream-bundled SHA-256 manifest. Pass `--skip-binary-integrity` (or set
+`OPENWORK_SKIP_BINARY_INTEGRITY=1`) to bypass the integrity check. This is intended for trusted
+system-package installs only — leave it off for default downloads.
+
 Add `--verbose` (or `OPENWORK_VERBOSE=1`) to print extra diagnostics about resolved binaries.
 
 OpenCode hot reload is enabled by default when launched via `openwork`.
