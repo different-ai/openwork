@@ -15,7 +15,6 @@ import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } f
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { startReloadWatchers } from "./reload-watcher.js";
-import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
@@ -34,7 +33,15 @@ import {
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
-import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
+import { listPortableFiles } from "./portable-files.js";
+import {
+  buildWorkspaceImportPreview,
+  normalizeWorkspaceImportPayload,
+  publicWorkspaceImportPreview,
+  summarizeWorkspaceImportPreview,
+  type WorkspaceImportPlan,
+  workspaceImportPreviewApprovalPaths,
+} from "./workspace-import-preview.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
 import {
   collectWorkspaceExportWarnings,
@@ -2800,34 +2807,42 @@ function createRoutes(
     return jsonResponse(exportPayload);
   });
 
+  addRoute(routes, "POST", "/workspace/:id/import/preview", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    return jsonResponse(publicWorkspaceImportPreview(preview));
+  });
+
   addRoute(routes, "POST", "/workspace/:id/import", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const portableFiles = planPortableFiles(workspace.path, body.files);
+    const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    const approvalPaths = workspaceImportPreviewApprovalPaths(preview);
+    if (approvalPaths.length === 0) {
+      return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
+    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
-      summary: "Import workspace config",
-      paths: [
-        opencodeConfigPath(workspace.path),
-        openworkConfigPath(workspace.path),
-        ...portableFiles.map((file) => file.absolutePath),
-      ],
+      summary: summarizeWorkspaceImportPreview(preview),
+      paths: approvalPaths,
     });
-    await importWorkspace(workspace, body);
+    await importWorkspace(workspace, body, preview);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "config.import",
       target: "workspace",
-      summary: "Imported workspace config",
+      summary: summarizeWorkspaceImportPreview(preview).replace(/^Import/, "Imported"),
       timestamp: Date.now(),
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
-    return jsonResponse({ ok: true });
+    return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/blueprint/sessions/materialize", "client", async (ctx) => {
@@ -3376,79 +3391,85 @@ function parseWorkspaceExportSensitiveMode(input: string | null): WorkspaceExpor
   throw new ApiError(400, "invalid_workspace_export_sensitive_mode", `Invalid workspace export sensitive mode: ${trimmed}`);
 }
 
-async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
-  const modes = (payload.mode as Record<string, string> | undefined) ?? {};
-  const opencode = payload.opencode as Record<string, unknown> | undefined;
-  const openwork = payload.openwork as Record<string, unknown> | undefined;
-  const skills = (payload.skills as { name: string; content: string; description?: string }[] | undefined) ?? [];
-  const commands = (payload.commands as { name: string; content?: string; description?: string; template?: string; agent?: string; model?: string | null; subtask?: boolean }[] | undefined) ?? [];
-  const files = payload.files;
+function workspaceImportRelativePath(workspace: WorkspaceInfo, path: string): string {
+  return relative(workspace.path, path).replaceAll("\\", "/");
+}
 
-  if (opencode) {
-    const sanitizedOpencode = sanitizePortableOpencodeConfig(opencode);
-    if (modes.opencode === "replace") {
-      await writeJsoncFile(opencodeConfigPath(workspace.path), sanitizedOpencode);
+async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>, preview: WorkspaceImportPlan): Promise<void> {
+  const input = normalizeWorkspaceImportPayload(workspace.path, payload);
+  const changed = new Set(
+    preview.changes
+      .filter((change) => change.action !== "unchanged")
+      .map((change) => `${change.kind}:${change.path}`),
+  );
+  const changedPath = (kind: string, path: string) => changed.has(`${kind}:${path}`);
+
+  if (
+    input.opencode !== undefined &&
+    changedPath("opencode", workspaceImportRelativePath(workspace, opencodeConfigPath(workspace.path)))
+  ) {
+    if (input.modes.opencode === "replace") {
+      await writeJsoncFile(opencodeConfigPath(workspace.path), input.opencode);
     } else {
-      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), sanitizedOpencode);
+      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), input.opencode);
     }
   }
 
-  if (openwork) {
-    const sanitizedOpenwork = sanitizeOpenworkTemplateConfig(openwork);
-    if (modes.openwork === "replace") {
-      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, false);
+  if (
+    input.openwork !== undefined &&
+    changedPath("openwork", workspaceImportRelativePath(workspace, openworkConfigPath(workspace.path)))
+  ) {
+    if (input.modes.openwork === "replace") {
+      await writeOpenworkConfig(workspace.path, input.openwork, false);
     } else {
-      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, true);
+      await writeOpenworkConfig(workspace.path, input.openwork, true);
     }
   }
 
-  if (skills.length > 0) {
-    if (modes.skills === "replace") {
-      await rm(projectSkillsDir(workspace.path), { recursive: true, force: true });
+  if (input.skills.length > 0) {
+    if (input.modes.skills === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "skill" && change.action === "delete") {
+          await rm(change.absolutePath, { recursive: true, force: true });
+        }
+      }
     }
-    for (const skill of skills) {
+    for (const skill of input.skills) {
+      const path = workspaceImportRelativePath(workspace, join(projectSkillsDir(workspace.path), skill.name, "SKILL.md"));
+      if (!changedPath("skill", path)) continue;
       await upsertSkill(workspace.path, skill);
     }
   }
 
-  if (commands.length > 0) {
-    if (modes.commands === "replace") {
-      await rm(projectCommandsDir(workspace.path), { recursive: true, force: true });
-    }
-    for (const command of commands) {
-      if (command.content) {
-        const parsed = parseFrontmatter(command.content);
-        const name = command.name || (typeof parsed.data.name === "string" ? parsed.data.name : "");
-        const description = command.description || (typeof parsed.data.description === "string" ? parsed.data.description : undefined);
-        if (!name) {
-          throw new ApiError(400, "invalid_command", "Command name is required");
+  if (input.commands.length > 0) {
+    if (input.modes.commands === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "command" && change.action === "delete") {
+          await rm(change.absolutePath, { force: true });
         }
-        const template = parsed.body.trim();
-        await upsertCommand(workspace.path, {
-          name,
-          description,
-          template,
-          agent: typeof parsed.data.agent === "string" ? parsed.data.agent : undefined,
-          model: typeof parsed.data.model === "string" ? parsed.data.model : undefined,
-          subtask: typeof parsed.data.subtask === "boolean" ? parsed.data.subtask : undefined,
-        });
-      } else {
-        const name = command.name ?? "";
-        const template = command.template ?? "";
-        await upsertCommand(workspace.path, {
-          name,
-          description: command.description,
-          template,
-          agent: command.agent,
-          model: command.model,
-          subtask: command.subtask,
-        });
       }
+    }
+    for (const command of input.commands) {
+      const path = workspaceImportRelativePath(workspace, join(projectCommandsDir(workspace.path), `${command.name}.md`));
+      if (!changedPath("command", path)) continue;
+      await upsertCommand(workspace.path, command);
     }
   }
 
-  if (Array.isArray(files) && files.length > 0) {
-    await writePortableFiles(workspace.path, files, { replace: modes.files === "replace" });
+  if (input.files.length > 0) {
+    if (input.modes.files === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "file" && change.action === "delete") {
+          await rm(change.absolutePath, { force: true });
+        }
+      }
+    }
+    for (const file of input.files) {
+      if (!changedPath("file", file.path)) continue;
+      const path = join(workspace.path, file.path);
+      await ensureDir(dirname(path));
+      await writeFile(path, file.content, "utf8");
+    }
   }
 }
 
