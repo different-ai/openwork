@@ -16,6 +16,12 @@ type PermissionPresentation = {
   note: string | null;
 };
 
+type PermissionDetail = {
+  label: string;
+  value: string;
+  multiline?: boolean;
+};
+
 type PermissionApprovalModalProps = {
   permission: PendingPermission;
   busy?: boolean;
@@ -23,6 +29,89 @@ type PermissionApprovalModalProps = {
   respondPermissionAndRemember?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
 };
+
+const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boolean }> = [
+  { key: "command", labelKey: "session.permission_detail_command", multiline: true },
+  { key: "cwd", labelKey: "session.permission_detail_cwd" },
+  { key: "filepath", labelKey: "session.permission_detail_file" },
+  { key: "filePath", labelKey: "session.permission_detail_file" },
+  { key: "path", labelKey: "session.permission_detail_path" },
+  { key: "target", labelKey: "session.permission_detail_target" },
+  { key: "url", labelKey: "session.permission_detail_url" },
+  { key: "diff", labelKey: "session.permission_detail_diff", multiline: true },
+];
+
+function readablePermissionLabel(permission: string): string {
+  if (permission === "bash") return "Bash";
+  if (permission === "edit") return t("session.permission_kind_edit");
+  if (permission === "read") return t("session.permission_kind_read");
+  if (permission === "external_directory") return t("session.permission_kind_external_directory");
+  if (permission === "task") return t("session.permission_kind_task");
+  if (permission === "todowrite") return t("session.permission_kind_todowrite");
+  if (permission === "question") return t("session.permission_kind_question");
+  if (permission === "skill") return t("session.permission_kind_skill");
+  return permission;
+}
+
+function permissionCopy(permission: string): Pick<PermissionPresentation, "title" | "message"> {
+  if (permission === "bash") {
+    return {
+      title: t("session.permission_title_bash"),
+      message: t("session.permission_message_bash"),
+    };
+  }
+  if (permission === "edit") {
+    return {
+      title: t("session.permission_title_edit"),
+      message: t("session.permission_message_edit"),
+    };
+  }
+  if (permission === "read") {
+    return {
+      title: t("session.permission_title_read"),
+      message: t("session.permission_message_read"),
+    };
+  }
+  if (permission === "external_directory") {
+    return {
+      title: t("session.permission_title_external_directory"),
+      message: t("session.permission_message_external_directory"),
+    };
+  }
+  if (permission === "task") {
+    return {
+      title: t("session.permission_title_task"),
+      message: t("session.permission_message_task"),
+    };
+  }
+  return {
+    title: t("session.permission_title_generic", undefined, { permission }),
+    message: t("session.permission_message"),
+  };
+}
+
+function metadataValue(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+export function permissionDetailRows(metadata: Record<string, unknown>): PermissionDetail[] {
+  const seen = new Set<string>();
+  const rows: PermissionDetail[] = [];
+  for (const item of metadataDetailKeys) {
+    if (seen.has(item.labelKey)) continue;
+    const value = metadataValue(metadata[item.key]);
+    if (!value) continue;
+    seen.add(item.labelKey);
+    rows.push({
+      label: t(item.labelKey),
+      value,
+      multiline: item.multiline,
+    });
+  }
+  return rows;
+}
 
 function describePermissionRequest(permission: PendingPermission): PermissionPresentation {
   const patterns = permission.patterns.filter((pattern) => pattern.trim().length > 0);
@@ -43,10 +132,11 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
     };
   }
 
+  const copy = permissionCopy(permission.permission);
   return {
-    title: t("session.permission_required"),
-    message: t("session.permission_message"),
-    permissionLabel: permission.permission,
+    title: copy.title,
+    message: copy.message,
+    permissionLabel: readablePermissionLabel(permission.permission),
     scopeLabel: t("session.scope_label"),
     scopeValue: patterns.join(", ") || t("session.permission_scope_empty"),
     isDoomLoop: false,
@@ -61,6 +151,7 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
       ? props.permission.metadata
       : {};
   const hasMetadata = Object.keys(metadata).length > 0;
+  const detailRows = permissionDetailRows(metadata);
   const Icon = presentation.isDoomLoop ? RefreshCcw : ShieldCheck;
   const iconClass = presentation.isDoomLoop
     ? "bg-amber-3/30 text-amber-11"
@@ -115,6 +206,28 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             </div>
           </div>
 
+          {detailRows.length > 0 ? (
+            <div className="rounded-[20px] border border-dls-border bg-dls-surface p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {t("session.permission_review_label")}
+              </div>
+              <div className="mt-3 space-y-3">
+                {detailRows.map((row) => (
+                  <div key={row.label}>
+                    <div className="text-[12px] font-medium text-dls-secondary">{row.label}</div>
+                    <div
+                      className={`mt-1 rounded-xl border border-dls-border bg-dls-hover/55 px-3 py-2 font-mono text-[12px] leading-5 text-dls-text ${
+                        row.multiline ? "max-h-44 overflow-auto whitespace-pre-wrap" : "break-all"
+                      }`}
+                    >
+                      {row.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {hasMetadata ? (
             <details className="group rounded-[18px] border border-dls-border bg-dls-surface px-4 py-3">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[13px] font-medium text-dls-text">
@@ -145,20 +258,21 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             <Button
               variant="outline"
               className="rounded-full bg-dls-surface"
-              onClick={() => props.respondPermission?.(props.permission.id, "once")}
-              disabled={props.busy || !props.respondPermission}
-            >
-              <Clock3 size={16} />
-              {t("session.allow_once")}
-            </Button>
-            <Button
-              variant="primary"
-              className="rounded-full"
               onClick={() => props.respondPermissionAndRemember?.(props.permission.id, "always")}
               disabled={props.busy || !props.respondPermissionAndRemember}
             >
               <Check size={16} />
               {t("session.allow_for_session")}
+            </Button>
+            <Button
+              variant="primary"
+              className="rounded-full"
+              autoFocus
+              onClick={() => props.respondPermission?.(props.permission.id, "once")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Clock3 size={16} />
+              {t("session.allow_once")}
             </Button>
           </div>
         </div>
