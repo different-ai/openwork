@@ -1036,6 +1036,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
       }),
+    setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
+      requestJson<{ items: OpenworkMcpItem[]; enabled: boolean; changed: boolean }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: { enabled },
+        },
+      ),
     removeMcp: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,

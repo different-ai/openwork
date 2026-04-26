@@ -6,9 +6,13 @@ import type { McpItem } from "./types.js";
 import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
+import { ApiError } from "./errors.js";
 
 function globalOpenCodeConfigPath(): string {
-  const base = join(homedir(), ".config", "opencode");
+  // Match the runtime's effective HOME first; tests and hosted workers may intentionally
+  // point HOME at a different config root than os.homedir().
+  const home = process.env.HOME?.trim() || homedir();
+  const base = join(home, ".config", "opencode");
   const jsonc = join(base, "opencode.jsonc");
   const json = join(base, "opencode.json");
   if (existsSync(jsonc)) return jsonc;
@@ -20,6 +24,19 @@ function getMcpConfig(config: Record<string, unknown>): Record<string, Record<st
   const mcp = config.mcp;
   if (!mcp || typeof mcp !== "object") return {};
   return mcp as Record<string, Record<string, unknown>>;
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function isConfiguredMcp(entry: Record<string, unknown> | undefined): entry is Record<string, unknown> {
+  // Keep in sync with OpenCode MCP transport types.
+  return entry?.type === "local" || entry?.type === "remote";
+}
+
+function isDisabledOverride(entry: Record<string, unknown> | undefined): boolean {
+  return entry?.enabled === false && !isConfiguredMcp(entry);
 }
 
 function getDeniedToolPatterns(config: Record<string, unknown>): string[] {
@@ -48,7 +65,19 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
 
   // Global MCPs first; project-level entries override global ones with the same name.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
-    if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
+    const projectEntry = projectMcpMap[name];
+    if (hasOwn(projectMcpMap, name)) {
+      if (isDisabledOverride(projectEntry) && isConfiguredMcp(entry)) {
+        items.push({
+          name,
+          config: { ...entry, enabled: false },
+          source: "config.project",
+          disabledByTools:
+            (isMcpDisabledByTools(globalConfig, name) || isMcpDisabledByTools(config, name)) || undefined,
+        });
+      }
+      continue;
+    }
     items.push({
       name,
       config: entry,
@@ -60,6 +89,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
 
   // Project MCPs (highest priority).
   for (const [name, entry] of Object.entries(projectMcpMap)) {
+    if (isDisabledOverride(entry)) continue;
     items.push({
       name,
       config: entry,
@@ -80,7 +110,7 @@ export async function addMcp(
   validateMcpConfig(config);
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
-  const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
+  const existed = hasOwn(mcpMap, name);
   mcpMap[name] = config;
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
   return { action: existed ? "updated" : "added" };
@@ -89,35 +119,83 @@ export async function addMcp(
 export async function removeMcp(workspaceRoot: string, name: string): Promise<boolean> {
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
-  if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
+  if (!hasOwn(mcpMap, name)) return false;
   delete mcpMap[name];
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
   return true;
 }
 
-// Flips `enabled` on a workspace MCP entry. Returns false for "toggle does
-// not apply": missing, non-object, or malformed enough that OpenCode would
-// fail to load it. The HTTP layer maps false to 404. Globals are out of
-// scope by design — only workspace-level entries.
-//
-// `updateJsoncPath` (vs `updateJsoncTopLevel`) preserves inline comments
-// inside the MCP entry — see the regression that motivated #1444.
+// For configured workspace MCP entries, update only mcp.<name>.enabled so
+// inline comments inside the entry survive (#1444). Inherited-global
+// pause/resume still edits the workspace mcp map because it creates or removes
+// a small workspace override.
 export async function setMcpEnabled(
   workspaceRoot: string,
   name: string,
   enabled: boolean,
-): Promise<boolean> {
+  options: { dryRun?: boolean } = {},
+): Promise<{ changed: boolean; enabled: boolean }> {
   validateMcpName(name);
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
-  const mcpMap = getMcpConfig(data);
-  if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
-  const current = mcpMap[name];
-  if (!current || typeof current !== "object" || Array.isArray(current)) return false;
-  try {
-    validateMcpConfig({ ...(current as Record<string, unknown>), enabled });
-  } catch {
-    return false;
+
+  const configPath = opencodeConfigPath(workspaceRoot);
+  const { data } = await readJsoncFile(configPath, {} as Record<string, unknown>);
+  const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>);
+  const projectMcpMap = getMcpConfig(data);
+  const globalMcpMap = getMcpConfig(globalConfig);
+  const projectEntry = projectMcpMap[name];
+  const globalEntry = globalMcpMap[name];
+
+  if (isConfiguredMcp(projectEntry)) {
+    if ((projectEntry.enabled !== false) === enabled) return { changed: false, enabled };
+    if (!options.dryRun) {
+      await updateJsoncPath(configPath, ["mcp", name, "enabled"], enabled);
+    }
+    return { changed: true, enabled };
   }
-  await updateJsoncPath(opencodeConfigPath(workspaceRoot), ["mcp", name, "enabled"], enabled);
-  return true;
+
+  if (isDisabledOverride(projectEntry)) {
+    if (!enabled) return { changed: false, enabled };
+    if (!isConfiguredMcp(globalEntry)) {
+      throw new ApiError(404, "mcp_not_found", "MCP server not found");
+    }
+    if (globalEntry.enabled === false) {
+      throw new ApiError(
+        409,
+        "global_mcp_disabled",
+        "This MCP server is disabled in the global config. Add it to this workspace before enabling it here.",
+      );
+    }
+    if (!options.dryRun) {
+      delete projectMcpMap[name];
+      await updateJsoncTopLevel(configPath, { mcp: projectMcpMap });
+    }
+    return { changed: true, enabled };
+  }
+
+  if (hasOwn(projectMcpMap, name)) {
+    throw new ApiError(409, "invalid_mcp_config", "MCP config is not a configurable server");
+  }
+
+  if (isConfiguredMcp(globalEntry)) {
+    if (enabled) {
+      if (globalEntry.enabled === false) {
+        throw new ApiError(
+          409,
+          "global_mcp_disabled",
+          "This MCP server is disabled in the global config. Add it to this workspace before enabling it here.",
+        );
+      }
+      return { changed: false, enabled };
+    }
+    if (globalEntry.enabled === false) {
+      return { changed: false, enabled: false };
+    }
+    if (!options.dryRun) {
+      projectMcpMap[name] = { enabled: false };
+      await updateJsoncTopLevel(configPath, { mcp: projectMcpMap });
+    }
+    return { changed: true, enabled };
+  }
+
+  throw new ApiError(404, "mcp_not_found", "MCP server not found");
 }

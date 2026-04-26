@@ -26,10 +26,8 @@ type SuggestedPlugin = {
   }>;
 };
 
-// The Solid ExtensionsView pulled the MCP-connected count from
-// useConnections(). In React we let the parent pass that plus an
-// already-rendered MCP view so we can ship this page before the full
-// connections provider is ported.
+// The Solid ExtensionsView pulled the MCP app count from useConnections().
+// In React we let the parent pass that plus an already-rendered MCP view.
 export type ExtensionsViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
@@ -39,7 +37,7 @@ export type ExtensionsViewProps = {
   accessHint?: string | null;
   suggestedPlugins: SuggestedPlugin[];
   extensions: PluginsExtensionsStore;
-  mcpConnectedAppsCount: number;
+  mcpConfiguredAppsCount: number;
   mcpView: ReactNode;
   onRefresh: () => void;
   initialSection?: ExtensionsSection;
@@ -95,16 +93,16 @@ export function ExtensionsView(props: ExtensionsViewProps) {
           <div
             className={`${props.showHeader === false ? "" : "mt-3"} flex flex-wrap items-center gap-2`}
           >
-            {props.mcpConnectedAppsCount > 0 ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-                <div className="w-2 h-2 rounded-full bg-green-9" />
-                <span className="text-xs font-medium text-green-11">
+            {props.mcpConfiguredAppsCount > 0 ? (
+              <div className="inline-flex items-center gap-2 rounded-full bg-blue-3 px-3 py-1">
+                <div className="w-2 h-2 rounded-full bg-blue-9" />
+                <span className="text-xs font-medium text-blue-11">
                   {t(
-                    props.mcpConnectedAppsCount === 1
+                    props.mcpConfiguredAppsCount === 1
                       ? "extensions.app_count_one"
                       : "extensions.app_count_many",
                     undefined,
-                    { count: props.mcpConnectedAppsCount },
+                    { count: props.mcpConfiguredAppsCount },
                   )}
                 </span>
               </div>

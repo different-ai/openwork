@@ -70,6 +70,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
+import { resolveCanManageMcp } from "./settings-route-permissions";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -927,7 +928,7 @@ export function SettingsRoute() {
       id: provider.id,
       name: provider.name ?? provider.id,
     }));
-  const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
+  const mcpConfiguredAppsCount = connectionsSnapshot.mcpServers.length;
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
     ? ROUTE_OPENWORK_CAPABILITIES
@@ -972,6 +973,15 @@ export function SettingsRoute() {
     }
     await refreshRouteState();
   };
+  const serverMcpWrite =
+    openworkServerSnapshot.openworkServerStatus === "connected"
+      ? Boolean(openworkServerSnapshot.openworkServerCapabilities?.mcp?.write)
+      : null;
+  const canManageMcp = resolveCanManageMcp({
+    serverConnected: openworkServerSnapshot.openworkServerStatus === "connected",
+    serverMcpWrite,
+    isRemoteWorkspace,
+  });
 
   const handleOpenCreateWorkspace = () => {
     setCreateWorkspaceError(null);
@@ -1133,7 +1143,7 @@ export function SettingsRoute() {
             accessHint={isRemoteWorkspace ? t("app.plugins_hint_readonly") : null}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
-            mcpConnectedAppsCount={mcpConnectedAppsCount}
+            mcpConfiguredAppsCount={mcpConfiguredAppsCount}
             initialSection={route.extensionsSection}
             setSectionRoute={(section) => navigate(`/settings/extensions/${section}`)}
             onRefresh={() => {
@@ -1163,11 +1173,8 @@ export function SettingsRoute() {
                 removeMcp={(name) => {
                   void connectionsStore.removeMcp(name);
                 }}
-                setMcpEnabled={
-                  routeOpenworkStatus === "connected" && routeOpenworkCapabilities?.mcp?.write
-                    ? (name, enabled) => connectionsStore.setMcpEnabled(name, enabled)
-                    : undefined
-                }
+                setMcpEnabled={(name, enabled) => connectionsStore.setMcpEnabled(name, enabled)}
+                canManageMcp={canManageMcp}
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
                 showHeader={false}
               />

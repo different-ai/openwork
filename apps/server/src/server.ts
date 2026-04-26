@@ -2583,6 +2583,51 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  addRoute(routes, "PATCH", "/workspace/:id/mcp/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.enabled !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+    }
+
+    const planned = await setMcpEnabled(workspace.path, name, body.enabled, { dryRun: true });
+    if (!planned.changed) {
+      const items = await listMcp(workspace.path);
+      return jsonResponse({ items, enabled: planned.enabled, changed: false });
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.update",
+      summary: `${body.enabled ? "Resume" : "Pause"} MCP ${name}`,
+      paths: [opencodeConfigPath(workspace.path)],
+    });
+
+    const result = await setMcpEnabled(workspace.path, name, body.enabled);
+    if (result.changed) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "mcp.update",
+        target: "opencode.json",
+        summary: `${body.enabled ? "Resumed" : "Paused"} MCP ${name}`,
+        timestamp: Date.now(),
+      });
+      emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+        type: "mcp",
+        name,
+        action: "updated",
+      });
+    }
+
+    const items = await listMcp(workspace.path);
+    return jsonResponse({ items, enabled: result.enabled, changed: result.changed });
+  });
+
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");

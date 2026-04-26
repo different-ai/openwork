@@ -20,6 +20,7 @@ import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
   removeMcpFromConfig,
+  setMcpEnabledInConfig,
   usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
@@ -135,6 +136,20 @@ export function createConnectionsStore(options: {
     return Object.fromEntries(
       Object.entries(status).filter(([name]) => configured.has(name)),
     ) as McpStatusMap;
+  };
+
+  const applyServerMcpItems = (items: Array<{ name: string; config: Record<string, unknown> }>) => {
+    const next = items.map((entry) => ({
+      name: entry.name,
+      config: entry.config as McpServerEntry["config"],
+    }));
+    mutateState((current) => ({
+      ...current,
+      mcpServers: next,
+      mcpLastUpdatedAt: Date.now(),
+      mcpStatuses: filterConfiguredStatuses(current.mcpStatuses, next),
+      mcpStatus: next.length ? current.mcpStatus : "No MCP servers configured yet.",
+    }));
   };
 
   const readMcpConfigFile = async (scope: "project" | "global"): Promise<OpencodeConfigFile | null> => {
@@ -770,34 +785,102 @@ export function createConnectionsStore(options: {
     }
   }
 
-  // Server-only path. Local fallback would rewrite opencode.jsonc whole and
-  // clobber inline comments — settings-route.tsx already gates the prop so
-  // this never gets called when the server is unavailable. Reload UX comes
-  // from the existing reload-required popup; no extra banner here.
   async function setMcpEnabled(name: string, enabled: boolean) {
-    try {
-      const openworkSnapshot = getOpenworkSnapshot();
-      const openworkClient = openworkSnapshot.openworkServerClient;
-      const openworkWorkspaceId = options.runtimeWorkspaceId();
-      const canUseOpenworkServer =
-        openworkSnapshot.openworkServerStatus === "connected" &&
-        openworkClient &&
-        openworkWorkspaceId &&
-        openworkSnapshot.openworkServerCapabilities?.mcp?.write;
+    const safeName = validateMcpServerName(name);
+    const openworkSnapshot = getOpenworkSnapshot();
+    const serverConnected = openworkSnapshot.openworkServerStatus === "connected";
+    const serverReadOnly =
+      serverConnected &&
+      openworkSnapshot.openworkServerCapabilities != null &&
+      !openworkSnapshot.openworkServerCapabilities.mcp?.write;
+    const isRemoteWorkspace =
+      options.workspaceType() === "remote" ||
+      (!isDesktopRuntime() && serverConnected);
 
-      if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
-        setStateField("mcpStatus", translate("mcp.toggle_requires_server"));
+    try {
+      setStateField("mcpStatus", null);
+      setStateField("mcpConnectingName", safeName);
+
+      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+        await resolveWritableOpenworkTarget();
+
+      if (serverReadOnly) {
+        setStateField("mcpStatus", translate("mcp.read_only"));
         return;
       }
 
-      await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
-      options.markReloadRequired?.("mcp", { type: "mcp", name, action: "updated" });
-      await refreshMcpServers();
+      if (isRemoteWorkspace && !canUseOpenworkServer) {
+        setStateField("mcpStatus", "OpenWork server unavailable. MCP config is read-only.");
+        return;
+      }
+
+      let serverItems: Array<{ name: string; config: Record<string, unknown> }> | null = null;
+      let changed = true;
+
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        const response = await openworkClient.setMcpEnabled(openworkWorkspaceId, safeName, enabled);
+        serverItems = response.items;
+        changed = response.changed;
+      } else {
+        if (!isDesktopRuntime()) {
+          setStateField("mcpStatus", translate("mcp.desktop_required"));
+          return;
+        }
+        const projectDir = options.projectDir().trim();
+        if (!projectDir) {
+          setStateField("mcpStatus", translate("mcp.pick_workspace_first"));
+          return;
+        }
+        const response = await setMcpEnabledInConfig(projectDir, safeName, enabled);
+        changed = response.changed;
+      }
+
+      if (!changed) {
+        if (serverItems) {
+          applyServerMcpItems(serverItems);
+        }
+        setStateField(
+          "mcpStatus",
+          translate(enabled ? "mcp.resume_success" : "mcp.pause_success").replace("{server}", safeName),
+        );
+        return;
+      }
+
+      const activeClient = options.client();
+      const resolvedProjectDir = activeClient
+        ? await resolveProjectDir(activeClient, options.projectDir().trim())
+        : "";
+      if (activeClient && resolvedProjectDir) {
+        try {
+          if (enabled) {
+            await activeClient.mcp.connect({ directory: resolvedProjectDir, name: safeName });
+          } else {
+            await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
+          }
+          const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
+          setStateField("mcpStatuses", status as McpStatusMap);
+        } catch {
+          // Persisted config is the source of truth; runtime changes are best-effort.
+        }
+      }
+
+      options.markReloadRequired?.("mcp", { type: "mcp", name: safeName, action: "updated" });
+      if (serverItems) {
+        applyServerMcpItems(serverItems);
+      } else {
+        await refreshMcpServers();
+      }
+      setStateField(
+        "mcpStatus",
+        translate(enabled ? "mcp.resume_success" : "mcp.pause_success").replace("{server}", safeName),
+      );
     } catch (error) {
       setStateField(
         "mcpStatus",
         error instanceof Error ? error.message : translate("mcp.toggle_failed"),
       );
+    } finally {
+      setStateField("mcpConnectingName", null);
     }
   }
 

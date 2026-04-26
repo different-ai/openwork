@@ -12,9 +12,10 @@ import {
   Globe,
   Loader2,
   MonitorSmartphone,
+  Pause,
   Plug2,
+  Play,
   Plus,
-  Power,
   Settings,
   Settings2,
   Unplug,
@@ -69,7 +70,8 @@ export type McpViewProps = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
-  setMcpEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
+  setMcpEnabled: (name: string, enabled: boolean) => Promise<void> | void;
+  canManageMcp?: boolean;
 };
 
 const statusDot = (status: ReactMcpStatus) => {
@@ -118,6 +120,36 @@ const statusBadgeStyle = (status: ReactMcpStatus) => {
       return "bg-red-3 text-red-11";
   }
 };
+
+const statusPillStyle = (status: ReactMcpStatus) => {
+  switch (status) {
+    case "connected":
+      return "border-green-6 bg-green-3 text-green-11";
+    case "needs_auth":
+    case "needs_client_registration":
+      return "border-amber-6 bg-amber-3 text-amber-11";
+    case "disabled":
+    case "disconnected":
+      return "border-dls-border bg-dls-hover text-dls-secondary";
+    default:
+      return "border-red-6 bg-red-3 text-red-11";
+  }
+};
+
+const StatusPill = ({
+  status,
+  locale,
+}: {
+  status: ReactMcpStatus;
+  locale: Language;
+}) => (
+  <span
+    className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium ${statusPillStyle(status)}`}
+  >
+    <span className={`h-1.5 w-1.5 rounded-full ${statusDot(status)}`} />
+    {friendlyStatus(status, locale)}
+  </span>
+);
 
 const serviceIcon = (name: string) => {
   const lower = name.toLowerCase();
@@ -168,6 +200,9 @@ export function McpView(props: McpViewProps) {
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseTarget, setPauseTarget] = useState<string | null>(null);
+  const [pauseBusy, setPauseBusy] = useState(false);
   const [configScope, setConfigScope] = useState<"project" | "global">("project");
   const [projectConfig, setProjectConfig] = useState<OpencodeConfigFile | null>(null);
   const [globalConfig, setGlobalConfig] = useState<OpencodeConfigFile | null>(null);
@@ -175,13 +210,13 @@ export function McpView(props: McpViewProps) {
   const [revealBusy, setRevealBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
-  const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
   const [controlChromeModalOpen, setControlChromeModalOpen] = useState(false);
   const [controlChromeModalMode, setControlChromeModalMode] = useState<"connect" | "edit">("connect");
   const [controlChromeExistingProfile, setControlChromeExistingProfile] = useState(false);
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
+  const canManageMcp = props.canManageMcp !== false;
 
   useEffect(() => {
     const root = props.selectedWorkspaceRoot.trim();
@@ -248,8 +283,8 @@ export function McpView(props: McpViewProps) {
   const quickConnectStatus = (entry: McpDirectoryInfo) =>
     props.mcpStatuses[getMcpIdentityKey(entry)];
 
-  const isQuickConnectConfigured = (entry: McpDirectoryInfo) =>
-    props.mcpServers.some((server) => server.name === getMcpIdentityKey(entry));
+  const configuredMcpEntry = (entry: McpDirectoryInfo) =>
+    props.mcpServers.find((server) => server.name === getMcpIdentityKey(entry));
 
   const openControlChromeModal = (
     mode: "connect" | "edit",
@@ -286,9 +321,9 @@ export function McpView(props: McpViewProps) {
     return resolved?.status ?? "disconnected";
   };
 
-  const connectedCount = props.mcpServers.filter(
-    (entry) => resolveStatus(entry) === "connected",
-  ).length;
+  const configuredCount = props.mcpServers.length;
+  const connectedCount = props.mcpServers.filter((entry) => resolveStatus(entry) === "connected").length;
+  const pausedCount = props.mcpServers.filter((entry) => entry.config.enabled === false).length;
 
   const requestLogout = (name: string) => {
     if (!name.trim()) return;
@@ -306,6 +341,19 @@ export function McpView(props: McpViewProps) {
       setLogoutBusy(false);
       setLogoutOpen(false);
       setLogoutTarget(null);
+    }
+  };
+
+  const confirmPause = async () => {
+    const name = pauseTarget;
+    if (!name || pauseBusy) return;
+    setPauseBusy(true);
+    try {
+      await props.setMcpEnabled(name, false);
+    } finally {
+      setPauseBusy(false);
+      setPauseOpen(false);
+      setPauseTarget(null);
     }
   };
 
@@ -347,12 +395,32 @@ export function McpView(props: McpViewProps) {
         <div>
           <h2 className="text-3xl font-bold text-dls-text">{tr("mcp.apps_title")}</h2>
           <p className="mt-1.5 text-sm text-dls-secondary">{tr("mcp.apps_subtitle")}</p>
-          {connectedCount > 0 ? (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-              <div className="h-2 w-2 rounded-full bg-green-9" />
-              <span className="text-xs font-medium text-green-11">
-                {connectedCount} {connectedCount === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
-              </span>
+          {configuredCount > 0 ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {connectedCount > 0 ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 py-1">
+                  <div className="h-1.5 w-1.5 rounded-full bg-dls-accent" />
+                  <span className="text-xs font-medium text-dls-secondary">
+                    {connectedCount} {connectedCount === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
+                  </span>
+                </div>
+              ) : null}
+              {pausedCount > 0 ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 py-1">
+                  <div className="h-1.5 w-1.5 rounded-full bg-dls-secondary" />
+                  <span className="text-xs font-medium text-dls-secondary">
+                    {pausedCount} {tr("mcp.friendly_status_paused")}
+                  </span>
+                </div>
+              ) : null}
+              {connectedCount === 0 && pausedCount === 0 ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 py-1">
+                  <div className="h-1.5 w-1.5 rounded-full bg-dls-secondary" />
+                  <span className="text-xs font-medium text-dls-secondary">
+                    {configuredCount} {configuredCount === 1 ? tr("mcp.app_configured") : tr("mcp.apps_configured")}
+                  </span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -364,13 +432,18 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] px-5 py-5 sm:px-6">
+      <div className="rounded-2xl border border-dls-border bg-dls-surface px-5 py-5 sm:px-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <div className="text-base font-semibold text-dls-text">{tr("mcp.add_modal_title")}</div>
-            <div className="text-sm text-dls-secondary">{tr("mcp.custom_app_cta_hint")}</div>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-dls-hover text-dls-secondary">
+              <Plug2 size={18} />
+            </div>
+            <div className="space-y-1">
+              <div className="text-base font-semibold text-dls-text">{tr("mcp.add_modal_title")}</div>
+              <div className="text-sm text-dls-secondary">{tr("mcp.custom_app_cta_hint")}</div>
+            </div>
           </div>
-          <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
+          <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)} disabled={!canManageMcp}>
             <Plus size={14} />
             {tr("mcp.add_modal_title")}
           </Button>
@@ -387,11 +460,19 @@ export function McpView(props: McpViewProps) {
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {quickConnectList.map((entry) => {
-            const configured = isQuickConnectConfigured(entry);
+            const configuredEntry = configuredMcpEntry(entry);
+            const configured = Boolean(configuredEntry);
+            const configuredStatus = configuredEntry ? resolveStatus(configuredEntry) : undefined;
             const connecting = props.mcpConnectingName === entry.name;
             const Icon = serviceIcon(entry.name);
             const controlChrome = isChromeDevtoolsMcp(entry);
             const quickStatus = !configured ? quickConnectStatus(entry) : undefined;
+            const configuredCardClass =
+              configuredStatus === "connected"
+                ? "border-green-6 bg-green-2"
+                : configuredStatus === "disabled"
+                  ? "border-gray-6 bg-gray-2"
+                  : "border-dls-border bg-dls-surface";
 
             return (
               <div key={getMcpIdentityKey(entry)} className="relative">
@@ -425,20 +506,26 @@ export function McpView(props: McpViewProps) {
                   }}
                   className={`group w-full rounded-xl border p-4 text-left transition-all ${
                     configured
-                      ? "border-green-6 bg-green-2"
-                      : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
+                      ? configuredCardClass
+                      : "border-dls-border bg-dls-surface hover:border-gray-7 hover:bg-dls-hover"
                   }`}
                 >
                   <div className="flex items-start gap-3">
                     <div
                       className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${
-                        configured ? "border-green-6 bg-green-3" : serviceIconBg(entry.name)
+                        configuredStatus === "connected"
+                          ? "border-green-6 bg-green-3"
+                          : configuredStatus === "disabled"
+                            ? "border-gray-6 bg-gray-3"
+                            : serviceIconBg(entry.name)
                       }`}
                     >
                       {connecting ? (
                         <Loader2 size={18} className="animate-spin text-dls-secondary" />
-                      ) : configured ? (
+                      ) : configuredStatus === "connected" ? (
                         <CheckCircle2 size={18} className="text-green-11" />
+                      ) : configuredStatus === "disabled" ? (
+                        <Pause size={18} className="text-gray-11" />
                       ) : (
                         <Icon size={18} className={serviceColor(entry.name)} />
                       )}
@@ -447,9 +534,9 @@ export function McpView(props: McpViewProps) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 pr-10">
                         <h4 className="text-sm font-semibold text-dls-text">{entry.name}</h4>
-                        {configured ? (
-                          <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
-                            {tr("mcp.connected_badge")}
+                        {configured && configuredStatus ? (
+                          <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${statusBadgeStyle(configuredStatus)}`}>
+                            {friendlyStatus(configuredStatus, locale)}
                           </span>
                         ) : null}
                         {!configured && quickStatus ? (
@@ -498,6 +585,7 @@ export function McpView(props: McpViewProps) {
               const Icon = serviceIcon(entry.name);
               const isSelected = props.selectedMcp === entry.name;
               const resolvedStatus = props.mcpStatuses[entry.name];
+              const toggleBusy = props.mcpConnectingName === entry.name;
               const errorInfo =
                 resolvedStatus && resolvedStatus.status === "failed"
                   ? "error" in resolvedStatus
@@ -508,15 +596,18 @@ export function McpView(props: McpViewProps) {
               return (
                 <div
                   key={entry.name}
-                  className={`rounded-xl border transition-all ${
+                  className={`relative overflow-hidden rounded-xl border transition-colors ${
                     isSelected
-                      ? "border-blue-7 bg-blue-2 shadow-sm"
+                      ? "border-dls-border bg-dls-surface shadow-[0_0_0_1px_rgba(var(--dls-accent-rgb),0.16)]"
                       : "border-dls-border bg-dls-surface hover:bg-dls-hover"
                   }`}
                 >
+                  {isSelected ? (
+                    <div className="absolute left-0 top-0 h-full w-1 bg-dls-accent" />
+                  ) : null}
                   <button
                     type="button"
-                    className="w-full px-4 py-3.5 text-left"
+                    className="w-full px-4 py-3.5 pl-5 text-left"
                     onClick={() => props.setSelectedMcp(isSelected ? null : entry.name)}
                   >
                     <div className="flex items-center gap-3">
@@ -540,10 +631,7 @@ export function McpView(props: McpViewProps) {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${statusDot(status)}`} />
-                        <span className="text-[11px] text-dls-secondary">
-                          {friendlyStatus(status, locale)}
-                        </span>
+                        <StatusPill status={status} locale={locale} />
                       </div>
                       <div className={`transition-transform ${isSelected ? "rotate-180" : ""}`}>
                         <ChevronDown size={14} className="text-dls-secondary/40" />
@@ -552,7 +640,7 @@ export function McpView(props: McpViewProps) {
                   </button>
 
                   {isSelected ? (
-                    <div className="animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-blue-6/20 px-4 py-3 duration-200">
+                    <div className="animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-dls-border px-5 py-3 duration-200">
                       <div className="flex items-center gap-4 text-xs">
                         <span className="text-dls-secondary">{tr("mcp.connection_type")}</span>
                         <span className="text-dls-text">
@@ -590,7 +678,9 @@ export function McpView(props: McpViewProps) {
                         </div>
                       </details>
 
-                      {supportsOauth(entry) && status !== "connected" ? (
+                      {supportsOauth(entry) &&
+                      status !== "connected" &&
+                      status !== "disabled" ? (
                         <>
                           <div className="flex items-center justify-between gap-3 pt-1">
                             <div className="text-xs text-dls-secondary">{tr("mcp.logout_label")}</div>
@@ -637,30 +727,46 @@ export function McpView(props: McpViewProps) {
                             {tr("mcp.control_chrome_edit")}
                           </Button>
                         ) : null}
-                        {props.setMcpEnabled && entry.source !== "config.global" ? (
+                        {status === "disabled" ? (
+                          <Button
+                            variant="secondary"
+                            className="!px-3 !py-1.5 !text-xs"
+                            disabled={!canManageMcp || props.busy || toggleBusy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void props.setMcpEnabled(entry.name, true);
+                            }}
+                          >
+                            {toggleBusy ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Play size={13} />
+                            )}
+                            {tr("mcp.resume_app")}
+                          </Button>
+                        ) : (
                           <Button
                             variant="outline"
                             className="!px-3 !py-1.5 !text-xs"
-                            disabled={props.busy || togglingMcp === entry.name}
+                            disabled={!canManageMcp || props.busy || toggleBusy}
                             onClick={(event) => {
                               event.stopPropagation();
-                              if (togglingMcp) return;
-                              const next = entry.config.enabled !== false ? false : true;
-                              setTogglingMcp(entry.name);
-                              void Promise.resolve(props.setMcpEnabled?.(entry.name, next)).finally(
-                                () => setTogglingMcp(null),
-                              );
+                              setPauseTarget(entry.name);
+                              setPauseOpen(true);
                             }}
                           >
-                            <Power size={13} />
-                            {entry.config.enabled === false
-                              ? tr("mcp.enable_app")
-                              : tr("mcp.disable_app")}
+                            {toggleBusy ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Pause size={13} />
+                            )}
+                            {tr("mcp.pause_app")}
                           </Button>
-                        ) : null}
+                        )}
                         <Button
                           variant="danger"
                           className="!px-3 !py-1.5 !text-xs"
+                          disabled={!canManageMcp}
                           onClick={(event) => {
                             event.stopPropagation();
                             setRemoveTarget(entry.name);
@@ -717,6 +823,23 @@ export function McpView(props: McpViewProps) {
           if (removeTarget) props.removeMcp(removeTarget);
           setRemoveOpen(false);
           setRemoveTarget(null);
+        }}
+      />
+
+      <ConfirmModal
+        open={pauseOpen}
+        title={tr("mcp.pause_modal_title")}
+        message={tr("mcp.pause_modal_message").replace("{server}", displayName(pauseTarget ?? ""))}
+        confirmLabel={pauseBusy ? tr("mcp.pause_working") : tr("mcp.pause_app")}
+        cancelLabel={tr("common.cancel")}
+        variant="warning"
+        onCancel={() => {
+          if (pauseBusy) return;
+          setPauseOpen(false);
+          setPauseTarget(null);
+        }}
+        onConfirm={() => {
+          void confirmPause();
         }}
       />
 

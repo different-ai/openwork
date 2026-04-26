@@ -19,6 +19,8 @@ export type ConnectionsMcpStore = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
+  setMcpEnabled: (name: string, enabled: boolean) => Promise<void> | void;
+  canManageMcp?: boolean;
 };
 
 export type ConnectionsMcpViewProps = {
@@ -51,6 +53,8 @@ export default function ConnectionsMcpView(props: ConnectionsMcpViewProps) {
       authorizeMcp={connections.authorizeMcp}
       logoutMcpAuth={connections.logoutMcpAuth}
       removeMcp={connections.removeMcp}
+      setMcpEnabled={connections.setMcpEnabled}
+      canManageMcp={connections.canManageMcp}
     />
   );
 }

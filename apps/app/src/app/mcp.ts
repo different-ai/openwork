@@ -1,9 +1,10 @@
-import { parse } from "jsonc-parser";
+import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/desktop";
 import { CHROME_DEVTOOLS_MCP_COMMAND, CHROME_DEVTOOLS_MCP_ID } from "./constants";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
+const jsoncFormattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
 
 export const CHROME_DEVTOOLS_AUTO_CONNECT_ARG = "--autoConnect";
 
@@ -51,6 +52,22 @@ export function validateMcpServerName(name: string): string {
   return trimmed;
 }
 
+function isConfiguredMcpEntry(entry: unknown): entry is Record<string, unknown> {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  const type = (entry as Record<string, unknown>).type;
+  return type === "local" || type === "remote";
+}
+
+function isDisabledMcpOverride(entry: unknown): boolean {
+  return (
+    Boolean(entry) &&
+    typeof entry === "object" &&
+    !Array.isArray(entry) &&
+    (entry as Record<string, unknown>).enabled === false &&
+    !isConfiguredMcpEntry(entry)
+  );
+}
+
 export async function removeMcpFromConfig(
   projectDir: string,
   name: string,
@@ -77,6 +94,98 @@ export async function removeMcpFromConfig(
   if (!writeResult.ok) {
     throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
   }
+}
+
+export function updateMcpEnabledInConfigContent(
+  content: string,
+  name: string,
+  enabled: boolean,
+  options: { inheritedMcpServers?: readonly McpServerEntry[] } = {},
+): string {
+  const source = content.trim() ? content : "{}\n";
+  const errors: { error: number; offset: number; length: number }[] = [];
+  const parsed = parse(source, errors, { allowTrailingComma: true }) as Record<string, unknown> | undefined;
+  if (errors.length > 0) {
+    const detail = errors.map((error) => printParseErrorCode(error.error)).join(", ");
+    throw new Error(`Failed to parse opencode config${detail ? `: ${detail}` : ""}`);
+  }
+
+  const mcpSection = parsed?.mcp as Record<string, unknown> | undefined;
+  const entry = mcpSection?.[name];
+  const inheritedEntry = options.inheritedMcpServers?.find((item) => item.name === name);
+  const inheritedEnabled = inheritedEntry ? inheritedEntry.config.enabled !== false : false;
+
+  if (isConfiguredMcpEntry(entry)) {
+    const updated = applyEdits(
+      source,
+      modify(source, ["mcp", name, "enabled"], enabled, {
+        formattingOptions: jsoncFormattingOptions,
+      }),
+    );
+    return updated.endsWith("\n") ? updated : `${updated}\n`;
+  }
+
+  if (isDisabledMcpOverride(entry)) {
+    if (!inheritedEntry) {
+      throw new Error("MCP server not found");
+    }
+    if (!enabled) return source.endsWith("\n") ? source : `${source}\n`;
+    if (!inheritedEnabled) {
+      throw new Error("This MCP server is disabled in the global config.");
+    }
+    const updated = applyEdits(
+      source,
+      modify(source, ["mcp", name], undefined, {
+        formattingOptions: jsoncFormattingOptions,
+      }),
+    );
+    return updated.endsWith("\n") ? updated : `${updated}\n`;
+  }
+
+  if (entry != null) {
+    throw new Error("MCP config is not a configurable server");
+  }
+
+  if (inheritedEntry) {
+    if (enabled) {
+      if (!inheritedEnabled) {
+        throw new Error("This MCP server is disabled in the global config.");
+      }
+      return source.endsWith("\n") ? source : `${source}\n`;
+    }
+    if (!inheritedEnabled) return source.endsWith("\n") ? source : `${source}\n`;
+    const updated = applyEdits(
+      source,
+      modify(source, ["mcp", name], { enabled: false }, {
+        formattingOptions: jsoncFormattingOptions,
+      }),
+    );
+    return updated.endsWith("\n") ? updated : `${updated}\n`;
+  }
+
+  throw new Error(mcpSection ? "MCP server not found" : "Workspace config has no MCP section yet");
+}
+
+export async function setMcpEnabledInConfig(
+  projectDir: string,
+  name: string,
+  enabled: boolean,
+): Promise<{ changed: boolean }> {
+  const safeName = validateMcpServerName(name);
+  const configFile = await readOpencodeConfig("project", projectDir);
+  const projectContent = configFile.exists && configFile.content ? configFile.content : "{}\n";
+  const globalConfigFile = await readOpencodeConfig("global", projectDir);
+  const inheritedMcpServers = parseMcpServersFromContent(globalConfigFile.content ?? "");
+
+  const nextContent = updateMcpEnabledInConfigContent(projectContent, safeName, enabled, {
+    inheritedMcpServers,
+  });
+  if (nextContent === projectContent) return { changed: false };
+  const writeResult = await writeOpencodeConfig("project", projectDir, nextContent);
+  if (!writeResult.ok) {
+    throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
+  }
+  return { changed: true };
 }
 
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {
