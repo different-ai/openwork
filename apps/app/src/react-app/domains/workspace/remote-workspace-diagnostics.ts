@@ -81,6 +81,10 @@ function isServerErrorStatus(error: unknown, status: number | number[]) {
   return expected.includes(actual);
 }
 
+function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
+  return `Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`;
+}
+
 function displayWorkspaceName(workspace: unknown) {
   if (!workspace || typeof workspace !== "object") return "";
   const value = workspace as {
@@ -226,10 +230,7 @@ export async function testRemoteWorkspaceConnection(
     await client.capabilities();
   } catch (error) {
     if (isServerErrorStatus(error, [401, 403])) {
-      return fail(
-        `Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`,
-        checkedAt,
-      );
+      return fail(rejectedTokenMessage(target), checkedAt);
     }
     return fail(
       `Connected to ${target.endpointLabel}, but capabilities failed: ${describeUnknownError(error)}`,
@@ -287,6 +288,9 @@ export async function testRemoteWorkspaceConnection(
       },
     };
   } catch (error) {
+    if (isServerErrorStatus(error, [401, 403])) {
+      return fail(rejectedTokenMessage(target), checkedAt);
+    }
     return fail(
       `Connected to ${target.endpointLabel}, but workspace list failed: ${describeUnknownError(error)}`,
       checkedAt,

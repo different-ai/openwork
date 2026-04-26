@@ -253,6 +253,28 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.message).toBe("Connected to Worker project.");
   });
 
+  test("reports rejected credentials from the workspace list fallback", async () => {
+    const result = await testRemoteWorkspaceConnection(
+      workspace({
+        openworkHostUrl: "https://worker.example.com",
+        openworkWorkspaceId: "",
+        baseUrl: "",
+      }),
+      {
+        createClient: () =>
+          client({
+            listWorkspaces: async () => {
+              throw serverError(401, "invalid_token", "Invalid token");
+            },
+          }),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.state.status).toBe("error");
+    expect(result.state.message).toContain("Token was rejected by worker.example.com");
+  });
+
   test("reports unauthorized workspace status separately from bad credentials", async () => {
     const result = await testRemoteWorkspaceConnection(workspace(), {
       createClient: () =>
