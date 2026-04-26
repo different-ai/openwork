@@ -34,6 +34,12 @@
     "yaml": "^2.8.1",
     "zod": "^4.3.6"
   },
+  "optionalDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.205.0",
+    "@opentelemetry/resources": "^2.1.0",
+    "@opentelemetry/sdk-node": "^0.205.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "bun-types": "^1.3.6",

@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { TextEncoder } from "node:util";
 import { getRequestContext, type AppBindings } from "../context/request-context.js";
 import { buildSuccessResponse } from "../http.js";
+import { recordPromptAttributes, type GenAiOperation } from "../observability/gen-ai.js";
 import { jsonResponse, withCommonErrorResponses } from "../openapi.js";
 import {
   acceptedActionResponseSchema,
@@ -393,6 +394,7 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     }) => Promise<unknown>,
     bodySchema?: { parse(input: unknown): Record<string, unknown> },
     responseSchema: any = acceptedActionResponseSchema,
+    operation?: GenAiOperation,
   ) => {
     app.post(
       path,
@@ -408,7 +410,11 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
         const { requestContext, workspaceId } = requireReadableWorkspace(c);
         const params = sessionIdParamsSchema.parse(c.req.param());
         const body = bodySchema ? await parseBody(bodySchema, c.req.raw) : {};
-        const result = await handler({ body, requestContext, sessionId: params.sessionId, workspaceId });
+        const sessionId = params.sessionId;
+        if (operation) {
+          await recordPromptAttributes(c, { operation, workspaceId, sessionId, body });
+        }
+        const result = await handler({ body, requestContext, sessionId, workspaceId });
         return c.json(buildSuccessResponse(requestContext.requestId, result ?? { accepted: true }));
       },
     );
@@ -419,6 +425,9 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     "Initialize a session",
     "Runs the upstream session init primitive through the workspace-first API.",
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.initSession(workspaceId, sessionId, body),
+    undefined,
+    undefined,
+    "init",
   );
   actionRoute(
     routePaths.workspaces.sessions.fork(),
@@ -427,18 +436,25 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.forkSession(workspaceId, sessionId, body),
     sessionForkRequestSchema as never,
     sessionResponseSchema,
+    "fork",
   );
   actionRoute(
     routePaths.workspaces.sessions.abort(),
     "Abort a session",
     "Aborts an in-flight session run through the workspace-first API.",
     ({ requestContext, sessionId, workspaceId }) => requestContext.services.sessions.abortSession(workspaceId, sessionId),
+    undefined,
+    undefined,
+    "abort",
   );
   actionRoute(
     routePaths.workspaces.sessions.share(),
     "Share a session",
     "Calls the upstream share primitive when the resolved backend supports it.",
     ({ requestContext, sessionId, workspaceId }) => requestContext.services.sessions.shareSession(workspaceId, sessionId),
+    undefined,
+    undefined,
+    "share",
   );
   app.delete(
     routePaths.workspaces.sessions.share(),
@@ -463,6 +479,8 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     "Runs the upstream summarize or compact primitive for the selected session.",
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.summarizeSession(workspaceId, sessionId, body),
     sessionSummarizeRequestSchema as never,
+    undefined,
+    "summarize",
   );
   actionRoute(
     routePaths.workspaces.sessions.promptAsync(),
@@ -470,6 +488,8 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     "Sends a prompt_async request to the resolved session backend for composer flows.",
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.promptAsync(workspaceId, sessionId, body),
     promptAsyncRequestSchema as never,
+    undefined,
+    "chat",
   );
   actionRoute(
     routePaths.workspaces.sessions.command(),
@@ -477,6 +497,8 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     "Runs a slash-command style session command through the workspace-first API.",
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.command(workspaceId, sessionId, body),
     commandRequestSchema as never,
+    undefined,
+    "command",
   );
   actionRoute(
     routePaths.workspaces.sessions.shell(),
@@ -484,6 +506,8 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     "Runs a shell command inside the resolved session backend.",
     ({ body, requestContext, sessionId, workspaceId }) => requestContext.services.sessions.shell(workspaceId, sessionId, body),
     shellRequestSchema as never,
+    undefined,
+    "shell",
   );
   actionRoute(
     routePaths.workspaces.sessions.revert(),
@@ -493,6 +517,7 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
       requestContext.services.sessions.revert(workspaceId, sessionId, body as { messageID: string }),
     revertRequestSchema as never,
     sessionResponseSchema,
+    "revert",
   );
   actionRoute(
     routePaths.workspaces.sessions.unrevert(),
@@ -501,6 +526,7 @@ export function registerSessionRoutes(app: Hono<AppBindings>) {
     ({ requestContext, sessionId, workspaceId }) => requestContext.services.sessions.unrevert(workspaceId, sessionId),
     undefined,
     sessionResponseSchema,
+    "unrevert",
   );
 
   app.get(

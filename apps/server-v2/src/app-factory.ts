@@ -5,6 +5,7 @@ import type { AppBindings } from "./context/request-context.js";
 import { requestContextMiddleware } from "./context/request-context.js";
 import { buildErrorResponse } from "./http.js";
 import { errorHandlingMiddleware } from "./middleware/error-handler.js";
+import { observabilityTracingMiddleware } from "./middleware/observability-tracing.js";
 import { requestLoggerMiddleware } from "./middleware/request-logger.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
 import { responseFinalizerMiddleware } from "./middleware/response-finalizer.js";
@@ -19,6 +20,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = new Hono<AppBindings>();
 
   app.use("*", requestIdMiddleware);
+  app.use("*", observabilityTracingMiddleware);
   app.use("*", requestContextMiddleware(dependencies));
   app.use("*", responseFinalizerMiddleware);
   app.use("*", requestLoggerMiddleware);
