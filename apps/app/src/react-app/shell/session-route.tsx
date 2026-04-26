@@ -1159,7 +1159,9 @@ export function SessionRoute() {
         }
 
         const parts = await draftToParts(draft, selectedWorkspaceRoot);
-        const envSystemContext = await buildOpenworkEnvSystemContext(client);
+        const envSystemContext = await buildOpenworkEnvSystemContext(client, {
+          cacheKey: selectedSessionId,
+        });
         const result = await opencodeClient.session.promptAsync({
           sessionID: selectedSessionId,
           parts,

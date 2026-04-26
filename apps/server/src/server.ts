@@ -1305,7 +1305,7 @@ function createRoutes(
       const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
       const value = typeof candidate.value === "string" ? candidate.value : "";
       if (!isValidEnvKey(key)) {
-        throw new ApiError(400, "invalid_env_key", `Invalid environment variable name: ${key || "<empty>"}`);
+        throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
       }
       entries.push({ key, value });
     }
@@ -1316,7 +1316,13 @@ function createRoutes(
       await env.upsertMany(entries);
     } catch (error) {
       if (error instanceof InvalidEnvKeyError) {
-        throw new ApiError(400, error.code, error.message);
+        throw new ApiError(
+          400,
+          error.code,
+          error.code === "reserved_env_key"
+            ? "Environment variable name is reserved for OpenWork internals"
+            : "Invalid environment variable name",
+        );
       }
       throw error;
     }

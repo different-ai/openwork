@@ -11,6 +11,7 @@ import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
+import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-context";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
 const rowIconButtonClass =
@@ -126,6 +127,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   };
 
   const markChangesPending = () => {
+    clearOpenworkEnvSystemContextCache();
     setPendingChanges(true);
     writeOpenworkEnvPendingChanges(true);
     setApplyError(null);
@@ -188,6 +190,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     setApplyError(null);
     try {
       await props.onApplyChanges();
+      clearOpenworkEnvSystemContextCache();
       setPendingChanges(false);
       writeOpenworkEnvPendingChanges(false);
       setApplyConfirmOpen(false);
@@ -349,9 +352,12 @@ export function EnvironmentView(props: EnvironmentViewProps) {
           </div>
         )}
 
-        {!isRemoteWorkspace ? <div className="text-[11px] text-gray-8">
-          {t("settings.environment.footer_hint")}
-        </div> : null}
+        {!isRemoteWorkspace ? (
+          <div className="space-y-1 text-[11px] text-gray-8">
+            <div>{t("settings.environment.footer_hint")}</div>
+            <div>{t("settings.environment.override_hint")}</div>
+          </div>
+        ) : null}
       </div>
 
       {editor ? (

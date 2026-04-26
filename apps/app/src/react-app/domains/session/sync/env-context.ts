@@ -1,7 +1,13 @@
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
 
-const MAX_ENV_KEYS_IN_CONTEXT = 80;
+const DEFAULT_CACHE_KEY = "__openwork_env_default__";
+
+const envSystemContextCache = new Map<string, string | undefined>();
+
+export function clearOpenworkEnvSystemContextCache(): void {
+  envSystemContextCache.clear();
+}
 
 function normalizeEnvKeys(keys: string[]): string[] {
   return Array.from(
@@ -15,25 +21,37 @@ function normalizeEnvKeys(keys: string[]): string[] {
 
 export async function buildOpenworkEnvSystemContext(
   client: OpenworkServerClient | null,
+  options: {
+    cacheKey?: string;
+    readPendingChanges?: () => boolean;
+  } = {},
 ): Promise<string | undefined> {
   if (!client) return undefined;
-  if (readOpenworkEnvPendingChanges()) return undefined;
+  const readPendingChanges = options.readPendingChanges ?? readOpenworkEnvPendingChanges;
+  if (readPendingChanges()) return undefined;
+
+  const cacheKey = `${client.baseUrl}:${options.cacheKey ?? DEFAULT_CACHE_KEY}`;
+  if (envSystemContextCache.has(cacheKey)) {
+    return envSystemContextCache.get(cacheKey);
+  }
 
   try {
     const response = await client.listUserEnvKeys();
     const keys = normalizeEnvKeys(response.keys ?? []);
-    if (keys.length === 0) return undefined;
+    if (keys.length === 0) {
+      envSystemContextCache.set(cacheKey, undefined);
+      return undefined;
+    }
 
-    const visibleKeys = keys.slice(0, MAX_ENV_KEYS_IN_CONTEXT);
-    const omittedCount = keys.length - visibleKeys.length;
-    const keyList = visibleKeys.map((key) => `- ${key}`).join("\n");
-    const omittedLine = omittedCount > 0 ? `\n- ...and ${omittedCount} more` : "";
+    const keyList = keys.map((key) => `- ${key}`).join("\n");
 
-    return [
+    const context = [
       "OpenWork environment variables configured:",
-      `${keyList}${omittedLine}`,
+      keyList,
       "Only names are shown; values are secret. Use these names when relevant.",
     ].join("\n");
+    envSystemContextCache.set(cacheKey, context);
+    return context;
   } catch {
     return undefined;
   }

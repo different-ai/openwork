@@ -1357,6 +1357,7 @@ export default {
   "settings.environment.empty_title": "还没有环境变量",
   "settings.environment.empty_value": "（空）",
   "settings.environment.footer_hint": "以 OPENWORK_ 或 OPENCODE_ 开头的键名保留给内部使用，不可在此设置。",
+  "settings.environment.override_hint": "OpenWork 启动前已经存在的环境变量，会优先于这里保存的值。",
   "settings.environment.hide": "隐藏",
   "settings.environment.hide_value": "隐藏 {key} 的值",
   "settings.environment.key_hint": "仅允许字母、数字和下划线；不能以数字开头。",

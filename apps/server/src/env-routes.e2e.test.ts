@@ -177,8 +177,10 @@ describe("env routes", () => {
       body: JSON.stringify({ key: "bad-key", value: "x" }),
     });
     expect(put.status).toBe(400);
-    const body = (await put.json()) as { code: string };
+    const body = (await put.json()) as { code: string; message: string };
     expect(body.code).toBe("invalid_env_key");
+    expect(body.message).toBe("Invalid environment variable name");
+    expect(body.message).not.toContain("bad-key");
   });
 
   test("PUT rejects reserved keys with 400", async () => {
@@ -189,8 +191,10 @@ describe("env routes", () => {
       body: JSON.stringify({ key: "OPENWORK_TOKEN", value: "x" }),
     });
     expect(put.status).toBe(400);
-    const body = (await put.json()) as { code: string };
+    const body = (await put.json()) as { code: string; message: string };
     expect(body.code).toBe("reserved_env_key");
+    expect(body.message).toBe("Environment variable name is reserved for OpenWork internals");
+    expect(body.message).not.toContain("OPENWORK_TOKEN");
   });
 
   test("PUT with no entries returns 400", async () => {

@@ -1,21 +1,31 @@
-const PENDING_CHANGES_SESSION_KEY = "openwork.settings.environment.pendingChanges";
+const PENDING_CHANGES_KEY = "openwork.settings.environment.pendingChanges";
 
-export function readOpenworkEnvPendingChanges(): boolean {
-  if (typeof window === "undefined") return false;
+function getStorage(kind: "localStorage" | "sessionStorage"): Storage | null {
+  if (typeof window === "undefined") return null;
   try {
-    return window.sessionStorage.getItem(PENDING_CHANGES_SESSION_KEY) === "1";
+    return window[kind] ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
+export function readOpenworkEnvPendingChanges(): boolean {
+  return (
+    getStorage("localStorage")?.getItem(PENDING_CHANGES_KEY) === "1" ||
+    getStorage("sessionStorage")?.getItem(PENDING_CHANGES_KEY) === "1"
+  );
+}
+
 export function writeOpenworkEnvPendingChanges(value: boolean): void {
-  if (typeof window === "undefined") return;
+  const localStorage = getStorage("localStorage");
+  const sessionStorage = getStorage("sessionStorage");
   try {
     if (value) {
-      window.sessionStorage.setItem(PENDING_CHANGES_SESSION_KEY, "1");
+      localStorage?.setItem(PENDING_CHANGES_KEY, "1");
+      sessionStorage?.removeItem(PENDING_CHANGES_KEY);
     } else {
-      window.sessionStorage.removeItem(PENDING_CHANGES_SESSION_KEY);
+      localStorage?.removeItem(PENDING_CHANGES_KEY);
+      sessionStorage?.removeItem(PENDING_CHANGES_KEY);
     }
   } catch {
     // ignore persistence failures

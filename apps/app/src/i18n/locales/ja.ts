@@ -1353,6 +1353,7 @@ export default {
   "settings.environment.empty_title": "環境変数はまだありません",
   "settings.environment.empty_value": "（空）",
   "settings.environment.footer_hint": "OPENWORK_ / OPENCODE_ で始まるキーは内部予約のため、ここでは設定できません。",
+  "settings.environment.override_hint": "OpenWork 起動前に設定済みの環境変数は、ここで保存した値より優先されます。",
   "settings.environment.hide": "隠す",
   "settings.environment.hide_value": "{key} の値を隠す",
   "settings.environment.key_hint": "英字・数字・アンダースコアのみ。数字で始められません。",

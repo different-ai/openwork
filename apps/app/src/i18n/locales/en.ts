@@ -1624,6 +1624,7 @@ export default {
   "settings.environment.empty_title": "No environment variables yet",
   "settings.environment.empty_value": "(empty)",
   "settings.environment.footer_hint": "Keys starting with OPENWORK_ or OPENCODE_ are reserved for internal wiring and cannot be set here.",
+  "settings.environment.override_hint": "Environment variables set before OpenWork starts take precedence over values saved here.",
   "settings.environment.hide": "Hide",
   "settings.environment.hide_value": "Hide value for {key}",
   "settings.environment.key_hint": "Letters, digits, and underscores. Cannot start with a digit.",
