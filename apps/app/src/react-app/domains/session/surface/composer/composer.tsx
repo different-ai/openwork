@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Loader2, Mic, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
 import { currentLocale, t, type Language } from "../../../../../i18n";
@@ -10,6 +10,33 @@ import {
   ReactComposerNotice,
   type ReactComposerNotice as ReactComposerNoticeData,
 } from "./notice";
+
+type VoiceDraftState = "idle" | "listening" | "transcribing" | "unsupported";
+
+type SpeechRecognitionCtor = new () => {
+  abort: () => void;
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: null | (() => void);
+  onerror: null | ((event: { error?: string }) => void);
+  onresult: null | ((event: {
+    resultIndex: number;
+    results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>;
+  }) => void);
+  onstart: null | (() => void);
+  start: () => void;
+  stop: () => void;
+};
+
+function getSpeechRecognitionCtor(): null | SpeechRecognitionCtor {
+  if (typeof window === "undefined") return null;
+  const w = window as Window & {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
 
 type MentionItem = {
   id: string;
@@ -242,6 +269,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
+  const [voiceDraftState, setVoiceDraftState] = useState<VoiceDraftState>(() =>
+    getSpeechRecognitionCtor() ? "idle" : "unsupported",
+  );
+  const voiceRecognitionRef = useRef<InstanceType<SpeechRecognitionCtor> | null>(null);
+  const voiceTranscriptRef = useRef("");
+  const latestDraftRef = useRef(props.draft ?? "");
+  const latestOnDraftChangeRef = useRef(props.onDraftChange);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
   const variantMenuRef = useRef<HTMLDivElement | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
@@ -255,7 +289,12 @@ export function ReactSessionComposer(props: ComposerProps) {
   const draftRef = useRef(props.draft);
   useEffect(() => {
     draftRef.current = props.draft;
+    latestDraftRef.current = props.draft ?? "";
   }, [props.draft]);
+
+  useEffect(() => {
+    latestOnDraftChangeRef.current = props.onDraftChange;
+  }, [props.onDraftChange]);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
   const slashQuery = slashMatch?.[1] ?? "";
@@ -286,6 +325,72 @@ export function ReactSessionComposer(props: ComposerProps) {
     setMcpStatus(props.mcpStatus ?? null);
     setMcpStatuses(props.mcpStatuses ?? {});
   }, [props.mcpServers, props.mcpStatus, props.mcpStatuses]);
+
+  useEffect(() => {
+    const Ctor = getSpeechRecognitionCtor();
+
+    if (!Ctor) {
+      setVoiceDraftState("unsupported");
+      voiceRecognitionRef.current = null;
+      return;
+    }
+
+    const recognition = new Ctor();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = navigator.language || "en-US";
+
+    recognition.onstart = () => {
+      voiceTranscriptRef.current = "";
+      setVoiceDraftState("listening");
+    };
+
+    recognition.onresult = (event) => {
+      let finalText = voiceTranscriptRef.current;
+
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const transcript = result?.[0]?.transcript?.trim();
+
+        if (result?.isFinal && transcript) {
+          finalText = finalText ? `${finalText} ${transcript}` : transcript;
+        }
+      }
+
+      voiceTranscriptRef.current = finalText;
+    };
+
+    recognition.onerror = (event) => {
+      console.warn("Speech recognition failed", event.error);
+      voiceTranscriptRef.current = "";
+      setVoiceDraftState("idle");
+    };
+
+    recognition.onend = () => {
+      const finalText = voiceTranscriptRef.current.trim();
+      voiceTranscriptRef.current = "";
+      setVoiceDraftState("idle");
+
+      if (finalText) {
+        const previous = latestDraftRef.current.trim();
+        const nextDraft = previous ? `${previous} ${finalText}` : finalText;
+        latestOnDraftChangeRef.current(nextDraft);
+      }
+    };
+
+    voiceRecognitionRef.current = recognition;
+    setVoiceDraftState("idle");
+
+    return () => {
+      recognition.onstart = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.abort();
+      voiceRecognitionRef.current = null;
+      voiceTranscriptRef.current = "";
+    };
+  }, []);
 
   useEffect(() => {
     setAgentMenuIndex(0);
@@ -476,6 +581,29 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
     return false;
   };
+
+  const handleVoiceDraft = useCallback(() => {
+    const recognition = voiceRecognitionRef.current;
+
+    if (!recognition) return;
+
+    if (voiceDraftState === "listening") {
+      setVoiceDraftState("transcribing");
+      recognition.stop();
+      return;
+    }
+
+    if (voiceDraftState !== "idle") return;
+
+    voiceTranscriptRef.current = "";
+
+    try {
+      recognition.start();
+    } catch (error) {
+      console.warn("Speech recognition could not start", error);
+      setVoiceDraftState("idle");
+    }
+  }, [voiceDraftState]);
 
   // Listen for cross-app focus + draft flush events. The Solid shell uses
   // these from deep-link handlers, the command palette, and the browser
@@ -735,6 +863,15 @@ export function ReactSessionComposer(props: ComposerProps) {
     );
   };
 
+  const voiceDraftLabel =
+    voiceDraftState === "unsupported"
+      ? "Speech-to-text is not supported in this browser"
+      : voiceDraftState === "listening"
+        ? "Stop recording and insert transcript"
+        : voiceDraftState === "transcribing"
+          ? "Transcribing speech..."
+          : "Record speech and insert transcript";
+
   return (
     <div
       ref={rootRef}
@@ -919,6 +1056,28 @@ export function ReactSessionComposer(props: ComposerProps) {
                   title={props.attachmentsDisabledReason ?? t("composer.attach_files", locale)}
                 >
                   <Paperclip size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleVoiceDraft}
+                  title={voiceDraftLabel}
+                  aria-label={voiceDraftLabel}
+                  disabled={voiceDraftState === "transcribing" || voiceDraftState === "unsupported"}
+                  className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${
+                    voiceDraftState === "unsupported"
+                      ? "cursor-not-allowed text-gray-8 opacity-40"
+                      : voiceDraftState === "listening"
+                        ? "bg-gray-3 text-gray-12"
+                        : voiceDraftState === "transcribing"
+                          ? "cursor-not-allowed text-gray-10 opacity-60"
+                          : "text-gray-10 hover:bg-gray-3"
+                  }`}
+                >
+                  {voiceDraftState === "transcribing" ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Mic size={16} className={voiceDraftState === "listening" ? "animate-pulse" : ""} />
+                  )}
                 </button>
                 <div ref={toolMenuRef} className="relative">
                   <button
