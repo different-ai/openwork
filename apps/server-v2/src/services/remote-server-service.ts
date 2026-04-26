@@ -3,22 +3,13 @@ import { requestRemoteOpenwork } from "../adapters/remote-openwork.js";
 import { createRemoteWorkspaceId, createServerId } from "../database/identifiers.js";
 import type { ServerRepositories } from "../database/repositories.js";
 import type { HostingKind, JsonObject, ServerRecord, WorkspaceRecord } from "../database/types.js";
+import { normalizeUrl } from "./url-safety.js";
 
 type RemoteWorkspaceSnapshot = {
   directory: string | null;
   displayName: string;
   remoteWorkspaceId: string;
 };
-
-function normalizeUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("baseUrl is required.");
-  }
-  const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
-  const url = new URL(withProtocol);
-  return url.toString().replace(/\/+$/, "");
-}
 
 function stripWorkspaceMount(value: string) {
   const url = new URL(normalizeUrl(value));
