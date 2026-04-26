@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { routePath as getRoutePath } from "hono/route";
+import { routePath } from "hono/route";
 import type { AppBindings } from "../context/request-context.js";
 import { getTraceApi } from "./otel-api.js";
 
@@ -28,7 +28,7 @@ export const otelTracingMiddleware: MiddlewareHandler<AppBindings> = async (c, n
 
       await next();
 
-      const matched = getRoutePath(c);
+      const matched = routePath(c);
       if (matched) {
         span.updateName(`${c.req.method} ${matched}`);
         span.setAttribute("http.route", matched);
