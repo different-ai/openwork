@@ -7,6 +7,7 @@ import {
   formatBillingStatusLabel,
   getBillingStatusLabel,
   getWorkspacePlanEntitlementCopy,
+  getWorkspacePlanInlineEntitlementCopy,
   getWorkspacePlanShortEntitlementCopy,
   isLocalMockBillingEnabled,
 } from "./billing-display";
@@ -117,6 +118,7 @@ describe("billing display helpers", () => {
 
   test("keeps plan entitlement copy centralized", () => {
     assert.equal(getWorkspacePlanEntitlementCopy(), "Includes up to 5 members and 1 hosted worker.");
+    assert.equal(getWorkspacePlanInlineEntitlementCopy(), "include up to 5 members and 1 hosted worker");
     assert.equal(getWorkspacePlanShortEntitlementCopy(), "5 members included · 1 hosted worker");
   });
 });

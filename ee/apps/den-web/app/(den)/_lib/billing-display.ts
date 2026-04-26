@@ -110,6 +110,13 @@ export function getWorkspacePlanEntitlementCopy() {
   return `Includes up to ${members} and ${workers}.`;
 }
 
+export function getWorkspacePlanInlineEntitlementCopy() {
+  const members = formatIncludedNoun(WORKSPACE_PLAN_LIMITS.includedMembers, "member", "members");
+  const workers = formatIncludedNoun(WORKSPACE_PLAN_LIMITS.includedHostedWorkers, "hosted worker", "hosted workers");
+
+  return `include up to ${members} and ${workers}`;
+}
+
 export function getWorkspacePlanShortEntitlementCopy() {
   const members = formatIncludedNoun(WORKSPACE_PLAN_LIMITS.includedMembers, "member", "members");
   const workers = formatIncludedNoun(WORKSPACE_PLAN_LIMITS.includedHostedWorkers, "hosted worker", "hosted workers");

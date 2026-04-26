@@ -7,6 +7,7 @@ import {
   formatBillingAmountLabel,
   formatBillingPlanLabels,
   getBillingStatusLabel,
+  getWorkspacePlanInlineEntitlementCopy,
   getWorkspacePlanShortEntitlementCopy,
 } from "../../../../_lib/billing-display";
 import { formatIsoDate } from "../../../../_lib/den-flow";
@@ -79,7 +80,7 @@ export function BillingDashboardScreen() {
   const workspacePlanDescription = billingSummary?.hasActivePlan
     ? `This workspace's plan is ${statusLabel.toLowerCase()} and renews on ${nextBillingDate}.`
     : planLabels.available
-      ? `Workspace plans are ${planLabels.inline} and include up to 5 members plus 1 hosted worker.`
+      ? `Workspace plans are ${planLabels.inline} and ${getWorkspacePlanInlineEntitlementCopy()}.`
       : "Workspace plan pricing is unavailable. Refresh billing to retry.";
 
   return (

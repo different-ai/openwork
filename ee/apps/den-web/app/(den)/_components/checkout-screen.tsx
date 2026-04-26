@@ -15,6 +15,7 @@ import {
   buildLocalMockBillingSummary,
   formatBillingPlanLabels,
   getBillingStatusLabel,
+  getWorkspacePlanInlineEntitlementCopy,
   getWorkspacePlanEntitlementCopy,
   isLocalMockBillingEnabled,
 } from "../_lib/billing-display";
@@ -219,7 +220,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
             <p className="den-eyebrow">OpenWork Cloud</p>
             <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Start with one workspace plan for {compactPlanAmountLabel}. Each plan includes up to 5 members and 1 hosted worker.
+              Start with one workspace plan for {compactPlanAmountLabel}. Each plan {getWorkspacePlanInlineEntitlementCopy()}.
             </p>
 
             <div className="flex flex-wrap gap-3">
