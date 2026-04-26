@@ -1721,7 +1721,7 @@ export default {
   "settings.window_appearance_desc": "Personaliza la apariencia de la ventana.",
   "settings.worker_id_label": "Worker {id}",
   "settings.worker_unresolved": "Worker {entorno de ejecuciónWorkspaceId}",
-  "settings.workspace_config_desc": ".opencode/openwork.json",
+  "settings.workspace_config_desc": ".openwork/openwork.json",
   "settings.workspace_config_title": "Configuración del espacio de trabajo",
   "settings.workspace_debug_events_label": "Eventos de depuración del espacio de trabajo",
   "settings.workspace_fallback_name": "workspace",

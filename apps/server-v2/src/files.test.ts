@@ -191,7 +191,7 @@ test("file routes cover simple content, file sessions, inbox, artifacts, and rel
   expect(inboxList.status).toBe(200);
   expect(inboxListBody.data.items[0].name).toBe("hello.txt");
 
-  const outboxDir = path.join(workspaceRoot, ".opencode", "openwork", "outbox");
+  const outboxDir = path.join(workspaceRoot, ".openwork", "outbox");
   fs.mkdirSync(outboxDir, { recursive: true });
   fs.writeFileSync(path.join(outboxDir, "artifact.bin"), "artifact", "utf8");
 
@@ -223,7 +223,7 @@ test("remote workspace config and file routes proxy through the local server", a
           ok: true,
           data: {
             effective: { opencode: { permission: { external_directory: { "/srv/alpha/*": "allow" } } }, openwork: {} },
-            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
+            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.openwork/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
             stored: { openwork: { reload: { auto: true } }, opencode: {} },
             updatedAt: new Date().toISOString(),
             workspaceId: "remote-alpha",
@@ -236,7 +236,7 @@ test("remote workspace config and file routes proxy through the local server", a
           ok: true,
           data: {
             effective: { opencode: { permission: { external_directory: { "/srv/alpha/*": "allow", "/srv/shared/*": "allow" } } }, openwork: {} },
-            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.opencode/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
+            materialized: { compatibilityOpencodePath: null, compatibilityOpenworkPath: null, configDir: "/srv/config", configOpenworkPath: "/srv/config/.openwork/openwork.json", configOpencodePath: "/srv/config/opencode.jsonc" },
             stored: { openwork: { reload: { auto: true } }, opencode: {} },
             updatedAt: new Date().toISOString(),
             workspaceId: "remote-alpha",

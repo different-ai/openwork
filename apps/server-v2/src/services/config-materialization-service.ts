@@ -320,7 +320,19 @@ export function createConfigMaterializationService(input: {
     if (!configDir) {
       throw new RouteError(500, "internal_error", `Workspace ${workspace.id} is missing its config directory.`);
     }
-    return path.join(configDir, ".opencode", "openwork.json");
+    const newPath = path.join(configDir, ".openwork", "openwork.json");
+    if (fs.existsSync(newPath)) return newPath;
+    const legacyPath = path.join(configDir, ".opencode", "openwork.json");
+    if (fs.existsSync(legacyPath)) return legacyPath;
+    return newPath;
+  }
+
+  function workspaceOpenworkWritePath(workspace: WorkspaceRecord) {
+    const configDir = workspace.configDir?.trim();
+    if (!configDir) {
+      throw new RouteError(500, "internal_error", `Workspace ${workspace.id} is missing its config directory.`);
+    }
+    return path.join(configDir, ".openwork", "openwork.json");
   }
 
   function compatibilityOpencodeConfigPath(workspace: WorkspaceRecord) {
@@ -330,7 +342,18 @@ export function createConfigMaterializationService(input: {
 
   function compatibilityOpenworkConfigPath(workspace: WorkspaceRecord) {
     const dataDir = workspace.dataDir?.trim();
-    return dataDir ? path.join(dataDir, ".opencode", "openwork.json") : null;
+    if (!dataDir) return null;
+    const newPath = path.join(dataDir, ".openwork", "openwork.json");
+    if (fs.existsSync(newPath)) return newPath;
+    const legacyPath = path.join(dataDir, ".opencode", "openwork.json");
+    if (fs.existsSync(legacyPath)) return legacyPath;
+    return newPath;
+  }
+
+  function compatibilityOpenworkWritePath(workspace: WorkspaceRecord) {
+    const dataDir = workspace.dataDir?.trim();
+    if (!dataDir) return null;
+    return path.join(dataDir, ".openwork", "openwork.json");
   }
 
   function workspaceSkillRoots(workspace: WorkspaceRecord) {
@@ -589,10 +612,10 @@ export function createConfigMaterializationService(input: {
       },
       materialized: {
         compatibilityOpencodePath: compatibilityOpencodeConfigPath(workspace),
-        compatibilityOpenworkPath: compatibilityOpenworkConfigPath(workspace),
+        compatibilityOpenworkPath: compatibilityOpenworkWritePath(workspace),
         configDir: workspace.configDir,
         configOpencodePath: workspaceOpencodeConfigPath(workspace),
-        configOpenworkPath: workspaceOpenworkConfigPath(workspace),
+        configOpenworkPath: workspaceOpenworkWritePath(workspace),
       },
       stored: {
         opencode: storedOpencode,
@@ -714,6 +737,7 @@ export function createConfigMaterializationService(input: {
         workspace.configDir,
         workspace.dataDir,
         workspace.dataDir ? path.join(workspace.dataDir, ".opencode") : null,
+        workspace.dataDir ? path.join(workspace.dataDir, ".openwork") : null,
       ].filter((value): value is string => Boolean(value));
     },
 

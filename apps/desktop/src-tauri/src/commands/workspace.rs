@@ -19,6 +19,18 @@ use walkdir::WalkDir;
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+fn resolve_openwork_config_read_path(workspace_root: &Path) -> PathBuf {
+    let new_path = workspace_root.join(".openwork").join("openwork.json");
+    if new_path.exists() {
+        return new_path;
+    }
+    let legacy_path = workspace_root.join(".opencode").join("openwork.json");
+    if legacy_path.exists() {
+        return legacy_path;
+    }
+    new_path
+}
+
 fn build_workspace_list(state: crate::types::WorkspaceState) -> WorkspaceList {
     let watched_id = if state.watched_workspace_id.trim().is_empty() {
         None
@@ -570,18 +582,13 @@ pub fn workspace_add_authorized_root(
         return Err("folderPath is required".to_string());
     }
 
-    let openwork_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("openwork.json");
+    let ws = PathBuf::from(&workspace_path);
+    let openwork_read_path = resolve_openwork_config_read_path(&ws);
+    let openwork_write_path = ws.join(".openwork").join("openwork.json");
 
-    if let Some(parent) = openwork_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
-    }
-
-    let mut config: WorkspaceOpenworkConfig = if openwork_path.exists() {
-        let raw = fs::read_to_string(&openwork_path)
-            .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+    let mut config: WorkspaceOpenworkConfig = if openwork_read_path.exists() {
+        let raw = fs::read_to_string(&openwork_read_path)
+            .map_err(|e| format!("Failed to read {}: {e}", openwork_read_path.display()))?;
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
         let mut cfg = WorkspaceOpenworkConfig::default();
@@ -595,11 +602,16 @@ pub fn workspace_add_authorized_root(
         config.authorized_roots.push(folder_path);
     }
 
+    if let Some(parent) = openwork_write_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+
     fs::write(
-        &openwork_path,
+        &openwork_write_path,
         serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+    .map_err(|e| format!("Failed to write {}: {e}", openwork_write_path.display()))?;
 
     Ok(ExecResult {
         ok: true,
@@ -619,9 +631,8 @@ pub fn workspace_openwork_read(
         return Err("workspacePath is required".to_string());
     }
 
-    let openwork_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
-        .join("openwork.json");
+    let ws = PathBuf::from(&workspace_path);
+    let openwork_path = resolve_openwork_config_read_path(&ws);
 
     if !openwork_path.exists() {
         let mut cfg = WorkspaceOpenworkConfig::default();
@@ -648,7 +659,7 @@ pub fn workspace_openwork_write(
     }
 
     let openwork_path = PathBuf::from(&workspace_path)
-        .join(".opencode")
+        .join(".openwork")
         .join("openwork.json");
 
     if let Some(parent) = openwork_path.parent() {
@@ -730,9 +741,12 @@ fn collect_workspace_entries(
         }
     }
 
-    let opencode_dir = workspace_root.join(".opencode");
-    if opencode_dir.exists() {
-        for entry in WalkDir::new(&opencode_dir) {
+    for dir_name in [".opencode", ".openwork"] {
+        let dir = workspace_root.join(dir_name);
+        if !dir.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(&dir) {
             let entry = entry.map_err(|e| e.to_string())?;
             if !entry.file_type().is_file() {
                 continue;
@@ -897,7 +911,7 @@ pub fn workspace_import_config(
         }) {
             return Err("Archive contains an unsafe path".to_string());
         }
-        if !(name == "opencode.json" || name.starts_with(".opencode/")) {
+        if !(name == "opencode.json" || name.starts_with(".opencode/") || name.starts_with(".openwork/")) {
             continue;
         }
         if let Some(file_name) = entry_path.file_name().and_then(|entry| entry.to_str()) {
@@ -924,17 +938,19 @@ pub fn workspace_import_config(
     }
 
     let opencode_dir = target_path.join(".opencode");
-    if !opencode_dir.exists() {
-        return Err("Archive is missing .opencode config".to_string());
+    let openwork_dir = target_path.join(".openwork");
+    if !opencode_dir.exists() && !openwork_dir.exists() {
+        return Err("Archive is missing workspace config".to_string());
     }
 
-    let openwork_path = target_path.join(".opencode").join("openwork.json");
+    let openwork_read_path = resolve_openwork_config_read_path(&target_path);
+    let openwork_write_path = target_path.join(".openwork").join("openwork.json");
     let mut preset = "starter".to_string();
     let mut workspace_name = name.clone().filter(|value| !value.trim().is_empty());
 
-    if openwork_path.exists() {
-        let raw = fs::read_to_string(&openwork_path)
-            .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+    if openwork_read_path.exists() {
+        let raw = fs::read_to_string(&openwork_read_path)
+            .map_err(|e| format!("Failed to read {}: {e}", openwork_read_path.display()))?;
         if let Ok(mut config) = serde_json::from_str::<WorkspaceOpenworkConfig>(&raw) {
             config.authorized_roots = vec![target_dir.clone()];
             if let Some(workspace) = &config.workspace {
@@ -950,23 +966,27 @@ pub fn workspace_import_config(
                     }
                 }
             }
+            if let Some(parent) = openwork_write_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+            }
             fs::write(
-                &openwork_path,
+                &openwork_write_path,
                 serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
             )
-            .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+            .map_err(|e| format!("Failed to write {}: {e}", openwork_write_path.display()))?;
         }
     } else {
         let config = WorkspaceOpenworkConfig::new(&target_dir, &preset, now_ms());
-        if let Some(parent) = openwork_path.parent() {
+        if let Some(parent) = openwork_write_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
         }
         fs::write(
-            &openwork_path,
+            &openwork_write_path,
             serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+        .map_err(|e| format!("Failed to write {}: {e}", openwork_write_path.display()))?;
     }
 
     let name = workspace_name

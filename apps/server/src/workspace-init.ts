@@ -1,9 +1,10 @@
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
-import { openworkConfigPath, opencodeConfigPath } from "./workspace-files.js";
+import { openworkConfigPath, newOpenworkConfigPath, opencodeConfigPath } from "./workspace-files.js";
+import { migrateOpenworkConfig } from "./config-migration.js";
 import { readJsoncFile, writeJsoncFile } from "./jsonc.js";
 
 const OPENWORK_AGENT = `---
@@ -51,8 +52,9 @@ async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: stri
     authorizedRoots: [workspaceRoot],
     reload: null,
   };
-  await ensureDir(join(workspaceRoot, ".opencode"));
-  await writeFile(path, JSON.stringify(config, null, 2) + "\n", "utf8");
+  const writePath = newOpenworkConfigPath(workspaceRoot);
+  await ensureDir(dirname(writePath));
+  await writeFile(writePath, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<void> {
@@ -85,6 +87,22 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
     throw new ApiError(400, "invalid_workspace_path", "workspace path is required");
   }
   await ensureDir(workspaceRoot);
+
+  // migrate legacy .opencode/openwork.json -> .openwork/openwork.json
+  try {
+    const migration = migrateOpenworkConfig(workspaceRoot);
+    if (migration.status === "migrated") {
+      console.info(JSON.stringify({ scope: "openwork.config-migration", status: "migrated", from: migration.from, to: migration.to }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({
+      scope: "openwork.config-migration",
+      status: "failed",
+      workspaceRoot,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
+
   await ensureOpencodeConfig(workspaceRoot);
   await ensureOpenworkAgent(workspaceRoot);
   await ensureWorkspaceOpenworkConfig(workspaceRoot, preset);

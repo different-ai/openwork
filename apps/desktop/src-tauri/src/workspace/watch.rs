@@ -165,6 +165,13 @@ pub fn update_workspace_watch(
             .map_err(|e| format!("Failed to watch .opencode: {e}"))?;
     }
 
+    let openwork_dir = root.join(".openwork");
+    if openwork_dir.exists() {
+        watcher
+            .watch(&openwork_dir, RecursiveMode::Recursive)
+            .map_err(|e| format!("Failed to watch .openwork: {e}"))?;
+    }
+
     *state
         .root
         .lock()

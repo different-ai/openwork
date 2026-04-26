@@ -350,7 +350,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       });
       if (!result.ok) {
         throw new Error(
-          result.stderr || result.stdout || "Failed to write .opencode/openwork.json",
+          result.stderr || result.stdout || "Failed to write .openwork/openwork.json",
         );
       }
       return true;

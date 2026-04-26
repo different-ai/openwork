@@ -311,11 +311,11 @@ function parseOperations(input: unknown) {
 }
 
 function resolveInboxDir(workspaceRoot: string) {
-  return path.join(workspaceRoot, ".opencode", "openwork", "inbox");
+  return path.join(workspaceRoot, ".openwork", "inbox");
 }
 
 function resolveOutboxDir(workspaceRoot: string) {
-  return path.join(workspaceRoot, ".opencode", "openwork", "outbox");
+  return path.join(workspaceRoot, ".openwork", "outbox");
 }
 
 function encodeArtifactId(relativePath: string) {

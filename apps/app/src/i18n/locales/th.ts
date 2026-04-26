@@ -1704,7 +1704,7 @@ export default {
   "settings.window_appearance_desc": "ปรับแต่งรูปลักษณ์หน้าต่าง",
   "settings.worker_id_label": "Worker {id}",
   "settings.worker_unresolved": "Worker {runtimeWorkspaceId}",
-  "settings.workspace_config_desc": ".opencode/openwork.json",
+  "settings.workspace_config_desc": ".openwork/openwork.json",
   "settings.workspace_config_title": "การตั้งค่าพื้นที่ทำงาน",
   "settings.workspace_debug_events_label": "เหตุการณ์ดีบักพื้นที่ทำงาน",
   "settings.workspace_fallback_name": "พื้นที่ทำงาน",

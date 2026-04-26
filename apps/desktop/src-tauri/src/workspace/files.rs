@@ -537,18 +537,19 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
         .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
     }
 
-    let openwork_path = root.join(".opencode").join("openwork.json");
-    if !openwork_path.exists() {
+    let openwork_new_path = root.join(".openwork").join("openwork.json");
+    let openwork_legacy_path = root.join(".opencode").join("openwork.json");
+    if !openwork_new_path.exists() && !openwork_legacy_path.exists() {
         let openwork = WorkspaceOpenworkConfig::new(workspace_path, preset, now_ms());
 
-        fs::create_dir_all(openwork_path.parent().unwrap())
-            .map_err(|e| format!("Failed to create {}: {e}", openwork_path.display()))?;
+        fs::create_dir_all(openwork_new_path.parent().unwrap())
+            .map_err(|e| format!("Failed to create {}: {e}", openwork_new_path.display()))?;
 
         fs::write(
-            &openwork_path,
+            &openwork_new_path,
             serde_json::to_string_pretty(&openwork).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+        .map_err(|e| format!("Failed to write {}: {e}", openwork_new_path.display()))?;
     }
 
     Ok(())

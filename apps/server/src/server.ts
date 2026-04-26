@@ -18,7 +18,7 @@ import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { startReloadWatchers } from "./reload-watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
-import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
+import { opencodeConfigPath, openworkConfigPath, newOpenworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
@@ -766,8 +766,8 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       files: {
         injection: writeEnabled && inboxEnabled,
         outbox: outboxEnabled,
-        inboxPath: ".opencode/openwork/inbox/",
-        outboxPath: ".opencode/openwork/outbox/",
+        inboxPath: ".openwork/inbox/",
+        outboxPath: ".openwork/outbox/",
         maxBytes,
       },
     },
@@ -839,11 +839,11 @@ function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
 }
 
 function resolveInboxDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "inbox");
+  return join(workspaceRoot, ".openwork", "inbox");
 }
 
 function resolveOutboxDir(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "outbox");
+  return join(workspaceRoot, ".openwork", "outbox");
 }
 
 export function normalizeWorkspaceRelativePath(input: string, options: { allowSubdirs: boolean }): string {
@@ -4942,10 +4942,10 @@ async function reloadOpencodeEngine(config: ServerConfig, workspace: WorkspaceIn
 }
 
 async function writeOpenworkConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
-  const path = openworkConfigPath(workspaceRoot);
+  const configPath = newOpenworkConfigPath(workspaceRoot);
   const next = merge ? { ...(await readOpenworkConfig(workspaceRoot)), ...payload } : payload;
-  await ensureDir(join(workspaceRoot, ".opencode"));
-  await writeFile(path, JSON.stringify(next, null, 2) + "\n", "utf8");
+  await ensureDir(dirname(configPath));
+  await writeFile(configPath, JSON.stringify(next, null, 2) + "\n", "utf8");
 }
 
 async function requireApproval(

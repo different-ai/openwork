@@ -164,12 +164,9 @@ fn current_openwork_state_paths(app: &AppHandle) -> Result<Vec<PathBuf>, String>
     ];
 
     if let Some(home) = home_dir() {
-        paths.push(
-            home.join("OpenWork")
-                .join("Welcome")
-                .join(".opencode")
-                .join("openwork.json"),
-        );
+        let welcome = home.join("OpenWork").join("Welcome");
+        let resolved = resolve_openwork_config_read_path(&welcome);
+        paths.push(resolved);
     }
 
     Ok(paths)
@@ -228,10 +225,22 @@ fn validate_server_name(name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+fn resolve_openwork_config_read_path(workspace_root: &Path) -> PathBuf {
+    let new_path = workspace_root.join(".openwork").join("openwork.json");
+    if new_path.exists() {
+        return new_path;
+    }
+    let legacy_path = workspace_root.join(".opencode").join("openwork.json");
+    if legacy_path.exists() {
+        return legacy_path;
+    }
+    new_path
+}
+
 fn read_workspace_openwork_config(
     workspace_path: &Path,
 ) -> Result<WorkspaceOpenworkConfig, String> {
-    let openwork_path = workspace_path.join(".opencode").join("openwork.json");
+    let openwork_path = resolve_openwork_config_read_path(workspace_path);
     if !openwork_path.exists() {
         let mut cfg = WorkspaceOpenworkConfig::default();
         let workspace_value = workspace_path.to_string_lossy().to_string();

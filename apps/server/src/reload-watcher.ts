@@ -71,11 +71,15 @@ function startWorkspaceReloadWatcher(input: {
   const root = resolve(workspace.path);
 
   const trees: DirectoryTreeWatcher[] = [];
+  let legacyConfigWatcher: FSWatcher | null = null;
+  let openworkConfigWatcher: FSWatcher | null = null;
   const closeAll = () => {
     for (const tree of trees) {
       tree.close();
     }
     rootWatcher?.close();
+    legacyConfigWatcher?.close();
+    openworkConfigWatcher?.close();
   };
 
   const record = (reason: ReloadReason, trigger?: ReloadTrigger) => {
@@ -97,7 +101,7 @@ function startWorkspaceReloadWatcher(input: {
             return;
           }
 
-          if (name === "opencode.json" || name === "opencode.jsonc") {
+          if (name === "opencode.json" || name === "opencode.jsonc" || name === "openwork.json") {
             record("config", {
               type: "config",
               name,
@@ -116,8 +120,8 @@ function startWorkspaceReloadWatcher(input: {
             return;
           }
 
-          // If .opencode is created/removed, rescan the relevant trees.
-          if (name === ".opencode") {
+          // If .opencode or .openwork is created/removed, rescan the relevant trees.
+          if (name === ".opencode" || name === ".openwork") {
             for (const tree of trees) tree.scheduleRescan();
           }
         },
@@ -139,6 +143,77 @@ function startWorkspaceReloadWatcher(input: {
   }
 
   const opencodeRoot = join(root, ".opencode");
+  const openworkRoot = join(root, ".openwork");
+
+  // Watch .opencode/ for legacy openwork.json edits.
+  if (existsSync(opencodeRoot)) {
+    try {
+      legacyConfigWatcher = watch(
+        opencodeRoot,
+        { persistent: false },
+        (_eventType, filename) => {
+          const raw = filename ? filename.toString() : "";
+          const name = raw.trim();
+          if (name === "openwork.json") {
+            record("config", {
+              type: "config",
+              name,
+              action: "updated",
+              path: join(opencodeRoot, name),
+            });
+          }
+        },
+      );
+      legacyConfigWatcher.on("error", (error) => {
+        logger?.log("warn", "Reload watcher legacy config error", {
+          workspaceId: workspace.id,
+          dir: opencodeRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    } catch (error) {
+      logger?.log("warn", "Reload watcher legacy config failed", {
+        workspaceId: workspace.id,
+        dir: opencodeRoot,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Watch .openwork/ for openwork.json edits.
+  if (existsSync(openworkRoot)) {
+    try {
+      openworkConfigWatcher = watch(
+        openworkRoot,
+        { persistent: false },
+        (_eventType, filename) => {
+          const raw = filename ? filename.toString() : "";
+          const name = raw.trim();
+          if (name === "openwork.json") {
+            record("config", {
+              type: "config",
+              name,
+              action: "updated",
+              path: join(openworkRoot, name),
+            });
+          }
+        },
+      );
+      openworkConfigWatcher.on("error", (error) => {
+        logger?.log("warn", "Reload watcher openwork config error", {
+          workspaceId: workspace.id,
+          dir: openworkRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    } catch (error) {
+      logger?.log("warn", "Reload watcher openwork config failed", {
+        workspaceId: workspace.id,
+        dir: openworkRoot,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   trees.push(
     createDirectoryTreeWatcher({

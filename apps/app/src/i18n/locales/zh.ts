@@ -1707,7 +1707,7 @@ export default {
   "settings.window_appearance_desc": "自定义窗口外观。",
   "settings.worker_id_label": "工作区{id}",
   "settings.worker_unresolved": "工作区{runtimeWorkspaceId}",
-  "settings.workspace_config_desc": ".opencode/openwork.json",
+  "settings.workspace_config_desc": ".openwork/openwork.json",
   "settings.workspace_config_title": "工作区配置",
   "settings.workspace_debug_events_label": "工作区调试事件",
   "settings.workspace_fallback_name": "工作区",

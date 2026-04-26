@@ -339,17 +339,29 @@ function defaultWorkspaceOpenworkConfig(workspacePath) {
   };
 }
 
+function resolveOpenworkConfigReadPath(workspacePath) {
+  const newPath = path.join(workspacePath, ".openwork", "openwork.json");
+  if (existsSync(newPath)) return newPath;
+  const legacyPath = path.join(workspacePath, ".opencode", "openwork.json");
+  if (existsSync(legacyPath)) return legacyPath;
+  return newPath;
+}
+
 async function readWorkspaceOpenworkConfig(workspacePath) {
-  const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
+  const openworkPath = resolveOpenworkConfigReadPath(workspacePath);
   if (!(await pathExists(openworkPath))) {
     return defaultWorkspaceOpenworkConfig(workspacePath);
   }
-  const raw = await readFile(openworkPath, "utf8");
-  return JSON.parse(raw);
+  try {
+    const raw = await readFile(openworkPath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return defaultWorkspaceOpenworkConfig(workspacePath);
+  }
 }
 
 async function writeWorkspaceOpenworkConfig(workspacePath, config) {
-  const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
+  const openworkPath = path.join(workspacePath, ".openwork", "openwork.json");
   await mkdir(path.dirname(openworkPath), { recursive: true });
   await writeFile(openworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   return execResult(true, `Wrote ${openworkPath}`);

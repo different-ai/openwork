@@ -84,7 +84,7 @@ describe("portable files", () => {
     ).toThrow(/not allowed/i);
 
     expect(() =>
-      planPortableFiles(workspaceRoot, [{ path: ".opencode/openwork.json", content: "{}" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".openwork/openwork.json", content: "{}" }]),
     ).toThrow(/not allowed/i);
 
     expect(() =>

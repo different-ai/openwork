@@ -19,7 +19,7 @@ import {
   writeFile,
   realpath,
 } from "node:fs/promises";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -2761,7 +2761,11 @@ function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
 }
 
 function resolveWorkspaceOpenworkConfigPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork.json");
+  const newPath = join(workspaceRoot, ".openwork", "openwork.json");
+  if (existsSync(newPath)) return newPath;
+  const legacyPath = join(workspaceRoot, ".opencode", "openwork.json");
+  if (existsSync(legacyPath)) return legacyPath;
+  return newPath;
 }
 
 function resolveOpencodeRouterConfigPath(): string {
@@ -2850,10 +2854,11 @@ async function resolveOpencodeRouterEnabled(
     return { enabled: envValue, source: "env" };
   }
 
-  const openworkConfigPath = resolveWorkspaceOpenworkConfigPath(workspaceRoot);
+  const openworkConfigReadPath = resolveWorkspaceOpenworkConfigPath(workspaceRoot);
+  const openworkConfigWritePath = join(workspaceRoot, ".openwork", "openwork.json");
   let openworkConfig: Record<string, unknown> = {};
   try {
-    const raw = await readFile(openworkConfigPath, "utf8");
+    const raw = await readFile(openworkConfigReadPath, "utf8");
     openworkConfig = asRecord(JSON.parse(raw));
   } catch {
     openworkConfig = {};
@@ -2882,9 +2887,9 @@ async function resolveOpencodeRouterEnabled(
   };
 
   try {
-    await mkdir(dirname(openworkConfigPath), { recursive: true });
+    await mkdir(dirname(openworkConfigWritePath), { recursive: true });
     await writeFile(
-      openworkConfigPath,
+      openworkConfigWritePath,
       `${JSON.stringify(nextOpenworkConfig, null, 2)}\n`,
       "utf8",
     );
@@ -2892,7 +2897,7 @@ async function resolveOpencodeRouterEnabled(
     logger.warn(
       "Failed to persist messaging enabled default",
       {
-        path: openworkConfigPath,
+        path: openworkConfigWritePath,
         error: error instanceof Error ? error.message : String(error),
       },
       "openwork-orchestrator",

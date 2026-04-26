@@ -460,13 +460,13 @@ export const TOY_UI_HTML = `<!doctype html>
                 <input id="file" type="file" />
                 <button class="btn" id="btn-upload">Upload to inbox</button>
               </div>
-              <div class="small">Uploads go to <span class="mono">.opencode/openwork/inbox/</span> inside the workspace.</div>
+              <div class="small">Uploads go to <span class="mono">.openwork/inbox/</span> inside the workspace.</div>
 
               <div class="hr"></div>
 
               <div class="row">
                 <button class="btn" id="btn-artifacts">List artifacts</button>
-                <span class="small">Downloads read from <span class="mono">.opencode/openwork/outbox/</span>.</span>
+                <span class="small">Downloads read from <span class="mono">.openwork/outbox/</span>.</span>
               </div>
               <div class="list" id="artifacts"></div>
 

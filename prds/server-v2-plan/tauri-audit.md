@@ -398,7 +398,7 @@ Reasoning: the app should keep only transient selection and reconnect state. The
 
 ### `workspace_add_authorized_root()`, `workspace_openwork_read()`, `workspace_openwork_write()`
 
-- What they do: manage `.opencode/openwork.json` data for authorized roots and related settings.
+- What they do: manage `.openwork/openwork.json` data for authorized roots and related settings.
 - Called from and when: called from settings/permissions UI.
 - Ends up calling: workspace-local config file reads and writes; in the ideal model this is server-side materialization into the OpenWork-managed workspace config directory.
 

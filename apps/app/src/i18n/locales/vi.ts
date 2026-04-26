@@ -1704,7 +1704,7 @@ export default {
   "settings.window_appearance_desc": "Tùy chỉnh giao diện cửa sổ.",
   "settings.worker_id_label": "Worker {id}",
   "settings.worker_unresolved": "Worker {runtimeWorkspaceId}",
-  "settings.workspace_config_desc": ".opencode/openwork.json",
+  "settings.workspace_config_desc": ".openwork/openwork.json",
   "settings.workspace_config_title": "Cấu hình workspace",
   "settings.workspace_debug_events_label": "Sự kiện gỡ lỗi workspace",
   "settings.workspace_fallback_name": "Workspace",
