@@ -1,6 +1,5 @@
 import BubbleButton from "@/components/ui/bubble-button";
 import Eyebrow from "@/components/ui/eyebrow";
-import VideoPlayer from "@/components/ui/video-player";
 import { DOWNLOAD_URL } from "@/constants";
 
 const TheWorkspaceSection = () => {
@@ -44,14 +43,16 @@ const TheWorkspaceSection = () => {
                 <span className="size-[1rem] rounded-full bg-[#eab308]" />
                 <span className="size-[1rem] rounded-full bg-[#22c55e]" />
               </div>
-              <span className="text-center font-sans text-[1.2rem] font-medium">workspace.mp4 · 1:22</span>
+              <span className="text-center font-sans text-[1.2rem] font-medium">workspace · preview</span>
               <span className="hidden sm:inline-flex items-center gap-xs font-sans text-[1.1rem] font-medium">
                 <span className="bg-emerald-400 size-[0.7rem] rounded-full" />
                 <span className="font-serif italic font-light text-[1.3rem]">in your folder</span>
               </span>
             </div>
-            <div className="aspect-[16/10] relative bg-black">
-              <VideoPlayer src="/workspace.mp4" />
+            <div className="aspect-[16/10] relative bg-black flex items-center justify-center">
+              <span className="font-serif italic font-light text-[1.6rem] text-white/40">
+                workspace preview coming soon
+              </span>
             </div>
           </div>
         </div>
