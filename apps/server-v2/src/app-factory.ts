@@ -7,6 +7,8 @@ import { buildErrorResponse } from "./http.js";
 import { errorHandlingMiddleware } from "./middleware/error-handler.js";
 import { requestLoggerMiddleware } from "./middleware/request-logger.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
+import { otelTracingMiddleware } from "./middleware/otel-tracing.js";
+import { otelSessionAttributesMiddleware } from "./middleware/otel-session-attributes.js";
 import { responseFinalizerMiddleware } from "./middleware/response-finalizer.js";
 import { registerRoutes } from "./routes/index.js";
 
@@ -20,9 +22,11 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.use("*", requestIdMiddleware);
   app.use("*", requestContextMiddleware(dependencies));
+  app.use("*", otelTracingMiddleware);
   app.use("*", responseFinalizerMiddleware);
   app.use("*", requestLoggerMiddleware);
   app.use("*", errorHandlingMiddleware);
+  app.use("/workspaces/:workspaceId/sessions/*", otelSessionAttributesMiddleware);
 
   registerRoutes(app, dependencies);
 

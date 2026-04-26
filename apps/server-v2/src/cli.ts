@@ -1,5 +1,6 @@
 import process from "node:process";
 import { startServer } from "./bootstrap/server.js";
+import { initTelemetry, shutdownTelemetry } from "./telemetry.js";
 
 function printHelp() {
   process.stdout.write([
@@ -48,12 +49,15 @@ function parseArgs(argv: Array<string>) {
 }
 
 async function main() {
+  await initTelemetry();
+
   const { host, port } = parseArgs(process.argv.slice(2));
   const runtime = startServer({ host, port });
 
   const shutdown = async (signal: NodeJS.Signals) => {
     console.info(JSON.stringify({ scope: "openwork-server-v2.stop", signal }));
     await runtime.stop();
+    await shutdownTelemetry();
     process.exit(0);
   };
 
