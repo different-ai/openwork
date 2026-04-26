@@ -12,7 +12,7 @@ function createTestApp() {
     await next();
   });
   app.use("*", otelTracingMiddleware);
-  app.use("/workspaces/:workspaceId/sessions/*", otelSessionAttributesMiddleware);
+  app.use("/workspaces/:workspaceId/sessions/:sessionId/*", otelSessionAttributesMiddleware);
 
   app.get("/workspaces/:workspaceId/sessions/:sessionId", (c) =>
     c.json({ ws: c.req.param("workspaceId"), session: c.req.param("sessionId") }),

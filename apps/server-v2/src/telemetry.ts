@@ -25,15 +25,15 @@ export async function initTelemetry(serviceName = "openwork-server-v2"): Promise
 
     console.info(
       JSON.stringify({
-        scope: "openwork-server-v2.telemetry",
         message: `OTEL tracing enabled, exporting to ${process.env.OTEL_EXPORTER_OTLP_ENDPOINT}`,
+        scope: "openwork-server-v2.telemetry",
       }),
     );
   } catch {
     console.info(
       JSON.stringify({
-        scope: "openwork-server-v2.telemetry",
         message: "OTEL packages not found, tracing disabled",
+        scope: "openwork-server-v2.telemetry",
       }),
     );
   }

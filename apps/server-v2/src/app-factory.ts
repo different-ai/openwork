@@ -26,7 +26,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("*", responseFinalizerMiddleware);
   app.use("*", requestLoggerMiddleware);
   app.use("*", errorHandlingMiddleware);
-  app.use("/workspaces/:workspaceId/sessions/*", otelSessionAttributesMiddleware);
+  app.use("/workspaces/:workspaceId/sessions/:sessionId/*", otelSessionAttributesMiddleware);
 
   registerRoutes(app, dependencies);
 
