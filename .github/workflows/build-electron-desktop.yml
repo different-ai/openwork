@@ -20,11 +20,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-26
             artifact: mac-arm64
             target_triple: aarch64-apple-darwin
             builder_args: --mac --arm64
-          - os: macos-13
+          - os: macos-26-intel
             artifact: mac-x64
             target_triple: x86_64-apple-darwin
             builder_args: --mac --x64
