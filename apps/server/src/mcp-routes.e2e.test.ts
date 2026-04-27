@@ -62,7 +62,7 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}`, "content-type": "application/json" };
 }
 
-function startOpenworkServer(input: { workspaceRoot: string; readOnly?: boolean }) {
+function startOpenworkServer(input: { workspaceRoot: string; readOnly?: boolean; approvalMode?: "auto" | "manual" }) {
   const dataDir = join(input.workspaceRoot, ".openwork-test-data");
   process.env.OPENWORK_DATA_DIR = dataDir;
   const config: ServerConfig = {
@@ -70,7 +70,7 @@ function startOpenworkServer(input: { workspaceRoot: string; readOnly?: boolean 
     port: 0,
     token: "owt_mcp_route_client_token",
     hostToken: "owt_mcp_route_host_token",
-    approval: { mode: "auto", timeoutMs: 1000 },
+    approval: { mode: input.approvalMode ?? "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces: [
       {
@@ -92,6 +92,19 @@ function startOpenworkServer(input: { workspaceRoot: string; readOnly?: boolean 
   const server = startServer(config) as Served;
   stops.push(() => server.stop(true));
   return { base: `http://127.0.0.1:${server.port}`, token: config.token, hostToken: config.hostToken };
+}
+
+async function waitForApproval(base: string, hostToken: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(`${base}/approvals`, {
+      headers: { "x-openwork-host-token": hostToken },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { items: Array<{ id: string }> };
+    if (body.items[0]) return body.items[0];
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("approval_not_created");
 }
 
 describe("mcp routes", () => {
@@ -167,6 +180,43 @@ describe("mcp routes", () => {
     expect(events.status).toBe(200);
     const eventsBody = (await events.json()) as { items: Array<{ reason: string }> };
     expect(eventsBody.items.some((event) => event.reason === "mcp")).toBe(false);
+  });
+
+  test("PATCH returns current state if the MCP app is removed during approval", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const { base, token, hostToken } = startOpenworkServer({ workspaceRoot, approvalMode: "manual" });
+
+    const pendingPatch = fetch(`${base}/workspace/ws_1/mcp/stripe`, {
+      method: "PATCH",
+      headers: auth(token),
+      body: JSON.stringify({ enabled: false }),
+    });
+
+    const approval = await waitForApproval(base, hostToken);
+    await writeFile(join(workspaceRoot, "opencode.jsonc"), `${JSON.stringify({ mcp: {} }, null, 2)}\n`, "utf8");
+
+    const allowed = await fetch(`${base}/approvals/${approval.id}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-openwork-host-token": hostToken,
+      },
+      body: JSON.stringify({ reply: "allow" }),
+    });
+    expect(allowed.status).toBe(200);
+
+    const response = await pendingPatch;
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      changed: boolean;
+      enabled: boolean;
+      items: Array<{ name: string }>;
+    };
+    expect(body).toMatchObject({ changed: false, enabled: false });
+    expect(body.items.some((entry) => entry.name === "stripe")).toBe(false);
+
+    const audits = await readAuditEntries(workspaceRoot, "ws_1");
+    expect(audits).toHaveLength(0);
   });
 
   test("PATCH rejects invalid payloads and missing MCP apps", async () => {

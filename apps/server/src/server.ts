@@ -2606,7 +2606,16 @@ function createRoutes(
       paths: [opencodeConfigPath(workspace.path)],
     });
 
-    const result = await setMcpEnabled(workspace.path, name, body.enabled);
+    let result: Awaited<ReturnType<typeof setMcpEnabled>>;
+    try {
+      result = await setMcpEnabled(workspace.path, name, body.enabled);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404 && error.code === "mcp_not_found") {
+        const items = await listMcp(workspace.path);
+        return jsonResponse({ items, enabled: body.enabled, changed: false });
+      }
+      throw error;
+    }
     if (result.changed) {
       await recordAudit(workspace.path, {
         id: shortId(),
