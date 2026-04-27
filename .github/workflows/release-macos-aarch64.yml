@@ -662,6 +662,8 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @openwork/desktop package:electron --publish always
+
+  release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.publish_sidecars == 'true'
