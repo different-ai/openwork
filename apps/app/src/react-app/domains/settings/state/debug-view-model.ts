@@ -6,6 +6,7 @@ import {
   engineInfo as engineInfoCmd,
   engineStart as engineStartCmd,
   nukeOpenworkAndOpencodeConfigAndExit,
+  openDesktopUrl,
   openworkServerInfo as openworkServerInfoCmd,
   openworkServerRestart as openworkServerRestartCmd,
   opencodeRouterInfo as opencodeRouterInfoCmd,
@@ -24,11 +25,16 @@ import {
   type SandboxDebugProbeResult,
 } from "../../../../app/lib/desktop";
 import {
+  migrateToElectron,
+  writeMigrationSnapshotFromTauri,
+} from "../../../../app/lib/migration";
+import {
   writeOpenworkServerSettings,
 } from "../../../../app/lib/openwork-server";
 import {
   clearStartupPreference,
   isDesktopRuntime,
+  isTauriRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -40,6 +46,8 @@ const ENGINE_SOURCE_KEY = "openwork.engineSource";
 const ENGINE_RUNTIME_KEY = "openwork.engineRuntime";
 const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
+const ELECTRON_PREVIEW_RELEASE_URL = "https://github.com/different-ai/openwork/releases/tag/electron-preview-latest";
+const ELECTRON_INSTALL_CONFIRM_PHRASE = "install electron preview";
 
 type ResetModalMode = "onboarding" | "all";
 
@@ -271,6 +279,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   );
   const [developerLog, setDeveloperLog] = useState<string[]>([]);
   const [developerLogStatus, setDeveloperLogStatus] = useState<string | null>(null);
+  const [electronMigrationUrl, setElectronMigrationUrl] = useState("");
+  const [electronMigrationSha256, setElectronMigrationSha256] = useState("");
+  const [electronMigrationBusy, setElectronMigrationBusy] = useState(false);
+  const [electronMigrationStatus, setElectronMigrationStatus] = useState<string | null>(null);
 
   const refreshEngineInfo = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -437,6 +449,98 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setDeveloperLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
   }, [developerLog]);
+
+  const onOpenElectronPreviewRelease = useCallback(async () => {
+    try {
+      await openDesktopUrl(ELECTRON_PREVIEW_RELEASE_URL);
+      setElectronMigrationStatus("Opened the rolling Electron preview release. Download links live there after dev/main push builds finish.");
+    } catch (error) {
+      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+    }
+  }, []);
+
+  const onPrepareElectronMigrationSnapshot = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      setElectronMigrationStatus("Migration snapshot export is only available in the Tauri desktop app.");
+      return;
+    }
+    setElectronMigrationBusy(true);
+    setElectronMigrationStatus(null);
+    try {
+      const result = await writeMigrationSnapshotFromTauri();
+      if (!result.ok) {
+        throw new Error(result.reason ?? "Failed to write migration snapshot.");
+      }
+      setElectronMigrationStatus(
+        `Prepared Electron migration data (${result.keyCount} localStorage key${result.keyCount === 1 ? "" : "s"}). This did not replace or quit Tauri.`,
+      );
+      pushDeveloperLog(`prepared Electron migration snapshot keyCount=${result.keyCount}`);
+    } catch (error) {
+      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setElectronMigrationBusy(false);
+    }
+  }, [pushDeveloperLog]);
+
+  const onInstallElectronPreviewFromTauri = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      setElectronMigrationStatus("Electron install handoff is only available in the Tauri desktop app.");
+      return;
+    }
+
+    const url = electronMigrationUrl.trim();
+    if (!url) {
+      setElectronMigrationStatus("Paste a trusted Electron artifact URL before starting the install handoff.");
+      return;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:") {
+        setElectronMigrationStatus("Electron artifact URLs must use https://.");
+        return;
+      }
+    } catch {
+      setElectronMigrationStatus("Paste a valid https:// Electron artifact URL before starting the install handoff.");
+      return;
+    }
+
+    const confirmed =
+      typeof window === "undefined" ||
+      window.confirm(
+        "This debug-only migration action first writes a migration snapshot, then starts the Tauri → Electron handoff. On macOS, the installer swaps OpenWork.app in place and keeps OpenWork.app.migrate-bak for rollback. Tauri stable updates remain unchanged. Continue?",
+      );
+    if (!confirmed) return;
+
+    const phrase =
+      typeof window === "undefined"
+        ? ELECTRON_INSTALL_CONFIRM_PHRASE
+        : window.prompt(`Type \"${ELECTRON_INSTALL_CONFIRM_PHRASE}\" to start the Electron preview install handoff.`);
+    if (phrase !== ELECTRON_INSTALL_CONFIRM_PHRASE) {
+      setElectronMigrationStatus("Install handoff cancelled before any app replacement step.");
+      return;
+    }
+
+    setElectronMigrationBusy(true);
+    setElectronMigrationStatus(null);
+    try {
+      const snapshot = await writeMigrationSnapshotFromTauri();
+      if (!snapshot.ok) {
+        throw new Error(snapshot.reason ?? "Failed to write migration snapshot.");
+      }
+      pushDeveloperLog(`prepared Electron migration snapshot before install keyCount=${snapshot.keyCount}`);
+      const result = await migrateToElectron({
+        url,
+        sha256: electronMigrationSha256.trim() || undefined,
+      });
+      if (!result.ok) {
+        throw new Error(result.reason ?? "Electron install handoff failed.");
+      }
+      setElectronMigrationStatus("Electron install handoff started. Tauri will quit if the native handoff accepted the request.");
+    } catch (error) {
+      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+      setElectronMigrationBusy(false);
+    }
+  }, [electronMigrationSha256, electronMigrationUrl, pushDeveloperLog]);
 
   const onRunSandboxDebugProbe = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -726,6 +830,17 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onClearDeveloperLog,
       onCopyDeveloperLog,
       onExportDeveloperLog,
+      electronMigrationAvailable: isTauriRuntime(),
+      electronMigrationUrl,
+      electronMigrationSha256,
+      electronMigrationBusy,
+      electronMigrationStatus,
+      electronPreviewReleaseUrl: ELECTRON_PREVIEW_RELEASE_URL,
+      onSetElectronMigrationUrl: setElectronMigrationUrl,
+      onSetElectronMigrationSha256: setElectronMigrationSha256,
+      onOpenElectronPreviewRelease,
+      onPrepareElectronMigrationSnapshot,
+      onInstallElectronPreviewFromTauri,
       sandboxProbeBusy,
       sandboxProbeResult,
       sandboxProbeStatus,
@@ -781,6 +896,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       developerLog,
       developerLogStatus,
       developerMode,
+      electronMigrationBusy,
+      electronMigrationSha256,
+      electronMigrationStatus,
+      electronMigrationUrl,
       engineCard,
       engineCustomBinPath,
       engineRuntime,
@@ -794,8 +913,11 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onCopyRuntimeDebugReport,
       onExportDeveloperLog,
       onExportRuntimeDebugReport,
+      onInstallElectronPreviewFromTauri,
       onNukeOpenworkAndOpencodeConfig,
+      onOpenElectronPreviewRelease,
       onOpenResetModal,
+      onPrepareElectronMigrationSnapshot,
       onPickEngineBinary,
       onResetStartupPreference,
       onRestartLocalServer,

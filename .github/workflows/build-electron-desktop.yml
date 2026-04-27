@@ -1,40 +1,50 @@
-name: Build Electron Desktop
+name: Build Electron Desktop Preview
 
 on:
   workflow_dispatch:
   push:
     branches:
+      - "**"
+  pull_request:
+    branches:
       - dev
-    paths:
-      - apps/app/**
-      - apps/desktop/**
-      - packages/ui/**
-      - constants.json
-      - pnpm-lock.yaml
-      - package.json
-      - .github/workflows/build-electron-desktop.yml
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build-electron:
+    name: Build Electron (${{ matrix.artifact }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            artifact: macos
-          - os: ubuntu-latest
-            artifact: linux
+          - os: macos-14
+            artifact: mac-arm64
+            target_triple: aarch64-apple-darwin
+            builder_args: --mac --arm64
+          - os: macos-13
+            artifact: mac-x64
+            target_triple: x86_64-apple-darwin
+            builder_args: --mac --x64
+          - os: ubuntu-24.04
+            artifact: linux-x64
+            target_triple: x86_64-unknown-linux-gnu
+            builder_args: --linux --x64
           - os: windows-latest
-            artifact: windows
+            artifact: windows-x64
+            target_triple: x86_64-pc-windows-msvc
+            builder_args: --win --x64
     runs-on: ${{ matrix.os }}
+    env:
+      TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target_triple }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      # pnpm must be installed BEFORE setup-node so setup-node can find the
-      # pnpm binary on PATH. Matches the pattern in build-desktop.yml so
-      # the two workflows share the same bootstrap story.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -50,14 +60,110 @@ jobs:
         with:
           bun-version: 1.3.9
 
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarchive-tools rpm
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package Electron desktop (unpacked)
-        run: pnpm --filter @openwork/desktop package:electron:dir
+      - name: Build Electron renderer and sidecars
+        shell: bash
+        run: pnpm --filter @openwork/desktop build:electron
 
-      - name: Upload Electron artifacts
+      - name: Package Electron desktop installer
+        shell: bash
+        run: pnpm --filter @openwork/desktop exec electron-builder --config electron-builder.yml ${{ matrix.builder_args }} --publish never
+
+      - name: Upload Electron preview artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openwork-electron-${{ matrix.artifact }}
-          path: apps/desktop/dist-electron/**
+          name: openwork-electron-${{ matrix.artifact }}-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/dist-electron/*.dmg
+            apps/desktop/dist-electron/*.zip
+            apps/desktop/dist-electron/*.AppImage
+            apps/desktop/dist-electron/*.tar.gz
+            apps/desktop/dist-electron/*.exe
+            apps/desktop/dist-electron/latest*.yml
+            apps/desktop/dist-electron/*.blockmap
+
+  publish-preview-release:
+    name: Publish rolling Electron preview release
+    needs: build-electron
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'different-ai/openwork' &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIEW_TAG: electron-preview-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download Electron artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: preview-artifacts
+          pattern: openwork-electron-*
+          merge-multiple: true
+
+      - name: Create or update preview release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notes_file="$RUNNER_TEMP/electron-preview-notes.md"
+          cat > "$notes_file" <<EOF
+          Rolling Electron preview build for commit $GITHUB_SHA.
+
+          Safety notes:
+          - This is a preview download bucket, not the stable Tauri updater channel.
+          - Tauri remains the main desktop build until a separate migration release is cut.
+          - The debug migration control in Tauri requires an explicit artifact URL and confirmation before any install handoff.
+          EOF
+
+          if gh release view "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$PREVIEW_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Electron Preview Latest" \
+              --notes-file "$notes_file" \
+              --prerelease
+          else
+            if ! git ls-remote --exit-code --tags origin "$PREVIEW_TAG" >/dev/null 2>&1; then
+              git tag "$PREVIEW_TAG" "$GITHUB_SHA"
+              git push origin "refs/tags/$PREVIEW_TAG"
+            fi
+            gh release create "$PREVIEW_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Electron Preview Latest" \
+              --notes-file "$notes_file" \
+              --prerelease \
+              --latest=false
+          fi
+
+          gh release view "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | while IFS= read -r asset; do
+                [ -z "$asset" ] && continue
+                gh release delete-asset "$PREVIEW_TAG" "$asset" --repo "$GITHUB_REPOSITORY" -y
+              done
+
+          mapfile -d '' files < <(find preview-artifacts -type f -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Electron preview artifacts found" >&2
+            exit 1
+          fi
+
+          gh release upload "$PREVIEW_TAG" "${files[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          echo "Electron preview release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$PREVIEW_TAG"

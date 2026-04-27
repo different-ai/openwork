@@ -3,6 +3,7 @@ import {
   CircleAlert,
   Copy,
   Download,
+  ExternalLink,
   HardDrive,
   RefreshCcw,
   Smartphone,
@@ -86,6 +87,17 @@ export type DebugViewProps = {
   onClearDeveloperLog: () => void | Promise<void>;
   onCopyDeveloperLog: () => void | Promise<void>;
   onExportDeveloperLog: () => void | Promise<void>;
+  electronMigrationAvailable: boolean;
+  electronMigrationUrl: string;
+  electronMigrationSha256: string;
+  electronMigrationBusy: boolean;
+  electronMigrationStatus: string | null;
+  electronPreviewReleaseUrl: string;
+  onSetElectronMigrationUrl: (value: string) => void;
+  onSetElectronMigrationSha256: (value: string) => void;
+  onOpenElectronPreviewRelease: () => void | Promise<void>;
+  onPrepareElectronMigrationSnapshot: () => void | Promise<void>;
+  onInstallElectronPreviewFromTauri: () => void | Promise<void>;
   sandboxProbeBusy: boolean;
   sandboxProbeResult: SandboxDebugProbeResult | null;
   sandboxProbeStatus: string | null;
@@ -258,6 +270,83 @@ export function DebugView(props: DebugViewProps) {
           <pre className={settingsMonoPreClass}>{props.developerLogText || "No developer logs captured yet."}</pre>
           {props.developerLogStatus ? <div className="text-xs text-gray-10">{props.developerLogStatus}</div> : null}
         </div>
+
+        {props.electronMigrationAvailable ? (
+          <div className={settingsCardClass}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-gray-12">Electron preview migration</div>
+                <div className="text-xs text-gray-10">
+                  Debug-only Tauri controls. Preparing migration data is non-destructive; installing requires a URL and two confirmations.
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="h-8 shrink-0 px-3 py-0 text-xs"
+                onClick={() => void props.onOpenElectronPreviewRelease()}
+              >
+                <ExternalLink size={13} className="mr-1.5" />
+                Preview release
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-green-7/25 bg-green-3/10 px-3 py-2 text-xs leading-relaxed text-green-11">
+              Safe default: use <strong>Prepare migration data</strong> first. It writes the Electron snapshot only and does not replace, quit, or delete the Tauri app.
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+              <label className="space-y-1 text-xs text-gray-10">
+                <span>Electron artifact URL</span>
+                <input
+                  type="url"
+                  value={props.electronMigrationUrl}
+                  onChange={(event) => props.onSetElectronMigrationUrl(event.currentTarget.value)}
+                  placeholder="Paste a trusted Electron .zip/.exe/AppImage URL"
+                  className="h-10 w-full rounded-xl border border-gray-6 bg-gray-1 px-3 font-mono text-xs text-gray-12 outline-none transition-colors placeholder:text-gray-7 focus:border-gray-8"
+                />
+              </label>
+              <label className="space-y-1 text-xs text-gray-10">
+                <span>sha256 (optional)</span>
+                <input
+                  type="text"
+                  value={props.electronMigrationSha256}
+                  onChange={(event) => props.onSetElectronMigrationSha256(event.currentTarget.value)}
+                  placeholder="recommended"
+                  className="h-10 w-full rounded-xl border border-gray-6 bg-gray-1 px-3 font-mono text-xs text-gray-12 outline-none transition-colors placeholder:text-gray-7 focus:border-gray-8"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                className="h-9 px-3 py-0 text-xs"
+                onClick={() => void props.onPrepareElectronMigrationSnapshot()}
+                disabled={props.electronMigrationBusy}
+              >
+                {props.electronMigrationBusy ? "Preparing…" : "Prepare migration data"}
+              </Button>
+              <Button
+                variant="outline"
+                className="h-9 border-amber-7/50 px-3 py-0 text-xs text-amber-11 hover:bg-amber-3/40"
+                onClick={() => void props.onInstallElectronPreviewFromTauri()}
+                disabled={props.electronMigrationBusy || !props.electronMigrationUrl.trim()}
+                title="Requires a trusted artifact URL. macOS keeps OpenWork.app.migrate-bak for rollback."
+              >
+                Start install handoff…
+              </Button>
+              <div className="text-[11px] text-gray-7">
+                Release page: <span className="font-mono">{props.electronPreviewReleaseUrl}</span>
+              </div>
+            </div>
+
+            {props.electronMigrationStatus ? (
+              <div className="rounded-lg border border-gray-6 bg-gray-1/60 px-3 py-2 text-xs text-gray-11">
+                {props.electronMigrationStatus}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className={settingsCardClass}>
           <div className="flex items-start justify-between gap-3">
