@@ -1,14 +1,9 @@
 name: Build Electron Desktop Preview
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - "**"
-  pull_request:
-    branches:
       - dev
-      - main
 
 permissions:
   contents: read
@@ -97,7 +92,7 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       github.repository == 'different-ai/openwork' &&
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+      github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
