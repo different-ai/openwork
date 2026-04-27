@@ -76,7 +76,7 @@ Pass criteria:
 - Sidebar shows a new **"New session"** entry above existing sessions.
 - Main area renders the composer with **"No transcript yet."**.
 - Composer model label is whatever is saved as default (e.g.
-  `opencode/minimax-m2.5-free`).
+  `opencode/minimax-m2.7`).
 
 Known regressions this catches:
 - `onCreateTaskInWorkspace` silently failing because the route has no
@@ -151,7 +151,7 @@ Known regressions this catches:
 Steps:
 1. On the General tab click **Change** (under "Model").
 2. In the picker, search or scroll to a model in an already-connected
-   provider (e.g. `opencode/minimax-m2.5-free`).
+   provider (e.g. `opencode/minimax-m2.7`).
 3. Click the model card.
 
 Pass criteria:

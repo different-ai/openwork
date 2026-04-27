@@ -28,6 +28,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     if (normalizedId === "openrouter") return "OR";
     if (normalizedId === "deepseek") return "DS";
     if (normalizedId === "google") return "GO";
+    if (normalizedId === "minimax") return "MM";
     if (normalizedId.length >= 2) return normalizedId.substring(0, 2).toUpperCase();
     return "AI";
   })();
