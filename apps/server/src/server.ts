@@ -3428,6 +3428,11 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
   }
 
   if (input.skills.length > 0) {
+    for (const skill of input.skills) {
+      const path = workspaceImportRelativePath(workspace, join(projectSkillsDir(workspace.path), skill.name, "SKILL.md"));
+      if (!changedPath("skill", path)) continue;
+      await upsertSkill(workspace.path, skill);
+    }
     if (input.modes.skills === "replace") {
       for (const change of preview.changes) {
         if (change.kind === "skill" && change.action === "delete") {
@@ -3435,14 +3440,14 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
         }
       }
     }
-    for (const skill of input.skills) {
-      const path = workspaceImportRelativePath(workspace, join(projectSkillsDir(workspace.path), skill.name, "SKILL.md"));
-      if (!changedPath("skill", path)) continue;
-      await upsertSkill(workspace.path, skill);
-    }
   }
 
   if (input.commands.length > 0) {
+    for (const command of input.commands) {
+      const path = workspaceImportRelativePath(workspace, join(projectCommandsDir(workspace.path), `${command.name}.md`));
+      if (!changedPath("command", path)) continue;
+      await upsertCommand(workspace.path, command);
+    }
     if (input.modes.commands === "replace") {
       for (const change of preview.changes) {
         if (change.kind === "command" && change.action === "delete") {
@@ -3450,26 +3455,21 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
         }
       }
     }
-    for (const command of input.commands) {
-      const path = workspaceImportRelativePath(workspace, join(projectCommandsDir(workspace.path), `${command.name}.md`));
-      if (!changedPath("command", path)) continue;
-      await upsertCommand(workspace.path, command);
-    }
   }
 
   if (input.files.length > 0) {
+    for (const file of input.files) {
+      if (!changedPath("file", file.path)) continue;
+      const path = join(workspace.path, file.path);
+      await ensureDir(dirname(path));
+      await writeFile(path, file.content, "utf8");
+    }
     if (input.modes.files === "replace") {
       for (const change of preview.changes) {
         if (change.kind === "file" && change.action === "delete") {
           await rm(change.absolutePath, { force: true });
         }
       }
-    }
-    for (const file of input.files) {
-      if (!changedPath("file", file.path)) continue;
-      const path = join(workspace.path, file.path);
-      await ensureDir(dirname(path));
-      await writeFile(path, file.content, "utf8");
     }
   }
 }

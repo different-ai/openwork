@@ -381,4 +381,53 @@ describe("workspace import preview", () => {
       }
     }
   });
+
+  test("replace import keeps existing items when an incoming write fails", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+
+    await mkdir(join(workspace, ".opencode", "skills", "old"), { recursive: true });
+    await writeFile(join(workspace, ".opencode", "skills", "old", "SKILL.md"), "old skill\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "skills", "new"), "blocks new skill directory\n", "utf8");
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: { skills: "replace" },
+          skills: [
+            {
+              name: "new",
+              description: "New skill",
+              content: "new skill\n",
+            },
+          ],
+        }),
+      });
+
+      expect(response.ok).toBe(false);
+      expect(await readFile(join(workspace, ".opencode", "skills", "old", "SKILL.md"), "utf8")).toBe("old skill\n");
+      expect(await readFile(join(workspace, ".opencode", "skills", "new"), "utf8")).toBe(
+        "blocks new skill directory\n",
+      );
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
 });
