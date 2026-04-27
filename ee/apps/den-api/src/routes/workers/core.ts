@@ -5,9 +5,11 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
+import { getRequiredUserEmail } from "../../user.js"
 import type { WorkerRouteVariables } from "./shared.js"
 import {
   continueCloudProvisioning,
@@ -17,7 +19,9 @@ import {
   getWorkerByIdForOrg,
   getWorkerTokensAndConnect,
   listWorkersQuerySchema,
+  parseUserId,
   parseWorkerIdParam,
+  requireCloudAccessOrPayment,
   toInstanceResponse,
   toWorkerResponse,
   token,
@@ -105,6 +109,20 @@ const orgLimitReachedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "WorkerOrgLimitReachedError" })
 
+const userEmailRequiredSchema = z.object({
+  error: z.literal("user_email_required"),
+}).meta({ ref: "WorkerUserEmailRequiredError" })
+
+const paymentRequiredSchema = z.object({
+  error: z.literal("payment_required"),
+  message: z.string(),
+  polar: z.object({
+    checkoutUrl: z.string().nullable(),
+    productId: z.string().nullable().optional(),
+    benefitId: z.string().nullable().optional(),
+  }),
+}).meta({ ref: "WorkerPaymentRequiredError" })
+
 const workerRuntimeUnavailableSchema = z.object({
   error: z.literal("worker_tokens_unavailable"),
   message: z.string(),
@@ -168,8 +186,9 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       responses: {
         201: jsonResponse("Local worker created successfully.", workerCreateResponseSchema),
         202: jsonResponse("Cloud worker creation started successfully.", workerCreateResponseSchema),
-        400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema])),
+        400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema, userEmailRequiredSchema])),
         401: jsonResponse("The caller must be signed in to create workers.", unauthorizedSchema),
+        402: jsonResponse("The caller needs an active cloud plan before creating a cloud worker.", paymentRequiredSchema),
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
     }),
@@ -190,6 +209,11 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     }
 
     if (input.destination === "cloud") {
+      const email = getRequiredUserEmail(user)
+      if (!email) {
+        return c.json({ error: "user_email_required" }, 400)
+      }
+
       const workerLimit = await getOrganizationLimitStatus(orgId, "workers")
       if (workerLimit.exceeded) {
         return c.json({
@@ -199,6 +223,24 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
           currentCount: workerLimit.currentCount,
           message: `This workspace currently supports up to ${workerLimit.limit} workers. Contact support to increase the limit.`,
         }, 409)
+      }
+
+      const access = await requireCloudAccessOrPayment({
+        userId: parseUserId(user.id),
+        email,
+        name: user.name ?? user.email ?? "OpenWork User",
+      })
+
+      if (!access.allowed) {
+        return c.json({
+          error: "payment_required",
+          message: "Creating a cloud worker requires an active OpenWork Cloud plan.",
+          polar: {
+            checkoutUrl: access.checkoutUrl,
+            productId: env.polar.productId,
+            benefitId: env.polar.benefitId,
+          },
+        }, 402)
       }
     }
 

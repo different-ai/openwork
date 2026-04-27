@@ -54,14 +54,14 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   const mockMode = MOCK_BILLING && process.env.NODE_ENV !== "production";
 
-  const billingSummary = MOCK_BILLING
+  const billingSummary = mockMode
     ? {
         featureGateEnabled: true,
         hasActivePlan: false,
         checkoutRequired: true,
-              checkoutUrl: MOCK_CHECKOUT_URL,
-              portalUrl: null,
-              price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
+        checkoutUrl: MOCK_CHECKOUT_URL,
+        portalUrl: null,
+        price: { amount: 5000, currency: "usd", recurringInterval: "month", recurringIntervalCount: 1 },
         subscription: null,
         invoices: [],
         productId: null,
@@ -182,8 +182,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
   }
 
   const billingPrice = billingSummary?.price ?? null;
-  const showLoading = resuming || (billingBusy && !billingSummary && !MOCK_BILLING);
-  const checkoutHref = effectiveCheckoutUrl ?? MOCK_CHECKOUT_URL ?? null;
+  const showLoading = resuming || (billingBusy && !billingSummary && !mockMode);
+  const checkoutHref = effectiveCheckoutUrl ?? (mockMode ? MOCK_CHECKOUT_URL : null);
   const planAmountLabel =
     billingPrice && billingPrice.amount !== null
       ? `${formatMoneyMinor(billingPrice.amount, billingPrice.currency)}/${billingPrice.recurringInterval}`
