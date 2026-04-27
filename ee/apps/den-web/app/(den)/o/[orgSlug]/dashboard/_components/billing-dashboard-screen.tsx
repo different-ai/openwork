@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { CreditCard, ExternalLink, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, CreditCard, ExternalLink, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
 import {
   formatBillingAmountLabel,
@@ -23,6 +23,62 @@ function BillingMetric({ label, value }: { label: string; value: string | number
   );
 }
 
+function CancelPlanDialog({
+  open,
+  effectiveDate,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  effectiveDate: string | null;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancel-plan-title"
+        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <AlertTriangle className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="cancel-plan-title" className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+              Cancel plan?
+            </h2>
+            <p className="mt-1 text-[13px] leading-6 text-gray-600">
+              You'll keep access until {effectiveDate ?? "the end of the current billing period"}.
+            </p>
+            <p className="mt-3 text-[12px] leading-5 text-gray-500">
+              You can resume the plan before then if you change your mind.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
+            Keep plan
+          </DenButton>
+          <DenButton variant="destructive" icon={AlertTriangle} loading={busy} onClick={onConfirm}>
+            Cancel plan
+          </DenButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BillingDashboardScreen() {
   const {
     sessionHydrated,
@@ -36,6 +92,7 @@ export function BillingDashboardScreen() {
     refreshBilling,
     handleSubscriptionCancellation,
   } = useDenFlow();
+  const [cancelPlanOpen, setCancelPlanOpen] = useState(false);
 
   useEffect(() => {
     if (!sessionHydrated || !user || billingSummary || billingBusy || billingCheckoutBusy) {
@@ -82,6 +139,9 @@ export function BillingDashboardScreen() {
     : planLabels.available
       ? `Workspace plans are ${planLabels.inline} and ${getWorkspacePlanInlineEntitlementCopy()}.`
       : "Workspace plan pricing is unavailable. Refresh billing to retry.";
+  const cancellationEffectiveDate = subscription?.currentPeriodEnd
+    ? formatIsoDate(subscription.currentPeriodEnd)
+    : null;
 
   return (
     <DashboardPageTemplate
@@ -155,7 +215,13 @@ export function BillingDashboardScreen() {
             <DenButton
               variant={subscription?.cancelAtPeriodEnd ? "secondary" : "destructive"}
               loading={billingSubscriptionBusy}
-              onClick={() => void handleSubscriptionCancellation(!Boolean(subscription?.cancelAtPeriodEnd))}
+              onClick={() => {
+                if (subscription?.cancelAtPeriodEnd) {
+                  void handleSubscriptionCancellation(false);
+                  return;
+                }
+                setCancelPlanOpen(true);
+              }}
             >
               {subscription?.cancelAtPeriodEnd ? "Resume plan" : "Cancel plan"}
             </DenButton>
@@ -216,6 +282,17 @@ export function BillingDashboardScreen() {
           </DenButton>
         )}
       </div>
+      <CancelPlanDialog
+        open={cancelPlanOpen}
+        effectiveDate={cancellationEffectiveDate}
+        busy={billingSubscriptionBusy}
+        onClose={() => {
+          if (!billingSubscriptionBusy) setCancelPlanOpen(false);
+        }}
+        onConfirm={() => {
+          void handleSubscriptionCancellation(true).then(() => setCancelPlanOpen(false));
+        }}
+      />
     </DashboardPageTemplate>
   );
 }

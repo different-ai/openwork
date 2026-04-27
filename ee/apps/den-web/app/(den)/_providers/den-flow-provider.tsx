@@ -860,13 +860,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (cancelAtPeriodEnd && typeof window !== "undefined") {
-      const confirmed = window.confirm("Cancel subscription at period end? You can still use your current billing period.");
-      if (!confirmed) {
-        return;
-      }
-    }
-
     setBillingSubscriptionBusy(true);
     setBillingError(null);
 
