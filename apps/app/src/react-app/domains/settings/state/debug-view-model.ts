@@ -49,7 +49,6 @@ const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
 const ENGINE_SOURCE_KEY = "openwork.engineSource";
 const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
-const ELECTRON_INSTALL_CONFIRM_PHRASE = "install electron alpha";
 
 type ResetModalMode = "onboarding" | "all";
 
@@ -546,11 +545,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       );
     if (!confirmed) return;
 
-    const phrase =
-      typeof window === "undefined"
-        ? ELECTRON_INSTALL_CONFIRM_PHRASE
-        : window.prompt(`Type \"${ELECTRON_INSTALL_CONFIRM_PHRASE}\" to start the Electron alpha install handoff.`);
-    if (phrase !== ELECTRON_INSTALL_CONFIRM_PHRASE) {
+    const doubleConfirmed =
+      typeof window === "undefined" ||
+      window.confirm(
+        "Final confirmation: quit Tauri and start installing the resolved Electron alpha now? The current app bundle will be moved to OpenWork.app.migrate-bak before replacement.",
+      );
+    if (!doubleConfirmed) {
       setElectronMigrationStatus("Install handoff cancelled before any app replacement step.");
       return;
     }
