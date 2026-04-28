@@ -349,14 +349,32 @@ jobs:
           node scripts/release/generate-latest-json.mjs \
             --tag "$ALPHA_RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --output "$RUNNER_TEMP/alpha-latest.json"
+            --output "$RUNNER_TEMP/latest.json"
+
+      - name: Validate alpha latest.json
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-updater-endpoint.mjs \
+            --file "$RUNNER_TEMP/latest.json" \
+            --platform darwin-aarch64
 
       - name: Upload alpha latest.json
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Upload a real file named latest.json. GitHub treats "#label"
+          # as a display label, not as the stored asset filename.
           gh release upload "$ALPHA_RELEASE_TAG" \
-            "$RUNNER_TEMP/alpha-latest.json#latest.json" \
+            "$RUNNER_TEMP/latest.json" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+      - name: Verify alpha updater feed
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-updater-endpoint.mjs \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${ALPHA_RELEASE_TAG}/latest.json" \
+            --platform darwin-aarch64 \
+            --attempts 6 \
+            --delay-ms 10000

@@ -222,6 +222,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.resolve.outputs.release_name }}" \
             --notes-file "$BODY_FILE" \
+            --latest=false \
             $DRAFT_FLAG $PRERELEASE_FLAG
 
   verify-release:
@@ -625,6 +626,12 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --output "$RUNNER_TEMP/latest.json"
 
+      - name: Validate generated latest.json
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-updater-endpoint.mjs \
+            --file "$RUNNER_TEMP/latest.json"
+
       - name: Upload latest.json
         env:
           GH_TOKEN: ${{ github.token }}
@@ -916,6 +923,21 @@ jobs:
           tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
           gh release upload "$tag" apps/orchestrator/dist/bin/* apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
 
+      - name: Keep orchestrator release out of GitHub latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # /releases/latest/download/latest.json must always point at
+          # a desktop release. Sidecar-only releases do not ship a Tauri
+          # updater manifest, so demote both newly-created and reused tags.
+          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq .id)"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            --input - >/dev/null <<'JSON'
+          {"make_latest":"false"}
+          JSON
+
   publish-npm:
     name: Publish npm packages
     needs: [resolve-release, verify-release, release-orchestrator-sidecars]
@@ -1140,7 +1162,6 @@ jobs:
       - publish-daytona-snapshot
     if: |
       always() &&
-      needs.resolve-release.outputs.draft == 'true' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
@@ -1152,7 +1173,9 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+      RELEASE_BUILD_TAURI: ${{ needs.resolve-release.outputs.build_tauri }}
     steps:
       - name: Publish release after assets are ready
         env:
@@ -1160,8 +1183,57 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          fi
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .id)"
+          payload="$RUNNER_TEMP/publish-release.json"
+
+          node <<'NODE' > "$payload"
+          const payload = {};
+          if (process.env.RELEASE_DRAFT === "true") {
+            payload.draft = false;
+          }
+          if (process.env.RELEASE_PRERELEASE === "true") {
+            payload.prerelease = true;
+            payload.make_latest = "false";
+          } else if (process.env.RELEASE_BUILD_TAURI === "true") {
+            payload.make_latest = "true";
+          } else {
+            payload.make_latest = "false";
+          }
+          process.stdout.write(`${JSON.stringify(payload)}\n`);
+          NODE
+
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            --input "$payload" >/dev/null
+
+  verify-stable-updater-feed:
+    name: Verify stable updater feed
+    needs:
+      - resolve-release
+      - publish-updater-json
+      - release-orchestrator-sidecars
+      - publish-release
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.resolve-release.outputs.build_tauri == 'true' &&
+      needs.resolve-release.outputs.prerelease != 'true' &&
+      needs.publish-updater-json.result == 'success' &&
+      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
+      (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Verify stable updater feed
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-updater-endpoint.mjs \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" \
+            --attempts 6 \
+            --delay-ms 10000
