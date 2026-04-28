@@ -135,13 +135,11 @@ Recommended location:
 
 - Tauri-side persisted store or app-data file
 
-For the current external bootstrap-file approach, the desktop shell should look for `desktop-bootstrap.json` in the host config directory under `OpenWork/`, unless an explicit override path is provided with `OPENWORK_DESKTOP_BOOTSTRAP_PATH`.
+For the current external bootstrap-file approach, the desktop shell should look for `desktop-bootstrap.json` in the shared OpenWork config directory, unless an explicit override path is provided with `OPENWORK_DESKTOP_BOOTSTRAP_PATH`.
 
 Expected default locations:
 
-- macOS: `~/Library/Application Support/OpenWork/desktop-bootstrap.json`
-- Linux: `~/.config/OpenWork/desktop-bootstrap.json`
-- Windows: `%AppData%\OpenWork\desktop-bootstrap.json`
+- All platforms: `~/.config/openwork/desktop-bootstrap.json`
 
 Avoid using browser `localStorage` as the long-term source of truth for install identity in desktop mode.
 

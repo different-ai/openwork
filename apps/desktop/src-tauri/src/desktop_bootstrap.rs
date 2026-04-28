@@ -85,11 +85,11 @@ fn desktop_bootstrap_path() -> Result<PathBuf, String> {
         }
     }
 
-    let config_root = dirs::config_dir()
-        .ok_or_else(|| "Failed to resolve a desktop bootstrap config directory".to_string())?;
-    Ok(config_root
-        .join("OpenWork")
-        .join(DESKTOP_BOOTSTRAP_FILE_NAME))
+    let config_root = dirs::home_dir()
+        .ok_or_else(|| "Failed to resolve a desktop bootstrap config directory".to_string())?
+        .join(".config")
+        .join("openwork");
+    Ok(config_root.join(DESKTOP_BOOTSTRAP_FILE_NAME))
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {

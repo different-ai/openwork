@@ -204,7 +204,10 @@ function flushPendingDeepLinks() {
 }
 
 function desktopBootstrapPath() {
-  return path.join(app.getPath("userData"), "desktop-bootstrap.json");
+  if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
+    return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH.trim();
+  }
+  return path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
 }
 
 function workspaceStatePath() {
