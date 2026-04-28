@@ -84,6 +84,7 @@ import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/pr
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
+import { useSessionListPolling, cacheSessionList } from "./session-list-cache";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -299,6 +300,7 @@ export function SessionRoute() {
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const sessionsByWorkspaceIdRef = useRef<Record<string, any[]>>({});
+  const clientRef = useRef<OpenworkServerClient | null>(null);
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
@@ -385,6 +387,7 @@ export function SessionRoute() {
               )
             : (response.items ?? []);
           setSessionsByWorkspaceId((current) => ({ ...current, [workspace.id]: items }));
+          cacheSessionList(workspace.id, items);
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setRetryingWorkspaceIds((current) =>
             current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
@@ -555,6 +558,39 @@ export function SessionRoute() {
     }
   }, [loadWorkspaceSessionsInBackground, markBootRouteReady, selectedSessionId]);
 
+  // Lightweight session-list-only refresh used by the periodic polling hook.
+  // This avoids the heavy work of `refreshRouteState` (re-fetching workspaces,
+  // re-resolving connections, etc.) and only re-fetches the session lists so
+  // that externally created sessions appear in the sidebar.
+  const refreshSessionLists = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    const owClient = clientRef.current;
+    const wsList = workspacesRef.current;
+    if (!owClient || wsList.length === 0) return;
+
+    for (const workspace of wsList) {
+      try {
+        const response = await owClient.listSessions(workspace.id, { limit: 200 });
+        const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
+        const items = workspaceRoot
+          ? (response.items ?? []).filter((session: any) =>
+              normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
+            )
+          : (response.items ?? []);
+        setSessionsByWorkspaceId((current) => ({ ...current, [workspace.id]: items }));
+        cacheSessionList(workspace.id, items);
+        setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
+      } catch {
+        // Best-effort; transient failures are retried on the next tick.
+      }
+    }
+  }, []);
+
+  // Periodic polling to surface externally created sessions (automations,
+  // messaging bots, other clients) without requiring manual refresh.
+  // Fixes #1262
+  useSessionListPolling(refreshSessionLists, 30_000);
+
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
     onHostInfo: setOpenworkServerHostInfoState,
@@ -660,6 +696,10 @@ export function SessionRoute() {
   useEffect(() => {
     sessionsByWorkspaceIdRef.current = sessionsByWorkspaceId;
   }, [sessionsByWorkspaceId]);
+
+  useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
 
   useEffect(() => {
     let cancelled = false;
