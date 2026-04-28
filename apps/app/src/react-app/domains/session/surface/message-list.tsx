@@ -949,10 +949,10 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
     return (
       <div
         key={`message-${block.messageId}`}
-        className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+        className={`relative flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
         data-message-role={block.isUser ? "user" : "assistant"}
         data-message-id={block.messageId}
-        style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
+        style={{ contain: block.isUser ? "layout style" : "layout style paint", ...blockPerfStyle(blockIndex) }}
       >
         <div
           className={`${
@@ -1046,12 +1046,20 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
             );
           })}
 
-          {!isNestedVariant ? (
+          {!isNestedVariant && !block.isUser ? (
             <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
               <CopyButton text={messageToText(block.message)} />
             </div>
           ) : null}
         </div>
+
+        {!isNestedVariant && block.isUser ? (
+          <div className="absolute inset-x-0 top-full z-10 h-4 opacity-100 pointer-events-auto md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity select-none">
+            <div className="absolute right-0 top-1 flex justify-end">
+              <CopyButton text={messageToText(block.message)} />
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   };
