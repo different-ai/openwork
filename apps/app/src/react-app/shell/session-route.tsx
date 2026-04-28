@@ -6,6 +6,7 @@ import type {
   ConfigProvidersResponse,
   FilePartInput,
   ProviderListResponse,
+  Session,
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
@@ -14,6 +15,7 @@ import { listCommands, shellInSession } from "../../app/lib/opencode-session";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  OpenworkServerError,
   readOpenworkServerSettings,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
@@ -626,10 +628,33 @@ export function SessionRoute() {
     if (!client || !selectedWorkspaceId || !selectedSessionId) return;
     let cancelled = false;
 
+    let interval: number | null = null;
+
+    const handleMissingSession = (missingSessionId: string, missingWorkspaceId: string) => {
+      if (cancelled) return;
+      cancelled = true;
+      if (interval !== null) {
+        window.clearInterval(interval);
+        interval = null;
+      }
+      setSessionsByWorkspaceId((current) => {
+        const list = current[missingWorkspaceId];
+        if (!list) return current;
+        const next = list.filter((session: Session) => session?.id !== missingSessionId);
+        if (next.length === list.length) return current;
+        return { ...current, [missingWorkspaceId]: next };
+      });
+      navigate("/session", { replace: true });
+    };
+
     const refreshSelectedSessionTitle = async () => {
       try {
         const response = await client.getSession(selectedWorkspaceId, selectedSessionId);
-        if (cancelled || !response.item) return;
+        if (cancelled) return;
+        if (!response.item) {
+          handleMissingSession(selectedSessionId, selectedWorkspaceId);
+          return;
+        }
         setSessionsByWorkspaceId((current) => {
           const list = current[selectedWorkspaceId] ?? [];
           const index = list.findIndex((session: any) => session?.id === selectedSessionId);
@@ -640,18 +665,25 @@ export function SessionRoute() {
           nextList[index] = nextSession;
           return { ...current, [selectedWorkspaceId]: nextList };
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof OpenworkServerError && error.status === 404) {
+          handleMissingSession(selectedSessionId, selectedWorkspaceId);
+          return;
+        }
         // Best-effort title sync; the session surface still owns messages.
       }
     };
 
     void refreshSelectedSessionTitle();
-    const interval = window.setInterval(() => void refreshSelectedSessionTitle(), 3_000);
+    interval = window.setInterval(() => void refreshSelectedSessionTitle(), 3_000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (interval !== null) {
+        window.clearInterval(interval);
+        interval = null;
+      }
     };
-  }, [client, selectedSessionId, selectedWorkspaceId]);
+  }, [client, navigate, selectedSessionId, selectedWorkspaceId]);
 
   useEffect(() => {
     workspacesRef.current = workspaces;
@@ -1712,9 +1744,15 @@ export function SessionRoute() {
       onDeleteSession={
         client && selectedWorkspaceId
           ? async (sessionId) => {
-              await client.deleteSession(selectedWorkspaceId, sessionId);
-              if (selectedSessionId === sessionId) {
-                navigate("/session");
+              const wasActive = selectedSessionId === sessionId;
+              const workspaceId = selectedWorkspaceId;
+              if (wasActive) {
+                navigate("/session", { replace: true });
+              }
+              try {
+                await client.deleteSession(workspaceId, sessionId);
+              } catch (error) {
+                console.error("[session-route] deleteSession failed", error);
               }
               await refreshRouteState();
             }
