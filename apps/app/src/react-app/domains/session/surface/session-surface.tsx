@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
+import type { SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
@@ -29,6 +30,7 @@ import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
+import { deriveRenderedSessionMessages } from "./session-render-state";
 import { SessionTranscript } from "./message-list";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
@@ -38,7 +40,10 @@ import {
   todoKey as reactTodoKey,
   transcriptKey as reactTranscriptKey,
 } from "../sync/session-sync";
-import { snapshotToUIMessages } from "../sync/usechat-adapter";
+
+const EMPTY_TRANSCRIPT: UIMessage[] = [];
+const EMPTY_TODOS: Todo[] = [];
+const IDLE_STATUS: SessionStatus = { type: "idle" };
 
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -102,6 +107,9 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
 
 function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   const queryClient = getReactQueryClient();
+  // useSyncExternalStore requires getSnapshot to return the same reference
+  // while the external store has not changed. Callers must pass stable
+  // fallbacks for empty cache states.
   return useSyncExternalStore(
     (callback) => queryClient.getQueryCache().subscribe(callback),
     () => (queryClient.getQueryData<T>(queryKey) ?? fallback),
@@ -174,16 +182,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [props.workspaceId, props.sessionId],
   );
 
-  useEffect(() => {
-    return () => {
-      const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: snapshotQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: transcriptQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: statusQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: todoQueryKey, exact: true });
-    };
-  }, [snapshotQueryKey, transcriptQueryKey, statusQueryKey, todoQueryKey]);
-
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
@@ -191,9 +189,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
-  const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, []);
-  const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? { type: "idle" as const });
-  useSharedQueryState(todoQueryKey, currentSnapshot?.todos ?? []);
+  const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
+  const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
+  useSharedQueryState(todoQueryKey, currentSnapshot?.todos ?? EMPTY_TODOS);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -291,9 +289,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, currentSnapshot, props.workspaceId]);
 
   const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
-  const liveStatus = statusState ?? snapshot?.status ?? { type: "idle" as const };
+  const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
-  const renderedMessages = transcriptState ?? [];
+  const renderedMessages = useMemo(
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
+    [snapshot, transcriptState],
+  );
   const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;

@@ -360,7 +360,7 @@ async function revealFileInFinder(path: string) {
   }
 }
 
-function CopyButton(props: { text: string }) {
+function CopyButton(props: { getText: () => string }) {
   const [copied, setCopied] = useState(false);
 
   return (
@@ -369,7 +369,7 @@ function CopyButton(props: { text: string }) {
       className="inline-flex items-center justify-center rounded-lg border border-dls-border bg-dls-surface p-1.5 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
       title="Copy message"
       onClick={async () => {
-        await navigator.clipboard.writeText(props.text);
+        await navigator.clipboard.writeText(props.getText());
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1200);
       }}
@@ -1048,7 +1048,7 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
           {!isNestedVariant ? (
             <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-              <CopyButton text={messageToText(block.message)} />
+              <CopyButton getText={() => messageToText(block.message)} />
             </div>
           ) : null}
         </div>

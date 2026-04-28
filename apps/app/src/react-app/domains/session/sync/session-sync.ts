@@ -414,9 +414,23 @@ function startSync(input: SyncOptions) {
   const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
   const controller = new AbortController();
   const entry = syncs.get(syncKey(input));
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelayMs = 1_000;
 
-  void client.event.subscribe(undefined, { signal: controller.signal }).then((sub) => {
-    void (async () => {
+  const scheduleRetry = () => {
+    if (disposed || controller.signal.aborted || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void connect();
+    }, retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
+  };
+
+  const connect = async () => {
+    try {
+      const sub = await client.event.subscribe(undefined, { signal: controller.signal });
+      retryDelayMs = 1_000;
       for await (const raw of sub.stream) {
         if (controller.signal.aborted) return;
         const event = normalizeEvent(raw);
@@ -424,10 +438,19 @@ function startSync(input: SyncOptions) {
         if (!entry) continue;
         applyEvent(entry, input.workspaceId, event);
       }
-    })();
-  });
+      if (!controller.signal.aborted) scheduleRetry();
+    } catch {
+      if (!controller.signal.aborted) scheduleRetry();
+    }
+  };
 
-  return () => controller.abort();
+  void connect();
+
+  return () => {
+    disposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    controller.abort();
+  };
 }
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
@@ -530,10 +553,6 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
       entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
         (item) => item.sessionId !== normalizedSessionId,
       );
-      const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, normalizedSessionId), exact: true });
-      queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, normalizedSessionId), exact: true });
-      queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, normalizedSessionId), exact: true });
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);

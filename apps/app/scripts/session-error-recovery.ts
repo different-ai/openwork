@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 
-import { latestSessionErrorTurnTime, shouldResetRunState } from "../src/app/session/run-state";
+import {
+  latestSessionErrorTurnTime,
+  shouldResetRunState,
+} from "../src/react-app/domains/session/sync/run-state";
 
 assert.equal(latestSessionErrorTurnTime([]), null);
 assert.equal(
