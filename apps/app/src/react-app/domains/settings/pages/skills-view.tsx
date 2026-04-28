@@ -718,7 +718,7 @@ export function SkillsView(props: SkillsViewProps) {
   return (
     <section className="space-y-8">
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-wrap flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             {props.showHeader !== false ? <h2 className={pageTitleClass}>{t("skills.title")}</h2> : null}
             <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-dls-secondary">
@@ -726,7 +726,7 @@ export function SkillsView(props: SkillsViewProps) {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3 lg:justify-end">
+          <div className="flex flex-wrap gap-3 justify-start xl:justify-end">
             <button
               type="button"
               onClick={() => runDesktopAction(extensions.importLocalSkill)}
@@ -752,7 +752,7 @@ export function SkillsView(props: SkillsViewProps) {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-[20px] border border-dls-border bg-dls-surface p-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 rounded-[20px] border border-dls-border bg-dls-surface p-4 2xl:flex-row 2xl:items-center 2xl:justify-between">
           <div className="relative min-w-0 flex-1">
             <Search size={16} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-dls-secondary" />
             <input
