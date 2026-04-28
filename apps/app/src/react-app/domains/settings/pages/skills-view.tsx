@@ -79,7 +79,7 @@ type ToastTone = "info" | "success" | "warning" | "error";
 const pageTitleClass = "text-[28px] font-semibold tracking-[-0.5px] text-dls-text";
 const sectionTitleClass = "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
 const panelCardClass =
-  "rounded-[20px] border border-dls-border bg-dls-surface p-5 transition-all hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]";
+  "rounded-[20px] border border-dls-border bg-dls-surface p-3 transition-all hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] sm:p-5";
 
 const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
   "workspace-guide",
@@ -822,7 +822,7 @@ export function SkillsView(props: SkillsViewProps) {
             </div>
           ) : (
             <div className="rounded-[24px] bg-dls-hover p-4">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {filteredSkills.map((skill) => (
                   <div
                     key={skill.path}
@@ -832,9 +832,9 @@ export function SkillsView(props: SkillsViewProps) {
                     onClick={() => void openSkill(skill)}
                     onKeyDown={(event) => handleSkillCardKeyDown(event, skill)}
                   >
-                    <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
-                        <Package size={20} className="text-dls-secondary" />
+                    <div className="flex min-w-0 gap-3 sm:gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover sm:h-10 sm:w-10">
+                        <Package className="h-4 w-4 text-dls-secondary sm:h-5 sm:w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -959,27 +959,27 @@ export function SkillsView(props: SkillsViewProps) {
                 </div>
               ) : (
                 <div className="rounded-[24px] bg-dls-hover p-4">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                     {filteredCloudOrgSkills.map((skill) => {
                       const state = cloudSkillInstallState(skill);
                       const installedName = importedCloudSkills[skill.id]?.installedName ?? null;
                       return (
                         <div key={skill.id} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
-                          <div className="flex min-w-0 gap-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
-                              <Cloud size={20} className="text-dls-secondary" />
+                          <div className="flex min-w-0 gap-3 sm:gap-4">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover sm:h-10 sm:w-10">
+                              <Cloud className="h-4 w-4 text-dls-secondary sm:h-5 sm:w-5" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <h4 className="truncate text-[14px] font-semibold text-dls-text">{skill.title}</h4>
                               {skill.description ? (
                                 <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">{skill.description}</p>
                               ) : null}
-                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
-                                {skill.hubName ? <span className={tagClass}>{t("skills.cloud_hub_label", undefined, { name: skill.hubName })}</span> : null}
+                              <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-dls-secondary">
+                                {skill.hubName ? <span className={tagClass} title={skill.hubName}>{t("skills.cloud_hub_label", undefined, { name: skill.hubName })}</span> : null}
                                 {skill.shared === "org" ? <span className={tagClass}>{t("skills.cloud_shared_org")}</span> : null}
                                 {skill.shared === "public" ? <span className={tagClass}>{t("skills.cloud_shared_public")}</span> : null}
                                 {skill.shared === null && !skill.hubName ? <span className={tagClass}>{t("skills.cloud_shared_private")}</span> : null}
-                                {installedName ? <span className={tagClass}>{t("skills.cloud_installed_as", undefined, { name: installedName })}</span> : null}
+                                {installedName ? <span className={tagClass} title={installedName}>{t("skills.cloud_installed_as", undefined, { name: installedName })}</span> : null}
                                 {state === "installed" ? <span className={tagClass}>{t("skills.cloud_status_installed")}</span> : null}
                                 {state === "update" ? <span className={tagClass}>{t("skills.cloud_status_update")}</span> : null}
                               </div>
@@ -1107,19 +1107,19 @@ export function SkillsView(props: SkillsViewProps) {
             </div>
           ) : (
             <div className="rounded-[24px] bg-dls-hover p-4">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {filteredHubSkills.map((skill) => (
                   <div key={`${skill.source.owner}/${skill.source.repo}/${skill.name}`} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
-                    <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
-                        <Package size={20} className="text-dls-secondary" />
+                    <div className="flex min-w-0 gap-3 sm:gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover sm:h-10 sm:w-10">
+                        <Package className="h-4 w-4 text-dls-secondary sm:h-5 sm:w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <h4 className="truncate text-[14px] font-semibold text-dls-text">{skill.name}</h4>
                         <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
                           {skill.description || t("skills.from_repo", undefined, { owner: skill.source.owner, repo: skill.source.repo })}
                         </p>
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
+                        <div className="mt-3 flex items-center gap-2 overflow-x-auto whitespace-nowrap text-[11px] text-dls-secondary">
                           <span className={`${tagClass} font-mono`}>{skill.source.owner}/{skill.source.repo}</span>
                           {skill.trigger ? (
                             <span className={tagClass} title={t("skills.trigger_label", undefined, { trigger: skill.trigger })}>
