@@ -185,7 +185,21 @@ async function main() {
     dryRun: args.dryRun,
   });
 
-  // 7. Stage + commit.
+  // 7. Once Tauri is gone, make the sidecar helper's default output match the
+  //    Electron resource layout. Before cleanup, Tauri still uses the old
+  //    default and Electron passes --outdir explicitly.
+  await replaceInFile(
+    resolve(repoRoot, "apps/desktop/scripts/prepare-sidecar.mjs"),
+    [
+      [
+        /join\(__dirname, "\.\.", "src-tauri", "sidecars"\)/,
+        'join(__dirname, "..", "resources", "sidecars")',
+      ],
+    ],
+    { dryRun: args.dryRun },
+  );
+
+  // 8. Stage + commit.
   run("git", ["add", "-A"], { dryRun: args.dryRun });
   run(
     "git",

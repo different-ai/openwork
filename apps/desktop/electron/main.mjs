@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -15,20 +16,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
-// electron-updater is dynamically imported later because it pulls in a
-// larger dep graph and we only want it loaded in packaged builds.
+import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
+import { registerUpdaterIpc } from "./updater.mjs";
+import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
-const MIGRATION_SNAPSHOT_FILENAME = "migration-snapshot.v1.json";
-const MIGRATION_SNAPSHOT_DONE_FILENAME = "migration-snapshot.v1.done.json";
-const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
-const ELECTRON_UPDATER_FEEDS = Object.freeze({
-  stable: "https://github.com/different-ai/openwork/releases/latest/download",
-  alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
-});
 
 // Share the same on-disk state folder as the Tauri shell so in-place
 // migration is a no-op for almost every file. Done BEFORE whenReady so all
@@ -52,8 +47,8 @@ if (userDataOverride) {
 // the Electron default icon is shown without this.
 function resolveAppIconPath() {
   const candidates = [
-    // Dev: repo-relative path to the existing Tauri icon set.
-    path.resolve(__dirname, "../src-tauri/icons/icon.png"),
+    // Dev: repo-relative path to the Electron resource icon set.
+    path.resolve(__dirname, "../resources/icons/icon.png"),
     // Packaged: electron-builder copies extraResources but we fall back to this
     // if custom packaging ever exposes the icon here.
     path.join(process.resourcesPath ?? "", "icons", "icon.png"),
@@ -368,13 +363,58 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
-function defaultWorkspaceOpenworkConfig(workspacePath) {
+function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
   return {
     version: 1,
-    workspace: null,
+    workspace: workspacePath
+      ? {
+          name: path.basename(workspacePath) || "Workspace",
+          createdAt: Date.now(),
+          preset: preset || null,
+        }
+      : null,
     authorizedRoots: workspacePath ? [workspacePath] : [],
     reload: null,
   };
+}
+
+async function normalizeLocalWorkspacePath(rawPath) {
+  const trimmed = String(rawPath ?? "").trim();
+  if (!trimmed) return "";
+  const expanded = trimmed === "~"
+    ? os.homedir()
+    : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+      ? path.join(os.homedir(), trimmed.slice(2))
+      : trimmed;
+  const resolved = path.resolve(expanded);
+  return realpath(resolved).catch(() => resolved);
+}
+
+function normalizeWorkspacePathKey(value) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed ? path.resolve(trimmed).replace(/\\/g, "/").toLowerCase() : "";
+}
+
+function stableWorkspaceId(value) {
+  return `ws_${createHash("sha256").update(String(value)).digest("hex").slice(0, 12)}`;
+}
+
+function localWorkspaceId(workspacePath) {
+  return stableWorkspaceId(workspacePath);
+}
+
+function remoteWorkspaceId(baseUrl, directory) {
+  const key = String(directory ?? "").trim()
+    ? `remote::${baseUrl}::${String(directory).trim()}`
+    : `remote::${baseUrl}`;
+  return stableWorkspaceId(key);
+}
+
+function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
+  const key = String(workspaceId ?? "").trim()
+    ? `openwork::${hostUrl}::${String(workspaceId).trim()}`
+    : `openwork::${hostUrl}`;
+  return stableWorkspaceId(key);
 }
 
 async function readWorkspaceOpenworkConfig(workspacePath) {
@@ -539,10 +579,6 @@ function ensureRuntimeBootstrap() {
     }));
   }
   return runtimeBootstrapPromise;
-}
-
-function makeWorkspaceId(kind, value) {
-  return `${kind}_${createHash("sha1").update(String(value)).digest("hex").slice(0, 12)}`;
 }
 
 function normalizeWorkspaceEntry(input) {
@@ -854,20 +890,26 @@ async function handleDesktopInvoke(event, command, ...args) {
       });
     case "workspaceCreate": {
       const input = args[0] ?? {};
-      const folderPath = String(input.folderPath ?? "").trim();
-      if (!folderPath) throw new Error("folderPath is required");
+      const rawFolderPath = String(input.folderPath ?? "").trim();
+      if (!rawFolderPath) throw new Error("folderPath is required");
+      const folderPath = await normalizeLocalWorkspacePath(rawFolderPath);
+      await mkdir(folderPath, { recursive: true });
+      const preset = String(input.preset ?? "starter");
       const workspace = normalizeWorkspaceEntry({
-        id: makeWorkspaceId("local", folderPath),
+        id: localWorkspaceId(folderPath),
         name: String(input.name ?? (path.basename(folderPath) || "Workspace")),
         displayName: String(input.name ?? (path.basename(folderPath) || "Workspace")),
         path: folderPath,
-        preset: String(input.preset ?? "starter"),
+        preset,
         workspaceType: "local",
       });
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-      await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath));
+      await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
       return mutateWorkspaceState((state) => {
-        state.workspaces = state.workspaces.filter((entry) => entry.id !== workspace.id);
+        const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
+        state.workspaces = state.workspaces.filter(
+          (entry) => entry.id !== workspace.id && normalizeWorkspacePathKey(entry.path) !== workspacePathKey,
+        );
         state.workspaces.push(workspace);
         state.selectedId = workspace.id;
         state.activeId = workspace.id;
@@ -879,21 +921,35 @@ async function handleDesktopInvoke(event, command, ...args) {
       const input = args[0] ?? {};
       const baseUrl = String(input.baseUrl ?? "").trim();
       if (!baseUrl) throw new Error("baseUrl is required");
+      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+        throw new Error("baseUrl must start with http:// or https://");
+      }
+      const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
+      const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
+      const openworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
+        ? input.openworkHostUrl.trim()
+        : null;
+      const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
+        ? input.openworkWorkspaceId.trim()
+        : null;
+      const id = remoteType === "openwork"
+        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
+        : remoteWorkspaceId(baseUrl, directory);
       const workspace = normalizeWorkspaceEntry({
-        id: makeWorkspaceId("remote", `${baseUrl}:${input.directory ?? ""}`),
+        id,
         name: String(input.displayName ?? input.openworkWorkspaceName ?? "Remote workspace"),
         displayName: input.displayName ?? null,
-        path: String(input.directory ?? baseUrl),
+        path: directory ?? "",
         preset: "remote",
         workspaceType: "remote",
-        remoteType: input.remoteType ?? "openwork",
+        remoteType,
         baseUrl,
-        directory: input.directory ?? null,
-        openworkHostUrl: input.openworkHostUrl ?? null,
+        directory,
+        openworkHostUrl,
         openworkToken: input.openworkToken ?? null,
         openworkClientToken: input.openworkClientToken ?? null,
         openworkHostToken: input.openworkHostToken ?? null,
-        openworkWorkspaceId: input.openworkWorkspaceId ?? null,
+        openworkWorkspaceId,
         openworkWorkspaceName: input.openworkWorkspaceName ?? null,
         sandboxBackend: input.sandboxBackend ?? null,
         sandboxRunId: input.sandboxRunId ?? null,
@@ -943,9 +999,9 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "workspaceAddAuthorizedRoot": {
       const input = args[0] ?? {};
       const workspacePath = String(input.workspacePath ?? "").trim();
-      const authorizedRoot = String(input.authorizedRoot ?? "").trim();
+      const authorizedRoot = String(input.folderPath ?? input.authorizedRoot ?? "").trim();
       if (!workspacePath || !authorizedRoot) {
-        throw new Error("workspacePath and authorizedRoot are required");
+        throw new Error("workspacePath and folderPath are required");
       }
       const config = await readWorkspaceOpenworkConfig(workspacePath);
       if (!Array.isArray(config.authorizedRoots)) {
@@ -963,6 +1019,49 @@ async function handleDesktopInvoke(event, command, ...args) {
         String(args[0]?.workspacePath ?? "").trim(),
         args[0]?.config ?? defaultWorkspaceOpenworkConfig(""),
       );
+    case "workspaceExportConfig": {
+      const input = args[0] ?? {};
+      const workspaceId = String(input.workspaceId ?? "").trim();
+      const outputPath = String(input.outputPath ?? "").trim();
+      if (!workspaceId) throw new Error("workspaceId is required");
+      if (!outputPath) throw new Error("outputPath is required");
+      const state = await readWorkspaceState();
+      const workspace = state.workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) throw new Error("Unknown workspaceId");
+      return exportWorkspaceConfig({ workspace, outputPath });
+    }
+    case "workspaceImportConfig": {
+      const input = args[0] ?? {};
+      const archivePath = String(input.archivePath ?? "").trim();
+      const targetDirRaw = String(input.targetDir ?? "").trim();
+      if (!archivePath) throw new Error("archivePath is required");
+      if (!targetDirRaw) throw new Error("targetDir is required");
+      const targetDir = await normalizeLocalWorkspacePath(targetDirRaw);
+      const imported = await importWorkspaceConfig({
+        archivePath,
+        targetDir,
+        name: input.name ?? null,
+      });
+      const workspace = normalizeWorkspaceEntry({
+        id: localWorkspaceId(targetDir),
+        name: imported.workspaceName,
+        displayName: null,
+        path: targetDir,
+        preset: imported.preset,
+        workspaceType: "local",
+      });
+      return mutateWorkspaceState((state) => {
+        const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
+        state.workspaces = state.workspaces.filter(
+          (entry) => entry.id !== workspace.id && normalizeWorkspacePathKey(entry.path) !== workspacePathKey,
+        );
+        state.workspaces.push(workspace);
+        state.selectedId = workspace.id;
+        state.activeId = workspace.id;
+        state.watchedId = workspace.id;
+        return state;
+      });
+    }
     case "opencodeCommandList":
       return listCommandNames(String(args[0]?.scope ?? "").trim(), String(args[0]?.projectDir ?? "").trim());
     case "opencodeCommandWrite":
@@ -1039,21 +1138,27 @@ async function handleDesktopInvoke(event, command, ...args) {
       return runtimeManager.openworkServerRestart(args[0] ?? {});
     case "pickDirectory": {
       const options = args[0] ?? {};
+      /** @type {import("electron").OpenDialogOptions["properties"]} */
+      const properties = options.multiple
+        ? ["openDirectory", "createDirectory", "multiSelections"]
+        : ["openDirectory", "createDirectory"];
       const result = await dialog.showOpenDialog(activeWindowFromEvent(event), {
         title: options.title,
         defaultPath: options.defaultPath,
-        properties: ["openDirectory", "createDirectory", ...(options.multiple ? ["multiSelections"] : [])],
+        properties,
       });
       if (result.canceled) return null;
       return options.multiple ? result.filePaths : (result.filePaths[0] ?? null);
     }
     case "pickFile": {
       const options = args[0] ?? {};
+      /** @type {import("electron").OpenDialogOptions["properties"]} */
+      const properties = options.multiple ? ["openFile", "multiSelections"] : ["openFile"];
       const result = await dialog.showOpenDialog(activeWindowFromEvent(event), {
         title: options.title,
         defaultPath: options.defaultPath,
         filters: options.filters,
-        properties: ["openFile", ...(options.multiple ? ["multiSelections"] : [])],
+        properties,
       });
       if (result.canceled) return null;
       return options.multiple ? result.filePaths : (result.filePaths[0] ?? null);
@@ -1271,184 +1376,8 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.exit(0);
 });
 
-// Migration snapshot: one-way handoff from the last Tauri release into the
-// first Electron launch. The Tauri shell writes migration-snapshot.v1.json
-// into app_data_dir before it kicks off the Electron installer. Electron
-// renders the workspace list / session-by-workspace preferences from it on
-// first boot and then marks it .done so subsequent boots don't re-import.
-function migrationSnapshotPath(done = false) {
-  return path.join(
-    app.getPath("userData"),
-    done ? MIGRATION_SNAPSHOT_DONE_FILENAME : MIGRATION_SNAPSHOT_FILENAME,
-  );
-}
-
-ipcMain.handle("openwork:migration:read", async () => {
-  const snapshotPath = migrationSnapshotPath();
-  if (!existsSync(snapshotPath)) return null;
-  try {
-    const raw = await readFile(snapshotPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.version === 1) {
-      return parsed;
-    }
-    return null;
-  } catch (error) {
-    console.warn("[migration] failed to read snapshot", error);
-    return null;
-  }
-});
-
-ipcMain.handle("openwork:migration:ack", async () => {
-  const snapshotPath = migrationSnapshotPath();
-  const donePath = migrationSnapshotPath(true);
-  if (!existsSync(snapshotPath)) return { ok: true, moved: false };
-  try {
-    await rename(snapshotPath, donePath);
-    return { ok: true, moved: true };
-  } catch (error) {
-    console.warn("[migration] failed to rename snapshot", error);
-    return { ok: false, moved: false };
-  }
-});
-
-// electron-updater wiring. Packaged-only; dev builds skip this so the
-// updater doesn't try to probe a non-existent release channel.
-let autoUpdaterInstance = null;
-let autoUpdaterLoaded = false;
-
-function normalizeElectronUpdaterChannel(value) {
-  if (value === "alpha" && process.platform === "darwin") return "alpha";
-  return "stable";
-}
-
-function electronUpdaterChannelPath() {
-  return path.join(app.getPath("userData"), ELECTRON_UPDATER_CHANNEL_FILENAME);
-}
-
-async function readElectronUpdaterChannel() {
-  try {
-    const raw = await readFile(electronUpdaterChannelPath(), "utf8");
-    const parsed = JSON.parse(raw);
-    return normalizeElectronUpdaterChannel(parsed?.channel);
-  } catch {
-    return "stable";
-  }
-}
-
-async function writeElectronUpdaterChannel(channel) {
-  const normalized = normalizeElectronUpdaterChannel(channel);
-  const outputPath = electronUpdaterChannelPath();
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(
-    outputPath,
-    `${JSON.stringify({ channel: normalized, writtenAt: new Date().toISOString() }, null, 2)}\n`,
-    "utf8",
-  );
-  return normalized;
-}
-
-function electronUpdaterFeedUrl(channel) {
-  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel)];
-}
-
-function updaterChannelState(channel) {
-  const normalized = normalizeElectronUpdaterChannel(channel);
-  return {
-    channel: normalized,
-    feedUrl: electronUpdaterFeedUrl(normalized),
-    currentVersion: app.getVersion(),
-  };
-}
-
-async function applyElectronUpdaterFeed(updater) {
-  const channel = await readElectronUpdaterChannel();
-  const state = updaterChannelState(channel);
-  if (updater?.setFeedURL) {
-    updater.setFeedURL({ provider: "generic", url: state.feedUrl });
-  }
-  return state;
-}
-
-async function ensureAutoUpdater() {
-  if (!app.isPackaged) return null;
-  if (autoUpdaterLoaded) return autoUpdaterInstance;
-  autoUpdaterLoaded = true;
-  try {
-    const mod = await import("electron-updater");
-    autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
-    if (autoUpdaterInstance) {
-      autoUpdaterInstance.autoDownload = false;
-      autoUpdaterInstance.autoInstallOnAppQuit = true;
-      autoUpdaterInstance.on("error", (err) => {
-        console.warn("[updater] error", err);
-      });
-      await applyElectronUpdaterFeed(autoUpdaterInstance);
-    }
-  } catch (error) {
-    console.warn("[updater] electron-updater not available", error);
-    autoUpdaterInstance = null;
-  }
-  return autoUpdaterInstance;
-}
-
-ipcMain.handle("openwork:updater:getChannel", async () => {
-  const channel = await readElectronUpdaterChannel();
-  return updaterChannelState(channel);
-});
-
-ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
-  const channel = await writeElectronUpdaterChannel(rawChannel);
-  const updater = await ensureAutoUpdater();
-  if (updater) {
-    return applyElectronUpdaterFeed(updater);
-  }
-  return updaterChannelState(channel);
-});
-
-ipcMain.handle("openwork:updater:check", async () => {
-  const updater = await ensureAutoUpdater();
-  const channelState = updater
-    ? await applyElectronUpdaterFeed(updater)
-    : updaterChannelState(await readElectronUpdaterChannel());
-  if (!updater) return { available: false, reason: "unavailable", ...channelState };
-  try {
-    const result = await updater.checkForUpdates();
-    const info = result?.updateInfo ?? null;
-    return {
-      available: Boolean(info && info.version && info.version !== app.getVersion()),
-      currentVersion: app.getVersion(),
-      latestVersion: info?.version ?? null,
-      releaseDate: info?.releaseDate ?? null,
-      releaseNotes: info?.releaseNotes ?? null,
-      ...channelState,
-    };
-  } catch (error) {
-    return { available: false, reason: String(error?.message ?? error), ...channelState };
-  }
-});
-
-ipcMain.handle("openwork:updater:download", async () => {
-  const updater = await ensureAutoUpdater();
-  if (!updater) return { ok: false, reason: "unavailable" };
-  try {
-    await updater.downloadUpdate();
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, reason: String(error?.message ?? error) };
-  }
-});
-
-ipcMain.handle("openwork:updater:installAndRestart", async () => {
-  const updater = await ensureAutoUpdater();
-  if (!updater) return { ok: false, reason: "unavailable" };
-  try {
-    updater.quitAndInstall(false, true);
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, reason: String(error?.message ?? error) };
-  }
-});
+registerMigrationIpc({ app, ipcMain });
+const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain });
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

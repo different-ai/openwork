@@ -19,6 +19,8 @@
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "electron": "pnpm exec electron ./electron/main.mjs",
+    "check:electron": "node ./scripts/check-electron-bridge.mjs",
+    "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {

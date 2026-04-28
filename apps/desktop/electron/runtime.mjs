@@ -294,7 +294,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   const userDataDir = app.getPath("userData");
   const sidecarDirs = [
-    path.join(desktopRoot, "src-tauri", "sidecars"),
+    path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     path.join(path.dirname(app.getPath("exe")), "sidecars"),
   ].filter(Boolean);
@@ -458,6 +458,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function buildChildEnv(extra = {}) {
+    /** @type {NodeJS.ProcessEnv} */
     const env = { ...process.env, BUN_CONFIG_DNS_RESULT_ORDER: "verbatim", ...extra };
     const pathEnv = prependedPath(sidecarDirs);
     if (pathEnv) {
