@@ -27,10 +27,30 @@ export type CloudImportedProvider = {
   importedAt: number | null;
 };
 
+export type CloudImportedPluginFile = {
+  configObjectId: string;
+  versionId: string | null;
+  objectType: string;
+  title: string;
+  path: string;
+  updatedAt: string | null;
+};
+
+export type CloudImportedPlugin = {
+  pluginId: string;
+  marketplaceId: string | null;
+  name: string;
+  description: string | null;
+  updatedAt: string | null;
+  files: CloudImportedPluginFile[];
+  importedAt: number | null;
+};
+
 export type WorkspaceCloudImports = {
   skillHubs: Record<string, CloudImportedSkillHub>;
   skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
+  plugins: Record<string, CloudImportedPlugin>;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -47,6 +67,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
   const rawSkillHubs = isRecord(cloudImports.skillHubs) ? cloudImports.skillHubs : {};
   const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
+  const rawPlugins = isRecord(cloudImports.plugins) ? cloudImports.plugins : {};
 
   const skillHubs = Object.fromEntries(
     Object.entries(rawSkillHubs)
@@ -125,7 +146,50 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
       .filter((entry): entry is readonly [string, CloudImportedSkill] => Boolean(entry)),
   );
 
-  return { skillHubs, skills, providers };
+  const plugins = Object.fromEntries(
+    Object.entries(rawPlugins)
+      .map(([key, entry]) => {
+        if (!isRecord(entry)) return null;
+        const pluginId = typeof entry.pluginId === "string" ? entry.pluginId.trim() : key.trim();
+        const name = typeof entry.name === "string" ? entry.name.trim() : pluginId;
+        if (!pluginId || !name) return null;
+        const files = Array.isArray(entry.files)
+          ? entry.files
+              .map((file): CloudImportedPluginFile | null => {
+                if (!isRecord(file)) return null;
+                const configObjectId = typeof file.configObjectId === "string" ? file.configObjectId.trim() : "";
+                const objectType = typeof file.objectType === "string" ? file.objectType.trim() : "";
+                const title = typeof file.title === "string" ? file.title.trim() : configObjectId;
+                const path = typeof file.path === "string" ? file.path.trim() : "";
+                if (!configObjectId || !objectType || !title || !path) return null;
+                return {
+                  configObjectId,
+                  versionId: typeof file.versionId === "string" ? file.versionId.trim() || null : null,
+                  objectType,
+                  title,
+                  path,
+                  updatedAt: typeof file.updatedAt === "string" ? file.updatedAt.trim() || null : null,
+                };
+              })
+              .filter((file): file is CloudImportedPluginFile => file !== null)
+          : [];
+        const imported = {
+          pluginId,
+          marketplaceId: typeof entry.marketplaceId === "string" ? entry.marketplaceId.trim() || null : null,
+          name,
+          description: typeof entry.description === "string" ? entry.description.trim() || null : null,
+          updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
+          files,
+          importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
+            ? entry.importedAt
+            : null,
+        } satisfies CloudImportedPlugin;
+        return [pluginId, imported] as const;
+      })
+      .filter((entry): entry is readonly [string, CloudImportedPlugin] => Boolean(entry)),
+  );
+
+  return { skillHubs, skills, providers, plugins };
 }
 
 export function withWorkspaceCloudImports(
@@ -138,6 +202,7 @@ export function withWorkspaceCloudImports(
       skillHubs: cloudImports.skillHubs,
       skills: cloudImports.skills,
       providers: cloudImports.providers,
+      plugins: cloudImports.plugins,
     },
   };
 }

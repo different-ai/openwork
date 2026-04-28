@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
+import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
 import { currentLocale, t, type Language } from "../../../../../i18n";
 import { LexicalPromptEditor } from "./editor";
@@ -25,7 +26,8 @@ type PastedTextChip = {
   lines: number;
 };
 
-type ToolMenuSection = "commands" | "skills" | "mcps";
+type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
+type ToolMenuSection = "commands" | "skills" | "mcps" | `plugin:${string}`;
 
 type ComposerProps = {
   draft: string;
@@ -58,7 +60,9 @@ type ComposerProps = {
   mcpServers?: McpServerEntry[];
   mcpStatus?: string | null;
   mcpStatuses?: McpStatusMap;
-  onOpenSettingsSection?: (section: ToolMenuSection) => void;
+  listImportedPlugins?: () => Promise<CloudImportedPlugin[]>;
+  importedPlugins?: CloudImportedPlugin[];
+  onOpenSettingsSection?: (section: ToolMenuSettingsSection) => void;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: "agent" | "file", value: string) => void;
@@ -219,6 +223,26 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
   }
 }
 
+function formatPluginObjectType(type: string) {
+  const normalized = type.trim().toLowerCase();
+  if (!normalized) return "File";
+  if (normalized === "mcp") return "MCP";
+  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+}
+
+function pluginSlashCommandName(file: CloudImportedPluginFile) {
+  const path = file.path.trim();
+  if (file.objectType === "command") {
+    const command = path.match(/^\.opencode\/(?:command|commands)\/(.+)\.md$/i)?.[1];
+    return command?.trim() || null;
+  }
+  if (file.objectType === "skill") {
+    const skill = path.match(/^\.opencode\/(?:skill|skills)\/(?:[^/]+\/)?([^/]+)\/SKILL\.md$/i)?.[1];
+    return skill?.trim() || null;
+  }
+  return null;
+}
+
 export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -232,6 +256,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>(props.mcpServers ?? []);
   const [mcpStatus, setMcpStatus] = useState<string | null>(props.mcpStatus ?? null);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>(props.mcpStatuses ?? {});
+  const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>(props.importedPlugins ?? []);
+  const [pluginsLoading, setPluginsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
@@ -286,6 +312,10 @@ export function ReactSessionComposer(props: ComposerProps) {
     setMcpStatus(props.mcpStatus ?? null);
     setMcpStatuses(props.mcpStatuses ?? {});
   }, [props.mcpServers, props.mcpStatus, props.mcpStatuses]);
+
+  useEffect(() => {
+    setImportedPlugins(props.importedPlugins ?? []);
+  }, [props.importedPlugins]);
 
   useEffect(() => {
     setAgentMenuIndex(0);
@@ -379,6 +409,28 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     if (!toolMenuOpen) return;
+    if (props.listImportedPlugins) {
+      let cancelled = false;
+      setPluginsLoading(true);
+      void props.listImportedPlugins()
+        .then((next) => {
+          if (!cancelled) setImportedPlugins(next);
+        })
+        .catch(() => {
+          if (!cancelled) setImportedPlugins([]);
+        })
+        .finally(() => {
+          if (!cancelled) setPluginsLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    return undefined;
+  }, [toolMenuOpen, props.listImportedPlugins]);
+
+  useEffect(() => {
+    if (!toolMenuOpen) return;
     if (toolMenuSection === "skills" && props.listSkills) {
       let cancelled = false;
       setSkillsLoading(true);
@@ -437,7 +489,20 @@ export function ReactSessionComposer(props: ComposerProps) {
   const toolCommandItems = commands.filter((command) => !command.source || command.source === "command");
   const toolSkillItems = commands.filter((command) => command.source === "skill");
   const toolMcpItems = commands.filter((command) => command.source === "mcp");
+  void toolMcpItems;
+  const pluginSections = importedPlugins
+    .filter((plugin) => plugin.files.length > 0)
+    .map((plugin) => ({ section: `plugin:${plugin.pluginId}` as const, plugin }));
+  const activePlugin = toolMenuSection.startsWith("plugin:")
+    ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
+    : null;
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
+
+  useEffect(() => {
+    if (!toolMenuSection.startsWith("plugin:")) return;
+    if (activePlugin) return;
+    setToolMenuSection("commands");
+  }, [activePlugin, toolMenuSection]);
 
   useEffect(() => {
     if (!activeItems.length) {
@@ -456,6 +521,27 @@ export function ReactSessionComposer(props: ComposerProps) {
     props.onDraftChange(`/${command.name} `);
     setSlashOpen(false);
     setToolMenuOpen(false);
+  };
+
+  const applyPluginFileSelection = (file: CloudImportedPluginFile) => {
+    const commandName = pluginSlashCommandName(file);
+    if (commandName) {
+      applyCommandSelection({
+        id: `plugin:${file.configObjectId}`,
+        name: commandName,
+        source: file.objectType === "skill" ? "skill" : "command",
+      });
+      return;
+    }
+    props.onInsertMention("file", file.path);
+    setToolMenuOpen(false);
+  };
+
+  const openToolMenuSettings = () => {
+    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills" || toolMenuSection === "mcps"
+      ? toolMenuSection
+      : "plugins";
+    props.onOpenSettingsSection?.(section);
   };
 
   const acceptActiveItem = () => {
@@ -955,6 +1041,18 @@ export function ReactSessionComposer(props: ComposerProps) {
                               <ChevronRight size={14} className="shrink-0 text-gray-9" />
                             </button>
                           ))}
+                          {pluginSections.length > 0 ? <div className="my-2 border-t border-dls-border" /> : null}
+                          {pluginSections.map(({ section, plugin }) => (
+                            <button
+                              key={plugin.pluginId}
+                              type="button"
+                              className={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${toolMenuSection === section ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"}`}
+                              onClick={() => setToolMenuSection(section)}
+                            >
+                              <span className="truncate">{plugin.name}</span>
+                              <ChevronRight size={14} className="shrink-0 text-gray-9" />
+                            </button>
+                          ))}
                         </div>
                         <div className="max-h-72 overflow-y-auto p-2">
                           <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
@@ -963,7 +1061,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
                               onClick={() => {
                                 setToolMenuOpen(false);
-                                props.onOpenSettingsSection?.(toolMenuSection);
+                                openToolMenuSettings();
                               }}
                             >
                               <Settings size={12} />
@@ -1041,6 +1139,36 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 {mcpLoading ? t("composer.loading_commands", locale) : (mcpStatus ?? t("context_panel.no_mcp", locale))}
                               </div>
                             )
+                          ) : null}
+                          {activePlugin ? (
+                            activePlugin.files.length > 0 ? (
+                              <div className="grid gap-1">
+                                {activePlugin.files.map((file) => (
+                                  <button
+                                    key={`${file.configObjectId}:${file.path}`}
+                                    type="button"
+                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    onClick={() => applyPluginFileSelection(file)}
+                                  >
+                                    <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="truncate text-xs font-semibold text-gray-11">{file.title}</div>
+                                        <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                          {formatPluginObjectType(file.objectType)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="px-3 py-2 text-xs text-gray-10">No plugin files imported yet.</div>
+                            )
+                          ) : toolMenuSection.startsWith("plugin:") ? (
+                            <div className="px-3 py-2 text-xs text-gray-10">
+                              {pluginsLoading ? t("composer.loading_commands", locale) : "Plugin files are unavailable."}
+                            </div>
                           ) : null}
                         </div>
                       </div>

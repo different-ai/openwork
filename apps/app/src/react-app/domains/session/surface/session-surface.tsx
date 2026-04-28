@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
+import { readWorkspaceCloudImports, type CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
@@ -67,7 +68,7 @@ export type SessionSurfaceProps = {
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
-  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps") => void) | undefined;
+  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
 };
 
 function transcriptToText(messages: UIMessage[]) {
@@ -147,6 +148,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
+  const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const hydratedKeyRef = useRef<string | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   attachmentsRef.current = attachments;
@@ -536,6 +538,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return { servers, statuses, status };
   };
 
+  const listImportedPlugins = async (): Promise<CloudImportedPlugin[]> => {
+    const response = await props.client.getConfig(props.workspaceId);
+    const plugins = Object.values(readWorkspaceCloudImports(response.openwork).plugins)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    setToolImportedPlugins(plugins);
+    return plugins;
+  };
+
   const handleUploadInboxFiles = async (files: File[], options?: { notify?: boolean }) => {
     const input = files.filter(Boolean);
     if (!input.length) return;
@@ -697,6 +707,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         mcpServers={toolMcpServers}
         mcpStatus={toolMcpStatus}
         mcpStatuses={toolMcpStatuses}
+        listImportedPlugins={listImportedPlugins}
+        importedPlugins={toolImportedPlugins}
         onOpenSettingsSection={props.onOpenSettingsSection}
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
