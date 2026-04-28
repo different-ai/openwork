@@ -1,5 +1,3 @@
-import type { DenTemplate } from "../../../app/lib/den";
-import type { OpenworkWorkspaceExportWarning } from "../../../app/lib/openwork-server";
 import type { WorkspacePreset } from "../../../app/types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
@@ -34,11 +32,6 @@ export type CreateWorkspaceModalProps = {
   onConfirm: (preset: WorkspacePreset, folder: string | null) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;
   onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
-  onConfirmTemplate?: (
-    template: DenTemplate,
-    preset: WorkspacePreset,
-    folder: string | null,
-  ) => Promise<void> | void;
   onPickFolder: () => Promise<string | null>;
   onImportConfig?: () => void;
   importingConfig?: boolean;
@@ -99,12 +92,7 @@ export type ShareField = {
   hint?: string;
 };
 
-export type ShareView =
-  | "chooser"
-  | "template"
-  | "template-public"
-  | "template-team"
-  | "access";
+export type ShareView = "chooser" | "access";
 
 export type ShareWorkspaceModalProps = {
   open: boolean;
@@ -121,32 +109,6 @@ export type ShareWorkspaceModalProps = {
     onSave: (enabled: boolean) => void | Promise<void>;
   };
   note?: string | null;
-  onShareWorkspaceProfile?: () => void;
-  shareWorkspaceProfileBusy?: boolean;
-  shareWorkspaceProfileUrl?: string | null;
-  shareWorkspaceProfileError?: string | null;
-  shareWorkspaceProfileDisabledReason?: string | null;
-  shareWorkspaceProfileSensitiveWarnings?: OpenworkWorkspaceExportWarning[] | null;
-  shareWorkspaceProfileSensitiveMode?: "include" | "exclude" | null;
-  onShareWorkspaceProfileSensitiveModeChange?: (mode: "include" | "exclude") => void;
-  onShareWorkspaceProfileToTeam?: (name: string) => void | Promise<void>;
-  shareWorkspaceProfileToTeamBusy?: boolean;
-  shareWorkspaceProfileToTeamError?: string | null;
-  shareWorkspaceProfileToTeamSuccess?: string | null;
-  shareWorkspaceProfileToTeamDisabledReason?: string | null;
-  shareWorkspaceProfileToTeamOrgName?: string | null;
-  shareWorkspaceProfileToTeamNeedsSignIn?: boolean;
-  onShareWorkspaceProfileToTeamSignIn?: () => void | Promise<void>;
-  templateContentSummary?: {
-    skillNames: string[];
-    commandNames: string[];
-    configFiles: string[];
-  } | null;
-  onShareSkillsSet?: () => void;
-  shareSkillsSetBusy?: boolean;
-  shareSkillsSetUrl?: string | null;
-  shareSkillsSetError?: string | null;
-  shareSkillsSetDisabledReason?: string | null;
   onExportConfig?: () => void;
   exportDisabledReason?: string | null;
 };

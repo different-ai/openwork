@@ -846,7 +846,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
+    publishBundle: (payload: unknown, bundleType: "skill" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
       requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
         token,
         hostToken,

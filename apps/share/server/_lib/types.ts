@@ -29,21 +29,6 @@ export interface NormalizedSkillItem {
   content: string;
 }
 
-export interface NormalizedCommandItem {
-  name: string;
-  description: string;
-  template: string;
-  content: string;
-  agent: string;
-  model: string;
-  subtask: boolean;
-}
-
-export interface NormalizedPortableFileItem {
-  path: string;
-  content: string;
-}
-
 export interface NormalizedBundle {
   schemaVersion: number | null;
   type: string;
@@ -51,9 +36,7 @@ export interface NormalizedBundle {
   description: string;
   trigger: string;
   content: string;
-  workspace: Record<string, unknown> | null;
   skills: NormalizedSkillItem[];
-  commands: NormalizedCommandItem[];
 }
 
 export interface BundleCounts {

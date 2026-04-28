@@ -64,30 +64,3 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.doesNotMatch(html, /Open in web app/);
   assert.doesNotMatch(html, /Copy share link/);
 });
-
-test("renderBundlePage shows workspace profile metadata", () => {
-  const rawJson = JSON.stringify({
-    schemaVersion: 1,
-    type: "workspace-profile",
-    name: "Team Workspace",
-    workspace: {
-      opencode: { model: "gpt-5.3" },
-      openwork: { reload: { auto: true } },
-      skills: [{ name: "workspace-guide", content: "..." }, { name: "skill-creator", content: "..." }],
-      commands: [{ name: "standup", template: "..." }],
-    },
-  });
-
-  const html = renderBundlePage({
-    id: "01WORKSPACE",
-    rawJson,
-    req: makeReq({ accept: "text/html", host: "share.openworklabs.com" }),
-  });
-
-  assert.match(html, /Open the bundle in OpenWork/);
-  assert.match(html, /Choose the destination worker/);
-  assert.match(html, /Happy OpenWorking!/);
-  assert.match(html, /Skills:/);
-  assert.doesNotMatch(html, /Bundle details/);
-  assert.doesNotMatch(html, /Raw endpoints/);
-});

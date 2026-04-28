@@ -21,7 +21,6 @@ import {
   DenApiError,
   type DenOrgLlmProvider,
   type DenOrgSkillHub,
-  type DenTemplate,
   type DenUser,
   createDenClient,
   ensureDenActiveOrganization,
@@ -30,11 +29,6 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../../app/lib/den";
-import {
-  clearDenTemplateCache,
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../../app/lib/den-template-cache";
 import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
@@ -105,12 +99,6 @@ export type DenSettingsPanelProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openTeamBundle: (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => void | Promise<void>;
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
@@ -200,23 +188,6 @@ function parseManualAuthInput(value: string) {
   return trimmed.length >= 12 ? { grant: trimmed } : null;
 }
 
-function formatTemplateTimestamp(value: string | null, tr: (key: string) => string) {
-  if (!value) return tr("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return tr("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function templateCreatorLabel(template: DenTemplate, tr: (key: string) => string) {
-  const creator = template.creator;
-  if (!creator) return tr("dashboard.unknown_creator");
-  return creator.name?.trim() || creator.email?.trim() || tr("dashboard.unknown_creator");
-}
-
 export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const tr = useCallback((key: string) => t(key, currentLocale()), []);
   const tx = useCallback(
@@ -227,15 +198,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   const initial = useMemo(() => readDenSettings(), []);
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
-  const initialTemplateSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: initialBaseUrl,
-        token: initial.authToken?.trim() || "",
-        orgSlug: initial.activeOrgSlug?.trim() || null,
-      }),
-    [initial.activeOrgSlug, initial.authToken, initialBaseUrl],
-  );
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = useState(initialBaseUrl);
@@ -249,7 +211,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [orgsBusy, setOrgsBusy] = useState(false);
   const [workersBusy, setWorkersBusy] = useState(false);
   const [openingWorkerId, setOpeningWorkerId] = useState<string | null>(null);
-  const [openingTemplateId, setOpeningTemplateId] = useState<string | null>(null);
   const [user, setUser] = useState<DenUser | null>(null);
   const [orgs, setOrgs] = useState<
     Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "member" }>
@@ -269,9 +230,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
-  const [templatesBusy, setTemplatesBusy] = useState(initialTemplateSnapshot.busy);
-  const [templates, setTemplates] = useState(initialTemplateSnapshot.templates);
-  const [templateError, setTemplateError] = useState<string | null>(initialTemplateSnapshot.error);
   const [skillHubsBusy, setSkillHubsBusy] = useState(false);
   const [skillHubActionId, setSkillHubActionId] = useState<string | null>(null);
   const [skillHubActionKind, setSkillHubActionKind] = useState<"import" | "remove" | "sync" | null>(null);
@@ -430,7 +388,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       authError ||
       workersError ||
       orgsError ||
-      templateError ||
       skillActionError ||
       providerActionError ||
       skillHubActionError
@@ -441,7 +398,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       sessionBusy ||
       orgsBusy ||
       workersBusy ||
-      templatesBusy ||
       skillsBusy ||
       providersBusy ||
       skillHubsBusy
@@ -462,8 +418,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     skillHubActionError,
     skillHubsBusy,
     skillsBusy,
-    templateError,
-    templatesBusy,
     workersBusy,
     workersError,
   ]);
@@ -482,8 +436,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     setActiveOrgId("");
     setOrgsError(null);
     setWorkersError(null);
-    setTemplateError(null);
-    setTemplates([]);
     setSkillHubActionError(null);
     setProviderActionError(null);
     setSkillHubActionKind(null);
@@ -493,15 +445,12 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const clearSignedInState = useCallback(
     (message?: string | null) => {
       clearDenSession({ includeBaseUrls: !props.developerMode });
-      clearDenTemplateCache();
       if (!props.developerMode) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
         setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
       }
       setAuthToken("");
       setOpeningWorkerId(null);
-      setOpeningTemplateId(null);
-      setTemplatesBusy(false);
       setSkillHubActionId(null);
       setProviderActionId(null);
       setSkillHubActionKind(null);
@@ -648,48 +597,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrg, activeOrgId, authToken, client, tr, tx],
   );
 
-  const refreshTemplates = useCallback(
-    async (quiet = false) => {
-      const orgSlug = activeOrg?.slug?.trim() ?? "";
-      if (!authToken.trim() || !orgSlug) return;
-
-      setTemplatesBusy(true);
-      setTemplateError(null);
-
-      try {
-        const nextTemplates = await loadDenTemplateCache(
-          {
-            baseUrl,
-            token: authToken,
-            orgSlug,
-          },
-          { force: true },
-        );
-        setTemplates(nextTemplates);
-        if (!quiet) {
-          setStatusMessage(
-            nextTemplates.length > 0
-              ? tx("den.status_loaded_templates", {
-                  count: nextTemplates.length,
-                  plural: nextTemplates.length === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                })
-              : tx("den.status_no_templates", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                }),
-          );
-        }
-      } catch (error) {
-        if (!quiet) {
-          setTemplateError(error instanceof Error ? error.message : tr("den.error_load_templates"));
-        }
-      } finally {
-        setTemplatesBusy(false);
-      }
-    },
-    [activeOrg, authToken, baseUrl, tr, tx],
-  );
-
   const refreshSkillHubs = useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
@@ -833,11 +740,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     if (!user || !activeOrgId.trim()) return;
     void refreshWorkers(true);
   }, [activeOrgId, refreshWorkers, user]);
-
-  useEffect(() => {
-    if (!user || !activeOrg?.slug?.trim()) return;
-    void refreshTemplates(true);
-  }, [activeOrg, refreshTemplates, user]);
 
   useEffect(() => {
     if (!user || !activeOrgId.trim()) return;
@@ -995,37 +897,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       }
     },
     [activeOrgId, client, props, tr, tx],
-  );
-
-  const handleOpenTemplate = useCallback(
-    async (template: DenTemplate) => {
-      if (openingTemplateId) return;
-
-      setOpeningTemplateId(template.id);
-      setTemplateError(null);
-
-      try {
-        await props.openTeamBundle({
-          templateId: template.id,
-          name: template.name,
-          templateData: template.templateData,
-          organizationName: activeOrg?.name ?? null,
-        });
-        const orgName = activeOrg?.name;
-        setStatusMessage(
-          orgName
-            ? tx("den.status_opened_template", { name: template.name, org: orgName })
-            : tx("den.status_opened_template_fallback", { name: template.name }),
-        );
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error ? error.message : tx("den.error_open_template", { name: template.name }),
-        );
-      } finally {
-        setOpeningTemplateId(null);
-      }
-    },
-    [activeOrg, openingTemplateId, props, tx],
   );
 
   const handleImportSkillHub = useCallback(
@@ -1311,7 +1182,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
         {baseUrlError ? <div className={errorBannerClass}>{baseUrlError}</div> : null}
 
-        {statusMessage && !authError && !workersError && !orgsError && !templateError ? (
+        {statusMessage && !authError && !workersError && !orgsError ? (
           <div className={softNoticeClass}>{statusMessage}</div>
         ) : null}
       </div>
@@ -1638,73 +1509,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       title={!status.canOpen ? tr("den.worker_not_ready_title") : undefined}
                     >
                       {openingWorkerId === worker.workerId ? tr("den.opening") : tr("den.open")}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Boxes size={15} className="text-dls-secondary" />
-                  {tr("den.team_templates_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.team_templates_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshTemplates()}
-                  disabled={templatesBusy || !activeOrg?.slug?.trim()}
-                >
-                  <RefreshCcw size={13} className={templatesBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {templateError ? <div className={errorBannerClass}>{templateError}</div> : null}
-
-            {!templatesBusy && templates.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrg?.slug?.trim() ? tr("den.no_team_templates") : tr("den.choose_org_for_templates")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {templates.map((template) => {
-                const isMine = template.creator?.userId === user?.id;
-                const opening = openingTemplateId === template.id;
-                return (
-                  <div
-                    key={template.id}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{template.name}</span>
-                        <span className={sectionPillClass}>{tr("den.team_template_badge")}</span>
-                        {isMine ? <span className={sectionPillClass}>{tr("den.worker_mine_badge")}</span> : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        by {templateCreatorLabel(template, tr)} · {formatTemplateTimestamp(template.createdAt, tr)}
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      className="h-8 shrink-0 px-4 text-xs"
-                      onClick={() => void handleOpenTemplate(template)}
-                      disabled={openingTemplateId !== null}
-                    >
-                      {opening ? tr("den.opening") : tr("den.open")}
                     </Button>
                   </div>
                 );

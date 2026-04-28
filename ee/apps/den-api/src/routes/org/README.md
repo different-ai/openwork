@@ -18,7 +18,7 @@ This folder owns organization-facing Den API routes.
 - New sessions should get an initial `activeOrganizationId` from Better Auth session creation hooks in `src/auth.ts`.
 - `GET /v1/org` returns the active organization from the current session, including a nested `organization.owner` object plus the current member and team context.
 - `POST /v1/org` creates a new organization and switches the session to it. `PATCH /v1/org` updates the active organization.
-- Active-org scoped resources should prefer top-level routes like `/v1/templates`, `/v1/skills`, `/v1/teams`, `/v1/roles`, `/v1/api-keys`, `/v1/llm-providers`, and plugin-system `/v1/...` routes. They should not require `:orgId` or `:orgSlug` in the path.
+- Active-org scoped resources should prefer top-level routes like `/v1/skills`, `/v1/teams`, `/v1/roles`, `/v1/api-keys`, `/v1/llm-providers`, and plugin-system `/v1/...` routes. They should not require `:orgId` or `:orgSlug` in the path.
 - Routes under `/v1/orgs/**` are reserved for cross-org flows that are not tied to the active workspace yet, such as invitation preview/accept.
 - If a client needs to change workspaces, it should call Better Auth set-active first, then use the active-org scoped `/v1/...` resource routes.
 

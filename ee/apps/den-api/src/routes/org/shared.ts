@@ -60,14 +60,6 @@ export function buildInvitationLink(invitationId: string) {
   return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
 }
 
-export function parseTemplateJson(value: string) {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
-}
-
 export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
   const payload = c.get("organizationContext")
   if (!payload?.currentMember.isOwner) {

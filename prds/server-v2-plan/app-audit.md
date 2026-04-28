@@ -188,7 +188,7 @@ Reasoning: parsing and UI state stay client-side, but import/export/share of rea
 ### bundle workflow store
 
 - What it does: owns modal state and the import decision tree, including trust warnings, worker-target resolution, and import routing.
-- Called from and when: entered from bundle deep links, team templates, and debug-open flows.
+- Called from and when: entered from bundle deep links and debug-open flows.
 - Ends up calling: local modal state, navigation, worker selection, and import state first, then workspace import or worker-creation flows.
 
 ### workspace share/export state

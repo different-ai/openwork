@@ -92,31 +92,9 @@ export const OrganizationRoleTable = mysqlTable(
   ],
 )
 
-export const TempTemplateSharingTable = mysqlTable(
-  "temp_template_sharing",
-  {
-    id: denTypeIdColumn("tempTemplateSharing", "id").notNull().primaryKey(),
-    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    creatorMemberId: denTypeIdColumn("member", "creator_member_id").notNull(),
-    creatorUserId: denTypeIdColumn("user", "creator_user_id").notNull(),
-    name: varchar("name", { length: 255 }).notNull(),
-    templateJson: text("template_json").notNull(),
-    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { fsp: 3 })
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
-  },
-  (table) => [
-    index("temp_template_sharing_org_id").on(table.organizationId),
-    index("temp_template_sharing_creator_member_id").on(table.creatorMemberId),
-    index("temp_template_sharing_creator_user_id").on(table.creatorUserId),
-  ],
-)
-
 export const organizationRelations = relations(OrganizationTable, ({ many }) => ({
   members: many(MemberTable),
   roles: many(OrganizationRoleTable),
-  tempTemplateSharings: many(TempTemplateSharingTable),
 }))
 
 export const memberRelations = relations(MemberTable, ({ many, one }) => ({
@@ -124,7 +102,6 @@ export const memberRelations = relations(MemberTable, ({ many, one }) => ({
     fields: [MemberTable.organizationId],
     references: [OrganizationTable.id],
   }),
-  createdTempTemplateSharings: many(TempTemplateSharingTable),
 }))
 
 export const organizationRoleRelations = relations(OrganizationRoleTable, ({ one }) => ({
@@ -134,19 +111,7 @@ export const organizationRoleRelations = relations(OrganizationRoleTable, ({ one
   }),
 }))
 
-export const tempTemplateSharingRelations = relations(TempTemplateSharingTable, ({ one }) => ({
-  organization: one(OrganizationTable, {
-    fields: [TempTemplateSharingTable.organizationId],
-    references: [OrganizationTable.id],
-  }),
-  creatorMember: one(MemberTable, {
-    fields: [TempTemplateSharingTable.creatorMemberId],
-    references: [MemberTable.id],
-  }),
-}))
-
 export const organization = OrganizationTable
 export const member = MemberTable
 export const invitation = InvitationTable
 export const organizationRole = OrganizationRoleTable
-export const tempTemplateSharing = TempTemplateSharingTable

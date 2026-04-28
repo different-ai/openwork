@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
-import { Boxes, FolderPlus, Loader2, XCircle } from "lucide-react";
+import { FolderPlus, Loader2, XCircle } from "lucide-react";
 
-import type { DenTemplate } from "../../../app/lib/den";
 import type { WorkspacePreset } from "../../../app/types";
 import {
   errorBannerClass,
@@ -42,17 +41,6 @@ export type CreateWorkspaceLocalPanelProps = {
   onPickFolder: () => void;
   submitting: boolean;
   localError: string | null;
-  selectedTemplateId: string | null;
-  setSelectedTemplateId: (
-    next: string | null | ((current: string | null) => string | null),
-  ) => void;
-  showTemplateSection: boolean;
-  cloudWorkspaceTemplates: DenTemplate[];
-  templateCreatorLabel: (template: DenTemplate) => string;
-  formatTemplateTimestamp: (value: string | null) => string;
-  templateError: string | null;
-  templateCacheBusy: boolean;
-  templateCacheError: string | null;
   onClose: () => void;
   onSubmit: () => void;
   confirmLabel?: string;
@@ -94,7 +82,6 @@ export function CreateWorkspaceLocalPanel(
   props: CreateWorkspaceLocalPanelProps,
 ) {
   const progress = props.progress;
-  const templateBanner = props.templateError || props.templateCacheError;
 
   return (
     <>
@@ -137,88 +124,6 @@ export function CreateWorkspaceLocalPanel(
             </div>
           </div>
 
-          {props.showTemplateSection ? (
-            <div className={surfaceCardClass}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-[15px] font-medium tracking-[-0.2px] text-dls-text">
-                    <Boxes size={16} className="text-dls-secondary" />
-                    Team templates
-                  </div>
-                  <div className="mt-1 text-[13px] leading-relaxed text-dls-secondary">
-                    Choose a starting point, or leave blank to create an empty
-                    workspace.
-                  </div>
-                </div>
-                {props.templateCacheBusy ? (
-                  <div className={tagClass}>
-                    <Loader2 size={12} className="animate-spin" />
-                    Syncing
-                  </div>
-                ) : null}
-              </div>
-
-              {templateBanner ? (
-                <div className={`mt-4 ${errorBannerClass}`}>{templateBanner}</div>
-              ) : null}
-
-              {props.cloudWorkspaceTemplates.length === 0 ? (
-                <div
-                  className={`mt-4 ${softCardClass} text-[14px] text-dls-secondary`}
-                >
-                  No shared workspace templates found for this org yet.
-                </div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {props.cloudWorkspaceTemplates.map((template) => {
-                    const selected = props.selectedTemplateId === template.id;
-                    return (
-                      <button
-                        key={template.id}
-                        type="button"
-                        className={`${surfaceCardClass} w-full transition-all duration-150 hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] ${
-                          selected
-                            ? "border-[rgba(var(--dls-accent-rgb),0.2)] bg-[rgba(var(--dls-accent-rgb),0.06)] shadow-[inset_0_0_0_1px_rgba(var(--dls-accent-rgb),0.08)]"
-                            : ""
-                        }`.trim()}
-                        onClick={() =>
-                          props.setSelectedTemplateId((current) =>
-                            current === template.id ? null : template.id,
-                          )
-                        }
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 text-left">
-                            <div className="flex items-center gap-2">
-                              <div className="truncate text-[14px] font-medium text-dls-text">
-                                {template.name}
-                              </div>
-                              {selected ? (
-                                <span className={tagClass}>Selected</span>
-                              ) : null}
-                            </div>
-                            <div className="mt-1 text-[12px] text-dls-secondary">
-                              {props.templateCreatorLabel(template)} ·{" "}
-                              {props.formatTemplateTimestamp(
-                                template.updatedAt ?? template.createdAt,
-                              )}
-                            </div>
-                          </div>
-                          <div
-                            className={`mt-1 h-4 w-4 shrink-0 rounded-full border ${
-                              selected
-                                ? "border-[var(--dls-accent)] bg-[var(--dls-accent)]"
-                                : "border-dls-border bg-dls-surface"
-                            }`.trim()}
-                          />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : null}
         </div>
       </div>
 

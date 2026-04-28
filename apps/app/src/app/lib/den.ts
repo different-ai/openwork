@@ -98,25 +98,6 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
-export type DenTemplateCreator = {
-  memberId: string;
-  role: "owner" | "admin" | "member";
-  userId: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-};
-
-export type DenTemplate = {
-  id: string;
-  organizationId: string;
-  name: string;
-  templateData: unknown;
-  createdAt: string | null;
-  updatedAt: string | null;
-  creator: DenTemplateCreator | null;
-};
-
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -750,65 +731,6 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
   };
 }
 
-function getTemplateCreator(value: unknown): DenTemplateCreator | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const role = value.role;
-  if (
-    typeof value.memberId !== "string" ||
-    typeof value.userId !== "string" ||
-    (role !== "owner" && role !== "admin" && role !== "member")
-  ) {
-    return null;
-  }
-
-  return {
-    memberId: value.memberId,
-    role,
-    userId: value.userId,
-    name: typeof value.name === "string" ? value.name : null,
-    email: typeof value.email === "string" ? value.email : null,
-    image: typeof value.image === "string" ? value.image : null,
-  };
-}
-
-function getTemplate(value: unknown): DenTemplate | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  if (
-    typeof value.id !== "string" ||
-    typeof value.organizationId !== "string" ||
-    typeof value.name !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    organizationId: value.organizationId,
-    name: value.name,
-    templateData: value.templateData,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
-    creator: getTemplateCreator(value.creator),
-  };
-}
-
-function getTemplates(payload: unknown): DenTemplate[] {
-  if (!isRecord(payload) || !Array.isArray(payload.templates)) {
-    return [];
-  }
-
-  return payload.templates
-    .map((entry) => getTemplate(entry))
-    .filter((entry): entry is DenTemplate => entry !== null);
-}
-
-
 function parseDenOrgSkillRow(record: Record<string, unknown>, hubName: string | null): DenOrgSkillCard | null {
   if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.skillText !== "string") {
     return null;
@@ -1260,58 +1182,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
-    },
-
-    async listTemplates(orgSlug: string): Promise<DenTemplate[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        "/v1/templates",
-        {
-          method: "GET",
-          token,
-        },
-      );
-      return getTemplates(payload);
-    },
-
-    async createTemplate(
-      orgSlug: string,
-      input: { name: string; templateData: unknown },
-    ): Promise<DenTemplate> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        "/v1/templates",
-        {
-          method: "POST",
-          token,
-          body: {
-            name: input.name.trim(),
-            templateData: input.templateData,
-          },
-        },
-      );
-      const template = isRecord(payload) ? getTemplate(payload.template) : null;
-      if (!template) {
-        throw new DenApiError(500, "invalid_template_payload", "Template response was missing template details.");
-      }
-      return template;
-    },
-
-    async deleteTemplate(orgSlug: string, templateId: string): Promise<void> {
-      const raw = await requestJsonRaw(
-        baseUrls,
-        `/v1/templates/${encodeURIComponent(templateId)}`,
-        {
-          method: "DELETE",
-          token,
-        },
-      );
-      if (!raw.ok) {
-        const payload = raw.json;
-        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
-        const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
-        throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
-      }
     },
 
     async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {

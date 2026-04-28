@@ -208,11 +208,9 @@ function buildBundleOgInput({ rawJson }: { id: string; rawJson: string }): OgIma
     maybeString(data.trigger).trim() || maybeString(bundle.trigger).trim(),
   );
   const title =
-    bundle.type === "workspace-profile"
-      ? "Workspace Profile"
-      : bundle.type === "skills-set" && bundle.skills.length > 1
-        ? `${bundle.skills.length} Shared Skills`
-        : humanizeTitle(bundleName) || "OpenWork bundle";
+    bundle.type === "skills-set" && bundle.skills.length > 1
+      ? `${bundle.skills.length} Shared Skills`
+      : humanizeTitle(bundleName) || "OpenWork bundle";
   const category = buildCategory(bundle.type, preview.tone);
   const tag =
     triggerTag ||

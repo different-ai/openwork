@@ -6,9 +6,7 @@ import type {
   BundleUrls,
   Frontmatter,
   NormalizedBundle,
-  NormalizedCommandItem,
   NormalizedSkillItem,
-  NormalizedPortableFileItem,
   OgImageUrlSet,
   OpenInAppUrls,
   RequestLike,
@@ -92,9 +90,6 @@ export function escapeJsonForScript(rawJson: string): string {
 
 export function humanizeType(type: unknown): string {
   if (!type) return "Bundle";
-  if (String(type).trim().toLowerCase() === "workspace-profile") {
-    return "Workspace Template";
-  }
   return String(type)
     .split("-")
     .filter(Boolean)
@@ -203,61 +198,6 @@ function normalizeSkillItem(value: unknown): NormalizedSkillItem | null {
   };
 }
 
-function normalizeCommandItem(value: unknown): NormalizedCommandItem | null {
-  const record = maybeObject(value);
-  if (!record) return null;
-  const name = maybeString(record.name).trim();
-  const template = maybeString(record.template);
-  const content = maybeString(record.content);
-  if (!name || (!template.trim() && !content.trim())) return null;
-  return {
-    name,
-    description: maybeString(record.description).trim(),
-    template,
-    content,
-    agent: maybeString(record.agent).trim(),
-    model: maybeString(record.model).trim(),
-    subtask: record.subtask === true,
-  };
-}
-
-function normalizePortableFileItem(value: unknown): NormalizedPortableFileItem | null {
-  const record = maybeObject(value);
-  if (!record) return null;
-  const path = maybeString(record.path).trim();
-  if (!path) return null;
-  return {
-    path,
-    content: maybeString(record.content),
-  };
-}
-
-function workspacePortableFiles(bundle: NormalizedBundle): NormalizedPortableFileItem[] {
-  return maybeArray(bundle.workspace?.files)
-    .map(normalizePortableFileItem)
-    .filter((file): file is NormalizedPortableFileItem => file !== null);
-}
-
-function basename(path: string): string {
-  const normalized = String(path ?? "").replaceAll("\\", "/");
-  const segments = normalized.split("/").filter(Boolean);
-  return segments[segments.length - 1] ?? normalized;
-}
-
-function templateFilePreviewMeta(path: string): { kind: PreviewItem["kind"]; tone: PreviewItem["tone"]; label: string } {
-  const normalized = String(path ?? "").toLowerCase();
-  if (normalized.startsWith(".opencode/agents/")) {
-    return { kind: "Agent", tone: "agent", label: "Agent file" };
-  }
-  if (normalized.startsWith(".opencode/commands/")) {
-    return { kind: "Command", tone: "command", label: "Command file" };
-  }
-  if (normalized.startsWith(".opencode/skills/")) {
-    return { kind: "Skill", tone: "skill", label: "Skill file" };
-  }
-  return { kind: "Config", tone: "config", label: "Template file" };
-}
-
 export function parseBundle(rawJson: string): NormalizedBundle {
   try {
     return normalizeBundleRecord(JSON.parse(rawJson));
@@ -268,7 +208,6 @@ export function parseBundle(rawJson: string): NormalizedBundle {
 
 function normalizeBundleRecord(parsed: unknown): NormalizedBundle {
   const record = maybeObject(parsed);
-  const workspace = maybeObject(record?.workspace);
 
   return {
     schemaVersion: typeof record?.schemaVersion === "number" ? record.schemaVersion : null,
@@ -277,9 +216,7 @@ function normalizeBundleRecord(parsed: unknown): NormalizedBundle {
     description: maybeString(record?.description).trim(),
     trigger: maybeString(record?.trigger).trim(),
     content: maybeString(record?.content),
-    workspace,
     skills: maybeArray(record?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null),
-    commands: maybeArray(record?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null),
   };
 }
 
@@ -296,7 +233,7 @@ export function validateBundlePayload(rawJson: string): ValidationResult {
     return { ok: false, message: "Unsupported bundle schema version" };
   }
 
-  if (!["skill", "skills-set", "workspace-profile"].includes(bundle.type)) {
+  if (!["skill", "skills-set"].includes(bundle.type)) {
     return { ok: false, message: "Unsupported bundle type" };
   }
 
@@ -312,26 +249,10 @@ export function validateBundlePayload(rawJson: string): ValidationResult {
     }
   }
 
-  if (bundle.type === "workspace-profile") {
-    if (!bundle.workspace) {
-      return { ok: false, message: "Workspace profile bundle is missing workspace payload" };
-    }
-  }
-
   return { ok: true, bundle };
 }
 
 export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
-  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null);
-  const opencode = maybeObject(bundle.workspace?.opencode);
-  const openwork = maybeObject(bundle.workspace?.openwork);
-  const genericConfig = maybeObject(bundle.workspace?.config);
-  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
-  const files = workspacePortableFiles(bundle);
-  const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
-  const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
-  const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
-
   return {
     skillCount:
       bundle.type === "skill"
@@ -340,13 +261,13 @@ export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
           : 0
         : bundle.type === "skills-set"
           ? bundle.skills.length
-          : workspaceSkills.length,
-    commandCount: commands.length,
-    agentCount: agentEntries.length,
-    mcpCount: mcpEntries.length,
-    configCount: (openwork ? 1 : 0) + (opencodeConfigKeys.length ? 1 : 0) + Object.keys(genericConfig ?? {}).length,
-    fileCount: files.length,
-    hasConfig: Boolean(openwork || opencodeConfigKeys.length || genericConfig),
+          : 0,
+    commandCount: 0,
+    agentCount: 0,
+    mcpCount: 0,
+    configCount: 0,
+    fileCount: 0,
+    hasConfig: false,
   };
 }
 
@@ -375,91 +296,6 @@ export function collectBundleItems(bundle: NormalizedBundle, limit = 8): Preview
         kind: "Skill",
         meta: skill.trigger ? `Trigger · ${skill.trigger}` : readVersionFromContent(skill.content) || "Skill",
         tone: "skill",
-      });
-    }
-  }
-
-  if (bundle.type === "workspace-profile") {
-    const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null);
-    for (const skill of workspaceSkills) {
-      items.push({
-        name: skill.name,
-        kind: "Skill",
-        meta: skill.trigger ? `Trigger · ${skill.trigger}` : readVersionFromContent(skill.content) || "Skill",
-        tone: "skill",
-      });
-    }
-
-    const opencode = maybeObject(bundle.workspace?.opencode);
-    for (const [name, config] of Object.entries(maybeObject(opencode?.agent) ?? {})) {
-      const entry = maybeObject(config) ?? {};
-      const version = maybeString(entry.version).trim();
-      const model = maybeString(entry.model).trim();
-      items.push({
-        name,
-        kind: "Agent",
-        meta: version ? `v${version}` : model ? model : "Agent config",
-        tone: "agent",
-      });
-    }
-
-    for (const [name, config] of Object.entries(maybeObject(opencode?.mcp) ?? {})) {
-      const entry = maybeObject(config) ?? {};
-      const type = maybeString(entry.type).trim();
-      const url = maybeString(entry.url).trim();
-      items.push({
-        name,
-        kind: "MCP",
-        meta: type ? `${humanizeType(type)} MCP` : url ? "Remote MCP" : "MCP config",
-        tone: "mcp",
-      });
-    }
-
-    const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
-    for (const command of commands) {
-      items.push({
-        name: command.name,
-        kind: "Command",
-        meta: command.agent ? `Agent · ${command.agent}` : "Command",
-        tone: "command",
-      });
-    }
-
-    const opencodeConfigKeys = Object.keys(maybeObject(opencode) ?? {}).filter((key) => !["agent", "mcp"].includes(key));
-    if (opencodeConfigKeys.length) {
-      items.push({
-        name: "opencode.json",
-        kind: "Config",
-        meta: "OpenCode config",
-        tone: "config",
-      });
-    }
-
-    if (maybeObject(bundle.workspace?.openwork)) {
-      items.push({
-        name: "openwork.json",
-        kind: "Config",
-        meta: "OpenWork config",
-        tone: "config",
-      });
-    }
-
-    for (const [name] of Object.entries(maybeObject(bundle.workspace?.config) ?? {})) {
-      items.push({
-        name,
-        kind: "Config",
-        meta: "Config file",
-        tone: "config",
-      });
-    }
-
-    for (const file of workspacePortableFiles(bundle)) {
-      const preview = templateFilePreviewMeta(file.path);
-      items.push({
-        name: basename(file.path),
-        kind: preview.kind,
-        meta: file.path,
-        tone: preview.tone,
       });
     }
   }
@@ -529,93 +365,6 @@ export function buildBundlePreview(bundle: NormalizedBundle): {
     });
   }
 
-  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((skill): skill is NormalizedSkillItem => skill !== null);
-  if (workspaceSkills.length) {
-    const firstSkill = workspaceSkills[0]!;
-    return buildBundlePreviewSelection({
-      filename: slugifyPreviewFilename(firstSkill.name || "skill", "skill", "md"),
-      text: buildTextPreview(firstSkill.content, `# ${firstSkill.name || "Workspace skill"}`),
-      tone: "skill",
-      label: workspaceSkills.length > 1 ? `Lead skill of ${workspaceSkills.length}` : "Skill preview",
-    });
-  }
-
-  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((command): command is NormalizedCommandItem => command !== null);
-  if (commands.length) {
-    const firstCommand = commands[0]!;
-    return buildBundlePreviewSelection({
-      filename: slugifyPreviewFilename(firstCommand.name || "command", "command", "md"),
-      text: buildTextPreview(firstCommand.template || firstCommand.content, `# ${firstCommand.name || "OpenWork command"}`),
-      tone: "command",
-      label: firstCommand.agent ? `Command for ${firstCommand.agent}` : "Command preview",
-    });
-  }
-
-  const opencode = maybeObject(bundle.workspace?.opencode);
-  const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
-  if (agentEntries.length) {
-    const [name, config] = agentEntries[0]!;
-    return buildBundlePreviewSelection({
-      filename: slugifyPreviewFilename(name, "agent", "json"),
-      text: buildJsonPreview({ agent: { [name]: config } }, '{\n  "agent": {}\n}'),
-      tone: "agent",
-      label: "Agent config",
-    });
-  }
-
-  const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
-  if (mcpEntries.length) {
-    const [name, config] = mcpEntries[0]!;
-    return buildBundlePreviewSelection({
-      filename: slugifyPreviewFilename(name, "mcp", "json"),
-      text: buildJsonPreview({ mcp: { [name]: config } }, '{\n  "mcp": {}\n}'),
-      tone: "mcp",
-      label: "MCP config",
-    });
-  }
-
-  if (maybeObject(bundle.workspace?.openwork)) {
-    return buildBundlePreviewSelection({
-      filename: "openwork.json",
-      text: buildJsonPreview(bundle.workspace?.openwork, '{\n  "openwork": {}\n}'),
-      tone: "config",
-      label: "OpenWork config",
-    });
-  }
-
-  if (opencode) {
-    return buildBundlePreviewSelection({
-      filename: "opencode.json",
-      text: buildJsonPreview(opencode, '{\n  "opencode": {}\n}'),
-      tone: "config",
-      label: "OpenCode config",
-    });
-  }
-
-  const configEntries = Object.entries(maybeObject(bundle.workspace?.config) ?? {});
-  if (configEntries.length) {
-    const [name, value] = configEntries[0]!;
-    const extension = name.includes(".") ? name.split(".").pop() || "json" : "json";
-    return buildBundlePreviewSelection({
-      filename: name,
-      text: buildJsonPreview(value, `{\n  "${name}": {}\n}`),
-      tone: "config",
-      label: `Config preview · ${extension}`,
-    });
-  }
-
-  const files = workspacePortableFiles(bundle);
-  if (files.length) {
-    const firstFile = files[0]!;
-    const preview = templateFilePreviewMeta(firstFile.path);
-    return buildBundlePreviewSelection({
-      filename: basename(firstFile.path),
-      text: buildTextPreview(firstFile.content, `# ${basename(firstFile.path) || "OpenWork portable file"}`),
-      tone: preview.tone,
-      label: `${preview.label} · ${firstFile.path}`,
-    });
-  }
-
   return buildBundlePreviewSelection({
     filename: "bundle.json",
     text: buildJsonPreview(bundle, '{\n  "bundle": true\n}'),
@@ -655,134 +404,6 @@ export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
       label: skill.trigger ? `Trigger · ${skill.trigger}` : "Skill",
     }));
   }
-
-  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((skill): skill is NormalizedSkillItem => skill !== null);
-  const selections: {
-    id: string;
-    name: string;
-    filename: string;
-    text: string;
-    tone: PreviewItem["tone"];
-    label: string;
-  }[] = [];
-
-  if (workspaceSkills.length) {
-    selections.push(...workspaceSkills.map((skill, index) => ({
-      id: `workspace-skill-${index}`,
-      name: skill.name || `Skill ${index + 1}`,
-      filename: slugifyPreviewFilename(skill.name || `skill-${index + 1}`, "skill", "md"),
-      text: buildTextPreview(skill.content, `# ${skill.name || `Skill ${index + 1}`}`),
-      tone: "skill" as const,
-      label: skill.trigger ? `Trigger · ${skill.trigger}` : "Skill",
-    })));
-  }
-
-  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((command): command is NormalizedCommandItem => command !== null);
-  if (commands.length) {
-    selections.push(...commands.map((command, index) => ({
-      id: `workspace-command-${index}`,
-      name: command.name || `Command ${index + 1}`,
-      filename: slugifyPreviewFilename(command.name || `command-${index + 1}`, "command", "md"),
-      text: buildTextPreview(command.template || command.content, `# ${command.name || `Command ${index + 1}`}`),
-      tone: "command" as const,
-      label: command.agent ? `Agent · ${command.agent}` : "Command",
-    })));
-  }
-
-  const opencode = maybeObject(bundle.workspace?.opencode);
-  const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
-  if (agentEntries.length) {
-    selections.push(...agentEntries.map(([name, config], index) => {
-      const entry = maybeObject(config) ?? {};
-      const version = maybeString(entry.version).trim();
-      const model = maybeString(entry.model).trim();
-
-      return {
-        id: `workspace-agent-${index}`,
-        name,
-        filename: slugifyPreviewFilename(name, "agent", "json"),
-        text: buildJsonPreview({ agent: { [name]: config } }, '{\n  "agent": {}\n}'),
-        tone: "agent" as const,
-        label: version ? `v${version}` : model ? model : "Agent config",
-      };
-    }));
-  }
-
-  const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
-  if (mcpEntries.length) {
-    selections.push(...mcpEntries.map(([name, config], index) => {
-      const entry = maybeObject(config) ?? {};
-      const type = maybeString(entry.type).trim();
-      const url = maybeString(entry.url).trim();
-
-      return {
-        id: `workspace-mcp-${index}`,
-        name,
-        filename: slugifyPreviewFilename(name, "mcp", "json"),
-        text: buildJsonPreview({ mcp: { [name]: config } }, '{\n  "mcp": {}\n}'),
-        tone: "mcp" as const,
-        label: type ? `${humanizeType(type)} MCP` : url ? "Remote MCP" : "MCP config",
-      };
-    }));
-  }
-
-  const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
-  if (opencodeConfigKeys.length) {
-    selections.push({
-      id: "workspace-opencode-config",
-      name: "OpenCode config",
-      filename: "opencode.json",
-      text: buildJsonPreview(opencode, '{\n  "opencode": {}\n}'),
-      tone: "config" as const,
-      label: "OpenCode settings",
-    });
-  }
-
-  if (maybeObject(bundle.workspace?.openwork)) {
-    selections.push({
-      id: "workspace-openwork-config",
-      name: "OpenWork config",
-      filename: "openwork.json",
-      text: buildJsonPreview(bundle.workspace?.openwork, '{\n  "openwork": {}\n}'),
-      tone: "config" as const,
-      label: "Workspace settings",
-    });
-  }
-
-  const configEntries = Object.entries(maybeObject(bundle.workspace?.config) ?? {});
-  if (configEntries.length) {
-    selections.push(...configEntries.map(([name, value], index) => {
-      const extension = name.includes(".") ? name.split(".").pop() || "json" : "json";
-
-      return {
-        id: `workspace-config-${index}`,
-        name,
-        filename: name,
-        text: buildJsonPreview(value, `{
-  "${name}": {}
-}`),
-        tone: "config" as const,
-        label: `Config file · ${extension}`,
-      };
-    }));
-  }
-
-  const files = workspacePortableFiles(bundle);
-  if (files.length) {
-    selections.push(...files.map((file, index) => {
-      const preview = templateFilePreviewMeta(file.path);
-      return {
-        id: `workspace-file-${index}`,
-        name: basename(file.path),
-        filename: basename(file.path),
-        text: buildTextPreview(file.content, `# ${basename(file.path) || `File ${index + 1}`}`),
-        tone: preview.tone,
-        label: `${preview.label} · ${file.path}`,
-      };
-    }));
-  }
-
-  if (selections.length) return selections;
 
   const preview = buildBundlePreview(bundle);
   return [

@@ -1671,43 +1671,6 @@ export function SessionRoute() {
                     }
                   : undefined,
               note: shareWorkspaceState.shareNote,
-              onShareWorkspaceProfile: () => void shareWorkspaceState.publishWorkspaceProfileLink(),
-              shareWorkspaceProfileBusy: shareWorkspaceState.shareWorkspaceProfileBusy,
-              shareWorkspaceProfileUrl: shareWorkspaceState.shareWorkspaceProfileUrl,
-              shareWorkspaceProfileError: shareWorkspaceState.shareWorkspaceProfileError,
-              shareWorkspaceProfileDisabledReason: shareWorkspaceState.shareServiceDisabledReason,
-              shareWorkspaceProfileSensitiveWarnings:
-                shareWorkspaceState.shareWorkspaceProfileSensitiveWarnings,
-              shareWorkspaceProfileSensitiveMode:
-                shareWorkspaceState.shareWorkspaceProfileSensitiveMode,
-              onShareWorkspaceProfileSensitiveModeChange:
-                shareWorkspaceState.setShareWorkspaceProfileSensitiveMode,
-              onShareWorkspaceProfileToTeam: (name) =>
-                void shareWorkspaceState.shareWorkspaceProfileToTeam(name),
-              shareWorkspaceProfileToTeamBusy:
-                shareWorkspaceState.shareWorkspaceProfileTeamBusy,
-              shareWorkspaceProfileToTeamError:
-                shareWorkspaceState.shareWorkspaceProfileTeamError,
-              shareWorkspaceProfileToTeamSuccess:
-                shareWorkspaceState.shareWorkspaceProfileTeamSuccess,
-              shareWorkspaceProfileToTeamDisabledReason:
-                shareWorkspaceState.shareWorkspaceProfileTeamDisabledReason,
-              shareWorkspaceProfileToTeamOrgName:
-                shareWorkspaceState.shareWorkspaceProfileTeamOrgName,
-              shareWorkspaceProfileToTeamNeedsSignIn:
-                shareWorkspaceState.shareWorkspaceProfileToTeamNeedsSignIn,
-              onShareWorkspaceProfileToTeamSignIn:
-                shareWorkspaceState.startShareWorkspaceProfileToTeamSignIn,
-              templateContentSummary: {
-                skillNames: [],
-                commandNames: [],
-                configFiles: ["opencode.json", "openwork.json"],
-              },
-              onShareSkillsSet: () => void shareWorkspaceState.publishSkillsSetLink(),
-              shareSkillsSetBusy: shareWorkspaceState.shareSkillsSetBusy,
-              shareSkillsSetUrl: shareWorkspaceState.shareSkillsSetUrl,
-              shareSkillsSetError: shareWorkspaceState.shareSkillsSetError,
-              shareSkillsSetDisabledReason: shareWorkspaceState.shareServiceDisabledReason,
               onExportConfig:
                 shareWorkspaceState.exportDisabledReason === null
                   ? () => {

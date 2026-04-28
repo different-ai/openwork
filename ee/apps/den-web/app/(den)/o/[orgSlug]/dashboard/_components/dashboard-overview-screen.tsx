@@ -7,7 +7,6 @@ import {
   Cpu,
   KeyRound,
   Monitor,
-  Share2,
   Users,
 } from "lucide-react";
 import {
@@ -17,11 +16,9 @@ import {
   getCustomLlmProvidersRoute,
   getOrgAccessFlags,
   getMembersRoute,
-  getSharedSetupsRoute,
 } from "../../../../_lib/den-org";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { formatTemplateTimestamp, useOrgTemplates } from "./shared-setup-data";
 
 function getGreeting(name: string | null | undefined) {
   const hour = new Date().getHours();
@@ -30,39 +27,15 @@ function getGreeting(name: string | null | undefined) {
   return `${greeting}, ${firstName}`;
 }
 
-function getTemplateAccent(seed: string) {
-  let hash = 0;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = (hash * 31 + seed.charCodeAt(index)) % 360;
-  }
-
-  const hue = hash;
-  const accent = `hsl(${hue} 82% 52%)`;
-  const accentTwo = `hsl(${(hue + 46) % 360} 84% 64%)`;
-  const background = `hsl(${hue} 90% 96%)`;
-
-  return {
-    background,
-    gradient: `radial-gradient(circle at 30% 30%, ${accentTwo} 0%, ${accent} 55%, hsl(${(hue + 140) % 360} 90% 32%) 100%)`,
-  };
-}
-
 export function DashboardOverviewScreen() {
   const { orgSlug, activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
-  const { templates } = useOrgTemplates(orgSlug);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
   );
 
   const quickActions = [
-    {
-      label: "Team templates",
-      icon: Share2,
-      href: getSharedSetupsRoute(orgSlug),
-      tint: "bg-indigo-50 text-indigo-500 group-hover:bg-indigo-100",
-    },
     {
       label: "Members",
       icon: Users,
@@ -154,50 +127,18 @@ export function DashboardOverviewScreen() {
       </div>
 
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div>
-          <h2 className="mb-4 text-[15px] tracking-[-0.2px] text-gray-900">
-            Recent templates
+        <div className="rounded-2xl border border-gray-100 bg-white p-6">
+          <h2 className="mb-2 text-[15px] tracking-[-0.2px] text-gray-900">
+            Cloud workspace control
           </h2>
-          <div className="space-y-1">
-            {templates.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-4 py-6 text-[13px] text-gray-500">
-                No team templates yet. Create one from the OpenWork desktop app and it will show up here.
-              </div>
-            ) : (
-              templates.slice(0, 4).map((template) => {
-                const accent = getTemplateAccent(template.name);
-
-                return (
-                  <Link
-                    key={template.id}
-                    href={getSharedSetupsRoute(orgSlug)}
-                    className="group flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all hover:bg-white hover:shadow-[0_1px_4px_rgba(0,0,0,0.04)]"
-                  >
-                    <div
-                      className="relative h-6 w-6 shrink-0 overflow-hidden rounded-full"
-                      style={{ backgroundColor: accent.background }}
-                    >
-                      <div
-                        className="absolute inset-0 opacity-90 transition-opacity group-hover:opacity-100"
-                        style={{ backgroundImage: accent.gradient }}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[14px] text-gray-900">{template.name}</p>
-                      <p className="text-[12px] text-gray-400">
-                        Updated {formatTemplateTimestamp(template.createdAt, { includeTime: true })}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })
-            )}
-          </div>
+          <p className="max-w-[620px] text-[13px] leading-[1.7] text-gray-500">
+            Launch shared workspaces, manage access, and connect teammates to hosted OpenWork workers from this dashboard.
+          </p>
           <Link
-            href={getSharedSetupsRoute(orgSlug)}
-            className="mt-3 inline-flex px-4 py-2 text-[13px] text-gray-500 transition-colors hover:text-gray-700"
+            href={getBackgroundAgentsRoute(orgSlug)}
+            className="mt-5 inline-flex rounded-full bg-gray-900 px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-gray-800"
           >
-            View all templates →
+            Open shared workspaces
           </Link>
         </div>
 
@@ -228,10 +169,6 @@ export function DashboardOverviewScreen() {
                 <span className="font-medium text-gray-900">
                   {(orgContext?.invitations ?? []).filter((invitation) => invitation.status === "pending").length}
                 </span>
-              </div>
-              <div className="flex items-center justify-between text-[13px] text-gray-500">
-                <span>Shared templates</span>
-                <span className="font-medium text-gray-900">{templates.length}</span>
               </div>
             </div>
           </div>

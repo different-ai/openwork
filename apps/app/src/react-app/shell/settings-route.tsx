@@ -1095,7 +1095,6 @@ export function SettingsRoute() {
             extensions={extensionsStore}
             openLink={(url) => platform.openLink(url)}
             connectRemoteWorkspace={async () => false}
-            openTeamBundle={async () => {}}
             cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
             importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
             refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}

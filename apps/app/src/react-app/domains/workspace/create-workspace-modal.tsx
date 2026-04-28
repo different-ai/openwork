@@ -13,16 +13,11 @@ import {
   buildDenAuthUrl,
   createDenClient,
   type DenOrgSummary,
-  type DenTemplate,
   type DenWorkerSummary,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
-import {
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../app/lib/den-template-cache";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
@@ -90,34 +85,6 @@ function workerStatusMeta(
   }
 }
 
-function formatTemplateTimestamp(
-  value: string | null,
-  translate: (key: string) => string,
-) {
-  if (!value) return translate("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return translate("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function templateCreatorLabel(
-  template: DenTemplate,
-  translate: (key: string) => string,
-) {
-  const creator = template.creator;
-  if (!creator) return translate("dashboard.unknown_creator");
-  return (
-    creator.name?.trim() ||
-    creator.email?.trim() ||
-    translate("dashboard.unknown_creator")
-  );
-}
-
 function workerSecondaryLine(
   worker: DenWorkerSummary,
   translate: (key: string) => string,
@@ -143,10 +110,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const [showProgressDetails, setShowProgressDetails] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [cloudSettings, setCloudSettings] = useState(() => readDenSettings());
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    null,
-  );
-  const [templateError, setTemplateError] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteToken, setRemoteToken] = useState("");
   const [remoteDisplayName, setRemoteDisplayName] = useState("");
@@ -184,43 +147,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         token: cloudSettings.authToken ?? "",
       }),
     [cloudSettings.authToken, cloudSettings.baseUrl],
-  );
-  const templateCacheSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      }),
-    [
-      cloudSettings.activeOrgSlug,
-      cloudSettings.authToken,
-      cloudSettings.baseUrl,
-    ],
-  );
-  const cloudWorkspaceTemplates = useMemo(
-    () =>
-      templateCacheSnapshot.templates.filter((template) => {
-        const payload = template.templateData;
-        return Boolean(
-          payload &&
-            typeof payload === "object" &&
-            (payload as { type?: unknown }).type === "workspace-profile",
-        );
-      }),
-    [templateCacheSnapshot.templates],
-  );
-  const showTemplateSection = Boolean(
-    props.onConfirmTemplate &&
-      cloudSettings.authToken?.trim() &&
-      cloudSettings.activeOrgSlug?.trim(),
-  );
-  const selectedTemplate = useMemo(
-    () =>
-      cloudWorkspaceTemplates.find(
-        (template) => template.id === selectedTemplateId,
-      ) ?? null,
-    [cloudWorkspaceTemplates, selectedTemplateId],
   );
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
@@ -280,8 +206,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     const settings = readDenSettings();
     setScreen("chooser");
     setCloudSettings(settings);
-    setSelectedTemplateId(null);
-    setTemplateError(null);
     setRemoteUrl("");
     setRemoteToken("");
     setRemoteDisplayName("");
@@ -312,26 +236,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         handler as EventListener,
       );
   }, [isInline, props.open]);
-
-  // Prime the template cache when the shared tab first becomes available.
-  useEffect(() => {
-    if (!showTemplateSection || (!props.open && !isInline)) return;
-    void loadDenTemplateCache(
-      {
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      },
-      { force: true },
-    ).catch(() => undefined);
-  }, [
-    cloudSettings.activeOrgSlug,
-    cloudSettings.authToken,
-    cloudSettings.baseUrl,
-    isInline,
-    props.open,
-    showTemplateSection,
-  ]);
 
   // Tick the "elapsed" clock while submitting.
   useEffect(() => {
@@ -515,22 +419,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    if (selectedTemplate && props.onConfirmTemplate) {
-      try {
-        setTemplateError(null);
-        await props.onConfirmTemplate(selectedTemplate, preset, selectedFolder);
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error
-            ? error.message
-            : translate("dashboard.error_create_template", {
-                name: selectedTemplate.name,
-              }),
-        );
-      }
-      return;
-    }
-    await props.onConfirm(preset, selectedFolder);
+    props.onConfirm(preset, selectedFolder);
   };
 
   if (!props.open && !isInline) {
@@ -637,19 +526,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           onPickFolder={() => void handlePickFolder()}
           submitting={submitting}
           localError={localError}
-          selectedTemplateId={selectedTemplateId}
-          setSelectedTemplateId={setSelectedTemplateId}
-          showTemplateSection={showTemplateSection}
-          cloudWorkspaceTemplates={cloudWorkspaceTemplates}
-          templateCreatorLabel={(template) =>
-            templateCreatorLabel(template, translate)
-          }
-          formatTemplateTimestamp={(value) =>
-            formatTemplateTimestamp(value, translate)
-          }
-          templateError={templateError}
-          templateCacheBusy={templateCacheSnapshot.busy}
-          templateCacheError={templateCacheSnapshot.error}
           onClose={props.onClose}
           onSubmit={() => void handleLocalSubmit()}
           confirmLabel={props.confirmLabel}

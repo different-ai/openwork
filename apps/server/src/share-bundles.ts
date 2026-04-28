@@ -9,7 +9,7 @@ type PublishBundleInput = {
 
 const DEFAULT_PUBLISHER_BASE_URL = String(process.env.OPENWORK_PUBLISHER_BASE_URL ?? "").trim() || "https://share.openworklabs.com";
 const DEFAULT_PUBLISHER_ORIGIN = String(process.env.OPENWORK_PUBLISHER_REQUEST_ORIGIN ?? "").trim() || "https://app.openwork.software";
-const ALLOWED_BUNDLE_TYPES = new Set(["skill", "skills-set", "workspace-profile"]);
+const ALLOWED_BUNDLE_TYPES = new Set(["skill", "skills-set"]);
 
 export function normalizeSharedBundleFetchUrl(input: URL): URL {
   const url = new URL(input.toString());

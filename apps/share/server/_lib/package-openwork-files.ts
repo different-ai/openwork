@@ -595,54 +595,36 @@ export function packageOpenworkFiles(input: PackageInput): PackageResult {
     cleanCommands.length;
   const name = buildBundleName(input?.bundleName, cleanSkills, summary.agents, summary.mcpServers, summary.commands, summary.configs);
 
-  let bundleType = "workspace-profile";
-  let bundle: Record<string, unknown>;
-  if (cleanSkills.length === 1 && !hasWorkspaceConfig) {
-    bundleType = "skill";
-    const skill = cleanSkills[0];
-    bundle = {
-      schemaVersion: 1,
-      type: "skill",
-      name: skill.name,
-      description: skill.description || undefined,
-      trigger: skill.trigger || undefined,
-      content: skill.content,
-    };
-  } else if (cleanSkills.length > 0 && !hasWorkspaceConfig) {
-    bundleType = "skills-set";
-    bundle = {
+  if (hasWorkspaceConfig) {
+    throw new Error("Packaging full workspace config is no longer supported. Share skills without workspace config instead.");
+  }
+
+  if (!cleanSkills.length) {
+    throw new Error("No shareable skills found. Drop a skill markdown file to package it.");
+  }
+
+  const bundleType = cleanSkills.length === 1 ? "skill" : "skills-set";
+  const bundle: Record<string, unknown> = (() => {
+    if (bundleType === "skill") {
+      const skill = cleanSkills[0]!;
+      return {
+        schemaVersion: 1,
+        type: "skill",
+        name: skill.name,
+        description: skill.description || undefined,
+        trigger: skill.trigger || undefined,
+        content: skill.content,
+      };
+    }
+
+    return {
       schemaVersion: 1,
       type: "skills-set",
       name,
       description: buildBundleDescription("skills-set", summary),
       skills: cleanSkills,
     };
-  } else {
-    const workspace: Record<string, unknown> = {
-      workspaceId: "share-service-package",
-      exportedAt: Date.now(),
-      ...(cleanSkills.length ? { skills: cleanSkills } : null),
-      ...(cleanCommands.length ? { commands: cleanCommands } : null),
-      ...(Object.keys(genericConfig).length ? { config: genericConfig } : null),
-      ...(openwork ? { openwork } : null),
-      ...((opencodeConfig || Object.keys(opencodeAgent).length || Object.keys(opencodeMcp).length)
-        ? {
-            opencode: mergeConfigSections(opencodeConfig, {
-              ...(Object.keys(opencodeAgent).length ? { agent: opencodeAgent } : null),
-              ...(Object.keys(opencodeMcp).length ? { mcp: opencodeMcp } : null),
-            }),
-          }
-        : null),
-    };
-
-    bundle = {
-      schemaVersion: 1,
-      type: "workspace-profile",
-      name,
-      description: buildBundleDescription("workspace-profile", summary),
-      workspace,
-    };
-  }
+  })();
 
   return {
     bundle,

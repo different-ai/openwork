@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
@@ -20,7 +19,7 @@ import {
 } from "lucide-react";
 import { DenInput } from "../../../../_components/ui/input";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
-import { DenButton, buttonVariants } from "../../../../_components/ui/button";
+import { DenButton } from "../../../../_components/ui/button";
 import { OrgLimitDialog } from "../../../../_components/org-limit-dialog";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
@@ -34,7 +33,7 @@ import {
 } from "../../../../_lib/den-flow";
 import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
-import { getBackgroundAgentsRoute, getSharedSetupsRoute } from "../../../../_lib/den-org";
+import { getBackgroundAgentsRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ConnectionDetails = {
@@ -433,12 +432,6 @@ export function BackgroundAgentsScreen() {
         >
           Add workspace
         </DenButton>
-        <Link
-          href={getSharedSetupsRoute(orgSlug)}
-          className={buttonVariants({ variant: "secondary" })}
-        >
-          Open shared setups
-        </Link>
       </div>
 
       {workersError ? (
