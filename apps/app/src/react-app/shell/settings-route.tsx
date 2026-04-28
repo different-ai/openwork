@@ -54,7 +54,7 @@ import {
   type WorkspaceInfo,
 } from "../../app/lib/desktop";
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
+import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
 import { isDesktopRuntime, isElectronRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
@@ -313,6 +313,7 @@ export function SettingsRoute() {
   const local = useLocal();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
   const route = parseSettingsPath(location.pathname);
 
@@ -580,6 +581,7 @@ export function SettingsRoute() {
     releaseChannel: local.prefs.releaseChannel ?? "stable",
     onReleaseChannelChange,
     updateAutoDownload,
+    desktopConfig: desktopConfig.config,
     setError: setRouteError,
   });
 
@@ -819,11 +821,15 @@ export function SettingsRoute() {
     };
   }, [connectionsStore, extensionsStore, openworkServerStore, providerAuthStore]);
 
-  // Periodically refresh cloud providers from Den while signed in (dev
-  // #1509 "auto-sync cloud providers"). Mounted here because the settings
-  // route always owns the provider-auth store and we don't want to fire
-  // the timer while the user is in an unrelated tree.
-  useCloudProviderAutoSync(providerAuthStore.refreshCloudOrgProviders);
+  // Periodically reconcile workspace-imported cloud providers from Den while
+  // signed in (dev #1509 "auto-sync cloud providers"). Mounted here because
+  // the settings route owns the provider-auth store.
+  useCloudProviderAutoSync(providerAuthStore.runCloudProviderSync);
+
+  useEffect(() => {
+    if (route.tab !== "den") return;
+    void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
+  }, [providerAuthStore, route.tab]);
 
   useEffect(() => {
     openworkServerStore.syncFromOptions();

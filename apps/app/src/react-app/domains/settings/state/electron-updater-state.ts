@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { DenDesktopConfig } from "../../../../app/lib/den";
+import { isUpdateAllowed } from "../../../../app/lib/version-gate";
 import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, isTauriRuntime, safeStringify } from "../../../../app/utils";
 
@@ -27,6 +29,7 @@ type UseElectronUpdaterStateOptions = {
   releaseChannel: ReleaseChannel;
   onReleaseChannelChange: (next: ReleaseChannel) => void;
   updateAutoDownload: boolean;
+  desktopConfig: DenDesktopConfig | null | undefined;
   setError: (message: string | null) => void;
 };
 
@@ -70,7 +73,7 @@ function updateProgress(event: unknown): { downloaded?: number; total?: number }
 }
 
 export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions) {
-  const { releaseChannel, onReleaseChannelChange, updateAutoDownload, setError } = options;
+  const { releaseChannel, onReleaseChannelChange, updateAutoDownload, desktopConfig, setError } = options;
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateEnv, setUpdateEnv] = useState<{ supported?: boolean; reason?: string | null } | null>(null);
@@ -128,6 +131,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
         return;
       }
+      if (update.version && !(await isUpdateAllowed(update.version, desktopConfig))) {
+        tauriUpdateRef.current = null;
+        setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
+        return;
+      }
       let downloadedBytes = 0;
       setUpdateStatus({
         state: "downloading",
@@ -179,7 +187,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       ...(current ?? {}),
       state: "ready",
     }));
-  }, [setError]);
+  }, [desktopConfig, setError]);
 
   const checkForUpdates = useCallback(async () => {
     if (isTauriRuntime()) {
@@ -187,6 +195,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const update = (await check()) as TauriUpdate | null;
+        const allowed = update?.version
+          ? await isUpdateAllowed(update.version, desktopConfig)
+          : true;
+        if (!allowed) {
+          tauriUpdateRef.current = null;
+          setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
+          return;
+        }
         tauriUpdateRef.current = update;
         const nextStatus: Exclude<SettingsUpdateStatus, null> = update
           ? {
@@ -234,7 +250,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
 
-      const nextStatus: Exclude<SettingsUpdateStatus, null> = result.available
+      const availableAllowed = result.available && result.latestVersion
+        ? await isUpdateAllowed(result.latestVersion, desktopConfig)
+        : result.available;
+      const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
         ? {
             state: "available",
             lastCheckedAt: Date.now(),
@@ -250,13 +269,13 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
             notes: releaseNotesToText(result.releaseNotes),
           };
       setUpdateStatus(nextStatus);
-      if (result.available && updateAutoDownload) {
+      if (availableAllowed && updateAutoDownload) {
         await downloadUpdate();
       }
     } catch (error) {
       setUpdateStatus({ state: "error", message: describeError(error) });
     }
-  }, [downloadUpdate, onReleaseChannelChange, releaseChannel, setError, updateAutoDownload]);
+  }, [desktopConfig, downloadUpdate, onReleaseChannelChange, releaseChannel, setError, updateAutoDownload]);
 
   const installUpdateAndRestart = useCallback(async () => {
     if (isTauriRuntime()) {

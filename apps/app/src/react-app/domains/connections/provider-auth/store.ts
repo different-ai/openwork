@@ -34,12 +34,17 @@ import {
 } from "../../../../app/utils/providers";
 import type { OpenworkServerStore } from "../openwork-server-store";
 import {
+  denSessionUpdatedEvent,
+  type DenSessionUpdatedDetail,
+} from "../../../../app/lib/den-session-events";
+import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
   type CloudImportedProvider,
 } from "../../../../app/cloud/import-state";
 
 type ProviderReturnFocusTarget = "none" | "composer";
+type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
 
 export type ProviderAuthMethod = {
   type: "oauth" | "api" | "cloud";
@@ -128,6 +133,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersLoadKey = "";
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
+  let cloudProviderSyncInFlight: Promise<void> | null = null;
+  let cloudProviderSyncQueuedReason: CloudProviderSyncReason | null = null;
+  let cloudProviderSyncContextKey = "";
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -143,6 +151,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   const getCloudProviderEnv = (config: Record<string, unknown>) =>
     getStringList(config.env);
+  const sortStrings = (values: string[]) => [...values].sort();
+  const sameStringList = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+
+  const getCloudManagedProviderId = (
+    provider: Pick<DenOrgLlmProvider, "id" | "providerId">,
+  ) => provider.id.trim();
 
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
@@ -499,16 +514,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   const addCloudProviderComment = (
     raw: string,
-    provider: Pick<DenOrgLlmProvider, "id" | "name" | "providerId">,
+    provider: Pick<DenOrgLlmProvider, "id" | "name">,
+    localProviderId: string,
   ) => {
-    const withoutExisting = removeCloudProviderComment(raw, provider.providerId);
+    const withoutExisting = removeCloudProviderComment(raw, localProviderId);
     const propertyPattern = new RegExp(
-      `^([ \t]*)"${escapeRegExp(provider.providerId)}":`,
+      `^([ \t]*)"${escapeRegExp(localProviderId)}":`,
       "m",
     );
     return withoutExisting.replace(
       propertyPattern,
-      `$1${cloudProviderComment(provider)}\n$1"${provider.providerId}":`,
+      `$1${cloudProviderComment(provider)}\n$1"${localProviderId}":`,
     );
   };
 
@@ -518,6 +534,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const formatConfigWithCloudProvider = (
     raw: string,
     provider: DenOrgLlmProviderConnection,
+    localProviderId: string,
     previousProviderId?: string | null,
   ) => {
     const nextProviderConfig = buildCloudProviderConfig(
@@ -527,7 +544,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       ? raw
       : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
 
-    if (previousProviderId && previousProviderId !== provider.providerId) {
+    if (previousProviderId && previousProviderId !== localProviderId) {
       updated = removeCloudProviderComment(updated, previousProviderId);
       const previousEdits = modify(updated, ["provider", previousProviderId], undefined, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
@@ -535,13 +552,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       updated = applyEdits(updated, previousEdits);
     }
 
-    const providerEdits = modify(updated, ["provider", provider.providerId], nextProviderConfig, {
+    const providerEdits = modify(updated, ["provider", localProviderId], nextProviderConfig, {
       formattingOptions: { insertSpaces: true, tabSize: 2 },
     });
     updated = applyEdits(updated, providerEdits);
-    updated = addCloudProviderComment(updated, provider);
+    updated = addCloudProviderComment(updated, provider, localProviderId);
 
-    const disabledToRemove = new Set([provider.providerId, previousProviderId ?? ""]);
+    const disabledToRemove = new Set([localProviderId, previousProviderId ?? ""]);
     const currentDisabled = options.disabledProviders();
     if (currentDisabled.some((id) => disabledToRemove.has(id))) {
       const nextDisabled = currentDisabled.filter((id) => !disabledToRemove.has(id));
@@ -575,18 +592,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const assertCloudProviderImportSafe = async (
     provider: DenOrgLlmProviderConnection,
   ) => {
-    const existingImported = Object.values(state.importedCloudProviders).find(
-      (entry) => entry.providerId === provider.providerId,
-    );
-    if (existingImported && existingImported.cloudProviderId !== provider.id) {
+    const localProviderId = getCloudManagedProviderId(provider);
+    const existingImported = state.importedCloudProviders[provider.id] ?? null;
+    if (
+      existingImported &&
+      existingImported.providerId !== localProviderId &&
+      Object.values(state.importedCloudProviders).some(
+        (entry) => entry.providerId === localProviderId && entry.cloudProviderId !== provider.id,
+      )
+    ) {
       throw new Error(
-        `${provider.providerId} is already imported from ${existingImported.name}. Remove it before importing a different cloud provider.`,
+        `${localProviderId} is already imported from another cloud provider. Remove it before importing this one.`,
       );
     }
 
-    if (!existingImported && options.providerConnectedIds().includes(provider.providerId)) {
+    if (!existingImported && options.providerConnectedIds().includes(localProviderId)) {
       throw new Error(
-        `${provider.providerId} is already connected in this workspace. Disconnect it before importing the cloud-managed version.`,
+        `${localProviderId} is already connected in this workspace. Disconnect it before importing the cloud-managed version.`,
       );
     }
 
@@ -604,10 +626,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       providerSection &&
       typeof providerSection === "object" &&
       !Array.isArray(providerSection) &&
-      provider.providerId in (providerSection as Record<string, unknown>)
+      localProviderId in (providerSection as Record<string, unknown>)
     ) {
       throw new Error(
-        `${provider.providerId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
+        `${localProviderId} already has a provider block in opencode.jsonc. Remove it before importing the cloud-managed version.`,
       );
     }
   };
@@ -642,7 +664,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return [];
     }
 
-    const client = createDenClient({ baseUrl: settings.baseUrl, token });
+    const client = createDenClient({
+      baseUrl: settings.baseUrl,
+      apiBaseUrl: settings.apiBaseUrl,
+      token,
+    });
     const request = client
       .listOrgLlmProviders(orgId)
       .then((providers) => {
@@ -1098,8 +1124,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function connectCloudProvider(cloudProviderId: string) {
-    setStateField("providerAuthError", null);
+  async function connectCloudProviderInternal(
+    cloudProviderId: string,
+    optionsArg?: { silent?: boolean },
+  ) {
+    if (!optionsArg?.silent) {
+      setStateField("providerAuthError", null);
+    }
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
@@ -1113,9 +1144,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
-      const den = createDenClient({ baseUrl: settings.baseUrl, token });
+      const den = createDenClient({
+        baseUrl: settings.baseUrl,
+        apiBaseUrl: settings.apiBaseUrl,
+        token,
+      });
       const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
+      const localProviderId = getCloudManagedProviderId(provider);
       const apiKey = provider.apiKey?.trim() ?? "";
       const env = getCloudProviderEnv(provider.providerConfig);
       if (!apiKey && env.length > 0) {
@@ -1126,11 +1162,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       if (apiKey) {
         await c.auth.set({
-          providerID: provider.providerId,
+          providerID: localProviderId,
           auth: { type: "api", key: apiKey },
         });
       }
-      if (existingImported?.providerId && existingImported.providerId !== provider.providerId) {
+      if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
           await removeProviderAuthCredentials(existingImported.providerId);
         } catch (error) {
@@ -1141,7 +1177,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         }
       }
       const updatedConfig = await updateProjectConfigFile((raw) =>
-        formatConfigWithCloudProvider(raw, provider, existingImported?.providerId ?? null),
+        formatConfigWithCloudProvider(raw, provider, localProviderId, existingImported?.providerId ?? null),
       );
       if (!updatedConfig) {
         throw new Error("Could not update opencode.jsonc for this workspace.");
@@ -1151,7 +1187,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         ...state.importedCloudProviders,
         [provider.id]: {
           cloudProviderId: provider.id,
-          providerId: provider.providerId,
+          providerId: localProviderId,
           // Track the provider id as shipped by the server at import time
           // so we can detect local/remote drift later (see dev #1510 "key
           // cloud providers by cloud id"). On first import both match.
@@ -1167,7 +1203,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       const nextDisabledProviders = options
         .disabledProviders()
-        .filter((id) => id !== provider.providerId && id !== existingImported?.providerId);
+        .filter((id) => id !== localProviderId && id !== existingImported?.providerId);
       options.setDisabledProviders(nextDisabledProviders);
       options.markOpencodeConfigReloadRequired();
       refreshSnapshot();
@@ -1175,13 +1211,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return `${t("status.connected")} ${provider.name}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to connect organization provider.");
-      setStateField("providerAuthError", message);
+      if (!optionsArg?.silent) {
+        setStateField("providerAuthError", message);
+      }
       throw error instanceof Error ? error : new Error(message);
     }
   }
 
-  async function removeCloudProvider(cloudProviderId: string) {
-    setStateField("providerAuthError", null);
+  async function connectCloudProvider(cloudProviderId: string) {
+    return await connectCloudProviderInternal(cloudProviderId);
+  }
+
+  async function removeCloudProviderInternal(
+    cloudProviderId: string,
+    optionsArg?: { silent?: boolean },
+  ) {
+    if (!optionsArg?.silent) {
+      setStateField("providerAuthError", null);
+    }
     const imported = state.importedCloudProviders[cloudProviderId];
     if (!imported) {
       throw new Error("This cloud provider has not been imported into the workspace.");
@@ -1216,9 +1263,148 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return `${t("providers.disconnected_prefix")} ${imported.name}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.disconnect_failed"));
-      setStateField("providerAuthError", message);
+      if (!optionsArg?.silent) {
+        setStateField("providerAuthError", message);
+      }
       throw error instanceof Error ? error : new Error(message);
     }
+  }
+
+  async function removeCloudProvider(cloudProviderId: string) {
+    return await removeCloudProviderInternal(cloudProviderId);
+  }
+
+  const logCloudProviderSyncError = (reason: CloudProviderSyncReason, error: unknown) => {
+    const message = describeProviderError(error, "Cloud provider sync failed.");
+    console.warn(`[cloud-provider-sync:${reason}] ${message}`);
+    return message;
+  };
+
+  const getCloudProviderSyncContextKey = () => {
+    const settings = readDenSettings();
+    return [
+      settings.baseUrl,
+      settings.apiBaseUrl ?? "",
+      settings.activeOrgId?.trim() ?? "",
+      settings.authToken?.trim() ?? "",
+      options.selectedWorkspaceDisplay().workspaceType,
+      options.selectedWorkspaceRoot().trim(),
+      options.runtimeWorkspaceId() ?? "",
+      options.client() ? "connected" : "disconnected",
+    ].join("::");
+  };
+
+  const hasCloudProviderSyncPrerequisites = () => {
+    const settings = readDenSettings();
+    const workspaceTarget =
+      options.selectedWorkspaceRoot().trim() || options.runtimeWorkspaceId() || "";
+    return Boolean(
+      options.client() &&
+        settings.authToken?.trim() &&
+        settings.activeOrgId?.trim() &&
+        workspaceTarget,
+    );
+  };
+
+  const isCloudProviderOutOfSync = (
+    provider: DenOrgLlmProvider,
+    importedProvider: CloudImportedProvider,
+  ) =>
+    importedProvider.providerId !== getCloudManagedProviderId(provider) ||
+    importedProvider.sourceProviderId !== provider.providerId ||
+    (importedProvider.source ?? null) !== provider.source ||
+    (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
+    !sameStringList(importedProvider.modelIds, sortStrings(provider.models.map((model) => model.id)));
+
+  async function performCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (!hasCloudProviderSyncPrerequisites()) {
+      return;
+    }
+
+    const importedProviders = await refreshImportedCloudProviders();
+    const liveProviders = await refreshCloudOrgProviders({ force: true });
+    const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
+    const failures: string[] = [];
+    const processedLiveProviderIds = new Set<string>();
+    let configChanged = false;
+
+    for (const importedProvider of Object.values(importedProviders)) {
+      const liveProvider = liveProviderMap.get(importedProvider.cloudProviderId);
+      if (!liveProvider) {
+        try {
+          await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
+          configChanged = true;
+        } catch (error) {
+          failures.push(logCloudProviderSyncError(reason, error));
+        }
+        continue;
+      }
+
+      processedLiveProviderIds.add(liveProvider.id);
+
+      if (!isCloudProviderOutOfSync(liveProvider, importedProvider)) {
+        continue;
+      }
+
+      try {
+        await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });
+        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        configChanged = true;
+      } catch (error) {
+        failures.push(logCloudProviderSyncError(reason, error));
+      }
+    }
+
+    const nextImportedProviders = state.importedCloudProviders;
+    for (const liveProvider of liveProviders) {
+      if (processedLiveProviderIds.has(liveProvider.id)) {
+        continue;
+      }
+      if (nextImportedProviders[liveProvider.id]) {
+        continue;
+      }
+
+      try {
+        await connectCloudProviderInternal(liveProvider.id, { silent: true });
+        configChanged = true;
+      } catch (error) {
+        failures.push(logCloudProviderSyncError(reason, error));
+      }
+    }
+
+    if (configChanged) {
+      await refreshProviders({ dispose: true }).catch(() => null);
+    }
+
+    if (failures.length > 0) {
+      throw new Error(failures.join("\n"));
+    }
+  }
+
+  async function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    if (cloudProviderSyncInFlight) {
+      cloudProviderSyncQueuedReason = reason;
+      return cloudProviderSyncInFlight;
+    }
+
+    const request = performCloudProviderSync(reason)
+      .catch((error) => {
+        const message = logCloudProviderSyncError(reason, error);
+        if (reason === "settings_cloud_opened") {
+          setStateField("providerAuthError", message);
+        }
+      })
+      .finally(() => {
+        cloudProviderSyncInFlight = null;
+        const queuedReason = cloudProviderSyncQueuedReason;
+        cloudProviderSyncQueuedReason = null;
+        if (queuedReason) {
+          void runCloudProviderSync(queuedReason);
+        }
+      });
+
+    cloudProviderSyncInFlight = request;
+    return request;
   }
 
   async function disconnectProvider(providerId: string) {
@@ -1366,6 +1552,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (workspaceChanged) {
       void refreshImportedCloudProviders();
     }
+    if (!hasCloudProviderSyncPrerequisites()) {
+      cloudProviderSyncContextKey = "";
+      return;
+    }
+
+    const nextSyncContextKey = getCloudProviderSyncContextKey();
+    if (nextSyncContextKey === cloudProviderSyncContextKey) {
+      return;
+    }
+
+    cloudProviderSyncContextKey = nextSyncContextKey;
+    void runCloudProviderSync("app_launch");
   };
 
   const start = () => {
@@ -1375,7 +1573,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     started = true;
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
-      const handleDenSessionUpdate = () => {
+      const handleDenSessionUpdate = (event: Event) => {
         cloudOrgProvidersLoadKey = "";
         cloudOrgProvidersInFlightKey = "";
         cloudOrgProvidersInFlight = null;
@@ -1384,14 +1582,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           cloudOrgProviders: [],
           providerAuthMethods: {},
         }));
+        const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
+        if (detail?.status === "success") {
+          void runCloudProviderSync("sign_in");
+        }
       };
       window.addEventListener(
-        "openwork-den-session-updated",
+        denSessionUpdatedEvent,
         handleDenSessionUpdate as EventListener,
       );
       denSessionCleanup = () => {
         window.removeEventListener(
-          "openwork-den-session-updated",
+          denSessionUpdatedEvent,
           handleDenSessionUpdate as EventListener,
         );
       };
@@ -1419,6 +1621,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     dispose,
     syncFromOptions,
     refreshCloudOrgProviders,
+    runCloudProviderSync,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,
