@@ -5784,6 +5784,29 @@ async function runInstanceCommand(args: ParsedArgs) {
   }
 }
 
+async function runTemplateCommand(args: ParsedArgs) {
+  const outputJson = readBool(args.flags, "json", false);
+  const subcommand = args.positionals[1];
+  const { openworkUrl, token } = readOpenworkClientAuth(args);
+  const baseUrl = openworkUrl.replace(/\/$/, "");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+
+  try {
+    if (subcommand === "list") {
+      const result = await fetchJson(`${baseUrl}/v1/templates`, { headers });
+      outputResult({ ok: true, ...result }, outputJson);
+      return;
+    }
+    throw new Error("template requires list");
+  } catch (error) {
+    outputError(error, outputJson);
+    process.exitCode = 1;
+  }
+}
+
 async function runRouterDaemon(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
@@ -8626,6 +8649,10 @@ async function main() {
   }
   if (command === "instance") {
     await runInstanceCommand(args);
+    return;
+  }
+  if (command === "template" || command === "templates") {
+    await runTemplateCommand(args);
     return;
   }
   if (command === "approvals") {
