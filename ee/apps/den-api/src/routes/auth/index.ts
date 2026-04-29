@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import { describeRoute } from "hono-openapi"
 import { auth } from "../../auth.js"
 import { emptyResponse } from "../../openapi.js"
@@ -6,6 +7,10 @@ import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.get("/api/auth/.well-known/oauth-authorization-server", (c) => oauthProviderAuthServerMetadata(auth)(c.req.raw))
+  app.get("/api/auth/.well-known/openid-configuration", (c) => oauthProviderOpenIdConfigMetadata(auth)(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server/api/auth", (c) => oauthProviderAuthServerMetadata(auth)(c.req.raw))
+
   app.on(
     ["GET", "POST"],
     "/api/auth/*",
