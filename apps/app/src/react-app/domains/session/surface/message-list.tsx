@@ -407,45 +407,6 @@ function PastedTextChip(props: { label: string; text: string }) {
   );
 }
 
-/** Collapsible block for long user messages. Shows a chip with line count
- *  that expands on click to reveal the full text. */
-function CollapsibleUserText(props: {
-  text: string;
-  lineCount: number;
-  highlightQuery?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const previewLines = 3;
-  const preview = props.text.split(/\r?\n/).slice(0, previewLines).join("\n");
-
-  return (
-    <div>
-      {expanded ? (
-        <HighlightedPlainText
-          text={props.text}
-          className="whitespace-pre-wrap break-words text-gray-12"
-          highlightQuery={props.highlightQuery}
-        />
-      ) : (
-        <div className="whitespace-pre-wrap break-words text-gray-12">
-          {preview}{props.lineCount > previewLines ? "..." : ""}
-        </div>
-      )}
-      <button
-        type="button"
-        className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-0.5 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3/30"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <ChevronDown
-          size={12}
-          className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
-        />
-        <span>{expanded ? "Collapse" : `${props.lineCount} lines · expand`}</span>
-      </button>
-    </div>
-  );
-}
-
 const PASTE_TOKEN_RE = /(\[pasted text [^\]]+\])/;
 
 function HighlightedPlainText(props: {
@@ -1100,15 +1061,7 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
                   const text = partToText(group.part);
                   if (block.isUser) {
-                    const lineCount = text.split(/\r?\n/).length;
-                    const isLong = lineCount >= 6 || text.length >= 400;
-                    return isLong ? (
-                      <CollapsibleUserText
-                        text={text}
-                        lineCount={lineCount}
-                        highlightQuery={highlightQuery}
-                      />
-                    ) : (
+                    return (
                       <HighlightedPlainText
                         text={text}
                         className="whitespace-pre-wrap break-words text-gray-12"
