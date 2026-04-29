@@ -46,9 +46,12 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
-    "tauri": "pnpm --filter @openwork/desktop exec tauri"
+    "tauri": "pnpm --filter @openwork/desktop exec tauri",
+    "lint": "turbo run lint:oxlint",
+    "lint:fix": "turbo run lint:oxlint -- --fix"
   },
   "devDependencies": {
+    "oxlint": "^1.62.0",
     "turbo": "^2.5.5"
   },
   "pnpm": {

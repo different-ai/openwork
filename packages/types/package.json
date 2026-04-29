@@ -19,7 +19,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "lint:oxlint": "oxlint ."
   },
   "dependencies": {
     "zod": "^4.3.6"

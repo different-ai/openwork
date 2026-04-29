@@ -29,6 +29,14 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**"]
+    },
+    "lint:oxlint": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "../../.oxlintrc.json",
+        "../../../.oxlintrc.json"
+      ],
+      "outputs": []
     }
   }
 }

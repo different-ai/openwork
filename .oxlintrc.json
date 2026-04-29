@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "off",
+    "suspicious": "off",
+    "perf": "off",
+    "restriction": "off",
+    "pedantic": "off",
+    "style": "off",
+    "nursery": "off"
+  },
+  "rules": {
+    "no-debugger": "error"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.next/**",
+    "**/.turbo/**",
+    "**/.tauri/**",
+    "**/target/**",
+    "**/coverage/**",
+    "**/out/**",
+    "vendor/**",
+    "patches/**",
+    "translated_readmes/**",
+    "**/*.generated.ts",
+    "**/*.gen.ts",
+    "packages/openwork-server-sdk/src/**",
+    "apps/server-v2/openapi.json",
+    "pnpm-lock.yaml",
+    "package-lock.json"
+  ]
+}
