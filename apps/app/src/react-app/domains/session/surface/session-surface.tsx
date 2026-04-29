@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 
@@ -341,7 +341,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isError: snapshotQuery.isError || Boolean(error),
   });
 
-  const buildDraft = (text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
+  const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const trimmed = text.trim();
     const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
     const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
@@ -369,7 +369,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolvedText: text,
       command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
     };
-  };
+  }, [mentions, pasteParts]);
 
   const handleCopyTranscript = async () => {
     try {
@@ -424,7 +424,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));
-  }, [draft, attachments, pasteParts, props]);
+  }, [attachments, buildDraft, draft, props.onDraftChange]);
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {

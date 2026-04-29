@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
@@ -265,6 +265,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const commandsCacheRef = useRef<SlashCommandOption[] | null>(null);
+  const commandsRequestRef = useRef<Promise<SlashCommandOption[]> | null>(null);
+  const commandsLoadVersionRef = useRef(0);
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
@@ -284,19 +287,21 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [props.draft]);
 
   const slashMatch = props.draft.match(/^\/(\S*)$/);
+  const slashOpenNext = Boolean(slashMatch);
   const slashQuery = slashMatch?.[1] ?? "";
   const mentionMatch = props.draft.match(/@([^\s@]*)$/);
+  const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
 
   useEffect(() => {
-    setSlashOpen(Boolean(slashMatch));
+    setSlashOpen(slashOpenNext);
     setMenuIndex(0);
-  }, [slashMatch]);
+  }, [slashOpenNext, slashQuery]);
 
   useEffect(() => {
-    setMentionOpen(Boolean(mentionMatch));
+    setMentionOpen(mentionOpenNext);
     setMenuIndex(0);
-  }, [mentionMatch]);
+  }, [mentionOpenNext, mentionQuery]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -327,10 +332,46 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [agentMenuIndex, agentMenuOpen]);
 
   useEffect(() => {
+    commandsLoadVersionRef.current += 1;
+    commandsCacheRef.current = null;
+    commandsRequestRef.current = null;
+  }, [props.listCommands]);
+
+  const loadCommands = useCallback(() => {
+    if (commandsCacheRef.current !== null) {
+      return Promise.resolve(commandsCacheRef.current);
+    }
+    if (commandsRequestRef.current) {
+      return commandsRequestRef.current;
+    }
+    const version = commandsLoadVersionRef.current;
+    const request = props.listCommands().then((next) => {
+      if (commandsLoadVersionRef.current === version) {
+        commandsCacheRef.current = next;
+      }
+      return next;
+    }).finally(() => {
+      if (commandsLoadVersionRef.current === version) {
+        commandsRequestRef.current = null;
+      }
+    });
+    commandsRequestRef.current = request;
+    return request;
+  }, [props.listCommands]);
+
+  useEffect(() => {
     if (!slashOpen && !toolMenuOpen) return;
     let cancelled = false;
+    const cached = commandsCacheRef.current;
+    if (cached !== null) {
+      setCommands(cached);
+      setCommandsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     setCommandsLoading(true);
-    void props.listCommands()
+    void loadCommands()
       .then((next) => {
         if (!cancelled) setCommands(next);
       })
@@ -343,7 +384,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     return () => {
       cancelled = true;
     };
-  }, [slashOpen, toolMenuOpen, props.listCommands]);
+  }, [slashOpen, toolMenuOpen, loadCommands]);
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -473,16 +514,20 @@ export function ReactSessionComposer(props: ComposerProps) {
     return undefined;
   }, [toolMenuOpen, toolMenuSection, props.listSkills, props.listMcp]);
 
-  const slashFiltered = !slashOpen
-    ? []
-    : slashQuery
-      ? fuzzysort.go(slashQuery, commands, { keys: ["name", "description"] }).map((entry) => entry.obj).slice(0, 8)
-      : commands.slice(0, 8);
-  const mentionFiltered = !mentionOpen
-    ? []
-    : mentionQuery
-      ? fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"] }).map((entry) => entry.obj).slice(0, 8)
-      : mentionItems.slice(0, 8);
+  const slashFiltered = useMemo(() => {
+    if (!slashOpen) return [];
+    if (!slashQuery) return commands.slice(0, 8);
+    return fuzzysort.go(slashQuery, commands, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
+  }, [commands, slashOpen, slashQuery]);
+  const mentionFiltered = useMemo(() => {
+    if (!mentionOpen) return [];
+    if (!mentionQuery) return mentionItems.slice(0, 8);
+    return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
+  }, [mentionItems, mentionOpen, mentionQuery]);
+  const pastedTextTokens = useMemo(
+    () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines })),
+    [props.pastedText],
+  );
 
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
@@ -513,6 +558,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [activeItems.length]);
 
   useEffect(() => {
+    menuItemRefs.current.length = activeItems.length;
     const target = menuItemRefs.current[menuIndex];
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
@@ -549,8 +595,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (activeMenu === "slash") {
       const command = slashFiltered[menuIndex];
       if (!command) return false;
-      props.onDraftChange(`/${command.name} `);
-      setSlashOpen(false);
+      applyCommandSelection(command);
       return true;
     }
     if (activeMenu === "mention") {
@@ -747,7 +792,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                     type="button"
                     className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                     onMouseEnter={() => setMenuIndex(index)}
-                    onClick={() => applyCommandSelection(command)}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      applyCommandSelection(command);
+                    }}
+                    onClick={(event) => {
+                      if (event.detail === 0) applyCommandSelection(command);
+                    }}
                   >
                     <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
                     <div className="min-w-0 flex-1">
@@ -898,7 +950,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             <LexicalPromptEditor
               value={props.draft}
               mentions={props.mentions}
-              pastedText={props.pastedText.map((item) => ({ label: item.label, lines: item.lines }))}
+              pastedText={pastedTextTokens}
               disabled={props.disabled}
               placeholder={t("composer.placeholder", locale)}
               onChange={props.onDraftChange}

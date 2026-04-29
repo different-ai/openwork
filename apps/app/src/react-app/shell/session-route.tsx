@@ -1065,6 +1065,11 @@ export function SessionRoute() {
     });
   }, [checkDesktopRestriction, modelOptions]);
 
+  const listSlashCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
+    if (!opencodeClient) return [];
+    return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
+  }, [opencodeClient, selectedWorkspaceRoot]);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1155,10 +1160,7 @@ export function SessionRoute() {
         return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
       },
       onSelectAgent: (agent: string | null) => setSelectedAgent(agent),
-      listCommands: async (): Promise<SlashCommandOption[]> => {
-        const list = await listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
-        return list;
-      },
+      listCommands: listSlashCommands,
       recentFiles: [],
       searchFiles: async (query: string) => {
         const trimmed = query.trim();
@@ -1179,6 +1181,7 @@ export function SessionRoute() {
   }, [
     client,
     local,
+    listSlashCommands,
     modelLabel,
     navigate,
     opencodeBaseUrl,

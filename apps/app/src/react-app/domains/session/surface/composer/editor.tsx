@@ -410,13 +410,18 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
       setPrompt(props.value, props.mentions, props.pastedText);
       $getRoot().selectEnd();
     });
-  }, [editor, props.mentions, props.value]);
+  }, [editor, props.mentions, props.pastedText, props.value]);
 
   return null;
 }
 
 function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: boolean }) {
   const [editor] = useLexicalComposerContext();
+  const onSubmitRef = useRef(props.onSubmit);
+
+  useEffect(() => {
+    onSubmitRef.current = props.onSubmit;
+  }, [props.onSubmit]);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -435,12 +440,12 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
         // Plain Enter submits. Cmd/Ctrl+Enter also submits for muscle
         // memory compatibility.
         event?.preventDefault();
-        void props.onSubmit();
+        void onSubmitRef.current();
         return true;
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, props.disabled, props.onSubmit]);
+  }, [editor, props.disabled]);
 
   return null;
 }
@@ -533,6 +538,17 @@ function MentionChipNavigationPlugin() {
 }
 
 export function LexicalPromptEditor(props: EditorProps) {
+  const valueRef = useRef(props.value);
+  const onChangeRef = useRef(props.onChange);
+
+  useEffect(() => {
+    valueRef.current = props.value;
+  }, [props.value]);
+
+  useEffect(() => {
+    onChangeRef.current = props.onChange;
+  }, [props.onChange]);
+
   const initialConfig = useMemo(
     () => ({
       namespace: "openwork-react-session-composer",
@@ -551,10 +567,13 @@ export function LexicalPromptEditor(props: EditorProps) {
   const handleChange = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
-        props.onChange(serializePromptFromRoot());
+        const next = serializePromptFromRoot();
+        if (next === valueRef.current) return;
+        valueRef.current = next;
+        onChangeRef.current(next);
       });
     },
-    [props],
+    [],
   );
 
   return (
