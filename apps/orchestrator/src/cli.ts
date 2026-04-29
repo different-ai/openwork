@@ -4185,6 +4185,7 @@ async function writeSandboxEntrypoint(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4213,6 +4214,10 @@ async function writeSandboxEntrypoint(options: {
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
     .join(" ");
+
+  const opencodeLogLevelArg = options.opencode.logLevel
+    ? `--log-level ${shQuote(options.opencode.logLevel)}`
+    : "";
 
   const openworkCors = options.openwork.corsOrigins.length
     ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
@@ -4282,7 +4287,7 @@ async function writeSandboxEntrypoint(options: {
     '  if [ -n "$opencode_pid" ]; then kill "$opencode_pid" 2>/dev/null || true; fi',
     "}",
     "trap cleanup INT TERM",
-    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
+    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))}${opencodeLogLevelArg ? ` ${opencodeLogLevelArg}` : ""} ${opencodeCors} &`,
     "opencode_pid=$!",
     options.openwork.opencodeRouterEnabled
       ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &`
@@ -4326,6 +4331,7 @@ async function startDockerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4512,6 +4518,7 @@ async function startAppleContainerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -7951,6 +7958,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
@@ -7994,6 +8002,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
