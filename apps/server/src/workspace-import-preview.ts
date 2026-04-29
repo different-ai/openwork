@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
@@ -31,9 +32,12 @@ export type WorkspaceImportChange = {
 
 type WorkspaceImportPlannedChange = WorkspaceImportChange & {
   absolutePath: string;
+  beforeDigest: string;
+  afterDigest: string;
 };
 
 export type WorkspaceImportPreview = {
+  fingerprint: string;
   summary: {
     total: number;
     create: number;
@@ -49,8 +53,11 @@ export type WorkspaceImportPlan = Omit<WorkspaceImportPreview, "changes"> & {
   changes: WorkspaceImportPlannedChange[];
 };
 
+type WorkspaceImportSection = "opencode" | "openwork" | "skills" | "commands" | "files";
+
 export type NormalizedWorkspaceImport = {
   modes: Record<string, WorkspaceImportMode>;
+  sections: Record<WorkspaceImportSection, boolean>;
   opencode?: Record<string, unknown>;
   openwork?: Record<string, unknown>;
   skills: Array<{ name: string; content: string; description?: string }>;
@@ -166,6 +173,13 @@ export function normalizeWorkspaceImportPayload(
 ): NormalizedWorkspaceImport {
   return {
     modes: normalizeModes(payload.mode),
+    sections: {
+      opencode: payload.opencode !== undefined,
+      openwork: payload.openwork !== undefined,
+      skills: payload.skills !== undefined,
+      commands: payload.commands !== undefined,
+      files: payload.files !== undefined,
+    },
     ...(payload.opencode !== undefined
       ? { opencode: sanitizePortableOpencodeConfig(readRecord(payload.opencode)) }
       : {}),
@@ -191,7 +205,19 @@ function stableStringify(value: unknown): string {
       .map(([key, child]) => `${JSON.stringify(key)}:${stableStringify(child)}`);
     return `{${entries.join(",")}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function textDigest(content: string | null): string {
+  return digest(content === null ? { type: "missing" } : { type: "text", content });
+}
+
+function jsonDigest(value: unknown): string {
+  return digest({ type: "json", value });
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -220,6 +246,18 @@ function countSummary(changes: WorkspaceImportChange[]): WorkspaceImportPreview[
       return summary;
     },
     { total: 0, create: 0, update: 0, replace: 0, delete: 0, unchanged: 0 },
+  );
+}
+
+function fingerprintWorkspaceImportChanges(changes: WorkspaceImportPlannedChange[]): string {
+  return digest(
+    changes.map((change) => ({
+      kind: change.kind,
+      action: change.action,
+      path: change.path,
+      beforeDigest: change.beforeDigest,
+      afterDigest: change.afterDigest,
+    })),
   );
 }
 
@@ -273,6 +311,8 @@ export async function buildWorkspaceImportPreview(
       label: "OpenCode config",
       path: rel(workspaceRoot, path),
       absolutePath: path,
+      beforeDigest: jsonDigest(before.data),
+      afterDigest: jsonDigest(after),
     });
   }
 
@@ -287,10 +327,12 @@ export async function buildWorkspaceImportPreview(
       label: "OpenWork config",
       path: rel(workspaceRoot, path),
       absolutePath: path,
+      beforeDigest: existsBefore ? jsonDigest(before) : textDigest(null),
+      afterDigest: jsonDigest(after),
     });
   }
 
-  if (input.skills.length > 0) {
+  if (input.sections.skills) {
     const existing = new Set(await listProjectSkillNames(workspaceRoot));
     const incoming = new Set<string>();
     for (const skill of input.skills) {
@@ -305,24 +347,29 @@ export async function buildWorkspaceImportPreview(
         label: skill.name,
         path: rel(workspaceRoot, path),
         absolutePath: path,
+        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        afterDigest: textDigest(next.content),
       });
     }
     if (input.modes.skills === "replace") {
       for (const name of existing) {
         if (incoming.has(name)) continue;
         const path = join(projectSkillsDir(workspaceRoot), name);
+        const skillFile = join(path, "SKILL.md");
         changes.push({
           kind: "skill",
           action: "delete",
           label: name,
           path: rel(workspaceRoot, path),
           absolutePath: path,
+          beforeDigest: textDigest(await readFile(skillFile, "utf8")),
+          afterDigest: textDigest(null),
         });
       }
     }
   }
 
-  if (input.commands.length > 0) {
+  if (input.sections.commands) {
     const existing = new Set(await listProjectCommandNames(workspaceRoot));
     const incoming = new Set<string>();
     for (const command of input.commands) {
@@ -337,6 +384,8 @@ export async function buildWorkspaceImportPreview(
         label: command.name,
         path: rel(workspaceRoot, path),
         absolutePath: path,
+        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        afterDigest: textDigest(next.content),
       });
     }
     if (input.modes.commands === "replace") {
@@ -349,12 +398,14 @@ export async function buildWorkspaceImportPreview(
           label: name,
           path: rel(workspaceRoot, path),
           absolutePath: path,
+          beforeDigest: textDigest(await readFile(path, "utf8")),
+          afterDigest: textDigest(null),
         });
       }
     }
   }
 
-  if (input.files.length > 0) {
+  if (input.sections.files) {
     const incoming = new Set<string>();
     for (const file of input.files) {
       incoming.add(file.path);
@@ -367,6 +418,8 @@ export async function buildWorkspaceImportPreview(
         label: file.path,
         path: file.path,
         absolutePath: path,
+        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        afterDigest: textDigest(file.content),
       });
     }
     if (input.modes.files === "replace") {
@@ -379,21 +432,28 @@ export async function buildWorkspaceImportPreview(
           label: filePath,
           path: filePath,
           absolutePath: path,
+          beforeDigest: textDigest(await readFile(path, "utf8")),
+          afterDigest: textDigest(null),
         });
       }
     }
   }
 
+  const summary = countSummary(changes);
   return {
-    summary: countSummary(changes),
+    fingerprint: fingerprintWorkspaceImportChanges(changes),
+    summary,
     changes,
   };
 }
 
 export function publicWorkspaceImportPreview(preview: WorkspaceImportPlan): WorkspaceImportPreview {
   return {
+    fingerprint: preview.fingerprint,
     summary: preview.summary,
-    changes: preview.changes.map(({ absolutePath: _absolutePath, ...change }) => change),
+    changes: preview.changes.map(
+      ({ absolutePath: _absolutePath, beforeDigest: _beforeDigest, afterDigest: _afterDigest, ...change }) => change,
+    ),
   };
 }
 

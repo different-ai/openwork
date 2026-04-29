@@ -210,6 +210,7 @@ export type OpenworkWorkspaceImportChange = {
 };
 
 export type OpenworkWorkspaceImportPreview = {
+  fingerprint: string;
   summary: {
     total: number;
     create: number;

@@ -2822,9 +2822,32 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    const expectedFingerprint = parseWorkspaceImportPreviewFingerprint(body);
     const approvalPaths = workspaceImportPreviewApprovalPaths(preview);
     if (approvalPaths.length === 0) {
       return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
+    }
+    if (!expectedFingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_required",
+          message: "Review this import preview before applying workspace changes.",
+          preview: publicWorkspaceImportPreview(preview),
+        },
+        409,
+      );
+    }
+    if (expectedFingerprint !== preview.fingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_stale",
+          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
+          preview: publicWorkspaceImportPreview(preview),
+        },
+        409,
+      );
     }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -3392,6 +3415,19 @@ function parseWorkspaceExportSensitiveMode(input: string | null): WorkspaceExpor
   throw new ApiError(400, "invalid_workspace_export_sensitive_mode", `Invalid workspace export sensitive mode: ${trimmed}`);
 }
 
+function parseWorkspaceImportPreviewFingerprint(payload: Record<string, unknown>): string | null {
+  const value = payload.previewFingerprint;
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") {
+    throw new ApiError(
+      400,
+      "invalid_workspace_import_preview_fingerprint",
+      "Workspace import preview fingerprint must be a string",
+    );
+  }
+  return value;
+}
+
 function workspaceImportRelativePath(workspace: WorkspaceInfo, path: string): string {
   return relative(workspace.path, path).replaceAll("\\", "/");
 }
@@ -3427,7 +3463,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     }
   }
 
-  if (input.skills.length > 0) {
+  if (input.sections.skills) {
     for (const skill of input.skills) {
       const path = workspaceImportRelativePath(workspace, join(projectSkillsDir(workspace.path), skill.name, "SKILL.md"));
       if (!changedPath("skill", path)) continue;
@@ -3442,7 +3478,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     }
   }
 
-  if (input.commands.length > 0) {
+  if (input.sections.commands) {
     for (const command of input.commands) {
       const path = workspaceImportRelativePath(workspace, join(projectCommandsDir(workspace.path), `${command.name}.md`));
       if (!changedPath("command", path)) continue;
@@ -3457,7 +3493,7 @@ async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string,
     }
   }
 
-  if (input.files.length > 0) {
+  if (input.sections.files) {
     for (const file of input.files) {
       if (!changedPath("file", file.path)) continue;
       const path = join(workspace.path, file.path);

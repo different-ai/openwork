@@ -70,6 +70,41 @@ function makeServerConfig(workspace: string, dataDir: string): ServerConfig {
   };
 }
 
+type TestHeaders = {
+  Authorization: string;
+  "Content-Type": string;
+};
+
+async function requestWorkspaceImportPreview(
+  baseUrl: string,
+  headers: TestHeaders,
+  payload: Record<string, unknown>,
+): Promise<{ fingerprint: string; summary: { create: number; update: number; delete: number; unchanged: number } }> {
+  const response = await fetch(`${baseUrl}/workspace/workspace/import/preview`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  expect(response.status).toBe(200);
+  return await response.json() as {
+    fingerprint: string;
+    summary: { create: number; update: number; delete: number; unchanged: number };
+  };
+}
+
+async function requestWorkspaceImportWithPreview(
+  baseUrl: string,
+  headers: TestHeaders,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  const preview = await requestWorkspaceImportPreview(baseUrl, headers, payload);
+  return await fetch(`${baseUrl}/workspace/workspace/import`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...payload, previewFingerprint: preview.fingerprint }),
+  });
+}
+
 describe("workspace import preview", () => {
   test("summarizes workspace import changes without writing files", async () => {
     const workspace = await makeWorkspace();
@@ -183,6 +218,7 @@ describe("workspace import preview", () => {
     ]);
     expect(workspaceImportPreviewApprovalPaths(preview)).toEqual([]);
     expect(publicWorkspaceImportPreview(preview).changes[0]).not.toHaveProperty("absolutePath");
+    expect(publicWorkspaceImportPreview(preview).changes[0]).not.toHaveProperty("beforeDigest");
   });
 
   test("uses replace action for config replacement", async () => {
@@ -213,6 +249,33 @@ describe("workspace import preview", () => {
     ).rejects.toThrow(/Portable file path is not allowed/i);
   });
 
+  test("replace preview treats empty sections as delete all", async () => {
+    const workspace = await makeWorkspace();
+    await mkdir(join(workspace, ".opencode", "skills", "old-skill"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "commands"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "agents"), { recursive: true });
+    await writeFile(join(workspace, ".opencode", "skills", "old-skill", "SKILL.md"), "old skill\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "commands", "old-command.md"), "old command\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "agents", "old.md"), "old agent\n", "utf8");
+
+    const preview = await buildWorkspaceImportPreview(workspace, {
+      mode: { skills: "replace", commands: "replace", files: "replace" },
+      skills: [],
+      commands: [],
+      files: [],
+    });
+
+    expect(preview.summary).toMatchObject({
+      total: 3,
+      delete: 3,
+    });
+    expect(preview.changes.map((change) => [change.kind, change.action, change.path])).toEqual([
+      ["skill", "delete", ".opencode/skills/old-skill"],
+      ["command", "delete", ".opencode/commands/old-command.md"],
+      ["file", "delete", ".opencode/agents/old.md"],
+    ]);
+  });
+
   test("preview route returns public changes and no-op import does not audit", async () => {
     const workspace = await makeWorkspace();
     const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
@@ -240,7 +303,9 @@ describe("workspace import preview", () => {
       });
       expect(previewResponse.status).toBe(200);
       const preview = await previewResponse.json() as Record<string, unknown>;
+      expect(typeof preview.fingerprint).toBe("string");
       expect((preview.changes as Array<Record<string, unknown>>)[0]).not.toHaveProperty("absolutePath");
+      expect((preview.changes as Array<Record<string, unknown>>)[0]).not.toHaveProperty("beforeDigest");
 
       const importResponse = await fetch(`${baseUrl}/workspace/workspace/import`, {
         method: "POST",
@@ -250,6 +315,49 @@ describe("workspace import preview", () => {
       expect(importResponse.status).toBe(200);
       const imported = await importResponse.json() as Record<string, unknown>;
       expect(imported.preview).toEqual(preview);
+      expect(await pathExists(auditLogPath("workspace"))).toBe(false);
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
+
+  test("changed import requires a reviewed preview fingerprint", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          opencode: { plugin: ["demo"] },
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      const body = await response.json() as {
+        code: string;
+        preview: { fingerprint: string; summary: { create: number } };
+      };
+      expect(body.code).toBe("workspace_import_preview_required");
+      expect(typeof body.preview.fingerprint).toBe("string");
+      expect(body.preview.summary.create).toBe(1);
+      expect(await pathExists(join(workspace, "opencode.jsonc"))).toBe(false);
       expect(await pathExists(auditLogPath("workspace"))).toBe(false);
     } finally {
       server.stop(true);
@@ -273,23 +381,21 @@ describe("workspace import preview", () => {
       stop: (force?: boolean) => void;
     };
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          opencode: { plugin: ["demo"] },
-          skills: [
-            {
-              name: "demo",
-              description: "Demo skill",
-              content: "Use this skill for demo work.",
-            },
-          ],
-          files: [{ path: ".opencode/agents/demo.md", content: "Demo agent\n" }],
-        }),
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const headers = {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      };
+      const response = await requestWorkspaceImportWithPreview(baseUrl, headers, {
+        opencode: { plugin: ["demo"] },
+        skills: [
+          {
+            name: "demo",
+            description: "Demo skill",
+            content: "Use this skill for demo work.",
+          },
+        ],
+        files: [{ path: ".opencode/agents/demo.md", content: "Demo agent\n" }],
       });
 
       expect(response.status).toBe(200);
@@ -345,18 +451,16 @@ describe("workspace import preview", () => {
       stop: (force?: boolean) => void;
     };
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          mode: { skills: "replace", commands: "replace", files: "replace" },
-          skills: [keepSkill],
-          commands: [keepCommand],
-          files: [{ path: ".opencode/tools/shared.ts", content: "shared tool\n" }],
-        }),
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const headers = {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      };
+      const response = await requestWorkspaceImportWithPreview(baseUrl, headers, {
+        mode: { skills: "replace", commands: "replace", files: "replace" },
+        skills: [keepSkill],
+        commands: [keepCommand],
+        files: [{ path: ".opencode/tools/shared.ts", content: "shared tool\n" }],
       });
 
       expect(response.status).toBe(200);
@@ -372,6 +476,146 @@ describe("workspace import preview", () => {
       expect(await readFile(join(workspace, ".opencode", "commands", "keep-command.md"), "utf8")).toBe(keepCommandContent);
       expect(await readFile(join(workspace, ".opencode", "tools", "shared.ts"), "utf8")).toBe("shared tool\n");
       expect(await readFile(auditLogPath("workspace"), "utf8")).toContain("Imported workspace config (remove 3)");
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
+
+  test("replace import route honors empty sections", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+
+    await mkdir(join(workspace, ".opencode", "skills", "old-skill"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "commands"), { recursive: true });
+    await mkdir(join(workspace, ".opencode", "agents"), { recursive: true });
+    await writeFile(join(workspace, ".opencode", "skills", "old-skill", "SKILL.md"), "old skill\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "commands", "old-command.md"), "old command\n", "utf8");
+    await writeFile(join(workspace, ".opencode", "agents", "old.md"), "old agent\n", "utf8");
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const headers = {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      };
+      const response = await requestWorkspaceImportWithPreview(baseUrl, headers, {
+        mode: { skills: "replace", commands: "replace", files: "replace" },
+        skills: [],
+        commands: [],
+        files: [],
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        preview: { summary: { delete: number } };
+      };
+      expect(body.preview.summary.delete).toBe(3);
+      expect(await pathExists(join(workspace, ".opencode", "skills", "old-skill"))).toBe(false);
+      expect(await pathExists(join(workspace, ".opencode", "commands", "old-command.md"))).toBe(false);
+      expect(await pathExists(join(workspace, ".opencode", "agents", "old.md"))).toBe(false);
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
+
+  test("import route rejects a stale reviewed preview", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+    await writeFile(join(workspace, "opencode.jsonc"), '{ "plugin": ["old"] }\n', "utf8");
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const headers = {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      };
+      const payload = { opencode: { plugin: ["new"] } };
+
+      const previewResponse = await fetch(`${baseUrl}/workspace/workspace/import/preview`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      expect(previewResponse.status).toBe(200);
+      const preview = await previewResponse.json() as { fingerprint: string };
+
+      await writeFile(join(workspace, "opencode.jsonc"), '{ "plugin": ["changed-after-preview"] }\n', "utf8");
+
+      const importResponse = await fetch(`${baseUrl}/workspace/workspace/import`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...payload, previewFingerprint: preview.fingerprint }),
+      });
+      expect(importResponse.status).toBe(409);
+      const rejected = await importResponse.json() as {
+        code: string;
+        preview: { fingerprint: string };
+      };
+      expect(rejected.code).toBe("workspace_import_preview_stale");
+      expect(rejected.preview.fingerprint).not.toBe(preview.fingerprint);
+      expect(await readFile(join(workspace, "opencode.jsonc"), "utf8")).toContain("changed-after-preview");
+      expect(await pathExists(auditLogPath("workspace"))).toBe(false);
+    } finally {
+      server.stop(true);
+      if (originalDataDir === undefined) {
+        delete process.env.OPENWORK_DATA_DIR;
+      } else {
+        process.env.OPENWORK_DATA_DIR = originalDataDir;
+      }
+    }
+  });
+
+  test("import route validates preview fingerprint shape", async () => {
+    const workspace = await makeWorkspace();
+    const dataDir = await mkdtemp(join(tmpdir(), "openwork-import-preview-data-"));
+    tempDirs.push(dataDir);
+
+    const originalDataDir = process.env.OPENWORK_DATA_DIR;
+    process.env.OPENWORK_DATA_DIR = dataDir;
+    const server = startServer(makeServerConfig(workspace, dataDir)) as {
+      port: number;
+      stop: (force?: boolean) => void;
+    };
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          opencode: { plugin: ["demo"] },
+          previewFingerprint: 123,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = await response.json() as { code: string };
+      expect(body.code).toBe("invalid_workspace_import_preview_fingerprint");
     } finally {
       server.stop(true);
       if (originalDataDir === undefined) {
@@ -398,22 +642,20 @@ describe("workspace import preview", () => {
       stop: (force?: boolean) => void;
     };
     try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/workspace/import`, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          mode: { skills: "replace" },
-          skills: [
-            {
-              name: "new",
-              description: "New skill",
-              content: "new skill\n",
-            },
-          ],
-        }),
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const headers = {
+        Authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      };
+      const response = await requestWorkspaceImportWithPreview(baseUrl, headers, {
+        mode: { skills: "replace" },
+        skills: [
+          {
+            name: "new",
+            description: "New skill",
+            content: "new skill\n",
+          },
+        ],
       });
 
       expect(response.ok).toBe(false);
