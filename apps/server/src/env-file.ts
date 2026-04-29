@@ -66,24 +66,47 @@ function parseRecord(raw: unknown): EnvRecord | null {
   };
 }
 
-async function readStore(path: string): Promise<EnvStoreFile> {
+function emptyStore(): EnvStoreFile {
+  return { schemaVersion: 1, updatedAt: Date.now(), variables: [] };
+}
+
+async function readStore(
+  path: string,
+  options: { tolerateInvalid?: boolean } = {},
+): Promise<EnvStoreFile> {
   if (!(await exists(path))) {
-    return { schemaVersion: 1, updatedAt: Date.now(), variables: [] };
+    return emptyStore();
   }
+  let raw = "";
   try {
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as Partial<EnvStoreFile>;
-    const variables = Array.isArray(parsed.variables)
-      ? parsed.variables.map(parseRecord).filter((entry): entry is EnvRecord => Boolean(entry))
-      : [];
-    return {
-      schemaVersion: typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 1,
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-      variables,
-    };
-  } catch {
-    return { schemaVersion: 1, updatedAt: Date.now(), variables: [] };
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return emptyStore();
+    if (options.tolerateInvalid) return emptyStore();
+    throw new EnvStoreReadError("Environment variable store could not be read");
   }
+
+  let parsed: Partial<EnvStoreFile>;
+  try {
+    parsed = JSON.parse(raw) as Partial<EnvStoreFile>;
+  } catch {
+    if (options.tolerateInvalid) return emptyStore();
+    throw new EnvStoreReadError("Environment variable store is invalid JSON");
+  }
+
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.variables)) {
+    if (options.tolerateInvalid) return emptyStore();
+    throw new EnvStoreReadError("Environment variable store has an invalid format");
+  }
+
+  const variables = parsed.variables
+    .map(parseRecord)
+    .filter((entry): entry is EnvRecord => Boolean(entry));
+  return {
+    schemaVersion: typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 1,
+    updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+    variables,
+  };
 }
 
 async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
@@ -180,7 +203,7 @@ export class EnvService {
   // readers byte-for-byte in sync on path resolution and reserved-keys policy.
   static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
     const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
-    const store = await readStore(path);
+    const store = await readStore(path, { tolerateInvalid: true });
     const out: Record<string, string> = {};
     for (const entry of store.variables) {
       if (isReservedEnvKey(entry.key)) continue;
@@ -188,6 +211,10 @@ export class EnvService {
     }
     return out;
   }
+}
+
+export class EnvStoreReadError extends Error {
+  readonly code = "invalid_env_store";
 }
 
 export class InvalidEnvKeyError extends Error {

@@ -22,7 +22,7 @@ import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
-import { EnvService, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
+import { EnvService, EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import {
@@ -1275,18 +1275,29 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  function rethrowEnvStoreReadError(error: unknown): never {
+    if (error instanceof EnvStoreReadError) {
+      throw new ApiError(
+        409,
+        error.code,
+        "Environment variable store is invalid. Fix or remove the local env file before editing.",
+      );
+    }
+    throw error;
+  }
+
   // User-level env vars (see apps/app/pr/environment-variables.md). All routes
   // require the desktop host token (not owner bearer tokens) because values are
   // returned raw; the React pane masks them only for display. Reload semantics
   // are driven from the UI after a write; this surface is user-scoped, not
   // workspace-scoped, so no audit.
   addRoute(routes, "GET", "/env", "host-token", async () => {
-    const items = await env.list();
+    const items = await env.list().catch(rethrowEnvStoreReadError);
     return jsonResponse({ items });
   });
 
   addRoute(routes, "GET", "/env/keys", "host-token", async () => {
-    const items = await env.list();
+    const items = await env.list().catch(rethrowEnvStoreReadError);
     return jsonResponse({ keys: items.map((item) => item.key) });
   });
 
@@ -1315,6 +1326,9 @@ function createRoutes(
     try {
       await env.upsertMany(entries);
     } catch (error) {
+      if (error instanceof EnvStoreReadError) {
+        rethrowEnvStoreReadError(error);
+      }
       if (error instanceof InvalidEnvKeyError) {
         throw new ApiError(
           400,
@@ -1335,7 +1349,7 @@ function createRoutes(
     if (!isValidEnvKey(key)) {
       throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
     }
-    const removed = await env.delete(key);
+    const removed = await env.delete(key).catch(rethrowEnvStoreReadError);
     if (!removed) {
       throw new ApiError(404, "env_not_found", "Environment variable not found");
     }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -146,6 +146,21 @@ describe("env routes", () => {
     const list = await fetch(`${base}/env/keys`, { headers: hostAuth() });
     expect(list.status).toBe(200);
     expect(await list.json()).toEqual({ keys: ["ANTHROPIC_API_KEY", "NBA_LIVE_KEY"] });
+  });
+
+  test("invalid env store returns 409 instead of overwriting on PUT", async () => {
+    writeFileSync(process.env.OPENWORK_ENV_STORE!, "{ this is not json");
+    const { base } = boot();
+
+    const put = await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({ key: "SAFE", value: "new" }),
+    });
+
+    expect(put.status).toBe(409);
+    const body = (await put.json()) as { code: string; message: string };
+    expect(body.code).toBe("invalid_env_store");
   });
 
   test("PUT accepts a batch via entries[]", async () => {

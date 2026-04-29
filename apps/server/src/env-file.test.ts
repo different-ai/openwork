@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { EnvService, InvalidEnvKeyError, isReservedEnvKey, isValidEnvKey } from "./env-file.js";
+import {
+  EnvService,
+  EnvStoreReadError,
+  InvalidEnvKeyError,
+  isReservedEnvKey,
+  isValidEnvKey,
+} from "./env-file.js";
 
 describe("env-file", () => {
   let dir: string;
@@ -122,5 +128,18 @@ describe("env-file", () => {
     writeFileSync(path, "{ this is not json");
     const injected = await EnvService.readForInjection(path);
     expect(injected).toEqual({});
+  });
+
+  test("list rejects corrupted JSON instead of treating it as empty", async () => {
+    writeFileSync(path, "{ this is not json");
+    const svc = new EnvService({ path });
+    await expect(svc.list()).rejects.toBeInstanceOf(EnvStoreReadError);
+  });
+
+  test("upsertMany does not overwrite an invalid store", async () => {
+    writeFileSync(path, "{ this is not json");
+    const svc = new EnvService({ path });
+    await expect(svc.upsertMany([{ key: "SAFE", value: "new" }])).rejects.toBeInstanceOf(EnvStoreReadError);
+    expect(readFileSync(path, "utf8")).toBe("{ this is not json");
   });
 });
