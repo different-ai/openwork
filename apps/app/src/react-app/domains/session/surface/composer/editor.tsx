@@ -406,7 +406,12 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
     // always force-rebuild the editor to remove any stale chip nodes.
     // The valueRef check can false-positive when both refs converge to ""
     // through different paths (SyncPlugin vs OnChange).
-    const forceRebuild = !props.value.trim() && serializePromptFromRoot().trim() !== "";
+    //
+    // NOTE: serializePromptFromRoot() calls $getRoot() which requires an
+    // active editor state. Outside of editor.update()/editor.read() we
+    // must wrap it in editor.getEditorState().read().
+    const currentText = editor.getEditorState().read(() => serializePromptFromRoot());
+    const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
     editor.update(() => {
