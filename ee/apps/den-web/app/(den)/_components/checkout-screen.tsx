@@ -210,12 +210,7 @@ export function CheckoutScreen({
   const showLoading = resuming || (billingBusy && !billingSummary && !mockMode);
   const checkoutHref = effectiveCheckoutUrl ?? billingSummary?.checkoutUrl ?? (mockMode ? MOCK_CHECKOUT_URL : null);
   const planLabels = formatBillingPlanLabels(billingPrice);
-  const compactPlanAmountLabel =
-    billingPrice && billingPrice.amount !== null
-      ? `${planLabels.amount}/${billingPrice.recurringInterval ?? "billing cycle"}`
-      : planLabels.inline;
-  const billingScheduleLabel =
-    billingPrice?.recurringInterval === "month" ? "billed monthly" : `billed ${planLabels.cadence}`;
+  const planPriceLabel = planLabels.inline;
   const hasActivePlan = Boolean(billingSummary?.hasActivePlan);
   const subscriptionStatus = getBillingStatusLabel(billingSummary);
 
@@ -227,7 +222,7 @@ export function CheckoutScreen({
             <p className="den-eyebrow">OpenWork Cloud</p>
             <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Start with one workspace plan for {compactPlanAmountLabel}. Each plan {getWorkspacePlanInlineEntitlementCopy()}.
+              Start with one workspace plan for {planPriceLabel}. Each plan {getWorkspacePlanInlineEntitlementCopy()}.
             </p>
 
             <div className="flex flex-wrap gap-3">
@@ -235,7 +230,7 @@ export function CheckoutScreen({
                 <a href={checkoutHref} rel="noreferrer" className="den-button-primary w-full sm:w-auto">
                   <CreditCard className="h-4 w-4" aria-hidden="true" />
                   <span>Purchase plan</span>
-                  {planLabels.available ? <span className="hidden sm:inline">— {compactPlanAmountLabel}</span> : null}
+                  {planLabels.available ? <span className="hidden sm:inline">— {planPriceLabel}</span> : null}
                 </a>
               ) : (
                 <button
@@ -255,9 +250,13 @@ export function CheckoutScreen({
             </div>
 
             <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--dls-text-secondary)]">
-              <span>{planLabels.available ? `${compactPlanAmountLabel} per workspace` : planLabels.inline}</span>
-              <span aria-hidden="true">•</span>
-              <span>{planLabels.available ? `${compactPlanAmountLabel} ${billingScheduleLabel}` : planLabels.inline}</span>
+              <span>{planLabels.available ? `${planLabels.amount} per workspace` : planLabels.inline}</span>
+              {planLabels.available ? (
+                <>
+                  <span aria-hidden="true">•</span>
+                  <span>{planLabels.cadence}</span>
+                </>
+              ) : null}
               <span className="hidden sm:inline" aria-hidden="true">•</span>
               <span className="hidden sm:inline">{user?.email ?? "Signed in"}</span>
             </div>
