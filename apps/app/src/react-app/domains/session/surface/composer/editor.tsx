@@ -461,9 +461,39 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
+        // --- Slash command chip: atomic delete ---
+        // When cursor is in the text node right after a slash chip,
+        // remove the chip (and any trailing whitespace text) in one action.
+        if ($isTextNode(anchorNode)) {
+          const previous = anchorNode.getPreviousSibling();
+          if (previous instanceof ComposerSlashCommandNode) {
+            // At offset 0: cursor is right after the chip -> remove chip
+            // At offset > 0 but text is only whitespace: also remove chip
+            const textBefore = anchorNode.getTextContent().slice(0, selection.anchor.offset);
+            if (selection.anchor.offset === 0 || textBefore.trim() === "") {
+              previous.remove();
+              // Also remove the whitespace-only prefix
+              if (selection.anchor.offset > 0) {
+                const remaining = anchorNode.getTextContent().slice(selection.anchor.offset);
+                if (remaining) {
+                  anchorNode.setTextContent(remaining);
+                  const sel = $createRangeSelection();
+                  sel.anchor.set(anchorNode.getKey(), 0, "text");
+                  sel.focus.set(anchorNode.getKey(), 0, "text");
+                  $setSelection(sel);
+                } else {
+                  anchorNode.remove();
+                }
+              }
+              return true;
+            }
+          }
+        }
+
+        // --- Mention / pasted-text chips: atomic delete (same as before) ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
@@ -471,7 +501,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isElementNode(anchorNode)) {
           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerSlashCommandNode || previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
