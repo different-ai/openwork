@@ -449,12 +449,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
     });
+    // Expand paste placeholders in resolvedText so the model receives
+    // the actual pasted content instead of "[pasted text <label>]".
+    let resolved = text;
+    for (const part of pasteParts) {
+      resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
+    }
     return {
       mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
-      resolvedText: text,
+      resolvedText: resolved,
       command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
     };
   }, [mentions, pasteParts]);

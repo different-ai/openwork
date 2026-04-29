@@ -379,10 +379,81 @@ function CopyButton(props: { getText: () => string }) {
   );
 }
 
+/** Expandable chip for collapsed pasted text in sent messages. */
+function PastedTextChip(props: { label: string; text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lineCount = props.text.split(/\r?\n/).length;
+
+  return (
+    <span className="inline">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-0.5 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3/30"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "Collapse pasted text" : "Expand pasted text"}
+      >
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+        <span>Pasted · {lineCount} line{lineCount === 1 ? "" : "s"}</span>
+      </button>
+      {expanded ? (
+        <div className="mt-1.5 mb-1.5 rounded-xl border border-amber-6/20 bg-amber-3/10 px-4 py-3 text-xs leading-5 text-dls-text">
+          <pre className="whitespace-pre-wrap break-words font-mono">{props.text}</pre>
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
+/** Collapsible block for long user messages. Shows a chip with line count
+ *  that expands on click to reveal the full text. */
+function CollapsibleUserText(props: {
+  text: string;
+  lineCount: number;
+  highlightQuery?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const previewLines = 3;
+  const preview = props.text.split(/\r?\n/).slice(0, previewLines).join("\n");
+
+  return (
+    <div>
+      {expanded ? (
+        <HighlightedPlainText
+          text={props.text}
+          className="whitespace-pre-wrap break-words text-gray-12"
+          highlightQuery={props.highlightQuery}
+        />
+      ) : (
+        <div className="whitespace-pre-wrap break-words text-gray-12">
+          {preview}{props.lineCount > previewLines ? "..." : ""}
+        </div>
+      )}
+      <button
+        type="button"
+        className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-0.5 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3/30"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+        <span>{expanded ? "Collapse" : `${props.lineCount} lines · expand`}</span>
+      </button>
+    </div>
+  );
+}
+
+const PASTE_TOKEN_RE = /(\[pasted text [^\]]+\])/;
+
 function HighlightedPlainText(props: {
   text: string;
   className: string;
   highlightQuery?: string;
+  /** Map of paste label -> full text for expandable chips */
+  pastedTextMap?: Map<string, string>;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -396,9 +467,29 @@ function HighlightedPlainText(props: {
     });
   }, [props.highlightQuery, props.text]);
 
+  // If no paste tokens present, render as plain text (fast path).
+  if (!props.pastedTextMap?.size || !PASTE_TOKEN_RE.test(props.text)) {
+    return (
+      <div ref={rootRef} className={props.className}>
+        {props.text}
+      </div>
+    );
+  }
+
+  // Split on paste tokens and render chips inline.
+  const segments = props.text.split(PASTE_TOKEN_RE);
   return (
     <div ref={rootRef} className={props.className}>
-      {props.text}
+      {segments.map((segment, index) => {
+        const match = segment.match(/^\[pasted text (.+)\]$/);
+        if (match?.[1]) {
+          const pastedBody = props.pastedTextMap?.get(match[1]);
+          if (pastedBody) {
+            return <PastedTextChip key={index} label={match[1]} text={pastedBody} />;
+          }
+        }
+        return <span key={index}>{segment}</span>;
+      })}
     </div>
   );
 }
@@ -1009,7 +1100,15 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
                   const text = partToText(group.part);
                   if (block.isUser) {
-                    return (
+                    const lineCount = text.split(/\r?\n/).length;
+                    const isLong = lineCount >= 6 || text.length >= 400;
+                    return isLong ? (
+                      <CollapsibleUserText
+                        text={text}
+                        lineCount={lineCount}
+                        highlightQuery={highlightQuery}
+                      />
+                    ) : (
                       <HighlightedPlainText
                         text={text}
                         className="whitespace-pre-wrap break-words text-gray-12"

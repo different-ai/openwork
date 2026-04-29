@@ -955,6 +955,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               placeholder={t("composer.placeholder", locale)}
               onChange={props.onDraftChange}
               onSubmit={props.onSend}
+              onPasteText={props.onPasteText}
               onPaste={(event) => {
                 // Paste policy:
                 // 1. Actual files on the clipboard -> attach them.
@@ -986,6 +987,19 @@ export function ReactSessionComposer(props: ComposerProps) {
                 }
 
                 const text = event.clipboardData?.getData("text/plain") ?? "";
+
+                // Collapse long pastes into an inline chip. The threshold
+                // is 3+ lines or 200+ characters — short pastes still go
+                // straight into the editor as plain text.
+                const PASTE_CHIP_LINE_THRESHOLD = 3;
+                const PASTE_CHIP_CHAR_THRESHOLD = 200;
+                const lineCount = text.split(/\r?\n/).length;
+                if (text.trim() && (lineCount >= PASTE_CHIP_LINE_THRESHOLD || text.length >= PASTE_CHIP_CHAR_THRESHOLD)) {
+                  event.preventDefault();
+                  props.onPasteText(text);
+                  return;
+                }
+
                 if (
                   text.trim() &&
                   (props.isRemoteWorkspace || props.isSandboxWorkspace) &&

@@ -18,11 +18,13 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   type SerializedTextNode,
   type Spread,
   TextNode,
@@ -40,6 +42,7 @@ type EditorProps = {
   onChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+  onPasteText?: (text: string) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
@@ -450,6 +453,43 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
   return null;
 }
 
+const PASTE_CHIP_LINE_THRESHOLD = 3;
+const PASTE_CHIP_CHAR_THRESHOLD = 200;
+
+function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const onPasteTextRef = useRef(props.onPasteText);
+
+  useEffect(() => {
+    onPasteTextRef.current = props.onPasteText;
+  }, [props.onPasteText]);
+
+  useEffect(() => {
+    return editor.registerCommand(
+      PASTE_COMMAND,
+      (event: ClipboardEvent) => {
+        if (!onPasteTextRef.current) return false;
+        // Only handle plain-text pastes; files are handled in the React onPaste.
+        const files = event.clipboardData?.files;
+        if (files && files.length > 0) return false;
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!text.trim()) return false;
+        const lineCount = text.split(/\r?\n/).length;
+        if (lineCount < PASTE_CHIP_LINE_THRESHOLD && text.length < PASTE_CHIP_CHAR_THRESHOLD) {
+          return false;
+        }
+        // Collapse into a paste chip.
+        event.preventDefault();
+        onPasteTextRef.current(text);
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function MentionChipNavigationPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -638,6 +678,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        <PasteChipPlugin onPasteText={props.onPasteText} />
         <MentionChipNavigationPlugin />
       </div>
     </LexicalComposer>
