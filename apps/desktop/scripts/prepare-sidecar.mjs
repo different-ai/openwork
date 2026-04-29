@@ -636,12 +636,11 @@ if (existsSync(chromeDevtoolsBuildPath)) {
 }
 
 adHocSignDarwinSidecars([
+  opencodePath,
+  opencodeTargetPath,
   openworkServerBuildPath,
   openworkServerPath,
   openworkServerTargetPath,
-  opencodeRouterBuildPath,
-  opencodeRouterPath,
-  opencodeRouterTargetPath,
   orchestratorBuildPath,
   orchestratorPath,
   orchestratorTargetPath,
