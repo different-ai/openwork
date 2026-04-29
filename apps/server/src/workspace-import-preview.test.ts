@@ -105,6 +105,19 @@ async function requestWorkspaceImportWithPreview(
   });
 }
 
+async function silenceExpectedServerError<T>(run: () => Promise<T>): Promise<T> {
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    if (args[0] === "[openwork-server] Unhandled error:") return;
+    originalError(...args);
+  };
+  try {
+    return await run();
+  } finally {
+    console.error = originalError;
+  }
+}
+
 async function waitForPendingApproval(baseUrl: string): Promise<string> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const response = await fetch(`${baseUrl}/approvals`, {
@@ -761,18 +774,21 @@ describe("workspace import preview", () => {
         Authorization: "Bearer test-token",
         "Content-Type": "application/json",
       };
-      const response = await requestWorkspaceImportWithPreview(baseUrl, headers, {
-        mode: { skills: "replace" },
-        skills: [
-          {
-            name: "new",
-            description: "New skill",
-            content: "new skill\n",
-          },
-        ],
-      });
+      const response = await silenceExpectedServerError(() =>
+        requestWorkspaceImportWithPreview(baseUrl, headers, {
+          mode: { skills: "replace" },
+          skills: [
+            {
+              name: "new",
+              description: "New skill",
+              content: "new skill\n",
+            },
+          ],
+        }),
+      );
 
       expect(response.ok).toBe(false);
+      expect(response.status).toBe(500);
       expect(await readFile(join(workspace, ".opencode", "skills", "old", "SKILL.md"), "utf8")).toBe("old skill\n");
       expect(await readFile(join(workspace, ".opencode", "skills", "new"), "utf8")).toBe(
         "blocks new skill directory\n",
