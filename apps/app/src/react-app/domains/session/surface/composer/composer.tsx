@@ -1421,9 +1421,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             ) : null}
           </div>
 
-          {props.statusLabel ? (
-            <div className="ml-3 hidden text-[11px] text-dls-secondary sm:block">{props.statusLabel}</div>
-          ) : null}
+          {/* Status label removed — redundant with the footer bar */}
         </div>
       </div>
     </div>

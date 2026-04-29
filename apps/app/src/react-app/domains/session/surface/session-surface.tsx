@@ -136,7 +136,7 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
 function AssistantWaitingCard() {
   return (
     <div className="flex justify-start py-2" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-3 rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-[12px] text-dls-secondary">
+      <div className="inline-flex items-center gap-3 rounded-full px-3 py-1.5 text-[12px] text-dls-secondary">
         <OwDotTicker size="sm" />
         <span>Thinking</span>
       </div>
