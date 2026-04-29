@@ -366,6 +366,7 @@ export function SessionRoute() {
     modelPickerOpen,
   });
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
+  const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
 
@@ -604,6 +605,7 @@ export function SessionRoute() {
       return false;
     }
     await client.reloadEngine(selectedWorkspaceId);
+    setEngineReloadVersion((v) => v + 1);
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
     } catch {
@@ -1086,9 +1088,13 @@ export function SessionRoute() {
   }, [checkDesktopRestriction, modelOptions]);
 
   const listSlashCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
+    // engineReloadVersion is included so the callback identity changes after
+    // an engine reload, which invalidates the composer's command list cache
+    // and causes it to re-fetch (picking up newly created skills).
+    void engineReloadVersion;
     if (!opencodeClient) return [];
     return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
-  }, [opencodeClient, selectedWorkspaceRoot]);
+  }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot]);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
