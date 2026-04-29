@@ -38,11 +38,15 @@ export default function McpSelectOrganizationPage() {
     if (typeof window === "undefined") return "";
     return window.location.search.replace(/^\?/, "");
   }, []);
+  const requestedScope = useMemo(() => {
+    if (typeof window === "undefined") return "openid profile email mcp:read";
+    return new URLSearchParams(window.location.search).get("scope") ?? "openid profile email mcp:read";
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET" });
+      const { response, payload } = await requestJson("/api/den/v1/me/orgs", { method: "GET" });
       if (cancelled) return;
       if (!response.ok) {
         setStatus(getErrorMessage(payload, "Sign in before authorizing MCP access."));
@@ -63,7 +67,7 @@ export default function McpSelectOrganizationPage() {
   async function continueFlow() {
     if (!selectedOrgId) return;
     setBusy(true);
-    setStatus("Saving workspace selection...");
+    setStatus("Authorizing MCP access...");
     const selected = orgs.find((org) => org.id === selectedOrgId);
     const active = await requestJson("/api/auth/organization/set-active", {
       method: "POST",
@@ -75,9 +79,9 @@ export default function McpSelectOrganizationPage() {
       return;
     }
 
-    const continued = await requestJson("/api/auth/oauth2/continue", {
+    const continued = await requestJson("/api/auth/oauth2/consent", {
       method: "POST",
-      body: JSON.stringify({ postLogin: true, oauth_query: oauthQuery }),
+      body: JSON.stringify({ accept: true, scope: requestedScope, oauth_query: oauthQuery }),
     });
     if (!continued.response.ok) {
       setBusy(false);

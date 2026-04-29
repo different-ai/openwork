@@ -107,6 +107,24 @@ function buildUpstreamErrorResponse(status: number, error: string): Response {
   });
 }
 
+function getJsonRedirectUrl(body: ArrayBuffer): string | null {
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "redirect" in payload &&
+      payload.redirect === true &&
+      "url" in payload &&
+      typeof payload.url === "string" &&
+      payload.url.trim()
+    ) {
+      return payload.url.trim();
+    }
+  } catch {}
+  return null;
+}
+
 function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers): void {
   const getSetCookie = (upstreamHeaders as Headers & { getSetCookie?: () => string[] }).getSetCookie;
   if (typeof getSetCookie === "function") {
@@ -318,6 +336,16 @@ export async function proxyUpstream(
   const responseContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
   if (upstream.status >= 500 && (responseContentType.includes("text/html") || isLikelyHtmlBody(body))) {
     return buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
+  }
+
+  if (request.method === "GET" && targetPath === "oauth2/authorize") {
+    const redirectUrl = getJsonRedirectUrl(body);
+    if (redirectUrl) {
+      const incoming = new URL(request.url);
+      const host = request.headers.get("host") ?? incoming.host;
+      const origin = `${incoming.protocol}//${host}`;
+      return Response.redirect(new URL(redirectUrl, origin), 302);
+    }
   }
 
   return buildProxyResponse(request, upstream, options, body);

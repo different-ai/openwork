@@ -20,7 +20,6 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
 import { oauthProvider } from "@better-auth/oauth-provider";
-import { eq } from "@openwork-ee/den-db/drizzle";
 import { APIError } from "better-call";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -76,13 +75,6 @@ function buildInvitationLink(invitationId: string) {
 
 function hasMcpScope(scopes: readonly string[]) {
   return scopes.some((scope) => scope.startsWith("mcp:"));
-}
-
-async function listUserOrganizationIds(userId: string) {
-  return db
-    .select({ organizationId: schema.MemberTable.organizationId })
-    .from(schema.MemberTable)
-    .where(eq(schema.MemberTable.userId, normalizeDenTypeId("user", userId)))
 }
 
 export const auth = betterAuth({
@@ -273,7 +265,7 @@ export const auth = betterAuth({
     }),
     oauthProvider({
       loginPage: "/",
-      consentPage: "/mcp/consent",
+      consentPage: "/mcp/select-organization",
       scopes: [...DEN_MCP_SCOPES],
       validAudiences: [DEN_MCP_RESOURCE],
       allowPublicClientPrelogin: true,
@@ -291,13 +283,12 @@ export const auth = betterAuth({
       },
       postLogin: {
         page: "/mcp/select-organization",
-        shouldRedirect: async ({ user, session, scopes }) => {
+        shouldRedirect: async ({ session, scopes }) => {
           if (!hasMcpScope(scopes)) {
             return false;
           }
 
-          const orgs = await listUserOrganizationIds(user.id);
-          return orgs.length > 1 || !session.activeOrganizationId;
+          return !session.activeOrganizationId;
         },
         consentReferenceId: async ({ session, scopes }) => {
           if (!hasMcpScope(scopes)) {
