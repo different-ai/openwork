@@ -2821,8 +2821,19 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const preview = await buildWorkspaceImportPreview(workspace.path, body);
     const expectedFingerprint = parseWorkspaceImportPreviewFingerprint(body);
+    const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    if (expectedFingerprint && expectedFingerprint !== preview.fingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_stale",
+          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
+          preview: publicWorkspaceImportPreview(preview),
+        },
+        409,
+      );
+    }
     const approvalPaths = workspaceImportPreviewApprovalPaths(preview);
     if (approvalPaths.length === 0) {
       return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
@@ -2838,35 +2849,36 @@ function createRoutes(
         409,
       );
     }
-    if (expectedFingerprint !== preview.fingerprint) {
-      return jsonResponse(
-        {
-          ok: false,
-          code: "workspace_import_preview_stale",
-          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
-          preview: publicWorkspaceImportPreview(preview),
-        },
-        409,
-      );
-    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
       summary: summarizeWorkspaceImportPreview(preview),
       paths: approvalPaths,
     });
-    await importWorkspace(workspace, body, preview);
+    const latestPreview = await buildWorkspaceImportPreview(workspace.path, body);
+    if (latestPreview.fingerprint !== expectedFingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_stale",
+          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
+          preview: publicWorkspaceImportPreview(latestPreview),
+        },
+        409,
+      );
+    }
+    await importWorkspace(workspace, body, latestPreview);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "config.import",
       target: "workspace",
-      summary: summarizeWorkspaceImportApplied(preview),
+      summary: summarizeWorkspaceImportApplied(latestPreview),
       timestamp: Date.now(),
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
-    return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
+    return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(latestPreview) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/blueprint/sessions/materialize", "client", async (ctx) => {

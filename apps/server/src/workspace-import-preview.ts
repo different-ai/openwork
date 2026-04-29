@@ -238,6 +238,19 @@ function rel(workspaceRoot: string, absolutePath: string): string {
   return relative(workspaceRoot, absolutePath).replaceAll("\\", "/");
 }
 
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+async function readTextIfPresent(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+}
+
 function countSummary(changes: WorkspaceImportChange[]): WorkspaceImportPreview["summary"] {
   return changes.reduce(
     (summary, change) => {
@@ -262,9 +275,10 @@ function fingerprintWorkspaceImportChanges(changes: WorkspaceImportPlannedChange
 }
 
 async function readOpenworkConfig(path: string): Promise<Record<string, unknown>> {
-  if (!(await exists(path))) return {};
+  const raw = await readTextIfPresent(path);
+  if (raw === null) return {};
   try {
-    return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    return JSON.parse(raw) as Record<string, unknown>;
   } catch {
     throw new ApiError(422, "invalid_json", "Failed to parse openwork.json");
   }
@@ -339,15 +353,15 @@ export async function buildWorkspaceImportPreview(
       incoming.add(skill.name);
       const path = join(projectSkillsDir(workspaceRoot), skill.name, "SKILL.md");
       const existsBefore = existing.has(skill.name);
-      const before = existsBefore ? await readFile(path, "utf8") : "";
+      const before = existsBefore ? await readTextIfPresent(path) : null;
       const next = buildSkillContent(skill);
       changes.push({
         kind: "skill",
-        action: actionForTarget(existsBefore, before !== next.content, "merge"),
+        action: actionForTarget(before !== null, before !== next.content, "merge"),
         label: skill.name,
         path: rel(workspaceRoot, path),
         absolutePath: path,
-        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        beforeDigest: before !== null ? textDigest(before) : textDigest(null),
         afterDigest: textDigest(next.content),
       });
     }
@@ -356,13 +370,15 @@ export async function buildWorkspaceImportPreview(
         if (incoming.has(name)) continue;
         const path = join(projectSkillsDir(workspaceRoot), name);
         const skillFile = join(path, "SKILL.md");
+        const before = await readTextIfPresent(skillFile);
+        if (before === null) continue;
         changes.push({
           kind: "skill",
           action: "delete",
           label: name,
           path: rel(workspaceRoot, path),
           absolutePath: path,
-          beforeDigest: textDigest(await readFile(skillFile, "utf8")),
+          beforeDigest: textDigest(before),
           afterDigest: textDigest(null),
         });
       }
@@ -376,15 +392,15 @@ export async function buildWorkspaceImportPreview(
       incoming.add(command.name);
       const path = join(projectCommandsDir(workspaceRoot), `${command.name}.md`);
       const existsBefore = existing.has(command.name);
-      const before = existsBefore ? await readFile(path, "utf8") : "";
+      const before = existsBefore ? await readTextIfPresent(path) : null;
       const next = buildCommandContent(command);
       changes.push({
         kind: "command",
-        action: actionForTarget(existsBefore, before !== next.content, "merge"),
+        action: actionForTarget(before !== null, before !== next.content, "merge"),
         label: command.name,
         path: rel(workspaceRoot, path),
         absolutePath: path,
-        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        beforeDigest: before !== null ? textDigest(before) : textDigest(null),
         afterDigest: textDigest(next.content),
       });
     }
@@ -392,13 +408,15 @@ export async function buildWorkspaceImportPreview(
       for (const name of existing) {
         if (incoming.has(name)) continue;
         const path = join(projectCommandsDir(workspaceRoot), `${name}.md`);
+        const before = await readTextIfPresent(path);
+        if (before === null) continue;
         changes.push({
           kind: "command",
           action: "delete",
           label: name,
           path: rel(workspaceRoot, path),
           absolutePath: path,
-          beforeDigest: textDigest(await readFile(path, "utf8")),
+          beforeDigest: textDigest(before),
           afterDigest: textDigest(null),
         });
       }
@@ -411,14 +429,14 @@ export async function buildWorkspaceImportPreview(
       incoming.add(file.path);
       const path = join(workspaceRoot, file.path);
       const existsBefore = await exists(path);
-      const before = existsBefore ? await readFile(path, "utf8") : "";
+      const before = existsBefore ? await readTextIfPresent(path) : null;
       changes.push({
         kind: "file",
-        action: actionForTarget(existsBefore, before !== file.content, "merge"),
+        action: actionForTarget(before !== null, before !== file.content, "merge"),
         label: file.path,
         path: file.path,
         absolutePath: path,
-        beforeDigest: existsBefore ? textDigest(before) : textDigest(null),
+        beforeDigest: before !== null ? textDigest(before) : textDigest(null),
         afterDigest: textDigest(file.content),
       });
     }
@@ -426,13 +444,15 @@ export async function buildWorkspaceImportPreview(
       for (const filePath of await listPortableFilePaths(workspaceRoot)) {
         if (incoming.has(filePath)) continue;
         const path = join(workspaceRoot, filePath);
+        const before = await readTextIfPresent(path);
+        if (before === null) continue;
         changes.push({
           kind: "file",
           action: "delete",
           label: filePath,
           path: filePath,
           absolutePath: path,
-          beforeDigest: textDigest(await readFile(path, "utf8")),
+          beforeDigest: textDigest(before),
           afterDigest: textDigest(null),
         });
       }
