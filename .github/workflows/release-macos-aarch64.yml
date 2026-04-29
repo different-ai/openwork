@@ -1223,7 +1223,7 @@ jobs:
       needs.resolve-release.outputs.prerelease != 'true' &&
       needs.publish-updater-json.result == 'success' &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
-      (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
+      needs.publish-release.result == 'success'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -1240,5 +1240,7 @@ jobs:
           node scripts/release/verify-updater-endpoint.mjs \
             --url "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" \
             --platform "$OPENWORK_STABLE_UPDATER_PLATFORMS" \
+            --version "${RELEASE_TAG#v}" \
+            --asset-tag "$RELEASE_TAG" \
             --attempts 6 \
             --delay-ms 10000

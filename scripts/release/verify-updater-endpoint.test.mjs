@@ -46,6 +46,36 @@ test("rejects missing expected platform", () => {
   ]);
 });
 
+test("rejects the wrong release version", () => {
+  assert.deepEqual(validateUpdaterManifest(validManifest, { version: "0.12.1" }), [
+    "version must be 0.12.1",
+  ]);
+  assert.deepEqual(validateUpdaterManifest(validManifest, { version: "v0.12.0" }), []);
+});
+
+test("rejects asset urls from a different release tag", () => {
+  assert.deepEqual(validateUpdaterManifest(validManifest, { assetTag: "v0.12.0" }), [
+    "platform darwin-aarch64 url must point at v0.12.0",
+  ]);
+  assert.deepEqual(
+    validateUpdaterManifest(
+      {
+        ...validManifest,
+        platforms: {
+          "darwin-aarch64": {
+            signature: "signed",
+            url:
+              "https://github.com/different-ai/openwork/releases/download/v0.12.0/" +
+              "openwork-desktop-darwin-aarch64.app.tar.gz",
+          },
+        },
+      },
+      { assetTag: "v0.12.0" },
+    ),
+    [],
+  );
+});
+
 test("rejects missing platforms from a required platform set", () => {
   assert.deepEqual(
     validateUpdaterManifest(validManifest, {
@@ -113,9 +143,15 @@ test("parses comma-separated expected platforms", () => {
     "latest.json",
     "--platform",
     "darwin-aarch64,linux-x86_64",
+    "--version",
+    "v0.12.0",
+    "--asset-tag",
+    "v0.12.0",
   ]);
 
   assert.deepEqual(options.platforms, ["darwin-aarch64", "linux-x86_64"]);
+  assert.equal(options.version, "v0.12.0");
+  assert.equal(options.assetTag, "v0.12.0");
 });
 
 test("rejects invalid retry arguments", () => {
@@ -139,4 +175,7 @@ test("release creation does not claim GitHub Latest before manifests are ready",
   assert.match(releaseWorkflow, /payload\.make_latest = "true"/);
   assert.match(releaseWorkflow, /OPENWORK_STABLE_UPDATER_PLATFORMS:.*darwin-aarch64/);
   assert.match(releaseWorkflow, /--platform "\$OPENWORK_STABLE_UPDATER_PLATFORMS"/);
+  assert.match(releaseWorkflow, /--version "\$\{RELEASE_TAG#v\}"/);
+  assert.match(releaseWorkflow, /--asset-tag "\$RELEASE_TAG"/);
+  assert.match(releaseWorkflow, /needs\.publish-release\.result == 'success'/);
 });

@@ -15,6 +15,8 @@ function parseArgs(argv) {
     file: process.env.UPDATER_MANIFEST_FILE || "",
     url: process.env.UPDATER_ENDPOINT_URL || "",
     platforms: parsePlatformList(process.env.UPDATER_EXPECTED_PLATFORM || ""),
+    version: process.env.UPDATER_EXPECTED_VERSION || "",
+    assetTag: process.env.UPDATER_EXPECTED_ASSET_TAG || "",
     attempts: Number(process.env.UPDATER_VERIFY_ATTEMPTS || "1"),
     delayMs: Number(process.env.UPDATER_VERIFY_DELAY_MS || "1000"),
     timeoutMs: Number(process.env.UPDATER_VERIFY_TIMEOUT_MS || "15000"),
@@ -34,6 +36,16 @@ function parseArgs(argv) {
     }
     if (arg === "--platform") {
       options.platforms.push(...parsePlatformList(argv[index + 1] || ""));
+      index += 1;
+      continue;
+    }
+    if (arg === "--version") {
+      options.version = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+    if (arg === "--asset-tag") {
+      options.assetTag = argv[index + 1] || "";
       index += 1;
       continue;
     }
@@ -80,9 +92,11 @@ function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function validateUpdaterManifest(manifest, { platform = "", platforms = [] } = {}) {
+function validateUpdaterManifest(manifest, { platform = "", platforms = [], version = "", assetTag = "" } = {}) {
   const errors = [];
   const requiredPlatforms = platforms.length ? platforms : parsePlatformList(platform);
+  const expectedVersion = String(version || "").trim().replace(/^v/, "");
+  const expectedAssetTag = String(assetTag || "").trim();
 
   if (!isRecord(manifest)) {
     return ["manifest must be a JSON object"];
@@ -90,6 +104,8 @@ function validateUpdaterManifest(manifest, { platform = "", platforms = [] } = {
 
   if (typeof manifest.version !== "string" || !manifest.version.trim()) {
     errors.push("version must be a non-empty string");
+  } else if (expectedVersion && manifest.version.trim().replace(/^v/, "") !== expectedVersion) {
+    errors.push(`version must be ${expectedVersion}`);
   }
 
   if (typeof manifest.pub_date !== "string" || !manifest.pub_date.trim()) {
@@ -113,6 +129,8 @@ function validateUpdaterManifest(manifest, { platform = "", platforms = [] } = {
       }
       if (typeof value.url !== "string" || !value.url.trim()) {
         errors.push(`platform ${key} must include a non-empty url`);
+      } else if (expectedAssetTag && !value.url.includes(`/releases/download/${expectedAssetTag}/`)) {
+        errors.push(`platform ${key} url must point at ${expectedAssetTag}`);
       }
       if (typeof value.signature !== "string" || !value.signature.trim()) {
         errors.push(`platform ${key} must include a non-empty signature`);
@@ -169,7 +187,11 @@ async function main() {
       const manifest = options.file
         ? await readUpdaterManifest(options.file)
         : await fetchUpdaterManifest(options.url, { timeoutMs: options.timeoutMs });
-      const errors = validateUpdaterManifest(manifest, { platforms: options.platforms });
+      const errors = validateUpdaterManifest(manifest, {
+        platforms: options.platforms,
+        version: options.version,
+        assetTag: options.assetTag,
+      });
 
       if (errors.length) {
         throw new Error(`Invalid updater manifest:\n${errors.map((error) => `- ${error}`).join("\n")}`);
