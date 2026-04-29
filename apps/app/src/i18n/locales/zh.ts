@@ -1117,6 +1117,7 @@ export default {
   "session.permission_message_external_directory": "允许访问工作区外部前，请先检查目标文件夹。",
   "session.permission_message_read": "允许访问前，请先检查请求的文件范围。",
   "session.permission_message_task": "允许启动前，请先检查请求的子任务。",
+  "session.permission_metadata_unavailable": "无法显示元数据。",
   "session.permission_required": "需要权限",
   "session.permission_review_label": "检查",
   "session.permission_scope_empty": "未提供具体范围。",

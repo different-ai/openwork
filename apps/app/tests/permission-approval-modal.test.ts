@@ -1,6 +1,28 @@
 import { describe, expect, test } from "bun:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { PendingPermission } from "../src/app/types";
 
-import { permissionDetailRows } from "../src/react-app/domains/session/chat/permission-approval-modal";
+import {
+  PermissionApprovalModal,
+  permissionDetailRows,
+} from "../src/react-app/domains/session/chat/permission-approval-modal";
+
+function pendingPermission(overrides: Partial<PendingPermission> = {}): PendingPermission {
+  return {
+    id: "permission-1",
+    sessionID: "session-1",
+    permission: "bash",
+    patterns: ["rm -rf dist"],
+    metadata: {},
+    always: {
+      session: false,
+      project: false,
+    },
+    receivedAt: 1,
+    ...overrides,
+  };
+}
 
 describe("permission approval modal helpers", () => {
   test("surfaces risk-bearing metadata as review rows", () => {
@@ -43,5 +65,32 @@ describe("permission approval modal helpers", () => {
     ).toEqual([
       ["Files", "add: src/new.ts\ndelete: /workspace/project/src/old.ts\nchange: src/update.ts"],
     ]);
+  });
+
+  test("keeps keyboard order on the safer one-shot approval before session approval", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalModal, {
+        permission: pendingPermission(),
+        respondPermission: () => {},
+      }),
+    );
+
+    const buttonLabels = Array.from(html.matchAll(/<button\b[\s\S]*?<\/button>/g)).map((match) =>
+      match[0].replace(/<[^>]*>/g, "").trim(),
+    );
+
+    expect(buttonLabels).toEqual(["Deny", "Allow once", "Allow for session"]);
+  });
+
+  test("uses readable labels for generic permission titles", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalModal, {
+        permission: pendingPermission({ permission: "todowrite" }),
+        respondPermission: () => {},
+      }),
+    );
+
+    expect(html).toContain("Approve Todo write?");
+    expect(html).not.toContain("Approve todowrite?");
   });
 });

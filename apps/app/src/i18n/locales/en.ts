@@ -1136,6 +1136,7 @@ export default {
   "session.permission_message_external_directory": "Review the folder before allowing access outside the workspace.",
   "session.permission_message_read": "Review the requested file scope before allowing access.",
   "session.permission_message_task": "Review the requested subtask before allowing it to start.",
+  "session.permission_metadata_unavailable": "Metadata could not be displayed.",
   "session.permission_required": "Permission Required",
   "session.permission_review_label": "Review",
   "session.permission_scope_empty": "No specific scope provided.",

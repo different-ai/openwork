@@ -1,24 +1,16 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { UIMessage } from "ai";
 import type {
   AgentPartInput,
   ConfigProvidersResponse,
   FilePartInput,
   ProviderListResponse,
-  Session,
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../app/lib/opencode";
-import {
-  abortSessionSafe,
-  listCommands,
-  revertSession,
-  shellInSession,
-  unrevertSession,
-} from "../../app/lib/opencode-session";
+import { listCommands, shellInSession } from "../../app/lib/opencode-session";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -73,8 +65,6 @@ import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-conte
 import {
   permissionKey as reactPermissionKey,
   seedPermissionState,
-  seedSessionState,
-  transcriptKey as reactTranscriptKey,
 } from "../domains/session/sync/session-sync";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { useRemoteAccessRestart } from "../domains/workspace/remote-access-restart";
@@ -186,7 +176,6 @@ function describeWorkspaceCreateError(error: unknown) {
   return message;
 }
 
-const emptyTranscript: UIMessage[] = [];
 const emptyPendingPermissions: PendingPermission[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
@@ -196,20 +185,6 @@ function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T)
     () => (queryKey ? queryClient.getQueryData<T>(queryKey) ?? fallback : fallback),
     () => fallback,
   );
-}
-
-function upsertSessionForWorkspace(
-  current: Record<string, any[]>,
-  workspaceId: string,
-  session: Session,
-) {
-  const list = current[workspaceId] ?? [];
-  const index = list.findIndex((item: any) => item?.id === session.id);
-  if (index < 0) return { ...current, [workspaceId]: [session, ...list] };
-
-  const nextList = [...list];
-  nextList[index] = { ...list[index], ...session };
-  return { ...current, [workspaceId]: nextList };
 }
 
 function mergeRouteWorkspaces(
@@ -398,6 +373,7 @@ export function SessionRoute() {
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
+  const permissionReplyBusyRef = useRef(false);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
@@ -415,7 +391,6 @@ export function SessionRoute() {
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
-  const [historyBusyAction, setHistoryBusyAction] = useState<"undo" | "redo" | null>(null);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
 
   const openworkServerSettings = useMemo(
@@ -955,11 +930,15 @@ export function SessionRoute() {
     let cancelled = false;
     const directory = selectedWorkspaceRoot || undefined;
     void (async () => {
+      const snapshotStartedAt = Date.now();
       try {
         const list = unwrap(await opencodeClient.permission.list({ directory }));
-        if (!cancelled) seedPermissionState(selectedWorkspaceId, selectedSessionId, list);
+        if (!cancelled) {
+          seedPermissionState(selectedWorkspaceId, selectedSessionId, list, { snapshotStartedAt });
+        }
       } catch {
-        if (!cancelled) seedPermissionState(selectedWorkspaceId, selectedSessionId, []);
+        // Keep event-synced permission state if the snapshot read fails.
+        // Hiding a pending approval can block the running task.
       }
     })();
     return () => {
@@ -971,6 +950,8 @@ export function SessionRoute() {
   const respondPermission = useCallback(
     async (requestID: string, reply: "once" | "always" | "reject") => {
       if (!opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
+      if (permissionReplyBusyRef.current) return;
+      permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
         unwrap(
@@ -991,114 +972,12 @@ export function SessionRoute() {
           tone: "error",
         });
       } finally {
+        permissionReplyBusyRef.current = false;
         setPermissionReplyBusy(false);
       }
     },
     [opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot, showToast],
   );
-  const selectedSession = useMemo<Session | null>(() => {
-    if (!selectedWorkspaceId || !selectedSessionId) return null;
-    return ((sessionsByWorkspaceId[selectedWorkspaceId] ?? []).find(
-      (session: any) => session?.id === selectedSessionId,
-    ) ?? null) as Session | null;
-  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
-  const transcriptQueryKey = useMemo(
-    () =>
-      selectedWorkspaceId && selectedSessionId
-        ? reactTranscriptKey(selectedWorkspaceId, selectedSessionId)
-        : null,
-    [selectedSessionId, selectedWorkspaceId],
-  );
-  const transcriptMessages = useQueryCacheState<UIMessage[]>(transcriptQueryKey, emptyTranscript);
-  const userMessages = useMemo(
-    () => transcriptMessages.filter((message) => message.role === "user"),
-    [transcriptMessages],
-  );
-  const selectedSessionRevertMessageId = selectedSession?.revert?.messageID?.trim() ?? "";
-  const canUndoLastUserMessage = Boolean(opencodeClient && selectedSessionId && userMessages.length > 0);
-  const canRedoLastUserMessage = Boolean(opencodeClient && selectedSessionId && selectedSessionRevertMessageId);
-  const refreshSelectedSessionSnapshot = useCallback(async () => {
-    if (!client || !selectedWorkspaceId || !selectedSessionId) return;
-    const response = await client.getSessionSnapshot(selectedWorkspaceId, selectedSessionId, { limit: 140 });
-    if (!response.item) return;
-    seedSessionState(selectedWorkspaceId, response.item);
-    setSessionsByWorkspaceId((current) =>
-      upsertSessionForWorkspace(current, selectedWorkspaceId, response.item.session),
-    );
-  }, [client, selectedSessionId, selectedWorkspaceId]);
-
-  const handleUndoLastUserMessage = useCallback(async () => {
-    if (historyBusyAction || !opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
-
-    const target = userMessages[userMessages.length - 1];
-    if (!target?.id) {
-      showToast({ title: t("session.nothing_to_undo"), tone: "info" });
-      return;
-    }
-
-    setHistoryBusyAction("undo");
-    try {
-      await abortSessionSafe(opencodeClient, selectedSessionId);
-      const nextSession = await revertSession(opencodeClient, selectedSessionId, target.id);
-      setSessionsByWorkspaceId((current) =>
-        upsertSessionForWorkspace(current, selectedWorkspaceId, nextSession),
-      );
-      await refreshSelectedSessionSnapshot();
-      showToast({ title: t("session.reverted_last_message"), tone: "success" });
-    } catch (error) {
-      showToast({
-        title: t("session.failed_to_undo"),
-        description: describeRouteError(error),
-        tone: "error",
-      });
-    } finally {
-      setHistoryBusyAction(null);
-    }
-  }, [
-    historyBusyAction,
-    opencodeClient,
-    refreshSelectedSessionSnapshot,
-    selectedSessionId,
-    selectedWorkspaceId,
-    showToast,
-    userMessages,
-  ]);
-
-  const handleRedoLastUserMessage = useCallback(async () => {
-    if (historyBusyAction || !opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
-
-    if (!selectedSessionRevertMessageId) {
-      showToast({ title: t("session.nothing_to_redo"), tone: "info" });
-      return;
-    }
-
-    setHistoryBusyAction("redo");
-    try {
-      await abortSessionSafe(opencodeClient, selectedSessionId);
-      const nextSession = await unrevertSession(opencodeClient, selectedSessionId);
-      setSessionsByWorkspaceId((current) =>
-        upsertSessionForWorkspace(current, selectedWorkspaceId, nextSession),
-      );
-      await refreshSelectedSessionSnapshot();
-      showToast({ title: t("session.restored_message"), tone: "success" });
-    } catch (error) {
-      showToast({
-        title: t("session.failed_to_redo"),
-        description: describeRouteError(error),
-        tone: "error",
-      });
-    } finally {
-      setHistoryBusyAction(null);
-    }
-  }, [
-    historyBusyAction,
-    opencodeClient,
-    refreshSelectedSessionSnapshot,
-    selectedSessionId,
-    selectedSessionRevertMessageId,
-    selectedWorkspaceId,
-    showToast,
-  ]);
   const showPreparingStatus =
     effectiveLoading ||
     (!canCreateTask && !routeError && !selectedWorkspaceError);
@@ -1895,11 +1774,11 @@ export function SessionRoute() {
       }}
       surface={surfaceProps}
       history={{
-        canUndo: canUndoLastUserMessage,
-        canRedo: canRedoLastUserMessage,
-        busyAction: historyBusyAction,
-        onUndo: handleUndoLastUserMessage,
-        onRedo: handleRedoLastUserMessage,
+        canUndo: false,
+        canRedo: false,
+        busyAction: null,
+        onUndo: () => {},
+        onRedo: () => {},
       }}
       todos={[] satisfies TodoItem[]}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
@@ -1937,7 +1816,6 @@ export function SessionRoute() {
       activePermission={activePermission}
       permissionReplyBusy={permissionReplyBusy}
       respondPermission={respondPermission}
-      respondPermissionAndRemember={respondPermission}
       safeStringify={safeStringify}
       onRenameSession={
         opencodeClient

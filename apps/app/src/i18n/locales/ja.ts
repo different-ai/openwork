@@ -1113,6 +1113,7 @@ export default {
   "session.permission_message_external_directory": "ワークスペース外へのアクセスを許可する前に、フォルダを確認してください。",
   "session.permission_message_read": "アクセスを許可する前に、要求されたファイルスコープを確認してください。",
   "session.permission_message_task": "開始を許可する前に、要求されたサブタスクを確認してください。",
+  "session.permission_metadata_unavailable": "メタデータを表示できませんでした。",
   "session.permission_required": "権限が必要です",
   "session.permission_review_label": "確認",
   "session.permission_scope_empty": "具体的なスコープはありません。",

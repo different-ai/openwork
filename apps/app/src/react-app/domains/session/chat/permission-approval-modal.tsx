@@ -26,7 +26,6 @@ type PermissionApprovalModalProps = {
   permission: PendingPermission;
   busy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
-  respondPermissionAndRemember?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
 };
 
@@ -91,7 +90,7 @@ function permissionCopy(permission: string): Pick<PermissionPresentation, "title
     };
   }
   return {
-    title: t("session.permission_title_generic", undefined, { permission }),
+    title: t("session.permission_title_generic", undefined, { permission: readablePermissionLabel(permission) }),
     message: t("session.permission_message"),
   };
 }
@@ -134,6 +133,14 @@ export function permissionDetailRows(metadata: Record<string, unknown>): Permiss
     });
   }
   return rows;
+}
+
+function stringifyMetadata(metadata: Record<string, unknown>, safeStringify?: (value: unknown) => string) {
+  try {
+    return safeStringify ? safeStringify(metadata) : JSON.stringify(metadata, null, 2);
+  } catch {
+    return t("session.permission_metadata_unavailable");
+  }
 }
 
 function isFocusableElement(element: HTMLElement) {
@@ -199,6 +206,11 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
   }, [props.permission.id]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      props.respondPermission?.(props.permission.id, "reject");
+      return;
+    }
     if (event.key !== "Tab") return;
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -306,7 +318,7 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
                 <ChevronRight size={15} className="text-dls-secondary transition-transform group-open:rotate-90" />
               </summary>
               <pre className="mt-3 max-h-44 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-dls-border bg-dls-hover/45 px-3 py-2.5 text-[12px] leading-5 text-dls-secondary">
-                {(props.safeStringify ?? JSON.stringify)(metadata, null, 2)}
+                {stringifyMetadata(metadata, props.safeStringify)}
               </pre>
             </details>
           ) : null}
@@ -327,15 +339,6 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
               {t("session.deny")}
             </Button>
             <Button
-              variant="outline"
-              className="rounded-full bg-dls-surface"
-              onClick={() => props.respondPermissionAndRemember?.(props.permission.id, "always")}
-              disabled={props.busy || !props.respondPermissionAndRemember}
-            >
-              <Check size={16} />
-              {t("session.allow_for_session")}
-            </Button>
-            <Button
               variant="primary"
               className="rounded-full"
               onClick={() => props.respondPermission?.(props.permission.id, "once")}
@@ -343,6 +346,15 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             >
               <Clock3 size={16} />
               {t("session.allow_once")}
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-full bg-dls-surface"
+              onClick={() => props.respondPermission?.(props.permission.id, "always")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Check size={16} />
+              {t("session.allow_for_session")}
             </Button>
           </div>
         </div>

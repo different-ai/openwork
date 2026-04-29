@@ -84,15 +84,27 @@ export function seedPermissionState(
   workspaceId: string,
   sessionId: string,
   permissions: PermissionRequest[],
+  options: { snapshotStartedAt?: number } = {},
 ) {
   const queryClient = getReactQueryClient();
   const now = Date.now();
   queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
-    return permissions
+    const seeded = permissions
       .filter((permission) => permission.sessionID === sessionId)
-      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now))
-      .sort(sortPermissions);
+      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now));
+    const seededIds = new Set(seeded.map((permission) => permission.id));
+    const snapshotStartedAt = options.snapshotStartedAt;
+    const liveAfterSnapshot =
+      typeof snapshotStartedAt === "number"
+        ? current.filter(
+            (permission) =>
+              permission.sessionID === sessionId &&
+              permission.receivedAt > snapshotStartedAt &&
+              !seededIds.has(permission.id),
+          )
+        : [];
+    return [...seeded, ...liveAfterSnapshot].sort(sortPermissions);
   });
 }
 

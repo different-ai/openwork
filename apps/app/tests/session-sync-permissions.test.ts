@@ -50,4 +50,32 @@ describe("session permission sync", () => {
 
     expect(second[0]!.receivedAt).toBe(first[0]!.receivedAt);
   });
+
+  test("keeps live permissions that arrive after a snapshot starts", () => {
+    getReactQueryClient().setQueryData(permissionKey("workspace-a", "session-a"), [
+      {
+        ...permission("perm-live", "session-a"),
+        receivedAt: 200,
+      },
+    ]);
+
+    seedPermissionState("workspace-a", "session-a", [], { snapshotStartedAt: 100 });
+
+    expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([
+      { id: "perm-live", sessionID: "session-a", permission: "bash" },
+    ]);
+  });
+
+  test("drops stale permissions that predate a fresh snapshot", () => {
+    getReactQueryClient().setQueryData(permissionKey("workspace-a", "session-a"), [
+      {
+        ...permission("perm-stale", "session-a"),
+        receivedAt: 100,
+      },
+    ]);
+
+    seedPermissionState("workspace-a", "session-a", [], { snapshotStartedAt: 200 });
+
+    expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
+  });
 });

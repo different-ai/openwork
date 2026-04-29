@@ -117,7 +117,6 @@ export type SessionPageProps = {
   activePermission?: PendingPermission | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
-  respondPermissionAndRemember?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
@@ -572,7 +571,6 @@ export function SessionPage(props: SessionPageProps) {
           permission={props.activePermission}
           busy={props.permissionReplyBusy}
           respondPermission={props.respondPermission}
-          respondPermissionAndRemember={props.respondPermissionAndRemember}
           safeStringify={props.safeStringify}
         />
       ) : null}

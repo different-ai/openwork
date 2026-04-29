@@ -18,21 +18,12 @@ export function StatusToast(props: StatusToastProps) {
 
   const tileClass =
     tone === "success"
-      ? "bg-emerald-3/35 text-emerald-11"
+      ? "border-emerald-6/40 bg-emerald-4/80 text-emerald-11"
       : tone === "warning"
-        ? "bg-amber-3/35 text-amber-11"
+        ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
         : tone === "error"
-          ? "bg-red-3/35 text-red-11"
-          : "bg-[rgba(var(--dls-accent-rgb),0.12)] text-dls-accent";
-
-  const accentClass =
-    tone === "success"
-      ? "bg-emerald-9"
-      : tone === "warning"
-        ? "bg-amber-9"
-        : tone === "error"
-          ? "bg-red-9"
-          : "bg-[var(--dls-accent)]";
+          ? "border-red-6/40 bg-red-4/80 text-red-11"
+          : "border-sky-6/40 bg-sky-4/80 text-sky-11";
 
   const Icon =
     tone === "success"
@@ -44,26 +35,22 @@ export function StatusToast(props: StatusToastProps) {
           : Info;
 
   return (
-    <div
-      role={tone === "error" ? "alert" : "status"}
-      className="relative w-full max-w-[26rem] overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface/95 shadow-[0_18px_44px_rgba(0,0,0,0.16)] backdrop-blur-2xl animate-in fade-in slide-in-from-top-3 duration-300"
-    >
-      <div className={`absolute bottom-3 left-0 top-3 w-1 rounded-r-full ${accentClass}`} />
-      <div className="flex items-start gap-3 px-4 py-3.5 pl-5">
+    <div className="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
+      <div className="flex items-start gap-3 px-4 py-4">
         <div
-          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${tileClass}`.trim()}
+          className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${tileClass}`.trim()}
         >
-          <Icon size={17} />
+          <Icon size={18} />
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-[13px] font-semibold leading-5 text-gray-12">
+              <div className="text-sm font-semibold text-gray-12">
                 {props.title}
               </div>
               {props.description?.trim() ? (
-                <p className="mt-1 text-[13px] leading-5 text-gray-10">
+                <p className="mt-1 text-sm leading-relaxed text-gray-10">
                   {props.description}
                 </p>
               ) : null}
@@ -72,7 +59,7 @@ export function StatusToast(props: StatusToastProps) {
             <button
               type="button"
               onClick={props.onDismiss}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-9 transition hover:bg-dls-hover hover:text-gray-12"
+              className="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
               aria-label={props.dismissLabel ?? "Dismiss"}
             >
               <X size={16} />
