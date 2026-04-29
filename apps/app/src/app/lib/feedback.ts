@@ -1,4 +1,5 @@
 const ENV_FEEDBACK_URL = String(import.meta.env.VITE_OPENWORK_FEEDBACK_URL ?? "").trim();
+const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
 
 export const DEFAULT_FEEDBACK_URL =
   ENV_FEEDBACK_URL || "https://openworklabs.com/feedback";
@@ -89,7 +90,7 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
 
   const entries = {
     deployment: options.deployment?.trim() ?? "",
-    appVersion: options.appVersion?.trim() ?? "",
+    appVersion: options.appVersion?.trim() || ENV_APP_VERSION,
     openworkServerVersion: options.openworkServerVersion?.trim() ?? "",
     opencodeVersion: options.opencodeVersion?.trim() ?? "",
     orchestratorVersion: options.orchestratorVersion?.trim() ?? "",

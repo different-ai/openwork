@@ -65,6 +65,7 @@ import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
+import { buildFeedbackUrl } from "../../app/lib/feedback";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -1037,7 +1038,7 @@ export function SettingsRoute() {
             onToggleAutoCompactContext={() => {
               setRouteError("Auto-compact controls are not wired into the React settings route yet.");
             }}
-            onSendFeedback={() => platform.openLink("https://openworklabs.com/docs")}
+            onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
             onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
             onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
           />

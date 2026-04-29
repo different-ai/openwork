@@ -1586,7 +1586,6 @@ export function SessionRoute() {
         platform.openLink(
           buildFeedbackUrl({
             entrypoint: "status-bar",
-            appVersion: "0.11.207",
           }),
         );
       }}

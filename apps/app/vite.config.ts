@@ -26,6 +26,21 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const appPackagePath = resolve(appRoot, "package.json");
+const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
+
+function readPackageVersion(packagePath: string): string | null {
+  if (!existsSync(packagePath)) return null;
+
+  const parsed = JSON.parse(readFileSync(packagePath, "utf8")) as { version?: string };
+  return parsed.version?.trim() || null;
+}
+
+const buildAppVersion =
+  process.env.VITE_OPENWORK_APP_VERSION?.trim() ||
+  readPackageVersion(desktopPackagePath) ||
+  readPackageVersion(appPackagePath) ||
+  "0.0.0";
 
 // Load the Tauri → Electron migration-release fragment if present. Written
 // by scripts/migration/01-cut-migration-release.mjs for the specific
@@ -57,12 +72,15 @@ const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 
 export default defineConfig({
   base: isElectronPackagedBuild ? "./" : "/",
-  define: Object.fromEntries(
-    Object.entries(migrationReleaseEnv).map(([k, v]) => [
-      `import.meta.env.${k}`,
-      JSON.stringify(v),
-    ]),
-  ),
+  define: {
+    ...Object.fromEntries(
+      Object.entries(migrationReleaseEnv).map(([k, v]) => [
+        `import.meta.env.${k}`,
+        JSON.stringify(v),
+      ]),
+    ),
+    "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
+  },
   plugins: [
     {
       name: "openwork-dev-server-id",
