@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { Check, ChevronRight, Clock3, HardDrive, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
 import { t } from "../../../../i18n";
 import type { PendingPermission } from "../../../../app/types";
@@ -32,12 +32,18 @@ type PermissionApprovalModalProps = {
 
 const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boolean }> = [
   { key: "command", labelKey: "session.permission_detail_command", multiline: true },
+  { key: "description", labelKey: "session.permission_detail_description" },
   { key: "cwd", labelKey: "session.permission_detail_cwd" },
   { key: "filepath", labelKey: "session.permission_detail_file" },
   { key: "filePath", labelKey: "session.permission_detail_file" },
   { key: "path", labelKey: "session.permission_detail_path" },
   { key: "target", labelKey: "session.permission_detail_target" },
+  { key: "parentDir", labelKey: "session.permission_detail_parent_directory" },
   { key: "url", labelKey: "session.permission_detail_url" },
+  { key: "query", labelKey: "session.permission_detail_query", multiline: true },
+  { key: "subagent_type", labelKey: "session.permission_detail_agent" },
+  { key: "tool", labelKey: "session.permission_detail_tool" },
+  { key: "files", labelKey: "session.permission_detail_files", multiline: true },
   { key: "diff", labelKey: "session.permission_detail_diff", multiline: true },
 ];
 
@@ -90,9 +96,26 @@ function permissionCopy(permission: string): Pick<PermissionPresentation, "title
   };
 }
 
-function metadataValue(value: unknown): string | null {
+function fileChangeLine(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const path =
+    (typeof record.relativePath === "string" && record.relativePath.trim()) ||
+    (typeof record.filePath === "string" && record.filePath.trim()) ||
+    (typeof record.path === "string" && record.path.trim()) ||
+    null;
+  if (!path) return null;
+  const type = typeof record.type === "string" && record.type.trim() ? record.type.trim() : "change";
+  return `${type}: ${path}`;
+}
+
+function metadataValue(key: string, value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (key === "files" && Array.isArray(value)) {
+    const lines = value.map(fileChangeLine).filter(Boolean);
+    return lines.length ? lines.join("\n") : null;
+  }
   return null;
 }
 
@@ -101,7 +124,7 @@ export function permissionDetailRows(metadata: Record<string, unknown>): Permiss
   const rows: PermissionDetail[] = [];
   for (const item of metadataDetailKeys) {
     if (seen.has(item.labelKey)) continue;
-    const value = metadataValue(metadata[item.key]);
+    const value = metadataValue(item.key, metadata[item.key]);
     if (!value) continue;
     seen.add(item.labelKey);
     rows.push({
@@ -111,6 +134,13 @@ export function permissionDetailRows(metadata: Record<string, unknown>): Permiss
     });
   }
   return rows;
+}
+
+function isFocusableElement(element: HTMLElement) {
+  if (element.hasAttribute("disabled")) return false;
+  if (element.getAttribute("aria-hidden") === "true") return false;
+  const style = window.getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
 }
 
 function describePermissionRequest(permission: PendingPermission): PermissionPresentation {
@@ -145,6 +175,8 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
 }
 
 export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
   const metadata =
     props.permission.metadata && typeof props.permission.metadata === "object"
@@ -157,12 +189,51 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
     ? "bg-amber-3/30 text-amber-11"
     : "bg-[rgba(var(--dls-accent-rgb),0.1)] text-dls-accent";
 
+  useEffect(() => {
+    previousActiveElementRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus({ preventScroll: true });
+    return () => {
+      previousActiveElementRef.current?.focus({ preventScroll: true });
+    };
+  }, [props.permission.id]);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter(isFocusableElement);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[6px]">
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="permission-approval-title"
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
         className="w-full max-w-[560px] overflow-hidden rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] animate-in fade-in zoom-in-95 duration-200"
       >
         <div className="border-b border-dls-border px-6 py-5">
@@ -267,7 +338,6 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             <Button
               variant="primary"
               className="rounded-full"
-              autoFocus
               onClick={() => props.respondPermission?.(props.permission.id, "once")}
               disabled={props.busy || !props.respondPermission}
             >

@@ -51,6 +51,7 @@ import type {
   ComposerPart,
   ModelOption,
   ModelRef,
+  PendingPermission,
   SlashCommandOption,
   TodoItem,
   WorkspacePreset,
@@ -70,6 +71,8 @@ import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provid
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
 import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-context";
 import {
+  permissionKey as reactPermissionKey,
+  seedPermissionState,
   seedSessionState,
   transcriptKey as reactTranscriptKey,
 } from "../domains/session/sync/session-sync";
@@ -184,6 +187,7 @@ function describeWorkspaceCreateError(error: unknown) {
 }
 
 const emptyTranscript: UIMessage[] = [];
+const emptyPendingPermissions: PendingPermission[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
   const queryClient = getReactQueryClient();
@@ -393,6 +397,7 @@ export function SessionRoute() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
+  const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
@@ -933,6 +938,63 @@ export function SessionRoute() {
   );
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError,
+  );
+  const permissionQueryKey = useMemo(
+    () =>
+      selectedWorkspaceId && selectedSessionId
+        ? reactPermissionKey(selectedWorkspaceId, selectedSessionId)
+        : null,
+    [selectedSessionId, selectedWorkspaceId],
+  );
+  const pendingPermissions = useQueryCacheState<PendingPermission[]>(
+    permissionQueryKey,
+    emptyPendingPermissions,
+  );
+  useEffect(() => {
+    if (!opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
+    let cancelled = false;
+    const directory = selectedWorkspaceRoot || undefined;
+    void (async () => {
+      try {
+        const list = unwrap(await opencodeClient.permission.list({ directory }));
+        if (!cancelled) seedPermissionState(selectedWorkspaceId, selectedSessionId, list);
+      } catch {
+        if (!cancelled) seedPermissionState(selectedWorkspaceId, selectedSessionId, []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
+
+  const activePermission = pendingPermissions[0] ?? null;
+  const respondPermission = useCallback(
+    async (requestID: string, reply: "once" | "always" | "reject") => {
+      if (!opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
+      setPermissionReplyBusy(true);
+      try {
+        unwrap(
+          await opencodeClient.permission.reply({
+            requestID,
+            reply,
+            directory: selectedWorkspaceRoot || undefined,
+          }),
+        );
+        getReactQueryClient().setQueryData<PendingPermission[]>(
+          reactPermissionKey(selectedWorkspaceId, selectedSessionId),
+          (current = []) => current.filter((permission) => permission.id !== requestID),
+        );
+      } catch (error) {
+        showToast({
+          title: t("app.error_request_failed"),
+          description: describeRouteError(error),
+          tone: "error",
+        });
+      } finally {
+        setPermissionReplyBusy(false);
+      }
+    },
+    [opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot, showToast],
   );
   const selectedSession = useMemo<Session | null>(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
@@ -1872,6 +1934,11 @@ export function SessionRoute() {
             }
           : null
       }
+      activePermission={activePermission}
+      permissionReplyBusy={permissionReplyBusy}
+      respondPermission={respondPermission}
+      respondPermissionAndRemember={respondPermission}
+      safeStringify={safeStringify}
       onRenameSession={
         opencodeClient
           ? async (sessionId, nextTitle) => {

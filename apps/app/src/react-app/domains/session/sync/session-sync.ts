@@ -1,10 +1,10 @@
 import type { UIMessage } from "ai";
-import type { Part, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { Part, PermissionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { createClient } from "../../../../app/lib/opencode";
 import { normalizeEvent } from "../../../../app/utils";
-import type { OpencodeEvent } from "../../../../app/types";
+import type { OpencodeEvent, PendingPermission } from "../../../../app/types";
 import { snapshotToUIMessages } from "./usechat-adapter";
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
 
@@ -45,6 +45,8 @@ export const statusKey = (workspaceId: string, sessionId: string) =>
   ["react-session-status", workspaceId, sessionId] as const;
 export const todoKey = (workspaceId: string, sessionId: string) =>
   ["react-session-todos", workspaceId, sessionId] as const;
+export const permissionKey = (workspaceId: string, sessionId: string) =>
+  ["react-session-permissions", workspaceId, sessionId] as const;
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
@@ -68,6 +70,30 @@ function shouldRetrySyncSubscribe(error: unknown) {
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
+}
+
+function withReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
+  return { ...permission, receivedAt };
+}
+
+function sortPermissions(a: PendingPermission, b: PendingPermission) {
+  return a.receivedAt - b.receivedAt || a.id.localeCompare(b.id);
+}
+
+export function seedPermissionState(
+  workspaceId: string,
+  sessionId: string,
+  permissions: PermissionRequest[],
+) {
+  const queryClient = getReactQueryClient();
+  const now = Date.now();
+  queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
+    const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
+    return permissions
+      .filter((permission) => permission.sessionID === sessionId)
+      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now))
+      .sort(sortPermissions);
+  });
 }
 
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
@@ -279,6 +305,32 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID || !props.todos) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(todoKey(workspaceId, props.sessionID), props.todos);
+    return;
+  }
+
+  if (event.type === "permission.asked") {
+    const permission = event.properties as PermissionRequest;
+    if (!permission?.id || !permission.sessionID) return;
+    if (!isTrackedSession(entry, permission.sessionID)) return;
+    const receivedAt = Date.now();
+    queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
+      const existing = current.find((item) => item.id === permission.id);
+      const next = withReceivedAt(permission, existing?.receivedAt ?? receivedAt);
+      if (existing) {
+        return current.map((item) => (item.id === permission.id ? next : item)).sort(sortPermissions);
+      }
+      return [...current, next].sort(sortPermissions);
+    });
+    return;
+  }
+
+  if (event.type === "permission.replied") {
+    const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
+    if (!props.sessionID || !props.requestID) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
+    queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, props.sessionID), (current = []) =>
+      current.filter((permission) => permission.id !== props.requestID),
+    );
     return;
   }
 
@@ -569,6 +621,8 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
       entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
         (item) => item.sessionId !== normalizedSessionId,
       );
+      const queryClient = getReactQueryClient();
+      queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, normalizedSessionId), exact: true });
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);
