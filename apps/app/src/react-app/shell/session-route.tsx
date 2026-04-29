@@ -100,6 +100,26 @@ function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   };
 }
 
+/**
+ * Serialize an SDK error value into a string that parseSessionError can parse.
+ * Preserves the original shape (name, data, message) as JSON when possible,
+ * so the session surface can detect ProviderModelNotFoundError and offer
+ * recovery actions like "Change model".
+ */
+function serializeSDKError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && error !== null) {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      const msg = (error as Record<string, unknown>).message;
+      return typeof msg === "string" ? msg : String(error);
+    }
+  }
+  return String(error);
+}
+
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
@@ -1125,7 +1145,7 @@ export function SessionRoute() {
             arguments: draft.command.arguments,
           });
           if (result.error) {
-            throw new Error(result.error instanceof Error ? result.error.message : String(result.error));
+            throw new Error(serializeSDKError(result.error));
           }
           return;
         }
@@ -1139,7 +1159,7 @@ export function SessionRoute() {
           ...(local.prefs.modelVariant ? { variant: local.prefs.modelVariant } : {}),
         });
         if (result.error) {
-          throw new Error(result.error instanceof Error ? result.error.message : String(result.error));
+          throw new Error(serializeSDKError(result.error));
         }
       },
       onDraftChange: () => {
@@ -1177,6 +1197,9 @@ export function SessionRoute() {
       },
       isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
       isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
+      onChangeModel: (model: { providerID: string; modelID: string }) => {
+        local.setPrefs((previous) => ({ ...previous, defaultModel: model }));
+      },
     };
   }, [
     client,
