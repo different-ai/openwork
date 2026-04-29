@@ -25,7 +25,31 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
 
-export const DEN_MCP_RESOURCE = `${env.betterAuthUrl}/mcp`;
+function localMcpResourceAliases(resource: string) {
+  if (!env.devMode) {
+    return [];
+  }
+
+  try {
+    const url = new URL(resource);
+    if (url.hostname === "127.0.0.1") {
+      url.hostname = "localhost";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+  } catch {}
+
+  return [];
+}
+
+export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? `${env.betterAuthUrl}/mcp`;
+export const DEN_MCP_RESOURCES = Array.from(new Set([
+  DEN_MCP_RESOURCE,
+  ...localMcpResourceAliases(DEN_MCP_RESOURCE),
+]));
 export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];
 export const DEN_MCP_TOKEN_USE_CLAIM = "https://openworklabs.com/token_use";
 export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
@@ -264,14 +288,14 @@ export const auth = betterAuth({
       },
     }),
     oauthProvider({
-      loginPage: "/",
-      consentPage: "/mcp/select-organization",
+      loginPage: env.betterAuthUrl,
+      consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
-      validAudiences: [DEN_MCP_RESOURCE],
+      validAudiences: DEN_MCP_RESOURCES,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
-      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read"],
+      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
       clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
       advertisedMetadata: {
         scopes_supported: [...DEN_MCP_SCOPES],
@@ -282,7 +306,7 @@ export const auth = betterAuth({
         ],
       },
       postLogin: {
-        page: "/mcp/select-organization",
+        page: `${env.betterAuthUrl}/mcp/select-organization`,
         shouldRedirect: async ({ session, scopes }) => {
           if (!hasMcpScope(scopes)) {
             return false;

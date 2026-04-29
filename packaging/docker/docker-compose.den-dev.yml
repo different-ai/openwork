@@ -75,6 +75,7 @@ services:
       BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:-dev-den-local-auth-secret-please-override-1234567890}
       DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:-dev-den-db-encryption-key-please-change-1234567890}
       BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
+      DEN_MCP_RESOURCE_URL: ${DEN_MCP_RESOURCE_URL:-http://localhost:8788/mcp}
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-}
       PORT: "8788"
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:8788,http://127.0.0.1:8788}

@@ -3,6 +3,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Users",
   "Organizations",
   "Invitations",
+  "API Keys",
   "Members",
   "Roles",
   "Teams",
@@ -13,12 +14,23 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Workers",
   "Worker Runtime",
   "Worker Activity",
+  "Config Objects",
+  "Plugins",
+  "Marketplaces",
+  "Connectors",
+  "GitHub",
 ])
 
 const BLOCKED_OPERATION_IDS = new Set([
   "postApiKeys",
+  "postV1ApiKeys",
   "deleteApiKeysByApiKeyId",
+  "deleteV1ApiKeysByApiKeyId",
+  "deleteOrg",
+  "deleteV1Org",
+  "deleteV1OrgsByOrgId",
   "postWorkersByWorkerIdTokens",
+  "postV1WorkersByWorkerIdTokens",
 ])
 
 export type OpenApiOperation = {

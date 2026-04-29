@@ -1,26 +1,27 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
-import { DEN_MCP_RESOURCE } from "../auth.js"
-import { verifyMcpRequest } from "./auth.js"
+import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
 
-function protectedResourceMetadata() {
+function protectedResourceMetadata(request: Request) {
+  const resource = getMcpResourceUrl(request)
   return {
-    resource: DEN_MCP_RESOURCE,
-    authorization_servers: [DEN_MCP_RESOURCE.replace(/\/mcp$/, "/api/auth")],
+    resource,
+    authorization_servers: [resource.replace(/\/mcp$/, "/api/auth")],
     scopes_supported: ["mcp:read", "mcp:write"],
     bearer_methods_supported: ["header"],
   }
 }
 
 export function registerMcpRoutes<T extends { Variables: Record<string, unknown> }>(app: Hono<T>) {
-  app.get("/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata()))
-  app.get("/mcp/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata()))
+  app.get("/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/.well-known/oauth-protected-resource/mcp", (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/mcp/.well-known/oauth-protected-resource", (c) => c.json(protectedResourceMetadata(c.req.raw)))
 
   app.all("/mcp", async (c) => {
-    const principal = await verifyMcpRequest(c.req.raw.headers)
+    const principal = await verifyMcpRequest(c.req.raw.headers, getMcpResourceUrl(c.req.raw))
     if (principal instanceof Response) {
       return principal
     }
