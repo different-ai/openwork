@@ -13,6 +13,7 @@ import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
+import { WelcomeRoute } from "./welcome-route";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -98,6 +99,14 @@ export function AppRoot() {
               element={
                 <DevProfiler id="SigninRoute">
                   <ForcedSigninPage developerMode={false} />
+                </DevProfiler>
+              }
+            />
+            <Route
+              path="/welcome"
+              element={
+                <DevProfiler id="WelcomeRoute">
+                  <WelcomeRoute />
                 </DevProfiler>
               }
             />

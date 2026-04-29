@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { FolderPlus, Loader2, XCircle } from "lucide-react";
+import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
 
 import type { WorkspacePreset } from "../../../app/types";
 import {
@@ -90,10 +90,30 @@ export function CreateWorkspaceLocalPanel(
       >
         <div className="space-y-4">
           <div className={surfaceCardClass}>
-            <div className={sectionTitleClass}>Workspace folder</div>
-            <div className={sectionBodyClass}>
-              Choose where this workspace should live on your device.
+            <div className={sectionTitleClass}>
+              {props.translate("welcome.folder_title")}
             </div>
+            <div className={`${sectionBodyClass} mt-2`}>
+              {props.translate("welcome.folder_explanation")}
+            </div>
+            <ul className="mt-3 space-y-1.5 pl-1">
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {props.translate("welcome.folder_read")}
+              </li>
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {props.translate("welcome.folder_write")}
+              </li>
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {props.translate("welcome.folder_anything")}
+              </li>
+            </ul>
+            <div className="mt-2 text-[12px] text-dls-secondary italic">
+              {props.translate("welcome.folder_drop_hint")}
+            </div>
+
             <div className="mt-4 rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3">
               {props.hasSelectedFolder ? (
                 <span className="block truncate font-mono text-[12px] text-dls-text">

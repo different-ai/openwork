@@ -849,6 +849,16 @@ export function SessionRoute() {
     navigate(`/session/${remembered}`, { replace: true });
   }, [loading, navigate, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
 
+  // Redirect to /welcome when no workspaces exist and the user hasn't
+  // completed onboarding. This fires after the initial route refresh so
+  // `loading` is false and we know for sure there are zero workspaces.
+  useEffect(() => {
+    if (loading) return;
+    if (workspaces.length > 0) return;
+    if (local.prefs.hasCompletedOnboarding) return;
+    navigate("/welcome", { replace: true });
+  }, [loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every
   // workspace change, which cascaded setState updates and froze the UI after
@@ -1601,6 +1611,8 @@ export function SessionRoute() {
           .catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);
+      // Mark onboarding complete so the /welcome redirect never fires again.
+      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (createdId) {
         navigate("/settings/general");
@@ -1610,7 +1622,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [client, navigate, refreshRouteState]);
+  }, [client, local, navigate, refreshRouteState]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
@@ -1637,6 +1649,8 @@ export function SessionRoute() {
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
       }
       setCreateWorkspaceOpen(false);
+      // Mark onboarding complete so the /welcome redirect never fires again.
+      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       return true;
     } catch (error) {
@@ -1645,7 +1659,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceRemoteBusy(false);
     }
-  }, [refreshRouteState]);
+  }, [local, refreshRouteState]);
 
   return (
     <>
