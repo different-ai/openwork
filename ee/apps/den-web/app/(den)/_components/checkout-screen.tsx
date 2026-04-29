@@ -59,7 +59,13 @@ function FeatureLine({
   );
 }
 
-export function CheckoutScreen({ customerSessionToken }: { customerSessionToken: string | null }) {
+export function CheckoutScreen({
+  customerSessionToken,
+  requestHost,
+}: {
+  customerSessionToken: string | null;
+  requestHost: string | null;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const handledReturnRef = useRef(false);
@@ -82,6 +88,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   const mockMode = isLocalMockBillingEnabled({
     flag: process.env.NEXT_PUBLIC_DEN_MOCK_BILLING,
+    host: requestHost,
     nodeEnv: process.env.NODE_ENV,
   });
 

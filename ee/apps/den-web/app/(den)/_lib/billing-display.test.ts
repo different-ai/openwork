@@ -10,6 +10,7 @@ import {
   getWorkspacePlanInlineEntitlementCopy,
   getWorkspacePlanShortEntitlementCopy,
   isLocalMockBillingEnabled,
+  isProductionBillingHost,
 } from "./billing-display";
 
 describe("billing display helpers", () => {
@@ -21,6 +22,41 @@ describe("billing display helpers", () => {
     assert.equal(isLocalMockBillingEnabled({ flag: "1", nodeEnv: "development" }), true);
     assert.equal(isLocalMockBillingEnabled({ flag: undefined, nodeEnv: "development" }), false);
     assert.equal(isLocalMockBillingEnabled({ flag: "0", nodeEnv: "development" }), false);
+  });
+
+  test("never enables local mock billing on the production billing host", () => {
+    assert.equal(
+      isLocalMockBillingEnabled({
+        flag: "1",
+        host: "app.openworklabs.com",
+        nodeEnv: "development",
+      }),
+      false,
+    );
+    assert.equal(
+      isLocalMockBillingEnabled({
+        flag: "1",
+        host: "APP.OPENWORKLABS.COM:443, internal-proxy",
+        nodeEnv: "development",
+      }),
+      false,
+    );
+    assert.equal(
+      isLocalMockBillingEnabled({
+        flag: "1",
+        host: "localhost:3005",
+        nodeEnv: "development",
+      }),
+      true,
+    );
+  });
+
+  test("detects production billing hosts consistently", () => {
+    assert.equal(isProductionBillingHost("app.openworklabs.com"), true);
+    assert.equal(isProductionBillingHost("app.openworklabs.com:443"), true);
+    assert.equal(isProductionBillingHost("app.openworklabs.com, internal-proxy"), true);
+    assert.equal(isProductionBillingHost("localhost:3005"), false);
+    assert.equal(isProductionBillingHost(null), false);
   });
 
   test("derives displayed plan copy from price data", () => {

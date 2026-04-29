@@ -24,14 +24,33 @@ export type BillingPlanLabels = {
   available: boolean;
 };
 
+const PRODUCTION_BILLING_HOSTS = new Set(["app.openworklabs.com"]);
+
+function normalizeHost(value: string | null | undefined) {
+  const host = value?.split(",")[0]?.trim().toLowerCase();
+  if (!host) return null;
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end > 0 ? host.slice(1, end) : host;
+  }
+  return host.split(":")[0] ?? null;
+}
+
+export function isProductionBillingHost(host: string | null | undefined) {
+  const normalizedHost = normalizeHost(host);
+  return normalizedHost ? PRODUCTION_BILLING_HOSTS.has(normalizedHost) : false;
+}
+
 export function isLocalMockBillingEnabled({
   flag,
+  host,
   nodeEnv,
 }: {
   flag: string | undefined;
+  host?: string | null;
   nodeEnv: string | undefined;
 }) {
-  return flag === "1" && nodeEnv !== "production";
+  return flag === "1" && nodeEnv !== "production" && !isProductionBillingHost(host);
 }
 
 export function buildLocalMockBillingSummary(checkoutUrl: string | null): BillingSummary {
