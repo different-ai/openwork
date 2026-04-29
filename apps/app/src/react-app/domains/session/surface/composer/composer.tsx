@@ -1244,15 +1244,13 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
 
               {/*
-                Send is ALWAYS reachable — even during streaming — so the
-                user can queue a follow-up prompt without stopping the run.
-                When busy AND the draft is empty, only Stop is visible (the
-                Send button would be a no-op). When busy AND there's a
-                draft, both buttons show so the user can either queue the
-                next turn or cancel the current one.
+                Single action button that toggles between Stop and Run task.
+                When busy with no draft: Stop (cancels current run).
+                When busy with a draft: Run task (queues a follow-up).
+                When idle: Run task.
               */}
               <div className="ml-auto flex shrink-0 items-end gap-1.5">
-                {props.busy ? (
+                {props.busy && !canSend ? (
                   <button
                     type="button"
                     onClick={props.onStop}
@@ -1262,23 +1260,22 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <Square size={12} fill="currentColor" />
                     <span>{t("composer.stop", locale)}</span>
                   </button>
-                ) : null}
-                {!props.busy || canSend ? (
+                ) : (
                   <button
                     type="button"
-                    onClick={props.onSend}
-                    disabled={props.disabled || !canSend}
+                    onClick={canSend ? props.onSend : props.busy ? props.onStop : undefined}
+                    disabled={props.disabled || (!canSend && !props.busy)}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
                       !canSend || props.disabled
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={props.busy ? t("composer.run_task", locale) : t("composer.run_task", locale)}
+                    title={t("composer.run_task", locale)}
                   >
                     <ArrowUp size={15} />
                     <span>{t("composer.run_task", locale)}</span>
                   </button>
-                ) : null}
+                )}
               </div>
             </div>
           </div>
