@@ -330,6 +330,7 @@ export function SettingsRoute() {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
+  const refreshInFlightRef = useRef(false);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
@@ -682,6 +683,8 @@ export function SettingsRoute() {
 
   const { markRouteReady: markBootRouteReady } = useBootState();
   const refreshRouteState = useMemo(() => async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     setLoading(true);
     setRouteError(null);
     let desktopList = null as Awaited<ReturnType<typeof workspaceBootstrap>> | null;
@@ -717,9 +720,13 @@ export function SettingsRoute() {
 
       const client = createOpenworkServerClient({ baseUrl: normalizedBaseUrl, token: resolvedToken });
       const list = await client.listWorkspaces();
+      const serverWorkspaceIds = new Set(list.items.map((workspace) => workspace.id));
       const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
+          if (!serverWorkspaceIds.has(workspace.id)) {
+            return { workspaceId: workspace.id, sessions: [], error: null as string | null };
+          }
           try {
             const response = await client.listSessions(workspace.id, { limit: 200 });
             const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
@@ -763,6 +770,7 @@ export function SettingsRoute() {
       }
     } finally {
       setLoading(false);
+      refreshInFlightRef.current = false;
       // Settings can be the first route a user lands on (direct link, deep
       // link, or after reload). Let the boot overlay dismiss once we've
       // completed our first data load.
