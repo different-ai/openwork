@@ -1,9 +1,10 @@
 /** @jsxImportSource react */
 /**
- * Migration prompt — one-time modal that nudges Tauri v0.12.0 users over
- * to the Electron build. Dormant unless the build was produced with
- * `VITE_OPENWORK_MIGRATION_RELEASE=1`, so landing this code on dev has
- * zero user impact until the release script flips that flag.
+ * Migration prompt — one-time modal that nudges Tauri users over to the
+ * Electron build. Dormant unless the build was produced with
+ * `VITE_OPENWORK_MIGRATION_RELEASE=1` or the dev override
+ * `VITE_OPENWORK_FORCE_MIGRATION_PROMPT=1` is set, so landing this code
+ * on dev has zero user impact until a flag is explicitly flipped.
  */
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 
@@ -33,13 +34,16 @@ type MigrationConfig = {
 
 function readBuildTimeConfig(): MigrationConfig | null {
   const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
-  const enabled = env.VITE_OPENWORK_MIGRATION_RELEASE === "1";
-  if (!enabled) return null;
+  const isMigrationRelease = env.VITE_OPENWORK_MIGRATION_RELEASE === "1";
+  // Dev override: set VITE_OPENWORK_FORCE_MIGRATION_PROMPT=1 in .env.local
+  // to test the migration flow without cutting a release build.
+  const isDevForced = env.VITE_OPENWORK_FORCE_MIGRATION_PROMPT === "1";
+  if (!isMigrationRelease && !isDevForced) return null;
   return {
-    macUrl: env.VITE_OPENWORK_MIGRATION_MAC_URL,
+    macUrl: env.VITE_OPENWORK_MIGRATION_MAC_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
     macSha256: env.VITE_OPENWORK_MIGRATION_MAC_SHA256,
-    windowsUrl: env.VITE_OPENWORK_MIGRATION_WINDOWS_URL,
-    linuxUrl: env.VITE_OPENWORK_MIGRATION_LINUX_URL,
+    windowsUrl: env.VITE_OPENWORK_MIGRATION_WINDOWS_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
+    linuxUrl: env.VITE_OPENWORK_MIGRATION_LINUX_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
   };
 }
 

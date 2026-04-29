@@ -54,7 +54,7 @@ on:
         type: boolean
         default: true
       publish_electron:
-        description: "Build + publish Electron desktop artifacts (macOS) alongside Tauri"
+        description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows) alongside Tauri"
         required: false
         type: boolean
         default: false
@@ -603,23 +603,56 @@ jobs:
             --clobber
 
   publish-electron:
-    name: Build + publish Electron desktop (macOS)
+    name: Build + publish Electron (${{ matrix.artifact }})
     # Runs alongside the Tauri jobs so the same release carries both
-    # latest.json (Tauri updater) AND latest-mac.yml (electron-updater).
+    # latest.json (Tauri updater) AND latest-*.yml (electron-updater).
     # Gated on RELEASE_PUBLISH_ELECTRON=true (repo var) OR the workflow
     # input of the same name so opt-in during rollout, opt-out if a
     # non-migration release doesn't want Electron artifacts.
     needs: [resolve-release, verify-release]
     if: ${{ vars.RELEASE_PUBLISH_ELECTRON == 'true' || github.event.inputs.publish_electron == 'true' }}
-    runs-on: macos-14
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 120
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-macos-arm64
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-macos-x64
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-linux-x64
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-windows-x64
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+
+      - name: Enable git long paths (Windows)
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -636,11 +669,25 @@ jobs:
         with:
           bun-version: 1.3.9
 
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-pnpm-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Write Electron notary API key
-        if: needs.resolve-release.outputs.notarize == 'true'
+      - name: Write Electron notary API key (macOS)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
         run: |
@@ -652,24 +699,64 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + package Electron app
+      - name: Build Electron app
+        shell: bash
         env:
-          # electron-builder reads these to codesign the .app.
+          # TARGET tells prepare-sidecar.mjs which architecture's sidecars
+          # to download (critical for cross-arch builds like x64 on arm64 mac).
+          TARGET: ${{ matrix.target_triple }}
+        run: pnpm --filter @openwork/desktop build:electron
+
+      - name: Package + publish Electron (macOS, signed + notarized)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        env:
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-          # Our Electron afterSign hook notarizes with the same App Store
-          # Connect API key flow as the Tauri release path. The electron-builder
-          # built-in notarizer is disabled in electron-builder.yml.
-          MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
           APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
-          # electron-builder needs this to upload artifacts + the updater
-          # feed manifest (latest-mac.yml) to the GitHub release.
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pnpm --filter @openwork/desktop package:electron --publish always
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
+
+      - name: Package + publish Electron (macOS, unsigned)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
+
+      - name: Package + publish Electron (Linux)
+        if: matrix.os_type == 'linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
+
+      - name: Package + publish Electron (Windows)
+        if: matrix.os_type == 'windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
 
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
