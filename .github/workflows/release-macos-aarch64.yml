@@ -63,6 +63,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  OPENWORK_STABLE_UPDATER_PLATFORMS: darwin-aarch64,darwin-x86_64,linux-x86_64,linux-aarch64,windows-x86_64
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -630,7 +633,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/release/verify-updater-endpoint.mjs \
-            --file "$RUNNER_TEMP/latest.json"
+            --file "$RUNNER_TEMP/latest.json" \
+            --platform "$OPENWORK_STABLE_UPDATER_PLATFORMS"
 
       - name: Upload latest.json
         env:
@@ -1235,5 +1239,6 @@ jobs:
           set -euo pipefail
           node scripts/release/verify-updater-endpoint.mjs \
             --url "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" \
+            --platform "$OPENWORK_STABLE_UPDATER_PLATFORMS" \
             --attempts 6 \
             --delay-ms 10000

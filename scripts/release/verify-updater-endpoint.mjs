@@ -3,13 +3,21 @@
 import { pathToFileURL } from "node:url";
 import { readFile } from "node:fs/promises";
 
+function parsePlatformList(value) {
+  return String(value || "")
+    .split(/[,\s]+/)
+    .map((platform) => platform.trim())
+    .filter(Boolean);
+}
+
 function parseArgs(argv) {
   const options = {
     file: process.env.UPDATER_MANIFEST_FILE || "",
     url: process.env.UPDATER_ENDPOINT_URL || "",
-    platform: process.env.UPDATER_EXPECTED_PLATFORM || "",
+    platforms: parsePlatformList(process.env.UPDATER_EXPECTED_PLATFORM || ""),
     attempts: Number(process.env.UPDATER_VERIFY_ATTEMPTS || "1"),
     delayMs: Number(process.env.UPDATER_VERIFY_DELAY_MS || "1000"),
+    timeoutMs: Number(process.env.UPDATER_VERIFY_TIMEOUT_MS || "15000"),
   };
 
   for (let index = 2; index < argv.length; index += 1) {
@@ -25,7 +33,7 @@ function parseArgs(argv) {
       continue;
     }
     if (arg === "--platform") {
-      options.platform = argv[index + 1] || "";
+      options.platforms.push(...parsePlatformList(argv[index + 1] || ""));
       index += 1;
       continue;
     }
@@ -36,6 +44,11 @@ function parseArgs(argv) {
     }
     if (arg === "--delay-ms") {
       options.delayMs = Number(argv[index + 1] || "1000");
+      index += 1;
+      continue;
+    }
+    if (arg === "--timeout-ms") {
+      options.timeoutMs = Number(argv[index + 1] || "15000");
       index += 1;
       continue;
     }
@@ -56,6 +69,9 @@ function parseArgs(argv) {
   if (!Number.isInteger(options.delayMs) || options.delayMs < 0) {
     throw new Error("--delay-ms must be a non-negative integer.");
   }
+  if (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1) {
+    throw new Error("--timeout-ms must be a positive integer.");
+  }
 
   return options;
 }
@@ -64,8 +80,9 @@ function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function validateUpdaterManifest(manifest, { platform = "" } = {}) {
+function validateUpdaterManifest(manifest, { platform = "", platforms = [] } = {}) {
   const errors = [];
+  const requiredPlatforms = platforms.length ? platforms : parsePlatformList(platform);
 
   if (!isRecord(manifest)) {
     return ["manifest must be a JSON object"];
@@ -102,21 +119,24 @@ function validateUpdaterManifest(manifest, { platform = "" } = {}) {
       }
     }
 
-    if (platform && !Object.hasOwn(manifest.platforms, platform)) {
-      errors.push(`platforms must include ${platform}`);
+    for (const requiredPlatform of requiredPlatforms) {
+      if (!Object.hasOwn(manifest.platforms, requiredPlatform)) {
+        errors.push(`platforms must include ${requiredPlatform}`);
+      }
     }
   }
 
   return errors;
 }
 
-async function fetchUpdaterManifest(url) {
+async function fetchUpdaterManifest(url, { timeoutMs } = {}) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
       "User-Agent": "openwork-release-updater-verify",
     },
     redirect: "follow",
+    signal: AbortSignal.timeout(timeoutMs ?? 15000),
   });
 
   const body = await response.text();
@@ -148,8 +168,8 @@ async function main() {
     try {
       const manifest = options.file
         ? await readUpdaterManifest(options.file)
-        : await fetchUpdaterManifest(options.url);
-      const errors = validateUpdaterManifest(manifest, { platform: options.platform });
+        : await fetchUpdaterManifest(options.url, { timeoutMs: options.timeoutMs });
+      const errors = validateUpdaterManifest(manifest, { platforms: options.platforms });
 
       if (errors.length) {
         throw new Error(`Invalid updater manifest:\n${errors.map((error) => `- ${error}`).join("\n")}`);

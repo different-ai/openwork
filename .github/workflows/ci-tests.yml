@@ -34,6 +34,9 @@ jobs:
         with:
           version: 10.27.0
 
+      - name: Run release script tests
+        run: node --test scripts/release/verify-updater-endpoint.test.mjs
+
       - name: Install OpenCode CLI
         shell: bash
         env:

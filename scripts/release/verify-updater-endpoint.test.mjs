@@ -46,6 +46,15 @@ test("rejects missing expected platform", () => {
   ]);
 });
 
+test("rejects missing platforms from a required platform set", () => {
+  assert.deepEqual(
+    validateUpdaterManifest(validManifest, {
+      platforms: ["darwin-aarch64", "darwin-x86_64", "linux-x86_64"],
+    }),
+    ["platforms must include darwin-x86_64", "platforms must include linux-x86_64"],
+  );
+});
+
 test("rejects platform entries without signatures", () => {
   const manifest = {
     ...validManifest,
@@ -96,6 +105,19 @@ test("rejects invalid source arguments", () => {
   );
 });
 
+test("parses comma-separated expected platforms", () => {
+  const options = parseArgs([
+    "node",
+    "verify-updater-endpoint.mjs",
+    "--file",
+    "latest.json",
+    "--platform",
+    "darwin-aarch64,linux-x86_64",
+  ]);
+
+  assert.deepEqual(options.platforms, ["darwin-aarch64", "linux-x86_64"]);
+});
+
 test("rejects invalid retry arguments", () => {
   assert.throws(
     () => parseArgs(["node", "verify-updater-endpoint.mjs", "--file", "latest.json", "--attempts", "0"]),
@@ -105,10 +127,16 @@ test("rejects invalid retry arguments", () => {
     () => parseArgs(["node", "verify-updater-endpoint.mjs", "--file", "latest.json", "--delay-ms", "-1"]),
     /--delay-ms must be a non-negative integer/,
   );
+  assert.throws(
+    () => parseArgs(["node", "verify-updater-endpoint.mjs", "--file", "latest.json", "--timeout-ms", "0"]),
+    /--timeout-ms must be a positive integer/,
+  );
 });
 
 test("release creation does not claim GitHub Latest before manifests are ready", () => {
   assert.match(releaseWorkflow, /gh release create[\s\S]*--latest=false[\s\S]*\$DRAFT_FLAG \$PRERELEASE_FLAG/);
   assert.doesNotMatch(releaseWorkflow, /needs\.resolve-release\.outputs\.draft == 'true'/);
   assert.match(releaseWorkflow, /payload\.make_latest = "true"/);
+  assert.match(releaseWorkflow, /OPENWORK_STABLE_UPDATER_PLATFORMS:.*darwin-aarch64/);
+  assert.match(releaseWorkflow, /--platform "\$OPENWORK_STABLE_UPDATER_PLATFORMS"/);
 });
