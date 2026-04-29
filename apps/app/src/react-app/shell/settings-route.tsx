@@ -13,6 +13,7 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
+import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
 import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspacePreset, WorkspaceSessionGroup } from "../../app/types";
 import { isSandboxWorkspace } from "../../app/utils";
 import { currentLocale, t, setLocale, type Language } from "../../i18n";
@@ -907,6 +908,11 @@ export function SettingsRoute() {
         config: { read: true, write: true },
       }
     : null;
+  const environmentRuntimeKey = buildOpenworkEnvRuntimeKey({
+    baseUrl: openworkServerSnapshot.openworkServerBaseUrl || openworkServerSnapshot.openworkServerUrl,
+    pid: openworkServerSnapshot.openworkServerHostInfo?.pid ?? null,
+    port: openworkServerSnapshot.openworkServerHostInfo?.port ?? null,
+  });
 
   const handleApplyEnvironmentChanges = async () => {
     if (!isDesktopRuntime()) {
@@ -937,7 +943,8 @@ export function SettingsRoute() {
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
     if (!reconnected) {
-      throw new Error(t("settings.restart_failed"));
+      await refreshRouteState().catch(() => {});
+      return { statusMessage: t("settings.environment.apply_refresh_failed") };
     }
     await refreshRouteState();
   };
@@ -1281,6 +1288,7 @@ export function SettingsRoute() {
                 ? t("settings.environment.apply_blocked_active_tasks")
                 : null
             }
+            runtimeKey={environmentRuntimeKey}
           />
         );
       case "debug":

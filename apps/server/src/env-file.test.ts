@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,6 +59,33 @@ describe("env-file", () => {
     const items = await svc.list();
     expect(items).toHaveLength(1);
     expect(items[0].value).toBe("2");
+  });
+
+  test("concurrent upserts do not overwrite each other", async () => {
+    const svc = new EnvService({ path });
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        svc.upsertMany([{ key: `KEY_${index}`, value: String(index) }])
+      ),
+    );
+
+    const items = await svc.list();
+    expect(items.map((item) => item.key)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `KEY_${index}`).sort(),
+    );
+  });
+
+  test("write failures do not mutate loaded values", async () => {
+    const svc = new EnvService({ path });
+    await svc.upsertMany([{ key: "KEEP_ME", value: "old" }]);
+
+    rmSync(path, { force: true });
+    mkdirSync(path);
+
+    await expect(svc.upsertMany([{ key: "NEW_KEY", value: "new" }])).rejects.toThrow();
+    expect(await svc.list()).toEqual([
+      expect.objectContaining({ key: "KEEP_ME", value: "old" }),
+    ]);
   });
 
   test("upsertMany rejects invalid keys with InvalidEnvKeyError", async () => {

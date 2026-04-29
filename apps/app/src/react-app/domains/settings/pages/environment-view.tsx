@@ -23,14 +23,16 @@ const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
 
 type EnvItem = { key: string; value: string; updatedAt: number };
+type ApplyEnvironmentChangesResult = { statusMessage?: string } | void;
 
 export type EnvironmentViewProps = {
   client: OpenworkServerClient | null;
   isRemoteWorkspace: boolean;
   onStatusMessage: (message: string) => void;
-  onApplyChanges?: () => Promise<void>;
+  onApplyChanges?: () => Promise<ApplyEnvironmentChangesResult>;
   applyBlocked?: boolean;
   applyBlockedReason?: string | null;
+  runtimeKey?: string | null;
 };
 
 function maskValue(value: string): string {
@@ -71,7 +73,9 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const [saving, setSaving] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
-  const [pendingChanges, setPendingChanges] = useState(readOpenworkEnvPendingChanges);
+  const [pendingChanges, setPendingChanges] = useState(() =>
+    readOpenworkEnvPendingChanges(props.runtimeKey),
+  );
   const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -108,6 +112,10 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   }, [refresh]);
 
   useEffect(() => {
+    setPendingChanges(readOpenworkEnvPendingChanges(props.runtimeKey));
+  }, [props.runtimeKey]);
+
+  useEffect(() => {
     if (canEdit) return;
     setEditor(null);
     setEditorError(null);
@@ -140,7 +148,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const markChangesPending = () => {
     clearOpenworkEnvSystemContextCache();
     setPendingChanges(true);
-    writeOpenworkEnvPendingChanges(true);
+    writeOpenworkEnvPendingChanges(true, props.runtimeKey);
     setApplyError(null);
     onStatusMessage(t("settings.environment.restart_required"));
   };
@@ -206,12 +214,12 @@ export function EnvironmentView(props: EnvironmentViewProps) {
     setApplyBusy(true);
     setApplyError(null);
     try {
-      await props.onApplyChanges();
+      const result = await props.onApplyChanges();
       clearOpenworkEnvSystemContextCache();
       setPendingChanges(false);
       writeOpenworkEnvPendingChanges(false);
       setApplyConfirmOpen(false);
-      onStatusMessage(t("settings.environment.apply_success"));
+      onStatusMessage(result?.statusMessage ?? t("settings.environment.apply_success"));
     } catch (err) {
       const message = err instanceof Error ? err.message : t("app.unknown_error");
       setApplyError(message);

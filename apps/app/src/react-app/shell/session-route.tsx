@@ -18,6 +18,7 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
+import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
 import {
   engineInfo,
   revealDesktopItemInDir,
@@ -1159,8 +1160,14 @@ export function SessionRoute() {
         }
 
         const parts = await draftToParts(draft, selectedWorkspaceRoot);
+        const envRuntimeKey = buildOpenworkEnvRuntimeKey({
+          baseUrl: client?.baseUrl ?? null,
+          pid: openworkServerHostInfoState?.pid ?? null,
+          port: openworkServerHostInfoState?.port ?? null,
+        });
         const envSystemContext = await buildOpenworkEnvSystemContext(client, {
           cacheKey: selectedSessionId,
+          runtimeKey: envRuntimeKey,
         });
         const result = await opencodeClient.session.promptAsync({
           sessionID: selectedSessionId,

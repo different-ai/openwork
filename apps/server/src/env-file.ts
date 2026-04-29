@@ -12,10 +12,12 @@ import { ensureDir, exists } from "./utils.js";
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-// Keys that are reserved for internal wiring by the shell/orchestrator/server.
+// Keys reserved for internal wiring by the shell/orchestrator/server. This UI
+// is for service credentials, not OpenWork/OpenCode runtime knobs; users who
+// need OPENCODE_* process settings should set them from the launching shell.
 // We refuse writes to these and strip them when reading for injection, so a
-// user can never accidentally (or intentionally) shadow auth credentials,
-// token paths, or process identity.
+// tampered file cannot shadow auth credentials, token paths, or process
+// identity.
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
 
 export type EnvRecord = {
@@ -154,6 +156,8 @@ export type EnvEntry = { key: string; value: string };
 export class EnvService {
   private readonly path: string;
   private loaded = false;
+  private loadPromise: Promise<void> | null = null;
+  private mutationQueue: Promise<void> = Promise.resolve();
   private variables: EnvRecord[] = [];
 
   constructor(options?: { path?: string }) {
@@ -162,9 +166,26 @@ export class EnvService {
 
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
-    const store = await readStore(this.path);
-    this.variables = store.variables;
-    this.loaded = true;
+    if (!this.loadPromise) {
+      this.loadPromise = readStore(this.path)
+        .then((store) => {
+          this.variables = store.variables;
+          this.loaded = true;
+        })
+        .finally(() => {
+          this.loadPromise = null;
+        });
+    }
+    await this.loadPromise;
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.mutationQueue.catch(() => {}).then(operation);
+    this.mutationQueue = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
   }
 
   async list(): Promise<EnvRecord[]> {
@@ -173,29 +194,35 @@ export class EnvService {
   }
 
   async upsertMany(entries: EnvEntry[]): Promise<void> {
-    await this.ensureLoaded();
-    const now = Date.now();
-    const next = new Map(this.variables.map((entry) => [entry.key, entry] as const));
-    for (const entry of entries) {
-      if (!isValidEnvKey(entry.key)) {
-        throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
+    return this.enqueueMutation(async () => {
+      await this.ensureLoaded();
+      const now = Date.now();
+      const next = new Map(this.variables.map((entry) => [entry.key, entry] as const));
+      for (const entry of entries) {
+        if (!isValidEnvKey(entry.key)) {
+          throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
+        }
+        if (isReservedEnvKey(entry.key)) {
+          throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
+        }
+        next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
       }
-      if (isReservedEnvKey(entry.key)) {
-        throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
-      }
-      next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
-    }
-    this.variables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
-    await writeStore(this.path, this.variables);
+      const nextVariables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
+      await writeStore(this.path, nextVariables);
+      this.variables = nextVariables;
+    });
   }
 
   async delete(key: string): Promise<boolean> {
-    await this.ensureLoaded();
-    const before = this.variables.length;
-    this.variables = this.variables.filter((entry) => entry.key !== key);
-    if (this.variables.length === before) return false;
-    await writeStore(this.path, this.variables);
-    return true;
+    return this.enqueueMutation(async () => {
+      await this.ensureLoaded();
+      const before = this.variables.length;
+      const nextVariables = this.variables.filter((entry) => entry.key !== key);
+      if (nextVariables.length === before) return false;
+      await writeStore(this.path, nextVariables);
+      this.variables = nextVariables;
+      return true;
+    });
   }
 
   // Used by the Electron + orchestrator shells at spawn time. The Tauri Rust

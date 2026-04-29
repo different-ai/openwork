@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  buildOpenworkEnvRuntimeKey,
   readOpenworkEnvPendingChanges,
   writeOpenworkEnvPendingChanges,
 } from "../src/app/lib/openwork-env-runtime";
@@ -50,19 +51,40 @@ describe("openwork env runtime", () => {
   });
 
   test("persists pending changes across browser sessions", () => {
-    writeOpenworkEnvPendingChanges(true);
-    expect(readOpenworkEnvPendingChanges()).toBe(true);
+    const runtimeKey = "http://127.0.0.1:8787::pid:123";
+    writeOpenworkEnvPendingChanges(true, runtimeKey);
+    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(true);
 
     window.sessionStorage.clear();
-    expect(readOpenworkEnvPendingChanges()).toBe(true);
+    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(true);
 
     writeOpenworkEnvPendingChanges(false);
-    expect(readOpenworkEnvPendingChanges()).toBe(false);
+    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(false);
   });
 
   test("reads legacy sessionStorage pending state", () => {
     window.sessionStorage.setItem("openwork.settings.environment.pendingChanges", "1");
 
     expect(readOpenworkEnvPendingChanges()).toBe(true);
+  });
+
+  test("clears pending changes after the runtime changes", () => {
+    writeOpenworkEnvPendingChanges(true, "http://127.0.0.1:8787::pid:123");
+
+    expect(readOpenworkEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
+    expect(readOpenworkEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
+  });
+
+  test("builds a stable runtime key from server identity", () => {
+    expect(buildOpenworkEnvRuntimeKey({
+      baseUrl: "http://127.0.0.1:8787/",
+      pid: 123,
+      port: 8787,
+    })).toBe("http://127.0.0.1:8787::pid:123");
+    expect(buildOpenworkEnvRuntimeKey({
+      baseUrl: "http://127.0.0.1:8787",
+      port: 8787,
+    })).toBe("http://127.0.0.1:8787::port:8787");
+    expect(buildOpenworkEnvRuntimeKey({})).toBeUndefined();
   });
 });

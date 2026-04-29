@@ -150,7 +150,7 @@ const fetchOpenWorkDevServerId = async (baseUrl) => {
 const runPrepareSidecars = () => {
   const prepareScript = resolve(fileURLToPath(new URL("./prepare-sidecar.mjs", import.meta.url)));
   const args = [prepareScript];
-  if (process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1") {
+  if (process.env.OPENWORK_SIDECAR_FORCE_BUILD !== "0") {
     args.push("--force");
   }
   const result = spawnSync(process.execPath, args, {
