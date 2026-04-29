@@ -69,7 +69,7 @@ function isValidHttpEndpoint(baseUrl: string) {
 }
 
 function describeUnknownError(error: unknown) {
-  return error instanceof Error ? error.message : String(error || "Unknown error");
+  return redactRemoteDiagnosticText(error instanceof Error ? error.message : String(error || "Unknown error"));
 }
 
 function isServerErrorStatus(error: unknown, status: number | number[]) {
@@ -83,6 +83,28 @@ function isServerErrorStatus(error: unknown, status: number | number[]) {
 
 function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
   return `Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`;
+}
+
+export function redactRemoteDiagnosticText(value: string): string {
+  return value
+    .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/(authorization:\s*bearer\s+)[^\s,]+/gi, "$1[redacted]")
+    .replace(/(bearer\s+)[a-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .replace(/\bowt_[a-z0-9_-]+\b/gi, "owt_[redacted]");
+}
+
+export function getRemoteWorkspaceConnectionKey(workspace: WorkspaceInfo): string {
+  return [
+    workspace.id,
+    workspace.workspaceType,
+    workspace.remoteType ?? "",
+    trim(workspace.baseUrl),
+    trim(workspace.openworkHostUrl),
+    trim(workspace.openworkWorkspaceId),
+    trim(workspace.openworkToken),
+    trim(workspace.openworkClientToken),
+    trim(workspace.openworkHostToken),
+  ].join("\u001f");
 }
 
 function displayWorkspaceName(workspace: unknown) {
@@ -120,12 +142,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     };
   }
 
-  if (
-    workspace.remoteType &&
-    workspace.remoteType !== "openwork" &&
-    !trim(workspace.openworkHostUrl) &&
-    !trim(workspace.openworkWorkspaceId)
-  ) {
+  if (workspace.remoteType && workspace.remoteType !== "openwork") {
     return {
       ok: false,
       state: {

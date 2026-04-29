@@ -72,11 +72,14 @@ import {
   permissionKey as reactPermissionKey,
   seedPermissionState,
 } from "../domains/session/sync/session-sync";
+import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { useRemoteAccessRestart } from "../domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
+import { useRemoteWorkspaceConnectionEditor } from "../domains/workspace/use-remote-workspace-connection-editor";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
+  getRemoteWorkspaceConnectionKey,
   testRemoteWorkspaceConnection,
 } from "../domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "../domains/workspace/share-workspace-state";
@@ -363,6 +366,8 @@ export function SessionRoute() {
   const refreshInFlightRef = useRef(false);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
   const workspacesRef = useRef<RouteWorkspace[]>([]);
+  const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
+  const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const sessionsByWorkspaceIdRef = useRef<Record<string, any[]>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
@@ -752,6 +757,26 @@ export function SessionRoute() {
   useEffect(() => {
     sessionsByWorkspaceIdRef.current = sessionsByWorkspaceId;
   }, [sessionsByWorkspaceId]);
+
+  const handleRemoteWorkspaceConnectionSaved = useCallback(
+    async (workspaceId: string) => {
+      delete remoteWorkspaceCheckRunRef.current[workspaceId];
+      setWorkspaceConnectionOverrides((current) => {
+        const next = { ...current };
+        delete next[workspaceId];
+        return next;
+      });
+      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
+      setRetryingWorkspaceIds((current) => current.filter((id) => id !== workspaceId));
+      await refreshRouteState();
+    },
+    [refreshRouteState],
+  );
+
+  const remoteWorkspaceConnectionEditor = useRemoteWorkspaceConnectionEditor({
+    workspaces,
+    onSaved: handleRemoteWorkspaceConnectionSaved,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -1511,6 +1536,10 @@ export function SessionRoute() {
     async (workspaceId: string, mode: "test" | "recover") => {
       const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
       if (!workspace || workspace.workspaceType !== "remote") return false;
+      const connectionKey = getRemoteWorkspaceConnectionKey(workspace);
+      remoteWorkspaceCheckRunCounterRef.current += 1;
+      const runId = String(remoteWorkspaceCheckRunCounterRef.current);
+      remoteWorkspaceCheckRunRef.current[workspaceId] = runId;
 
       setWorkspaceConnectionOverrides((current) => ({
         ...current,
@@ -1522,6 +1551,17 @@ export function SessionRoute() {
       }));
 
       const result = await testRemoteWorkspaceConnection(workspace);
+      const currentWorkspace = workspacesRef.current.find((item) => item.id === workspaceId);
+      if (
+        remoteWorkspaceCheckRunRef.current[workspaceId] !== runId ||
+        !currentWorkspace ||
+        getRemoteWorkspaceConnectionKey(currentWorkspace) !== connectionKey
+      ) {
+        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+          delete remoteWorkspaceCheckRunRef.current[workspaceId];
+        }
+        return false;
+      }
       setWorkspaceConnectionOverrides((current) => ({
         ...current,
         [workspaceId]: result.state,
@@ -1532,6 +1572,9 @@ export function SessionRoute() {
           ...current,
           [workspaceId]: result.state.message ?? "Remote worker connection failed.",
         }));
+        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+          delete remoteWorkspaceCheckRunRef.current[workspaceId];
+        }
         return false;
       }
 
@@ -1539,6 +1582,9 @@ export function SessionRoute() {
       setRetryingWorkspaceIds((current) => current.filter((id) => id !== workspaceId));
       if (mode === "recover") {
         await refreshRouteState();
+      }
+      if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+        delete remoteWorkspaceCheckRunRef.current[workspaceId];
       }
       return true;
     },
@@ -1862,7 +1908,7 @@ export function SessionRoute() {
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),
         onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
         onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
-        onEditWorkspaceConnection: () => {},
+        onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
       }}
@@ -1957,6 +2003,17 @@ export function SessionRoute() {
       localError={createWorkspaceError}
       remoteSubmitting={createWorkspaceRemoteBusy}
       remoteError={createWorkspaceRemoteError}
+    />
+    <CreateRemoteWorkspaceModal
+      open={remoteWorkspaceConnectionEditor.workspace !== null}
+      onClose={remoteWorkspaceConnectionEditor.close}
+      onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
+      initialValues={remoteWorkspaceConnectionEditor.initialValues}
+      submitting={remoteWorkspaceConnectionEditor.busy}
+      error={remoteWorkspaceConnectionEditor.error}
+      title={t("dashboard.edit_remote_workspace_title")}
+      subtitle={t("dashboard.edit_remote_workspace_subtitle")}
+      confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
     />
     <RenameWorkspaceModal
       open={renameWorkspaceId !== null}

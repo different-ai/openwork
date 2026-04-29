@@ -4,6 +4,8 @@ import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
+  getRemoteWorkspaceConnectionKey,
+  redactRemoteDiagnosticText,
   resolveRemoteWorkspaceConnectionTarget,
   testRemoteWorkspaceConnection,
 } from "./remote-workspace-diagnostics";
@@ -140,6 +142,21 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     expect(target.ok).toBe(false);
     if (target.ok) return;
     expect(target.state.status).toBe("error");
+    expect(target.state.message).toContain("OpenWork remote workers");
+  });
+
+  test("does not run OpenWork probes against stale OpenWork fields on non-OpenWork remotes", () => {
+    const target = resolveRemoteWorkspaceConnectionTarget(
+      workspace({
+        remoteType: "opencode",
+        openworkHostUrl: "https://worker.example.com/w/ws_remote",
+        openworkToken: "owt_secret",
+        baseUrl: "https://opencode.example.com",
+      }),
+    );
+
+    expect(target.ok).toBe(false);
+    if (target.ok) return;
     expect(target.state.message).toContain("OpenWork remote workers");
   });
 });
@@ -303,6 +320,45 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Cannot reach worker.example.com");
+  });
+
+  test("redacts token-like values from diagnostic error messages", async () => {
+    const result = await testRemoteWorkspaceConnection(workspace(), {
+      createClient: () =>
+        client({
+          health: async () => {
+            throw new Error("Failed with Bearer owt_live_secret and ?token=abc123");
+          },
+        }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.state.message).toContain("Bearer [redacted]");
+    expect(result.state.message).toContain("?token=[redacted]");
+    expect(result.state.message).not.toContain("owt_live_secret");
+    expect(result.state.message).not.toContain("abc123");
+  });
+});
+
+describe("remote diagnostic identity", () => {
+  test("redacts common token shapes", () => {
+    const redacted = redactRemoteDiagnosticText(
+      "Authorization: Bearer abc.def and https://x.test/?access_token=secret&ok=1 and owt_live_secret",
+    );
+
+    expect(redacted).toContain("Authorization: Bearer [redacted]");
+    expect(redacted).toContain("?access_token=[redacted]&ok=1");
+    expect(redacted).toContain("owt_[redacted]");
+    expect(redacted).not.toContain("abc.def");
+    expect(redacted).not.toContain("secret");
+    expect(redacted).not.toContain("owt_live_secret");
+  });
+
+  test("changes when connection credentials change", () => {
+    const before = getRemoteWorkspaceConnectionKey(workspace({ openworkToken: "old-token" }));
+    const after = getRemoteWorkspaceConnectionKey(workspace({ openworkToken: "new-token" }));
+
+    expect(before).not.toBe(after);
   });
 });
 
