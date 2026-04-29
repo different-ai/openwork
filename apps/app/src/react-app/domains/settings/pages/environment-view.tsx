@@ -29,6 +29,8 @@ export type EnvironmentViewProps = {
   isRemoteWorkspace: boolean;
   onStatusMessage: (message: string) => void;
   onApplyChanges?: () => Promise<void>;
+  applyBlocked?: boolean;
+  applyBlockedReason?: string | null;
 };
 
 function maskValue(value: string): string {
@@ -74,6 +76,9 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const [applyBusy, setApplyBusy] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const refreshRequestId = useRef(0);
+  const applyBlockedReason = props.applyBlocked
+    ? props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks")
+    : null;
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestId.current;
@@ -103,19 +108,25 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!isRemoteWorkspace) return;
+    if (canEdit) return;
+    setEditor(null);
+    setEditorError(null);
+    setDeleteCandidate(null);
+    setDeletingKey(null);
     setApplyConfirmOpen(false);
     setApplyError(null);
-  }, [isRemoteWorkspace]);
+  }, [canEdit]);
 
   const existingKeys = useMemo(() => new Set(items.map((item) => item.key)), [items]);
 
   const openAdd = () => {
+    if (!canEdit) return;
     setEditorError(null);
     setEditor({ mode: "add", key: "", value: "" });
   };
 
   const openEdit = (item: EnvItem) => {
+    if (!canEdit) return;
     setEditorError(null);
     setEditor({ mode: "edit", key: item.key, value: item.value });
   };
@@ -186,6 +197,12 @@ export function EnvironmentView(props: EnvironmentViewProps) {
 
   const applyChanges = async () => {
     if (!props.onApplyChanges || applyBusy) return;
+    if (props.applyBlocked) {
+      const message = applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks");
+      setApplyError(message);
+      onStatusMessage(message);
+      return;
+    }
     setApplyBusy(true);
     setApplyError(null);
     try {
@@ -256,7 +273,11 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                       ? t("settings.environment.apply_pending_body")
                       : t("settings.environment.apply_pending_body_manual")}
                   </p>
-                  {applyError ? (
+                  {applyBlockedReason ? (
+                    <div className="mt-2 rounded-lg border border-amber-7/50 bg-amber-3/30 px-3 py-2 text-xs text-amber-11">
+                      {applyBlockedReason}
+                    </div>
+                  ) : applyError ? (
                     <div className="mt-2 rounded-lg border border-red-7 bg-red-3/40 px-3 py-2 text-xs text-red-11">
                       {applyError}
                     </div>
@@ -267,8 +288,17 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                 <Button
                   variant="primary"
                   className="h-8 shrink-0 px-3 py-0 text-xs"
-                  onClick={() => setApplyConfirmOpen(true)}
-                  disabled={applyBusy}
+                  onClick={() => {
+                    if (props.applyBlocked) {
+                      const message = applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks");
+                      setApplyError(message);
+                      onStatusMessage(message);
+                      return;
+                    }
+                    setApplyConfirmOpen(true);
+                  }}
+                  disabled={applyBusy || props.applyBlocked}
+                  title={applyBlockedReason ?? undefined}
                 >
                   <RefreshCw size={13} className={applyBusy ? "animate-spin" : ""} />
                   {applyBusy ? t("settings.environment.applying") : t("settings.environment.apply_button")}

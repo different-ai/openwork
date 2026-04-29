@@ -1632,6 +1632,7 @@ export default {
   "settings.environment.loading": "Loading…",
   "settings.environment.remote_workspace_hint": "This workspace is remote. Local environment variables are hidden here; use cloud LLM Providers or configure the worker host directly.",
   "settings.environment.apply_button": "Apply changes",
+  "settings.environment.apply_blocked_active_tasks": "Stop running tasks before applying environment changes.",
   "settings.environment.apply_confirm_body": "OpenWork will restart local agents so they can use the latest environment. Running local tasks may stop.",
   "settings.environment.apply_no_local_workspace": "OpenWork is not connected to a local workspace.",
   "settings.environment.apply_pending_body": "Apply changes to restart local agents and make the latest values available.",

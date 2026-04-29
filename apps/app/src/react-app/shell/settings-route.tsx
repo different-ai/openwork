@@ -912,6 +912,9 @@ export function SettingsRoute() {
     if (!isDesktopRuntime()) {
       throw new Error(t("settings.environment.apply_unavailable"));
     }
+    if (activeReloadBlockingSessions.length > 0) {
+      throw new Error(t("settings.environment.apply_blocked_active_tasks"));
+    }
     if (!selectedWorkspaceRoot) {
       throw new Error(t("settings.environment.apply_no_local_workspace"));
     }
@@ -928,7 +931,7 @@ export function SettingsRoute() {
     }
     await engineStart(selectedWorkspaceRoot, {
       preferSidecar: true,
-      runtime: "openwork-orchestrator",
+      runtime: "direct",
       workspacePaths,
       openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
     });
@@ -1272,6 +1275,12 @@ export function SettingsRoute() {
             isRemoteWorkspace={isRemoteWorkspace}
             onStatusMessage={setConfigActionStatus}
             onApplyChanges={isDesktopRuntime() && !isRemoteWorkspace ? handleApplyEnvironmentChanges : undefined}
+            applyBlocked={activeReloadBlockingSessions.length > 0}
+            applyBlockedReason={
+              activeReloadBlockingSessions.length > 0
+                ? t("settings.environment.apply_blocked_active_tasks")
+                : null
+            }
           />
         );
       case "debug":

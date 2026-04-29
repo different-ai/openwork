@@ -1361,6 +1361,7 @@ export default {
   "settings.environment.loading": "読み込み中…",
   "settings.environment.remote_workspace_hint": "このワークスペースはリモートです。ここではローカル環境変数を表示・編集しません。クラウドの LLM Providers を使うか、worker ホストを直接設定してください。",
   "settings.environment.apply_button": "変更を適用",
+  "settings.environment.apply_blocked_active_tasks": "環境変数の変更を適用する前に、実行中のタスクを停止してください。",
   "settings.environment.apply_confirm_body": "OpenWork はローカルエージェントを再起動し、最新の環境変数を使えるようにします。実行中のローカルタスクは停止する場合があります。",
   "settings.environment.apply_no_local_workspace": "OpenWork はローカルワークスペースに接続されていません。",
   "settings.environment.apply_pending_body": "変更を適用してローカルエージェントを再起動すると、最新の値が利用可能になります。",

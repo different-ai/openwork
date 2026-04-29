@@ -1365,6 +1365,7 @@ export default {
   "settings.environment.loading": "加载中……",
   "settings.environment.remote_workspace_hint": "当前工作区是远程工作区。这里不会显示或编辑本机环境变量；请使用云端 LLM Providers，或直接配置 worker 所在主机。",
   "settings.environment.apply_button": "应用更改",
+  "settings.environment.apply_blocked_active_tasks": "应用环境更改前，请先停止正在运行的任务。",
   "settings.environment.apply_confirm_body": "OpenWork 会重启本机 agents，让它们使用最新环境变量。正在运行的本机任务可能会停止。",
   "settings.environment.apply_no_local_workspace": "OpenWork 尚未连接到本机工作区。",
   "settings.environment.apply_pending_body": "应用更改会重启本机 agents，并让最新值可用。",
