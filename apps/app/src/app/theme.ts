@@ -1,19 +1,28 @@
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark" | "system" | "cyberpunk" | "matrix";
 
-const THEME_PREF_KEY = "openwork.themePref";
+export const THEME_PREF_KEY = "openwork.themePref";
+
+/** Historic key used by react settings route; synced with `{@link THEME_PREF_KEY}` on persist. */
+export const REACT_THEME_SETTINGS_KEY = "openwork.react.settings.theme-mode";
 
 const mediaQuery = "(prefers-color-scheme: dark)";
 
 const getMediaQueryList = () =>
   typeof window === "undefined" ? null : window.matchMedia(mediaQuery);
 
+function isStoredTheme(raw: string | null): raw is ThemeMode {
+  return (
+    raw === "light" || raw === "dark" || raw === "system" || raw === "matrix"
+  );
+}
+
 const readStoredMode = (): ThemeMode => {
   if (typeof window === "undefined") return "system";
   try {
-    const stored = window.localStorage.getItem(THEME_PREF_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") {
-      return stored;
-    }
+    const stored =
+      window.localStorage.getItem(THEME_PREF_KEY) ??
+      window.localStorage.getItem(REACT_THEME_SETTINGS_KEY);
+    if (isStoredTheme(stored)) return stored;
   } catch {
     // ignore
   }
@@ -29,7 +38,8 @@ const applyTheme = (mode: ThemeMode) => {
   if (typeof document === "undefined") return;
   const resolved = resolveMode(mode);
   document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
+  document.documentElement.style.colorScheme =
+    resolved === "light" ? "light" : "dark";
 };
 
 export const bootstrapTheme = () => {
@@ -43,6 +53,7 @@ export const persistThemeMode = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(THEME_PREF_KEY, mode);
+    window.localStorage.setItem(REACT_THEME_SETTINGS_KEY, mode);
   } catch {
     // ignore
   }

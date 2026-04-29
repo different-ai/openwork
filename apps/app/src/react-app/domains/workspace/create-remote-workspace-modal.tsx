@@ -31,11 +31,13 @@ export function CreateRemoteWorkspaceModal(
   const [displayName, setDisplayName] = useState("");
 
   const showClose = props.showClose ?? true;
-  const title = props.title ?? translate("dashboard.create_remote_workspace_title");
+  const title =
+    props.title ?? translate("dashboard.create_remote_workspace_title");
   const subtitle =
     props.subtitle ?? translate("dashboard.create_remote_workspace_subtitle");
   const confirmLabel =
-    props.confirmLabel ?? translate("dashboard.create_remote_workspace_confirm");
+    props.confirmLabel ??
+    translate("dashboard.create_remote_workspace_confirm");
   const isInline = props.inline ?? false;
   const submitting = props.submitting ?? false;
 
@@ -89,9 +91,7 @@ export function CreateRemoteWorkspaceModal(
           token={openworkToken}
           tokenVisible={openworkTokenVisible}
           onTokenInput={setOpenworkToken}
-          onToggleTokenVisible={() =>
-            setOpenworkTokenVisible((prev) => !prev)
-          }
+          onToggleTokenVisible={() => setOpenworkTokenVisible((prev) => !prev)}
           displayName={displayName}
           onDisplayNameInput={setDisplayName}
           directory={directory}

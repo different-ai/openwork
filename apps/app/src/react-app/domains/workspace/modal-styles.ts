@@ -9,7 +9,8 @@ export const modalHeaderClass =
 
 export const modalBodyClass = "flex-1 overflow-y-auto px-6 py-6";
 
-export const modalFooterClass = "space-y-3 border-t border-dls-border px-6 py-5";
+export const modalFooterClass =
+  "space-y-3 border-t border-dls-border px-6 py-5";
 
 export const modalHeaderButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-50";
@@ -17,7 +18,8 @@ export const modalHeaderButtonClass =
 export const modalTitleClass =
   "text-[20px] font-semibold tracking-[-0.3px] text-dls-text";
 
-export const modalSubtitleClass = "mt-1 text-[14px] leading-6 text-dls-secondary";
+export const modalSubtitleClass =
+  "mt-1 text-[14px] leading-6 text-dls-secondary";
 
 export const surfaceCardClass =
   "rounded-[20px] border border-dls-border bg-dls-surface p-5";
@@ -34,7 +36,8 @@ export const iconTileClass =
 export const sectionTitleClass =
   "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
 
-export const sectionBodyClass = "mt-1 text-[13px] leading-relaxed text-dls-secondary";
+export const sectionBodyClass =
+  "mt-1 text-[13px] leading-relaxed text-dls-secondary";
 
 export const inputLabelClass = "text-[13px] font-medium text-dls-text";
 

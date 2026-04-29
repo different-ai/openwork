@@ -93,7 +93,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                         className={`rounded-full px-3 py-1 font-medium transition-colors ${
                           active
                             ? "bg-gray-12/12 text-gray-12 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]"
-                            : "text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                            : "text-gray-10 hover:bg-dls-hover hover:text-gray-12"
                         } ${!props.onReleaseChannelChange ? "cursor-default opacity-70" : ""}`}
                         onClick={() => props.onReleaseChannelChange?.(value)}
                         disabled={!props.onReleaseChannelChange}
@@ -115,7 +115,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                 className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                   props.updateAutoCheck
                     ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-dls-hover hover:text-gray-12"
                 }`}
                 onClick={props.toggleUpdateAutoCheck}
               >
@@ -133,7 +133,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                 className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
                   props.updateAutoDownload
                     ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
+                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-dls-hover hover:text-gray-12"
                 }`}
                 onClick={props.toggleUpdateAutoDownload}
               >
@@ -187,7 +187,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    className="h-9 rounded-full border-gray-6/60 bg-gray-1/70 px-4 py-0 text-xs hover:bg-gray-2/70"
+                    className="h-9 rounded-full border-gray-6/60 bg-gray-1/70 px-4 py-0 text-xs hover:bg-dls-hover"
                     onClick={props.checkForUpdates}
                     disabled={props.busy || updateState === "checking" || updateState === "downloading"}
                   >

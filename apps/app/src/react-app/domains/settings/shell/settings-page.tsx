@@ -157,7 +157,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 {props.updateToolbarActionLabel ? (
                   <Button
                     variant="outline"
-                    className="h-8 rounded-full border-gray-6/60 bg-gray-1/70 px-3 py-0 text-xs hover:bg-gray-2/70"
+                    className="h-8 rounded-full border-gray-6/60 bg-gray-1/70 px-3 py-0 text-xs hover:bg-dls-hover"
                     onClick={props.onUpdateToolbarAction}
                     disabled={props.updateToolbarDisabled}
                     title={props.updateRestartBlockedMessage ?? ""}

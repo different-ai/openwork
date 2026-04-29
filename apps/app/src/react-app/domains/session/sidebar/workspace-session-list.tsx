@@ -1,6 +1,12 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+} from "lucide-react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -35,8 +41,12 @@ type Props = {
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
+  onRecoverWorkspace: (
+    workspaceId: string,
+  ) => Promise<boolean> | boolean | void;
+  onTestWorkspaceConnection: (
+    workspaceId: string,
+  ) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
@@ -130,7 +140,9 @@ const flattenSessionRows = (
     rows.push({ session, depth });
     const children = tree.childrenByParent.get(session.id) ?? [];
     if (!children.length) return;
-    const expanded = expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
+    const expanded =
+      expandedSessionIds.has(session.id) ||
+      forcedExpandedSessionIds.has(session.id);
     if (!expanded) return;
     children.forEach((child) => walk(child, depth + 1));
   };
@@ -169,7 +181,9 @@ export function WorkspaceSessionList(props: Props) {
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = useState<Record<string, number>>({});
+  const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = useState<
+    Record<string, number>
+  >({});
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(
@@ -282,9 +296,10 @@ export function WorkspaceSessionList(props: Props) {
       ? group.sessions.findIndex((session) => session.id === selectedId)
       : -1;
     const start = selectedIndex >= 0 ? Math.max(0, selectedIndex - 2) : 0;
-    const end = selectedIndex >= 0
-      ? Math.min(group.sessions.length, selectedIndex + 3)
-      : Math.min(group.sessions.length, 4);
+    const end =
+      selectedIndex >= 0
+        ? Math.min(group.sessions.length, selectedIndex + 3)
+        : Math.min(group.sessions.length, 4);
 
     group.sessions.slice(start, end).forEach((session) => {
       props.onPrefetchSession?.(workspaceId, session.id);
@@ -318,8 +333,11 @@ export function WorkspaceSessionList(props: Props) {
     const session = row.session;
     const isSelected = props.selectedSessionId === session.id;
     const displayTitle = getDisplaySessionTitle(session.title);
-    const hasChildren = (tree.descendantCountBySessionId.get(session.id) ?? 0) > 0;
-    const isExpanded = expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
+    const hasChildren =
+      (tree.descendantCountBySessionId.get(session.id) ?? 0) > 0;
+    const isExpanded =
+      expandedSessionIds.has(session.id) ||
+      forcedExpandedSessionIds.has(session.id);
     const isSessionActive = tree.activeIds.has(session.id);
     const canManageSession = Boolean(
       props.showSessionActions &&
@@ -344,7 +362,7 @@ export function WorkspaceSessionList(props: Props) {
           tabIndex={0}
           className={`group flex min-h-9 w-full items-center justify-between rounded-xl px-3 py-1.5 text-left text-[13px] transition-colors ${
             isSelected
-              ? "bg-gray-3 text-gray-12"
+              ? "bg-gray-3 text-gray-12 ow-sidebar-session-row-selected"
               : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-11"
           }`}
           style={{ marginLeft: `${Math.min(row.depth, 4) * 16}px` }}
@@ -363,23 +381,35 @@ export function WorkspaceSessionList(props: Props) {
               <button
                 type="button"
                 className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
-                aria-label={isExpanded ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
+                aria-label={
+                  isExpanded
+                    ? t("workspace_list.hide_child_sessions")
+                    : t("workspace_list.show_child_sessions")
+                }
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
                   toggleSessionExpanded(session.id);
                 }}
               >
-                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                {isExpanded ? (
+                  <ChevronDown size={13} />
+                ) : (
+                  <ChevronRight size={13} />
+                )}
               </button>
             ) : row.depth > 0 ? (
               <span className="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
             ) : null}
 
-            {isSessionActive ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" /> : null}
+            {isSessionActive ? (
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+            ) : null}
             <span
               className={`block min-w-0 truncate ${
-                isSelected ? "font-medium text-gray-12" : "font-normal text-current"
+                isSelected
+                  ? "font-medium text-gray-12"
+                  : "font-normal text-current"
               }`}
               title={displayTitle}
             >
@@ -447,36 +477,48 @@ export function WorkspaceSessionList(props: Props) {
       <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
         <div className="space-y-2 pb-3">
           {props.workspaceSessionGroups.map((group) => {
-            const tree = buildSessionTreeState(group.sessions, props.sessionStatusById);
+            const tree = buildSessionTreeState(
+              group.sessions,
+              props.sessionStatusById,
+            );
             const forcedExpandedSessionIds = new Set(
               props.selectedSessionId
-                ? tree.ancestorIdsBySessionId.get(props.selectedSessionId) ?? []
+                ? (tree.ancestorIdsBySessionId.get(props.selectedSessionId) ??
+                    [])
                 : [],
             );
             const workspace = group.workspace;
             const isConnecting = props.connectingWorkspaceId === workspace.id;
-            const connectionState = props.workspaceConnectionStateById[workspace.id] ?? {
+            const connectionState = props.workspaceConnectionStateById[
+              workspace.id
+            ] ?? {
               status: "idle" as const,
               message: null,
             };
             const isConnectionActionBusy =
               isConnecting || connectionState.status === "connecting";
             const canRecover =
-              workspace.workspaceType === "remote" && connectionState.status === "error";
+              workspace.workspaceType === "remote" &&
+              connectionState.status === "error";
             const isMenuOpen = workspaceMenuId === workspace.id;
-            const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
+            const taskLoadError = getWorkspaceTaskLoadErrorDisplay(
+              workspace,
+              group.error,
+            );
             const statusLabel = (() => {
               if (group.status === "error") return taskLoadError.label;
               if (isConnectionActionBusy) return t("workspace_list.connecting");
               if (!props.developerMode) return "";
-              if (props.selectedWorkspaceId === workspace.id) return t("workspace.selected");
+              if (props.selectedWorkspaceId === workspace.id)
+                return t("workspace.selected");
               return workspaceKindLabel(workspace);
             })();
-            const statusTone = group.status === "error"
-              ? taskLoadError.tone === "offline"
-                ? "text-amber-11"
-                : "text-red-11"
-              : "text-gray-9";
+            const statusTone =
+              group.status === "error"
+                ? taskLoadError.tone === "offline"
+                  ? "text-amber-11"
+                  : "text-red-11"
+                : "text-gray-9";
             const rootSessions = getRootSessions(group.sessions);
             const sessionRows = flattenSessionRows(
               group.sessions,
@@ -494,26 +536,36 @@ export function WorkspaceSessionList(props: Props) {
                     tabIndex={0}
                     className={`w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left text-[13px] transition-colors ${
                       props.selectedWorkspaceId === workspace.id
-                        ? "bg-gray-2/70 text-gray-12"
+                        ? "bg-gray-2/70 text-gray-12 ow-sidebar-workspace-selected"
                         : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-12"
                     } ${isConnecting ? "opacity-75" : ""}`}
                     onClick={() => {
                       expandWorkspace(workspace.id);
-                      void Promise.resolve(props.onSelectWorkspace(workspace.id));
+                      void Promise.resolve(
+                        props.onSelectWorkspace(workspace.id),
+                      );
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
-                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      if (
+                        event.nativeEvent.isComposing ||
+                        event.keyCode === 229
+                      )
+                        return;
                       event.preventDefault();
                       expandWorkspace(workspace.id);
-                      void Promise.resolve(props.onSelectWorkspace(workspace.id));
+                      void Promise.resolve(
+                        props.onSelectWorkspace(workspace.id),
+                      );
                     }}
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
                       <div
                         className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-full"
                         style={{
-                          backgroundColor: workspaceSwatchColor(workspace.id || workspaceLabel(workspace)),
+                          backgroundColor: workspaceSwatchColor(
+                            workspace.id || workspaceLabel(workspace),
+                          ),
                         }}
                       />
                       <div className="min-w-0 flex-1">
@@ -521,14 +573,19 @@ export function WorkspaceSessionList(props: Props) {
                           {workspaceLabel(workspace)}
                         </div>
                         {statusLabel ? (
-                          <div className={`mt-0.5 text-[11px] ${statusTone}`}>{statusLabel}</div>
+                          <div className={`mt-0.5 text-[11px] ${statusTone}`}>
+                            {statusLabel}
+                          </div>
                         ) : null}
                       </div>
                     </div>
 
                     <div className="ml-4 flex shrink-0 items-center gap-1.5">
                       {group.status === "loading" || isConnecting ? (
-                        <Loader2 size={14} className="animate-spin text-gray-9" />
+                        <Loader2
+                          size={14}
+                          className="animate-spin text-gray-9"
+                        />
                       ) : null}
 
                       <div
@@ -556,7 +613,9 @@ export function WorkspaceSessionList(props: Props) {
                           className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setWorkspaceMenuId((current) => (current === workspace.id ? null : workspace.id));
+                            setWorkspaceMenuId((current) =>
+                              current === workspace.id ? null : workspace.id,
+                            );
                           }}
                           aria-label={t("workspace_list.workspace_options")}
                         >
@@ -631,7 +690,9 @@ export function WorkspaceSessionList(props: Props) {
                               type="button"
                               className="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2"
                               onClick={() => {
-                                void Promise.resolve(props.onRecoverWorkspace(workspace.id));
+                                void Promise.resolve(
+                                  props.onRecoverWorkspace(workspace.id),
+                                );
                                 setWorkspaceMenuId(null);
                               }}
                               disabled={isConnectionActionBusy}
@@ -643,7 +704,9 @@ export function WorkspaceSessionList(props: Props) {
                             type="button"
                             className="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2"
                             onClick={() => {
-                              void Promise.resolve(props.onTestWorkspaceConnection(workspace.id));
+                              void Promise.resolve(
+                                props.onTestWorkspaceConnection(workspace.id),
+                              );
                               setWorkspaceMenuId(null);
                             }}
                             disabled={isConnectionActionBusy}
@@ -679,7 +742,7 @@ export function WorkspaceSessionList(props: Props) {
 
                 {expandedWorkspaceIds.has(workspace.id) ? (
                   <div className="mt-3 px-1 pb-1">
-                    <div className="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
+                    <div className="ow-sidebar-session-tree-rail relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:content-['']">
                       {props.showInitialLoading ? (
                         <div className="space-y-2">
                           {[0, 1, 2].map((idx) => (
@@ -689,27 +752,47 @@ export function WorkspaceSessionList(props: Props) {
                             >
                               <div
                                 className="h-2.5 rounded-full bg-dls-hover/80 animate-pulse"
-                                style={{ width: idx === 0 ? "62%" : idx === 1 ? "78%" : "54%" }}
+                                style={{
+                                  width:
+                                    idx === 0
+                                      ? "62%"
+                                      : idx === 1
+                                        ? "78%"
+                                        : "54%",
+                                }}
                               />
                             </div>
                           ))}
                         </div>
-                      ) : group.status === "loading" && group.sessions.length === 0 ? (
+                      ) : group.status === "loading" &&
+                        group.sessions.length === 0 ? (
                         <div className="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
                           {t("workspace.loading_tasks")}
                         </div>
                       ) : group.sessions.length > 0 ? (
                         <>
-                          {sessionRows.map((row) => renderSessionRow(workspace.id, row, tree, forcedExpandedSessionIds))}
+                          {sessionRows.map((row) =>
+                            renderSessionRow(
+                              workspace.id,
+                              row,
+                              tree,
+                              forcedExpandedSessionIds,
+                            ),
+                          )}
 
-                          {group.sessions.length === 0 && group.status === "ready" ? (
+                          {group.sessions.length === 0 &&
+                          group.status === "ready" ? (
                             <button
                               type="button"
                               className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                              onClick={() => props.onCreateTaskInWorkspace(workspace.id)}
+                              onClick={() =>
+                                props.onCreateTaskInWorkspace(workspace.id)
+                              }
                               disabled={props.newTaskDisabled}
                             >
-                              <span className="group-hover/empty:hidden">{t("workspace.no_tasks")}</span>
+                              <span className="group-hover/empty:hidden">
+                                {t("workspace.no_tasks")}
+                              </span>
                               <span className="hidden group-hover/empty:inline font-medium">
                                 {t("workspace.new_task_inline")}
                               </span>
@@ -720,7 +803,12 @@ export function WorkspaceSessionList(props: Props) {
                             <button
                               type="button"
                               className="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                              onClick={() => showMoreSessions(workspace.id, rootSessions.length)}
+                              onClick={() =>
+                                showMoreSessions(
+                                  workspace.id,
+                                  rootSessions.length,
+                                )
+                              }
                             >
                               {showMoreLabel(workspace.id, rootSessions.length)}
                             </button>
@@ -741,10 +829,14 @@ export function WorkspaceSessionList(props: Props) {
                         <button
                           type="button"
                           className="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                          onClick={() => props.onCreateTaskInWorkspace(workspace.id)}
+                          onClick={() =>
+                            props.onCreateTaskInWorkspace(workspace.id)
+                          }
                           disabled={props.newTaskDisabled}
                         >
-                          <span className="group-hover/empty:hidden">{t("workspace.no_tasks")}</span>
+                          <span className="group-hover/empty:hidden">
+                            {t("workspace.no_tasks")}
+                          </span>
                           <span className="hidden group-hover/empty:inline font-medium">
                             {t("workspace.new_task_inline")}
                           </span>
@@ -762,7 +854,7 @@ export function WorkspaceSessionList(props: Props) {
       <div className="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
         <button
           type="button"
-          className="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
+          className="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-dls-text shadow-[var(--dls-card-shadow)] transition-colors hover:bg-dls-softHover"
           onClick={props.onOpenCreateWorkspace}
         >
           <Plus size={14} />

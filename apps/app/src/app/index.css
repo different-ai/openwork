@@ -6,7 +6,7 @@
 :root {
   color-scheme: light;
   --dls-surface: #ffffff;
-  --dls-sidebar: #f9fafb;
+  --dls-sidebar: #3a3e43;
   --dls-app-bg: #ffffff;
   --dls-border: #f3f4f6;
   --dls-accent: #011627;
@@ -20,6 +20,10 @@
   --dls-radius-lg: 24px;
   --dls-shell-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
   --dls-card-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+  /* disabled send / low-emphasis controls: same as bg-gray-4 + text-gray-10 (see colors.css --gray-*) */
+  --dls-control-muted-bg: var(--gray-4);
+  --dls-control-muted-text: var(--gray-10);
+  --dls-soft-hover-bg: var(--gray-2);
 }
 
 [data-theme="dark"] {
@@ -37,6 +41,57 @@
   --dls-active: #2d2d2d;
   --dls-shell-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
   --dls-card-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+  --dls-soft-hover-bg: var(--gray-4);
+}
+
+[data-theme="matrix"] {
+  color-scheme: dark;
+  --dls-surface: #000000;
+  --dls-sidebar: #000000;
+  --dls-app-bg: #000000;
+  --dls-border: #252525;
+  --dls-accent: #00ff41;
+  --dls-accent-hover: #4dff72;
+  --dls-accent-rgb: 0 255 65;
+  --dls-text-primary: #00ff00;
+  --dls-text-secondary: #00ff00;
+  --dls-hover: #1a241a;
+  --dls-active: #003b00;
+  --dls-control-muted-bg: #2a2a2a;
+  --dls-control-muted-text: #737373;
+  --dls-soft-hover-bg: #262626;
+  --dls-shell-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.55), 0 0 36px rgba(0, 255, 65, 0.07),
+    inset 0 1px 0 rgba(0, 255, 65, 0.05);
+  --dls-card-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.42), 0 0 28px rgba(0, 143, 17, 0.12),
+    inset 0 1px 0 rgba(0, 255, 65, 0.04);
+  & body {
+    background-color: var(--dls-app-bg);
+  }
+  & .text-gray-11,
+  & .text-gray-10 {
+    color: #3cbf4d;
+  }
+  & .text-gray-12 {
+    color: var(--dls-text-primary);
+  }
+  & .ow-sidebar-workspace-selected {
+    background-color: #000000;
+    color: var(--dls-text-primary);
+  }
+  & .ow-sidebar-session-row-selected {
+    background-color: #08140c;
+    color: var(--dls-text-primary);
+    box-shadow: inset 0 0 0 1px rgba(0, 255, 65, 0.18);
+  }
+  & .ow-sidebar-session-tree-rail::before {
+    background-color: rgba(0, 255, 65, 0.32);
+  }
+}
+
+.ow-sidebar-session-tree-rail::before {
+  background-color: var(--gray-3);
 }
 
 html,
@@ -134,7 +189,11 @@ body {
   padding: 0.75rem 1.25rem;
   font-size: 13px;
   font-weight: 500;
-  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease, opacity 150ms ease;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease,
+    opacity 150ms ease;
 }
 
 .ow-button-primary:active:not(:disabled),
@@ -211,7 +270,9 @@ body {
 
 .ow-input:focus {
   outline: none;
-  box-shadow: inset 0 0 0 1px rgba(var(--dls-accent-rgb), 0.28), 0 0 0 3px rgba(var(--dls-accent-rgb), 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--dls-accent-rgb), 0.28),
+    0 0 0 3px rgba(var(--dls-accent-rgb), 0.08);
 }
 
 /* Global clickable elements pointer */
