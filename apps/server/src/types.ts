@@ -167,6 +167,7 @@ export interface McpItem {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  inherited?: boolean;
   disabledByTools?: boolean;
 }
 

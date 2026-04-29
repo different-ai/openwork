@@ -584,6 +584,7 @@ export function McpView(props: McpViewProps) {
               const status = resolveStatus(entry);
               const Icon = serviceIcon(entry.name);
               const isSelected = props.selectedMcp === entry.name;
+              const isInherited = entry.inherited === true;
               const resolvedStatus = props.mcpStatuses[entry.name];
               const toggleBusy = props.mcpConnectingName === entry.name;
               const errorInfo =
@@ -655,6 +656,11 @@ export function McpView(props: McpViewProps) {
                         {entry.config.type === "remote" ? (
                           <span className="rounded-md border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-dls-text">
                             {tr("mcp.cap_signin")}
+                          </span>
+                        ) : null}
+                        {isInherited ? (
+                          <span className="rounded-md border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-medium text-dls-secondary">
+                            {tr("mcp.inherited_app")}
                           </span>
                         ) : null}
                       </div>
@@ -763,18 +769,20 @@ export function McpView(props: McpViewProps) {
                             {tr("mcp.pause_app")}
                           </Button>
                         )}
-                        <Button
-                          variant="danger"
-                          className="!px-3 !py-1.5 !text-xs"
-                          disabled={!canManageMcp}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setRemoveTarget(entry.name);
-                            setRemoveOpen(true);
-                          }}
-                        >
-                          {tr("mcp.remove_app")}
-                        </Button>
+                        {!isInherited ? (
+                          <Button
+                            variant="danger"
+                            className="!px-3 !py-1.5 !text-xs"
+                            disabled={!canManageMcp}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setRemoveTarget(entry.name);
+                              setRemoveOpen(true);
+                            }}
+                          >
+                            {tr("mcp.remove_app")}
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}

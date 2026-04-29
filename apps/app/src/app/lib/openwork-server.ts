@@ -189,6 +189,7 @@ export type OpenworkMcpItem = {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
+  inherited?: boolean;
   disabledByTools?: boolean;
 };
 
@@ -1053,17 +1054,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
-    setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(
-        baseUrl,
-        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/enabled`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { enabled },
-        },
-      ),
 
     logoutMcpAuth: (workspaceId: string, name: string) =>
       requestJson<{ ok: true }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/auth`, {

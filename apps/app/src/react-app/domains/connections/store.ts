@@ -19,6 +19,7 @@ import {
 import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
+  parseEffectiveMcpServersFromContent,
   removeMcpFromConfig,
   setMcpEnabledInConfig,
   usesChromeDevtoolsAutoConnect,
@@ -73,6 +74,7 @@ export function createConnectionsStore(options: {
 
   let started = false;
   let disposed = false;
+  let activeMcpToggleKey = "";
   let lastWorkspaceContextKey = "";
   let lastProjectDir = "";
   let snapshot: ConnectionsStoreSnapshot;
@@ -138,10 +140,14 @@ export function createConnectionsStore(options: {
     ) as McpStatusMap;
   };
 
-  const applyServerMcpItems = (items: Array<{ name: string; config: Record<string, unknown> }>) => {
+  const applyServerMcpItems = (
+    items: Array<{ name: string; config: Record<string, unknown>; source?: McpServerEntry["source"]; inherited?: boolean }>,
+  ) => {
     const next = items.map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
+      source: entry.source,
+      inherited: entry.inherited,
     }));
     mutateState((current) => ({
       ...current,
@@ -366,7 +372,9 @@ export function createConnectionsStore(options: {
     try {
       setStateField("mcpStatus", null);
       const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content) {
+      const globalConfig = await readOpencodeConfig("global", projectDir);
+      const next = parseEffectiveMcpServersFromContent(config.content ?? "", globalConfig.content ?? "");
+      if ((!config.exists || !config.content) && !next.length) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -376,7 +384,6 @@ export function createConnectionsStore(options: {
         return;
       }
 
-      const next = parseMcpServersFromContent(config.content);
       let nextStatuses = state.mcpStatuses;
       const activeClient = options.client();
       if (activeClient) {
@@ -787,6 +794,8 @@ export function createConnectionsStore(options: {
 
   async function setMcpEnabled(name: string, enabled: boolean) {
     const safeName = validateMcpServerName(name);
+    const operationWorkspaceContextKey = getWorkspaceContextKey();
+    const operationToggleKey = `${operationWorkspaceContextKey}:${safeName}`;
     const openworkSnapshot = getOpenworkSnapshot();
     const serverConnected = openworkSnapshot.openworkServerStatus === "connected";
     const serverReadOnly =
@@ -800,6 +809,7 @@ export function createConnectionsStore(options: {
     try {
       setStateField("mcpStatus", null);
       setStateField("mcpConnectingName", safeName);
+      activeMcpToggleKey = operationToggleKey;
 
       const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
         await resolveWritableOpenworkTarget();
@@ -810,15 +820,21 @@ export function createConnectionsStore(options: {
       }
 
       if (isRemoteWorkspace && !canUseOpenworkServer) {
-        setStateField("mcpStatus", "OpenWork server unavailable. MCP config is read-only.");
+        setStateField("mcpStatus", translate("mcp.server_unavailable_read_only"));
         return;
       }
 
-      let serverItems: Array<{ name: string; config: Record<string, unknown> }> | null = null;
+      let serverItems: Array<{
+        name: string;
+        config: Record<string, unknown>;
+        source?: McpServerEntry["source"];
+        inherited?: boolean;
+      }> | null = null;
       let changed = true;
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
         const response = await openworkClient.setMcpEnabled(openworkWorkspaceId, safeName, enabled);
+        if (operationWorkspaceContextKey !== getWorkspaceContextKey()) return;
         serverItems = response.items;
         changed = response.changed;
       } else {
@@ -832,6 +848,7 @@ export function createConnectionsStore(options: {
           return;
         }
         const response = await setMcpEnabledInConfig(projectDir, safeName, enabled);
+        if (operationWorkspaceContextKey !== getWorkspaceContextKey()) return;
         changed = response.changed;
       }
 
@@ -858,6 +875,7 @@ export function createConnectionsStore(options: {
             await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
           }
           const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
+          if (operationWorkspaceContextKey !== getWorkspaceContextKey()) return;
           setStateField("mcpStatuses", status as McpStatusMap);
         } catch {
           // Persisted config is the source of truth; runtime changes are best-effort.
@@ -880,7 +898,10 @@ export function createConnectionsStore(options: {
         error instanceof Error ? error.message : translate("mcp.toggle_failed"),
       );
     } finally {
-      setStateField("mcpConnectingName", null);
+      if (activeMcpToggleKey === operationToggleKey) {
+        activeMcpToggleKey = "";
+        setStateField("mcpConnectingName", null);
+      }
     }
   }
 
@@ -911,6 +932,8 @@ export function createConnectionsStore(options: {
       return;
     }
 
+    activeMcpToggleKey = "";
+    setStateField("mcpConnectingName", null);
     void refreshMcpServers();
   };
 

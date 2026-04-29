@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { parse } from "jsonc-parser";
 
-import { parseMcpServersFromContent, updateMcpEnabledInConfigContent } from "./mcp";
+import {
+  parseEffectiveMcpServersFromContent,
+  parseMcpServersFromContent,
+  updateMcpEnabledInConfigContent,
+} from "./mcp";
 
 describe("mcp config helpers", () => {
   test("updates enabled without changing the MCP config shape", () => {
@@ -51,6 +55,7 @@ describe("mcp config helpers", () => {
     expect(entries).toEqual([
       {
         name: "stripe",
+        source: "config.project",
         config: {
           type: "remote",
           url: "https://example.com/mcp",
@@ -143,5 +148,42 @@ describe("mcp config helpers", () => {
     });
 
     expect(updated).toBe(source);
+  });
+
+  test("lists inherited global MCPs with workspace pause overrides", () => {
+    const entries = parseEffectiveMcpServersFromContent(
+      JSON.stringify({
+        mcp: {
+          linear: { enabled: false },
+          stripe: { type: "remote", url: "https://example.com/stripe" },
+        },
+      }),
+      JSON.stringify({
+        mcp: {
+          linear: { type: "remote", url: "https://example.com/linear" },
+          github: { type: "remote", url: "https://example.com/github" },
+        },
+      }),
+    );
+
+    expect(entries).toEqual([
+      {
+        name: "linear",
+        config: { type: "remote", url: "https://example.com/linear", enabled: false },
+        source: "config.project",
+        inherited: true,
+      },
+      {
+        name: "github",
+        config: { type: "remote", url: "https://example.com/github" },
+        source: "config.global",
+        inherited: true,
+      },
+      {
+        name: "stripe",
+        config: { type: "remote", url: "https://example.com/stripe" },
+        source: "config.project",
+      },
+    ]);
   });
 });

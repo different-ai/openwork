@@ -330,6 +330,7 @@ export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
   source?: McpServerSource;
+  inherited?: boolean;
 };
 
 export type McpStatus =

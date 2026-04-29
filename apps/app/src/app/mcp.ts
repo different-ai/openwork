@@ -72,6 +72,9 @@ export async function removeMcpFromConfig(
   projectDir: string,
   name: string,
 ): Promise<void> {
+  const globalConfigFile = await readOpencodeConfig("global", projectDir);
+  const inheritedMcpServers = parseMcpServersFromContent(globalConfigFile.content ?? "");
+  const inheritedEntry = inheritedMcpServers.find((entry) => entry.name === name);
   const configFile = await readOpencodeConfig("project", projectDir);
   let existingConfig: Record<string, unknown> = {};
   if (configFile.exists && configFile.content?.trim()) {
@@ -83,7 +86,16 @@ export async function removeMcpFromConfig(
   }
 
   const mcpSection = existingConfig["mcp"] as Record<string, unknown> | undefined;
-  if (!mcpSection || !(name in mcpSection)) return;
+  const projectEntry = mcpSection?.[name];
+  if (isDisabledMcpOverride(projectEntry) && inheritedEntry) {
+    throw new Error("This MCP app is inherited from the global config.");
+  }
+  if (!mcpSection || !(name in mcpSection)) {
+    if (inheritedEntry) {
+      throw new Error("This MCP app is inherited from the global config.");
+    }
+    return;
+  }
 
   delete mcpSection[name];
   const writeResult = await writeOpencodeConfig(
@@ -214,4 +226,57 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   } catch {
     return [];
   }
+}
+
+function parseMcpMap(content: string): Record<string, unknown> {
+  if (!content.trim()) return {};
+  try {
+    const parsed = parse(content) as Record<string, unknown> | undefined;
+    const mcp = parsed?.mcp;
+    return mcp && typeof mcp === "object" && !Array.isArray(mcp) ? (mcp as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function parseEffectiveMcpServersFromContent(
+  projectContent: string,
+  globalContent = "",
+): McpServerEntry[] {
+  const projectMcp = parseMcpMap(projectContent);
+  const globalMcp = parseMcpMap(globalContent);
+  const entries: McpServerEntry[] = [];
+
+  for (const [name, value] of Object.entries(globalMcp)) {
+    const projectValue = projectMcp[name];
+    if (Object.prototype.hasOwnProperty.call(projectMcp, name)) {
+      if (isDisabledMcpOverride(projectValue) && isConfiguredMcpEntry(value)) {
+        entries.push({
+          name,
+          config: { ...(value as McpServerConfig), enabled: false },
+          source: "config.project",
+          inherited: true,
+        });
+      }
+      continue;
+    }
+    if (!isConfiguredMcpEntry(value)) continue;
+    entries.push({
+      name,
+      config: value as McpServerConfig,
+      source: "config.global",
+      inherited: true,
+    });
+  }
+
+  for (const [name, value] of Object.entries(projectMcp)) {
+    if (isDisabledMcpOverride(value) || !isConfiguredMcpEntry(value)) continue;
+    entries.push({
+      name,
+      config: value as McpServerConfig,
+      source: "config.project",
+    });
+  }
+
+  return entries;
 }

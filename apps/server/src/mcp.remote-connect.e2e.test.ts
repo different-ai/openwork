@@ -116,11 +116,17 @@ describe("mcp remote connect flow", () => {
       const listedBeforePause = await listMcp(workspaceRoot);
       expect(listedBeforePause.find((entry) => entry.name === "inherited")).toMatchObject({
         source: "config.global",
+        inherited: true,
         config: {
           type: "remote",
           url: "https://example.com/global-mcp",
           enabled: true,
         },
+      });
+
+      await expect(removeMcp(workspaceRoot, "inherited")).rejects.toMatchObject({
+        status: 409,
+        code: "inherited_mcp_not_removable",
       });
 
       const paused = await setMcpEnabled(workspaceRoot, "inherited", false);
@@ -134,11 +140,17 @@ describe("mcp remote connect flow", () => {
       const listedAfterPause = await listMcp(workspaceRoot);
       expect(listedAfterPause.find((entry) => entry.name === "inherited")).toMatchObject({
         source: "config.project",
+        inherited: true,
         config: {
           type: "remote",
           url: "https://example.com/global-mcp",
           enabled: false,
         },
+      });
+
+      await expect(removeMcp(workspaceRoot, "inherited")).rejects.toMatchObject({
+        status: 409,
+        code: "inherited_mcp_not_removable",
       });
 
       const resumed = await setMcpEnabled(workspaceRoot, "inherited", true);
@@ -147,6 +159,7 @@ describe("mcp remote connect flow", () => {
       const listedAfterResume = await listMcp(workspaceRoot);
       expect(listedAfterResume.find((entry) => entry.name === "inherited")).toMatchObject({
         source: "config.global",
+        inherited: true,
         config: {
           type: "remote",
           url: "https://example.com/global-mcp",

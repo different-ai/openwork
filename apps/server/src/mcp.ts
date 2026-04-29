@@ -65,6 +65,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
 
   // Global MCPs first; project-level entries override global ones with the same name.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
+    if (!isConfiguredMcp(entry)) continue;
     const projectEntry = projectMcpMap[name];
     if (hasOwn(projectMcpMap, name)) {
       if (isDisabledOverride(projectEntry) && isConfiguredMcp(entry)) {
@@ -72,6 +73,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
           name,
           config: { ...entry, enabled: false },
           source: "config.project",
+          inherited: true,
           disabledByTools:
             (isMcpDisabledByTools(globalConfig, name) || isMcpDisabledByTools(config, name)) || undefined,
         });
@@ -82,6 +84,7 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
       name,
       config: entry,
       source: "config.global",
+      inherited: true,
       disabledByTools:
         (isMcpDisabledByTools(globalConfig, name) || isMcpDisabledByTools(config, name)) || undefined,
     });
@@ -116,12 +119,40 @@ export async function addMcp(
   return { action: existed ? "updated" : "added" };
 }
 
-export async function removeMcp(workspaceRoot: string, name: string): Promise<boolean> {
+export async function removeMcp(
+  workspaceRoot: string,
+  name: string,
+  options: { dryRun?: boolean } = {},
+): Promise<boolean> {
+  validateMcpName(name);
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const { data: globalConfig } = await readJsoncFile(globalOpenCodeConfigPath(), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
-  if (!hasOwn(mcpMap, name)) return false;
-  delete mcpMap[name];
-  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  const globalMcpMap = getMcpConfig(globalConfig);
+  const projectEntry = mcpMap[name];
+  const globalEntry = globalMcpMap[name];
+
+  if (isDisabledOverride(projectEntry) && isConfiguredMcp(globalEntry)) {
+    throw new ApiError(
+      409,
+      "inherited_mcp_not_removable",
+      "This MCP app is inherited from the global config. Resume it here or remove it from the global config.",
+    );
+  }
+  if (!hasOwn(mcpMap, name)) {
+    if (isConfiguredMcp(globalEntry)) {
+      throw new ApiError(
+        409,
+        "inherited_mcp_not_removable",
+        "This MCP app is inherited from the global config. Remove it from the global config.",
+      );
+    }
+    return false;
+  }
+  if (!options.dryRun) {
+    delete mcpMap[name];
+    await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  }
   return true;
 }
 

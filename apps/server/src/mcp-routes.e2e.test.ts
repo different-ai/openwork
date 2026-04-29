@@ -15,6 +15,7 @@ type Served = {
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
 const priorDataDir = process.env.OPENWORK_DATA_DIR;
+const priorHome = process.env.HOME;
 
 afterEach(async () => {
   while (stops.length) {
@@ -27,6 +28,11 @@ afterEach(async () => {
     delete process.env.OPENWORK_DATA_DIR;
   } else {
     process.env.OPENWORK_DATA_DIR = priorDataDir;
+  }
+  if (priorHome === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = priorHome;
   }
 });
 
@@ -56,6 +62,31 @@ async function createWorkspaceRoot() {
     "utf8",
   );
   return root;
+}
+
+async function createGlobalConfigRoot() {
+  const homeRoot = await mkdtemp(join(tmpdir(), "openwork-mcp-routes-home-"));
+  roots.push(homeRoot);
+  process.env.HOME = homeRoot;
+  await mkdir(join(homeRoot, ".config", "opencode"), { recursive: true });
+  await writeFile(
+    join(homeRoot, ".config", "opencode", "opencode.jsonc"),
+    `${JSON.stringify(
+      {
+        mcp: {
+          inherited: {
+            type: "remote",
+            url: "https://example.com/global-mcp",
+            enabled: true,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return homeRoot;
 }
 
 function auth(token: string) {
@@ -258,6 +289,51 @@ describe("mcp routes", () => {
 
     const audits = await readAuditEntries(workspaceRoot, "ws_1");
     expect(audits).toHaveLength(0);
+  });
+
+  test("DELETE rejects inherited global MCP apps without audit or reload", async () => {
+    await createGlobalConfigRoot();
+    const workspaceRoot = await createWorkspaceRoot();
+    const { base, token } = startOpenworkServer({ workspaceRoot });
+
+    const pause = await fetch(`${base}/workspace/ws_1/mcp/inherited`, {
+      method: "PATCH",
+      headers: auth(token),
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(pause.status).toBe(200);
+
+    const auditsBeforeDelete = await readAuditEntries(workspaceRoot, "ws_1");
+    const eventsBeforeDelete = await fetch(`${base}/workspace/ws_1/events?since=0`, { headers: auth(token) });
+    expect(eventsBeforeDelete.status).toBe(200);
+    await eventsBeforeDelete.json();
+
+    const response = await fetch(`${base}/workspace/ws_1/mcp/inherited`, {
+      method: "DELETE",
+      headers: auth(token),
+    });
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { code: string };
+    expect(body.code).toBe("inherited_mcp_not_removable");
+
+    const auditsAfterDelete = await readAuditEntries(workspaceRoot, "ws_1");
+    expect(auditsAfterDelete).toHaveLength(auditsBeforeDelete.length);
+
+    const eventsAfterDelete = await fetch(`${base}/workspace/ws_1/events?since=0`, { headers: auth(token) });
+    expect(eventsAfterDelete.status).toBe(200);
+    const eventsAfterDeleteBody = (await eventsAfterDelete.json()) as {
+      items: Array<{ trigger?: { type?: string; name?: string; action?: string } }>;
+    };
+    expect(eventsAfterDeleteBody.items).not.toContainEqual(
+      expect.objectContaining({
+        trigger: { type: "mcp", name: "inherited", action: "removed" },
+      }),
+    );
+
+    const configText = await readFile(join(workspaceRoot, "opencode.jsonc"), "utf8");
+    expect(configText).toContain("\"inherited\"");
+    expect(configText).toContain("\"enabled\": false");
+    expect(configText).not.toContain("global-mcp");
   });
 
   test("PATCH requires authenticated collaborator access", async () => {

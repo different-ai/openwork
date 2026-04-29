@@ -2642,6 +2642,11 @@ function createRoutes(
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
+    const plannedRemoved = await removeMcp(workspace.path, name, { dryRun: true });
+    if (!plannedRemoved) {
+      const items = await listMcp(workspace.path);
+      return jsonResponse({ items, removed: false });
+    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "mcp.remove",
@@ -2649,16 +2654,16 @@ function createRoutes(
       paths: [opencodeConfigPath(workspace.path)],
     });
     const removed = await removeMcp(workspace.path, name);
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "mcp.remove",
-      target: "opencode.json",
-      summary: `Removed MCP ${name}`,
-      timestamp: Date.now(),
-    });
     if (removed) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "mcp.remove",
+        target: "opencode.json",
+        summary: `Removed MCP ${name}`,
+        timestamp: Date.now(),
+      });
       emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
         type: "mcp",
         name,
@@ -2666,7 +2671,7 @@ function createRoutes(
       });
     }
     const items = await listMcp(workspace.path);
-    return jsonResponse({ items });
+    return jsonResponse({ items, removed });
   });
 
   // Toggle `enabled` on a workspace MCP. Strict body validation — `Boolean(body.enabled)`
