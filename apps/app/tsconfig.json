@@ -28,6 +28,5 @@
     "src/app/theme.ts",
     "src/app/mcp.ts",
     "vite.config.ts"
-  ],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  ]
 }

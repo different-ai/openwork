@@ -755,6 +755,22 @@ export function SessionRoute() {
   }, [workspaces]);
 
   useEffect(() => {
+    const activeWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+    setWorkspaceConnectionOverrides((current) => {
+      let changed = false;
+      const next: Record<string, WorkspaceConnectionState> = {};
+      for (const [workspaceId, state] of Object.entries(current)) {
+        if (activeWorkspaceIds.has(workspaceId)) {
+          next[workspaceId] = state;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [workspaces]);
+
+  useEffect(() => {
     sessionsByWorkspaceIdRef.current = sessionsByWorkspaceId;
   }, [sessionsByWorkspaceId]);
 
@@ -1545,7 +1561,7 @@ export function SessionRoute() {
         ...current,
         [workspaceId]: {
           status: "connecting",
-          message: mode === "recover" ? "Checking connection..." : "Testing connection...",
+          message: t("config.testing_connection"),
           checkedAt: null,
         },
       }));

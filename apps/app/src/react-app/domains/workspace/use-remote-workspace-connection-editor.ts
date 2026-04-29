@@ -73,7 +73,10 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
     async (fields: RemoteWorkspaceInput) => {
       const id = workspaceId?.trim() ?? "";
       const baseUrl = fields.openworkHostUrl?.trim() ?? "";
-      if (!id || !baseUrl) return;
+      if (!id || !baseUrl) {
+        setError(t("dashboard.remote_base_url_required"));
+        return;
+      }
 
       setBusy(true);
       setError(null);

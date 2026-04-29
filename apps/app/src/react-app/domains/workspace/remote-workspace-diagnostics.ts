@@ -7,6 +7,7 @@ import {
   parseOpenworkWorkspaceIdFromUrl,
   type OpenworkServerClient,
 } from "../../../app/lib/openwork-server";
+import { redactTokenLikeText } from "../../../app/utils";
 
 export type RemoteWorkspaceConnectionTarget = {
   kind: "openwork";
@@ -86,11 +87,7 @@ function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
 }
 
 export function redactRemoteDiagnosticText(value: string): string {
-  return value
-    .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
-    .replace(/(authorization:\s*bearer\s+)[^\s,]+/gi, "$1[redacted]")
-    .replace(/(bearer\s+)[a-z0-9._~+/=-]+/gi, "$1[redacted]")
-    .replace(/\bowt_[a-z0-9_-]+\b/gi, "owt_[redacted]");
+  return redactTokenLikeText(value);
 }
 
 export function getRemoteWorkspaceConnectionKey(workspace: WorkspaceInfo): string {
@@ -321,7 +318,7 @@ export async function diagnoseRemoteWorkspaceTaskLoadFailure(
   options: TestOptions = {},
 ): Promise<WorkspaceConnectionState> {
   const checkedAt = options.now?.() ?? Date.now();
-  const fallback = trim(taskLoadError) || "Remote worker connection failed.";
+  const fallback = redactRemoteDiagnosticText(trim(taskLoadError) || "Remote worker connection failed.");
 
   try {
     const diagnostic = await testRemoteWorkspaceConnection(workspace, options);

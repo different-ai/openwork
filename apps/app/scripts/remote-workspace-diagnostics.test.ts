@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
-import type { WorkspaceInfo } from "../../../app/lib/desktop";
+import type { OpenworkServerClient } from "../src/app/lib/openwork-server";
+import type { WorkspaceInfo } from "../src/app/lib/desktop";
+import { getWorkspaceTaskLoadErrorDisplay } from "../src/app/utils";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
   redactRemoteDiagnosticText,
   resolveRemoteWorkspaceConnectionTarget,
   testRemoteWorkspaceConnection,
-} from "./remote-workspace-diagnostics";
+} from "../src/react-app/domains/workspace/remote-workspace-diagnostics";
 
 function workspace(overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
   return {
@@ -396,5 +397,34 @@ describe("diagnoseRemoteWorkspaceTaskLoadFailure", () => {
 
     expect(state.status).toBe("error");
     expect(state.message).toContain("Cannot reach worker.example.com");
+  });
+
+  test("redacts token-like values from task load fallbacks", async () => {
+    const state = await diagnoseRemoteWorkspaceTaskLoadFailure(
+      workspace(),
+      "Session failed with bearer owt_live_secret and ?token=abc123",
+      {
+        createClient: () => client(),
+      },
+    );
+
+    expect(state.message).toContain("bearer [redacted]");
+    expect(state.message).toContain("?token=[redacted]");
+    expect(state.message).not.toContain("owt_live_secret");
+    expect(state.message).not.toContain("abc123");
+  });
+});
+
+describe("getWorkspaceTaskLoadErrorDisplay", () => {
+  test("redacts remote worker task load errors before rendering", () => {
+    const display = getWorkspaceTaskLoadErrorDisplay(
+      workspace(),
+      "failed with Authorization: Bearer owt_live_secret and ?token=abc123",
+    );
+
+    expect(display.message).toContain("Authorization: Bearer [redacted]");
+    expect(display.message).toContain("?token=[redacted]");
+    expect(display.message).not.toContain("owt_live_secret");
+    expect(display.message).not.toContain("abc123");
   });
 });

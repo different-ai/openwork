@@ -337,8 +337,16 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
   );
 }
 
+export function redactTokenLikeText(value: string): string {
+  return value
+    .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\b(authorization:\s*bearer\s+)[^\s,]+/gi, "$1[redacted]")
+    .replace(/\b(bearer\s+)[a-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .replace(/\bowt_[a-z0-9_-]+\b/gi, "owt_[redacted]");
+}
+
 export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error?: string | null) {
-  const raw = error?.trim() ?? "";
+  const raw = redactTokenLikeText(error?.trim() ?? "");
   const fallbackTitle = raw || "Failed to load tasks";
   if (!raw || !isSandboxWorkspace(workspace)) {
     return {
