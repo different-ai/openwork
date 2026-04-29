@@ -50,6 +50,22 @@ function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
 }
 
+function getErrorStatus(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const record = error as {
+    status?: unknown;
+    response?: { status?: unknown };
+    cause?: { status?: unknown };
+  };
+  const status = record.status ?? record.response?.status ?? record.cause?.status;
+  return typeof status === "number" ? status : null;
+}
+
+function shouldRetrySyncSubscribe(error: unknown) {
+  const status = getErrorStatus(error);
+  return status !== 401 && status !== 403 && status !== 404;
+}
+
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
 }
@@ -439,8 +455,8 @@ function startSync(input: SyncOptions) {
         applyEvent(entry, input.workspaceId, event);
       }
       if (!controller.signal.aborted) scheduleRetry();
-    } catch {
-      if (!controller.signal.aborted) scheduleRetry();
+    } catch (error) {
+      if (!controller.signal.aborted && shouldRetrySyncSubscribe(error)) scheduleRetry();
     }
   };
 

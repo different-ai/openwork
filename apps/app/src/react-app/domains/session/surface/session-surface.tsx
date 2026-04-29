@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
-import type { SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
@@ -30,19 +30,17 @@ import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
-import { deriveRenderedSessionMessages } from "./session-render-state";
+import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { SessionTranscript } from "./message-list";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
-  todoKey as reactTodoKey,
   transcriptKey as reactTranscriptKey,
 } from "../sync/session-sync";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
-const EMPTY_TODOS: Todo[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
 
 export type SessionSurfaceProps = {
@@ -177,11 +175,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
-  const todoQueryKey = useMemo(
-    () => reactTodoKey(props.workspaceId, props.sessionId),
-    [props.workspaceId, props.sessionId],
-  );
-
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
@@ -191,7 +184,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
   const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
-  useSharedQueryState(todoQueryKey, currentSnapshot?.todos ?? EMPTY_TODOS);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -288,7 +280,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     seedSessionState(props.workspaceId, currentSnapshot);
   }, [props.sessionId, currentSnapshot, props.workspaceId]);
 
-  const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
+  const snapshot = resolveRenderedSessionSnapshot({
+    sessionId: props.sessionId,
+    currentSnapshot,
+    cachedRendered: rendered,
+  });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   const renderedMessages = useMemo(
@@ -336,7 +332,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
-    renderedSessionId: renderedMessages.length > 0 || snapshotQuery.data ? props.sessionId : rendered?.sessionId ?? null,
+    renderedSessionId: renderedMessages.length > 0 || snapshot ? props.sessionId : null,
     hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
