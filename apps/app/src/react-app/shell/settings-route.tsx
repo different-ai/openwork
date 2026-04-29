@@ -1052,7 +1052,10 @@ export function SettingsRoute() {
             accessHint={isRemoteWorkspace ? t("app.skills_hint_readonly") : null}
             extensions={extensionsStore}
             onOpenLink={(url) => platform.openLink(url)}
-            createSessionAndOpen={async () => undefined}
+            createSessionAndOpen={async (_command?: string): Promise<string | undefined> => {
+              navigate("/session");
+              return undefined;
+            }}
           />
         );
       case "extensions":
