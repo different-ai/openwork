@@ -3,7 +3,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime } from "../../../../app
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
-import type { SettingsUpdateStatus } from "../state/electron-updater-state";
+import type { SettingsUpdateEnv, SettingsUpdateStatus } from "../state/electron-updater-state";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
 
@@ -11,7 +11,7 @@ export type UpdatesViewProps = {
   busy: boolean;
   webDeployment: boolean;
   appVersion: string | null;
-  updateEnv: { supported?: boolean; reason?: string | null } | null;
+  updateEnv: SettingsUpdateEnv;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
@@ -66,6 +66,10 @@ export function UpdatesView(props: UpdatesViewProps) {
         {props.webDeployment ? (
           <div className="rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-sm text-gray-11">
             {t("settings.updates_desktop_only")}
+          </div>
+        ) : props.updateEnv === null ? (
+          <div className="rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-sm text-gray-11">
+            {t("settings.updates_checking_support")}
           </div>
         ) : props.updateEnv && props.updateEnv.supported === false ? (
           <div className="rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-sm text-gray-11">

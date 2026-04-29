@@ -23,11 +23,13 @@ declare global {
           channel: "stable" | "alpha";
           feedUrl: string;
           currentVersion: string;
+          updateChecksSupported?: boolean;
         }>;
         setChannel?: (channel: "stable" | "alpha") => Promise<{
           channel: "stable" | "alpha";
           feedUrl: string;
           currentVersion: string;
+          updateChecksSupported?: boolean;
         }>;
         check?: () => Promise<{
           available: boolean;
@@ -37,6 +39,7 @@ declare global {
           releaseNotes?: unknown;
           channel?: "stable" | "alpha";
           feedUrl?: string;
+          updateChecksSupported?: boolean;
           reason?: string;
         }>;
         download?: () => Promise<{ ok: boolean; reason?: string }>;

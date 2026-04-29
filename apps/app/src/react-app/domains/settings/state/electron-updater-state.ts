@@ -5,6 +5,7 @@ import type { DenDesktopConfig } from "../../../../app/lib/den";
 import { isAlphaUpdateAllowed, isUpdateAllowed } from "../../../../app/lib/version-gate";
 import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, isTauriRuntime, safeStringify } from "../../../../app/utils";
+import { t } from "../../../../i18n";
 
 export type SettingsUpdateStatus = {
   state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
@@ -20,12 +21,32 @@ export type SettingsUpdateStatus = {
 type ElectronUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"] & {
   onDownloadProgress?: (callback: (data: { transferred: number; total: number; percent: number; bytesPerSecond: number }) => void) => (() => void);
 };
+type ElectronUpdaterMethod = "getChannel" | "setChannel" | "check" | "download" | "installAndRestart";
+type CompleteElectronUpdaterBridge = ElectronUpdaterBridge & Required<Pick<ElectronUpdaterBridge, ElectronUpdaterMethod>>;
+type ElectronUpdaterChannelState = {
+  channel?: ReleaseChannel;
+  currentVersion?: string | null;
+  updateChecksSupported?: boolean;
+  reason?: string | null;
+};
 type TauriUpdate = {
   version?: string;
   date?: string;
   body?: string;
   downloadAndInstall?: (handler?: (event: unknown) => void) => Promise<void>;
 };
+
+export type SettingsUpdateEnv = { supported?: boolean; reason?: string | null } | null;
+
+const ELECTRON_UPDATER_REQUIRED_METHODS: readonly ElectronUpdaterMethod[] = [
+  "getChannel",
+  "setChannel",
+  "check",
+  "download",
+  "installAndRestart",
+];
+const ELECTRON_UPDATER_BRIDGE_WAIT_ATTEMPTS = 8;
+const ELECTRON_UPDATER_BRIDGE_WAIT_MS = 25;
 
 type UseElectronUpdaterStateOptions = {
   releaseChannel: ReleaseChannel;
@@ -38,6 +59,45 @@ type UseElectronUpdaterStateOptions = {
 function electronUpdaterBridge(): ElectronUpdaterBridge | null {
   if (typeof window === "undefined") return null;
   return window.__OPENWORK_ELECTRON__?.updater ?? null;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForElectronUpdaterBridge() {
+  for (let attempt = 0; attempt < ELECTRON_UPDATER_BRIDGE_WAIT_ATTEMPTS; attempt += 1) {
+    const bridge = electronUpdaterBridge();
+    if (bridge) return bridge;
+    await delay(ELECTRON_UPDATER_BRIDGE_WAIT_MS);
+  }
+  return electronUpdaterBridge();
+}
+
+export function missingElectronUpdaterMethods(
+  bridge: ElectronUpdaterBridge | null | undefined,
+): ElectronUpdaterMethod[] {
+  if (!bridge) return [...ELECTRON_UPDATER_REQUIRED_METHODS];
+  const values = bridge as Record<ElectronUpdaterMethod, unknown>;
+  return ELECTRON_UPDATER_REQUIRED_METHODS.filter((method) => typeof values[method] !== "function");
+}
+
+function hasCompleteElectronUpdaterBridge(
+  bridge: ElectronUpdaterBridge | null | undefined,
+): bridge is CompleteElectronUpdaterBridge {
+  return missingElectronUpdaterMethods(bridge).length === 0;
+}
+
+export function electronUpdaterRequiresPackagedBuild(state: ElectronUpdaterChannelState | null | undefined) {
+  return state?.updateChecksSupported === false || state?.reason === "unavailable";
+}
+
+function updaterBridgeUnavailableMessage() {
+  return t("settings.updates_bridge_unavailable");
+}
+
+function updaterPackagedOnlyMessage() {
+  return t("settings.updates_packaged_only");
 }
 
 function describeError(error: unknown) {
@@ -78,12 +138,23 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   const { releaseChannel, onReleaseChannelChange, updateAutoDownload, desktopConfig, setError } = options;
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [updateEnv, setUpdateEnv] = useState<{ supported?: boolean; reason?: string | null } | null>(null);
+  const [updateEnv, setUpdateEnv] = useState<SettingsUpdateEnv>(null);
+  const [electronReleaseChannelSupported, setElectronReleaseChannelSupported] = useState(false);
   const tauriUpdateRef = useRef<TauriUpdate | null>(null);
+  const releaseChannelRef = useRef(releaseChannel);
+  const onReleaseChannelChangeRef = useRef(onReleaseChannelChange);
+
+  // Probe the native updater bridge once; channel changes go through setReleaseChannel.
+  useEffect(() => {
+    releaseChannelRef.current = releaseChannel;
+    onReleaseChannelChangeRef.current = onReleaseChannelChange;
+  }, [onReleaseChannelChange, releaseChannel]);
 
   useEffect(() => {
     if (isTauriRuntime()) {
       let cancelled = false;
+      setUpdateEnv({ supported: true, reason: null });
+      setElectronReleaseChannelSupported(false);
       void import("@tauri-apps/api/app")
         .then(({ getVersion }) => getVersion())
         .then((version) => {
@@ -95,36 +166,56 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       };
     }
 
-    if (!isElectronRuntime()) return;
-    const bridge = electronUpdaterBridge();
-    if (!bridge?.getChannel) {
-      setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+    if (!isElectronRuntime()) {
+      setUpdateEnv({ supported: false, reason: t("settings.updates_desktop_only") });
+      setElectronReleaseChannelSupported(false);
       return;
     }
+
     let cancelled = false;
-    void bridge
-      .getChannel()
-      .then(async (state) => {
+    void waitForElectronUpdaterBridge()
+      .then(async (bridge) => {
+        if (cancelled) return;
+        if (!hasCompleteElectronUpdaterBridge(bridge)) {
+          setUpdateEnv({ supported: false, reason: updaterBridgeUnavailableMessage() });
+          setElectronReleaseChannelSupported(false);
+          return;
+        }
+
+        const state = await bridge.getChannel();
         if (cancelled) return;
         setAppVersion(state.currentVersion ?? null);
-        if (state.channel && state.channel !== releaseChannel && bridge.setChannel) {
-          const nextState = await bridge.setChannel(releaseChannel);
+        if (electronUpdaterRequiresPackagedBuild(state)) {
+          setUpdateEnv({ supported: false, reason: updaterPackagedOnlyMessage() });
+          setElectronReleaseChannelSupported(false);
+          return;
+        }
+        setUpdateEnv({ supported: true, reason: null });
+        setElectronReleaseChannelSupported(true);
+        if (state.channel && state.channel !== releaseChannelRef.current) {
+          const nextState = await bridge.setChannel(releaseChannelRef.current);
           if (cancelled) return;
           setAppVersion(nextState.currentVersion ?? null);
-          if (nextState.channel && nextState.channel !== releaseChannel) {
-            onReleaseChannelChange(nextState.channel);
+          if (electronUpdaterRequiresPackagedBuild(nextState)) {
+            setUpdateEnv({ supported: false, reason: updaterPackagedOnlyMessage() });
+            setElectronReleaseChannelSupported(false);
+            return;
+          }
+          if (nextState.channel && nextState.channel !== releaseChannelRef.current) {
+            onReleaseChannelChangeRef.current(nextState.channel);
           }
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+          setUpdateEnv({ supported: false, reason: updaterBridgeUnavailableMessage() });
+          setElectronReleaseChannelSupported(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [onReleaseChannelChange, releaseChannel]);
+  }, []);
 
   const downloadUpdate = useCallback(async () => {
     if (isTauriRuntime()) {
@@ -178,7 +269,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
     const bridge = electronUpdaterBridge();
     if (!bridge?.download) {
-      const message = "Electron updater downloads are available only in the Electron desktop app.";
+      const message = updaterBridgeUnavailableMessage();
       setUpdateStatus({ state: "error", message });
       setError(message);
       return;
@@ -207,7 +298,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     try {
       const result = await bridge.download();
       if (!result?.ok) {
-        setUpdateStatus({ state: "error", message: result?.reason ?? "Update download failed." });
+        setUpdateStatus({
+          state: "error",
+          message: result?.reason === "unavailable"
+            ? updaterPackagedOnlyMessage()
+            : (result?.reason ?? "Update download failed."),
+        });
         return;
       }
       setUpdateStatus((current) => ({
@@ -257,7 +353,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
     const bridge = electronUpdaterBridge();
     if (!bridge?.check) {
-      const message = "Electron update checks are available only in the Electron desktop app.";
+      const message = updaterBridgeUnavailableMessage();
       setUpdateStatus({ state: "error", message });
       setError(message);
       return;
@@ -270,11 +366,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (result.channel && result.channel !== releaseChannel) {
         onReleaseChannelChange(result.channel);
       }
-      if (result.reason === "unavailable") {
-        setUpdateStatus({
-          state: "idle",
-          message: "Auto-updates are available in packaged builds only.",
-        });
+      if (electronUpdaterRequiresPackagedBuild(result)) {
+        const message = updaterPackagedOnlyMessage();
+        setUpdateEnv({ supported: false, reason: message });
+        setElectronReleaseChannelSupported(false);
+        setUpdateStatus({ state: "error", message });
         return;
       }
       if (result.reason) {
@@ -324,40 +420,58 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
-      const message = "Electron update install is available only in the Electron desktop app.";
+      const message = updaterBridgeUnavailableMessage();
       setUpdateStatus({ state: "error", message });
       setError(message);
       return;
     }
     const result = await bridge.installAndRestart();
     if (!result?.ok) {
-      setUpdateStatus({ state: "error", message: result?.reason ?? "Update install failed." });
+      setUpdateStatus({
+        state: "error",
+        message: result?.reason === "unavailable"
+          ? updaterPackagedOnlyMessage()
+          : (result?.reason ?? "Update install failed."),
+      });
     }
   }, [setError]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {
-      onReleaseChannelChange(next);
       const bridge = electronUpdaterBridge();
-      if (!bridge?.setChannel) return;
+      if (!bridge?.setChannel) {
+        const message = updaterBridgeUnavailableMessage();
+        setUpdateStatus({ state: "error", message });
+        setError(message);
+        return;
+      }
       try {
         const state = await bridge.setChannel(next);
         setAppVersion(state.currentVersion ?? null);
-        if (state.channel && state.channel !== next) {
-          onReleaseChannelChange(state.channel);
+        if (electronUpdaterRequiresPackagedBuild(state)) {
+          const message = updaterPackagedOnlyMessage();
+          setUpdateEnv({ supported: false, reason: message });
+          setElectronReleaseChannelSupported(false);
+          setUpdateStatus({ state: "error", message });
+          return;
         }
+        const resolvedChannel = state.channel ?? next;
+        onReleaseChannelChange(resolvedChannel);
+        setUpdateEnv({ supported: true, reason: null });
+        setElectronReleaseChannelSupported(true);
         setUpdateStatus({ state: "idle", lastCheckedAt: null });
       } catch (error) {
         setUpdateStatus({ state: "error", message: describeError(error) });
       }
     },
-    [onReleaseChannelChange],
+    [onReleaseChannelChange, setError],
   );
 
   return {
     appVersion,
     updateEnv,
     updateStatus,
+    electronReleaseChannelSupported,
     checkForUpdates,
     downloadUpdate,
     installUpdateAndRestart,

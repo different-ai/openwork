@@ -70,10 +70,12 @@ function electronUpdaterFeedUrl(channel) {
 
 function updaterChannelState(app, channel) {
   const normalized = normalizeElectronUpdaterChannel(channel);
+  const updateChecksSupported = app.isPackaged;
   return {
     channel: normalized,
     feedUrl: electronUpdaterFeedUrl(normalized),
     currentVersion: resolveAppVersion(app),
+    updateChecksSupported,
   };
 }
 
