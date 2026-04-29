@@ -337,6 +337,164 @@ runner. Key differences:
 - For Flow 1 streaming, don't insist on exact assistant text. Confirm the
   assistant bubble becomes non-empty and status returns to `Ready`.
 
+---
+
+## Flow 13 — Slash command selection and backspace
+
+**Why**: The slash menu used to cause render churn and RAM growth from
+unstable regex dependencies and uncached command fetches.
+
+Steps:
+1. Create a new session.
+2. Type `/rev` in the composer.
+3. Expect: slash menu opens with `/review` as the top fuzzy match.
+4. Click `/review`.
+5. Expect: composer shows `/review` chip (purple pill) + trailing space;
+   slash menu closes.
+6. Press Backspace once.
+7. Expect: the entire `/review` chip is removed atomically (not one char at
+   a time). Composer is empty.
+
+Pass criteria:
+- Menu items don't flicker or reset while typing.
+- One backspace removes the chip + space together.
+- No console errors or `react.render_loop_suspected` watchdog warnings.
+
+---
+
+## Flow 14 — Slash command error with model recovery
+
+**Why**: When a slash command fails (e.g. model not found), the error must
+show inline in the session area with a recovery action — not as raw
+`[object Object]` below the composer.
+
+Steps:
+1. Create a new session.
+2. Type `/init`, select it, click Run task.
+3. If the command's configured model is unavailable, expect: an inline error
+   card appears in the session area with a human-readable message like
+   "Model openai/gpt-5.2-codex is not available."
+4. Expect: a "Change model" button is visible on the error card.
+5. Click "Change model".
+6. Expect: the model picker opens. Select a valid model.
+7. Composer should be cleared and editable (not stuck readonly).
+
+Pass criteria:
+- Error renders inline in the session (not below the composer).
+- Error message is human-readable (no `[object Object]`).
+- "Change model" opens the picker (not sets the failed model as default).
+- Composer resets on error.
+
+---
+
+## Flow 15 — Paste chip collapse
+
+**Why**: Pasting large text (3+ lines or 200+ chars) should collapse into an
+inline amber chip in the composer instead of flooding the editor.
+
+Steps:
+1. Create a new session.
+2. Copy a multi-line code snippet (10+ lines) to the system clipboard.
+3. Paste into the composer (Cmd+V).
+4. Expect: an amber "Pasted · N lines" chip appears inline in the composer
+   instead of the raw text.
+5. Type `explain this code:` before the chip.
+6. Click Run task.
+7. Expect: the user message in the transcript shows the full expanded text
+   (not the `[pasted text ...]` placeholder).
+8. The assistant response should reference the pasted code correctly.
+
+Pass criteria:
+- Text over threshold collapses into a chip in the composer.
+- Short pastes (< 3 lines, < 200 chars) go in as plain text.
+- `resolvedText` sent to the model contains the full pasted content.
+- User message in the transcript shows the full text, not the placeholder.
+
+Note: CDP `Meta+V` does not trigger real clipboard events in Electron; use
+osascript (`pbcopy` + `keystroke "v" using command down`) to test paste.
+
+---
+
+## Flow 16 — User message display
+
+**Why**: Hand-typed user messages must never be truncated in the transcript.
+Only pasted chip placeholders should render as collapsible.
+
+Steps:
+1. Send a long message (10+ lines of hand-typed text).
+2. Expect: the full message renders in the user bubble without truncation or
+   "expand" chips.
+
+Pass criteria:
+- No `CollapsibleUserText` or "N lines · expand" button on hand-typed text.
+- The full message is visible immediately without clicking.
+
+---
+
+## Flow 17 — Stop / Run task single button
+
+**Why**: The composer should have a single action button that toggles between
+"Run task" (idle or has draft while busy) and "Stop" (busy with no draft).
+
+Steps:
+1. Send a message that triggers a long response.
+2. Expect: the button label changes from "Run task" to "Stop" while
+   the assistant is streaming.
+3. Once the response finishes, expect: button returns to "Run task".
+4. While streaming, type text into the composer.
+5. Expect: button shows "Run task" (to queue the follow-up), not "Stop".
+
+Pass criteria:
+- Only one button visible at any time (no side-by-side Stop + Run task).
+- Button label toggles based on busy state and draft content.
+
+---
+
+## Flow 18 — Skill lifecycle (create, verify, use)
+
+**Why**: Skills should be createable from the UI, appear on disk, and be
+usable in new sessions after reload.
+
+Steps:
+1. Go to Settings → Skills.
+2. Click "Create skill in chat".
+3. Expect: navigates to a new session.
+4. Type `/skill-creator create a skill about weather alerts`.
+5. Select the command and run it.
+6. Expect: the assistant creates `.opencode/skills/weather-alerts/SKILL.md`
+   (requires a model with tool-use capability).
+7. Verify the file exists on disk.
+8. Reload the app (or trigger config reload).
+9. Create a new session and check that `/weather-alerts` appears in the
+   slash command list.
+10. Run `/weather-alerts` and expect the skill template is used.
+
+Pass criteria:
+- "Create skill in chat" navigates away from settings to a session.
+- The skill command actually writes files to `.opencode/skills/`.
+- After reload, the new skill appears in the slash menu.
+- Running the new skill uses its template as the user message.
+
+Note: requires a model with tool-use support (e.g. Claude, GPT-4). Free-tier
+models may describe what they would do without actually calling tools.
+
+---
+
+## Flow 19 — Add workspace button placement
+
+**Why**: The "Add workspace" button must not clip against the Tauri/Electron
+window bottom corners.
+
+Steps:
+1. Look at the sidebar bottom.
+2. Expect: the "Add workspace" button has visible padding below it, above the
+   footer bar.
+
+Pass criteria:
+- At least 16px gap between the button bottom edge and the window edge.
+
+---
+
 ## Change log
 
 - 2026-04-16 — initial doc after the React port cutover fixed streaming,
@@ -345,3 +503,6 @@ runner. Key differences:
   palette), Flow 12 (workspace options menu). Also added the desktop-runtime
   boot hook and restored 17 missing i18n keys that were leaking as raw
   identifiers in the UI.
+- 2026-04-28 — added Flows 13-19: slash command stability, error recovery
+  with model change, paste chip collapse, user message display, single action
+  button, skill lifecycle, and workspace button placement.
