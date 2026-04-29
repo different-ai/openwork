@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto"
 import { sql } from "drizzle-orm"
 import { bigint, boolean, index, int, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
@@ -109,6 +110,19 @@ export const AuthApiKeyTable = mysqlTable(
   ],
 )
 
+export const AuthJwksTable = mysqlTable("jwks", {
+  id: varchar("id", { length: 64 })
+    .notNull()
+    .$defaultFn(() => crypto.randomUUID())
+    .primaryKey(),
+  publicKey: text("public_key").notNull(),
+  privateKey: text("private_key").notNull(),
+  createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { fsp: 3 }),
+  alg: varchar("alg", { length: 32 }),
+  crv: varchar("crv", { length: 32 }),
+})
+
 export const OAuthClientTable = mysqlTable(
   "oauthClient",
   {
@@ -190,7 +204,6 @@ export const OAuthAccessTokenTable = mysqlTable(
     scopes: text("scopes").notNull(),
   },
   (table) => [
-    uniqueIndex("oauth_access_token_token").on(table.token),
     index("oauth_access_token_client_id").on(table.clientId),
     index("oauth_access_token_session_id").on(table.sessionId),
     index("oauth_access_token_user_id").on(table.userId),
@@ -224,6 +237,7 @@ export const session = AuthSessionTable
 export const account = AuthAccountTable
 export const verification = AuthVerificationTable
 export const apikey = AuthApiKeyTable
+export const jwks = AuthJwksTable
 export const oauthClient = OAuthClientTable
 export const oauthRefreshToken = OAuthRefreshTokenTable
 export const oauthAccessToken = OAuthAccessTokenTable
