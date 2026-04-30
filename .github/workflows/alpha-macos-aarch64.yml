@@ -4,8 +4,9 @@ name: Alpha Channel (macOS arm64)
 # alpha release channel.
 #
 # The alpha channel is macOS-only today. It lives as a rolling GitHub
-# release under the fixed tag `alpha-macos-latest` so the Electron updater feed
-# stays stable while the underlying artifacts get replaced on every run.
+# release. Each run also updates a small manifest on the fixed
+# `alpha-macos-latest` release so the Electron updater feed stays stable while
+# historical alpha artifacts remain available.
 #
 # See:
 #   - ARCHITECTURE.md#release-channels
@@ -103,8 +104,10 @@ jobs:
           const run = process.env.GITHUB_RUN_NUMBER || "0";
           const sha = (process.env.GITHUB_SHA || "").slice(0, 7) || "local";
           const alpha = `${major}.${minor}.${nextPatch}-alpha.${run}+${sha}`;
+          const releaseTag = `alpha-macos-v${major}.${minor}.${nextPatch}-alpha.${run}-${sha}`;
           console.log(`alpha_version=${alpha}`);
           console.log(`base_version=${major}.${minor}.${nextPatch}`);
+          console.log(`release_tag=${releaseTag}`);
           NODE
 
       - name: Write alpha Electron package version
@@ -121,21 +124,6 @@ jobs:
             fs.writeFileSync(path, `${JSON.stringify(json, null, 2)}\n`);
           }
           NODE
-
-      - name: Clear previous alpha release (rolling channel)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Keep a single rolling release under ALPHA_RELEASE_TAG. Delete
-          # whatever exists so this run's Electron artifacts become the only
-          # alpha assets, and users on the alpha channel always resolve to the
-          # freshest latest-mac.yml.
-          gh release delete "$ALPHA_RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --cleanup-tag \
-            --yes || true
 
       - name: Write notary API key
         if: env.MACOS_NOTARIZE == 'true'
@@ -181,10 +169,32 @@ jobs:
             --arm64 \
             --publish never
 
+      - name: Create immutable alpha prerelease
+        if: env.MACOS_NOTARIZE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALPHA_VERSION: ${{ steps.alpha-version.outputs.alpha_version }}
+          ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          body="Rolling alpha build for OpenWork (macOS arm64) from ${GITHUB_SHA}."
+          if gh release view "$ALPHA_RUN_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Alpha prerelease $ALPHA_RUN_RELEASE_TAG already exists; reusing it."
+            exit 0
+          fi
+          gh release create "$ALPHA_RUN_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OpenWork Alpha ${ALPHA_VERSION}" \
+            --notes "$body" \
+            --target "$GITHUB_SHA" \
+            --prerelease
+
       - name: Upload Electron alpha updater assets
         if: env.MACOS_NOTARIZE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -198,6 +208,40 @@ jobs:
             echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
             exit 1
           fi
-          gh release upload "$ALPHA_RELEASE_TAG" "${assets[@]}" \
+          gh release upload "$ALPHA_RUN_RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Update alpha updater pointer
+        if: env.MACOS_NOTARIZE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          POINTER_MANIFEST="$RUNNER_TEMP/latest-mac.yml"
+          export POINTER_MANIFEST
+          node <<'NODE'
+          const fs = require("node:fs");
+          const manifestPath = "apps/desktop/dist-electron/latest-mac.yml";
+          const releaseTag = process.env.ALPHA_RUN_RELEASE_TAG;
+          const baseUrl = `https://github.com/different-ai/openwork/releases/download/${releaseTag}`;
+          const rewritten = fs.readFileSync(manifestPath, "utf8")
+            .replace(/(url:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`)
+            .replace(/(path:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`);
+          fs.writeFileSync(process.env.POINTER_MANIFEST, rewritten);
+          NODE
+
+          if ! gh release view "$ALPHA_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$ALPHA_RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ALPHA_RELEASE_NAME" \
+              --notes "Stable Electron updater pointer for the newest macOS arm64 alpha prerelease." \
+              --target "$GITHUB_SHA" \
+              --prerelease
+          fi
+
+          gh release upload "$ALPHA_RELEASE_TAG" "$POINTER_MANIFEST#latest-mac.yml" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
