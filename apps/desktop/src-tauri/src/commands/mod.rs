@@ -2,6 +2,7 @@ pub mod command_files;
 pub mod config;
 pub mod desktop_bootstrap;
 pub mod engine;
+pub mod migration;
 pub mod misc;
 pub mod opencode_router;
 pub mod openwork_server;

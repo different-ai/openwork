@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
 import { createContext, useContext, type ReactNode } from "react";
 
-import { isTauriRuntime } from "../../app/utils";
+import { openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
+import { isDesktopRuntime } from "../../app/utils";
 
 export type SyncStorage = {
   getItem(key: string): string | null;
@@ -59,12 +60,10 @@ function shouldOpenInCurrentTab(url: string) {
 
 export function createDefaultPlatform(): Platform {
   return {
-    platform: isTauriRuntime() ? "desktop" : "web",
+    platform: isDesktopRuntime() ? "desktop" : "web",
     openLink(url: string) {
-      if (isTauriRuntime()) {
-        void import("@tauri-apps/plugin-opener")
-          .then(({ openUrl }) => openUrl(url))
-          .catch(() => undefined);
+      if (isDesktopRuntime()) {
+        void openDesktopUrl(url).catch(() => undefined);
         return;
       }
 
@@ -76,9 +75,8 @@ export function createDefaultPlatform(): Platform {
       window.open(url, "_blank");
     },
     restart: async () => {
-      if (isTauriRuntime()) {
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
+      if (isDesktopRuntime()) {
+        await relaunchDesktopApp();
         return;
       }
 

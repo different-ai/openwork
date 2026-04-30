@@ -5,12 +5,13 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, ChevronDown, CircleAlert, Copy, File as FileIcon } from "lucide-react";
 
+import { openDesktopPath, revealDesktopItemInDir } from "../../../../app/lib/desktop";
 import {
   SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX,
   type MessageGroup,
   type StepGroupMode,
 } from "../../../../app/types";
-import { groupMessageParts, summarizeStep } from "../../../../app/utils";
+import { groupMessageParts, isDesktopRuntime, summarizeStep } from "../../../../app/utils";
 import { MarkdownBlock } from "./markdown";
 import { applyTextHighlights } from "./text-highlights";
 
@@ -343,18 +344,9 @@ function hasStructuredValue(value: unknown) {
   return true;
 }
 
-function isDesktopRuntime() {
-  try {
-    return Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__);
-  } catch {
-    return false;
-  }
-}
-
 async function openFileWithOS(path: string) {
   try {
-    const { openPath } = await import("@tauri-apps/plugin-opener");
-    await openPath(path);
+    await openDesktopPath(path);
   } catch {
     // silently fail on web
   }
@@ -362,8 +354,7 @@ async function openFileWithOS(path: string) {
 
 async function revealFileInFinder(path: string) {
   try {
-    const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-    await revealItemInDir(path);
+    await revealDesktopItemInDir(path);
   } catch {
     // silently fail on web
   }

@@ -16,12 +16,12 @@ import type {
 import type {
   OrchestratorStatus,
   SandboxDebugProbeResult,
-} from "../../../../app/lib/tauri";
+} from "../../../../app/lib/desktop";
 import type {
   OpencodeConnectStatus,
   StartupPreference,
 } from "../../../../app/types";
-import { formatRelativeTime, isTauriRuntime } from "../../../../app/utils";
+import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
@@ -173,7 +173,7 @@ function renderLines(lines: string[]) {
 export function DebugView(props: DebugViewProps) {
   if (!props.developerMode) return null;
 
-  const isDesktop = isTauriRuntime();
+  const isDesktop = isDesktopRuntime();
   const isLocalPreference = props.startupPreference !== "server";
   const sandboxProbeDisabled = !isDesktop || props.sandboxProbeBusy || props.anyActiveRuns;
   const sandboxProbeTitle = !isDesktop

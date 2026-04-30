@@ -21,7 +21,12 @@ import {
 } from "lucide-react";
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
-import { readOpencodeConfig, type OpencodeConfigFile } from "../../../../app/lib/tauri";
+import {
+  openDesktopPath,
+  readOpencodeConfig,
+  revealDesktopItemInDir,
+  type OpencodeConfigFile,
+} from "../../../../app/lib/desktop";
 import {
   buildChromeDevtoolsCommand,
   getMcpIdentityKey,
@@ -30,7 +35,7 @@ import {
   usesChromeDevtoolsAutoConnect,
 } from "../../../../app/mcp";
 import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
-import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../../../../app/utils";
+import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { currentLocale, t, type Language } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
@@ -181,7 +186,7 @@ export function McpView(props: McpViewProps) {
     configRequestId.current = nextId;
     const readConfig = props.readConfigFile;
 
-    if (!readConfig && !isTauriRuntime()) {
+    if (!readConfig && !isDesktopRuntime()) {
       setProjectConfig(null);
       setGlobalConfig(null);
       setConfigError(null);
@@ -220,7 +225,7 @@ export function McpView(props: McpViewProps) {
     : tr("mcp.reveal_in_finder");
 
   const canRevealConfig =
-    isTauriRuntime() &&
+    isDesktopRuntime() &&
     !revealBusy &&
     !(configScope === "project" && !props.selectedWorkspaceRoot.trim()) &&
     Boolean(activeConfig?.exists);
@@ -302,7 +307,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const revealConfig = async () => {
-    if (!isTauriRuntime() || revealBusy) return;
+    if (!isDesktopRuntime() || revealBusy) return;
     const root = props.selectedWorkspaceRoot.trim();
 
     if (configScope === "project" && !root) {
@@ -319,11 +324,10 @@ export function McpView(props: McpViewProps) {
       if (!resolved) {
         throw new Error(tr("mcp.config_load_failed"));
       }
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
       if (isWindowsPlatform()) {
-        await openPath(resolved.path);
+        await openDesktopPath(resolved.path);
       } else {
-        await revealItemInDir(resolved.path);
+        await revealDesktopItemInDir(resolved.path);
       }
     } catch (error) {
       setConfigError(

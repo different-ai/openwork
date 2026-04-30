@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 
-import type { WorkspaceInfo } from "../../../app/lib/tauri";
+import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import { currentLocale, t } from "../../../i18n";
 import { isSandboxWorkspace } from "../../../app/utils";
 import { Button } from "../../design-system/button";

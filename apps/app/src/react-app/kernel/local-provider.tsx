@@ -13,6 +13,7 @@ import {
 import { THINKING_PREF_KEY } from "../../app/constants";
 import { coerceReleaseChannel } from "../../app/lib/release-channels";
 import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
+import { readStoredDefaultModel } from "./model-config";
 
 export type LocalUIState = {
   view: View;
@@ -88,9 +89,16 @@ export function LocalProvider({ children }: LocalProviderProps) {
   const [ui, setUiRaw] = useState<LocalUIState>(() =>
     readPersisted(UI_STORAGE_KEY, INITIAL_UI),
   );
-  const [prefs, setPrefsRaw] = useState<LocalPreferences>(() =>
-    readPersisted(PREFS_STORAGE_KEY, INITIAL_PREFS),
-  );
+  const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
+    const persisted = readPersisted(PREFS_STORAGE_KEY, INITIAL_PREFS);
+    if (persisted.defaultModel) {
+      return persisted;
+    }
+    return {
+      ...persisted,
+      defaultModel: readStoredDefaultModel(),
+    };
+  });
   const [ready, setReady] = useState(false);
   const migratedThinkingRef = useRef(false);
 

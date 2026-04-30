@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useEffect, useState } from "react";
 import { BookOpen, MessageCircle, Settings } from "lucide-react";
 
 import { t } from "../../../../i18n";
@@ -6,6 +7,8 @@ import { usePlatform } from "../../../kernel/platform";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 
 const DOCS_URL = "https://openworklabs.com/docs";
+const STATUS_BAR_BOOT_STARTED_AT = Date.now();
+const STATUS_BAR_INITIALIZING_MS = 15_000;
 
 export type StatusBarProps = {
   clientConnected: boolean;
@@ -22,6 +25,7 @@ export type StatusBarProps = {
   statusPingClass?: string;
   statusPulse?: boolean;
   showSettingsButton?: boolean;
+  initializing?: boolean;
 };
 
 type StatusCopy = {
@@ -43,19 +47,20 @@ function deriveStatusCopy(props: StatusBarProps): StatusCopy {
     };
   }
 
-  const providers = props.providerConnectedIds?.length ?? 0;
   const mcp = props.mcpConnectedCount;
+
+  if (!props.clientConnected && props.openworkServerStatus === "disconnected" && props.initializing) {
+    return {
+      label: "Preparing workspace",
+      detail: t("session.loading_detail"),
+      dotClass: "bg-amber-9",
+      pingClass: "bg-amber-9/35 animate-ping",
+      pulse: true,
+    };
+  }
 
   if (props.clientConnected) {
     const detailBits: string[] = [];
-    if (providers > 0) {
-      detailBits.push(
-        t("status.providers_connected", undefined, {
-          count: providers,
-          plural: providers === 1 ? "" : "s",
-        }),
-      );
-    }
     if (mcp > 0) {
       detailBits.push(t("status.mcp_connected", undefined, { count: mcp }));
     }
@@ -98,7 +103,21 @@ function deriveStatusCopy(props: StatusBarProps): StatusCopy {
 
 export function StatusBar(props: StatusBarProps) {
   const platform = usePlatform();
-  const statusCopy = deriveStatusCopy(props);
+  const [initializing, setInitializing] = useState(
+    () => Date.now() - STATUS_BAR_BOOT_STARTED_AT < STATUS_BAR_INITIALIZING_MS,
+  );
+
+  useEffect(() => {
+    if (!initializing) return;
+    const remaining = Math.max(
+      0,
+      STATUS_BAR_INITIALIZING_MS - (Date.now() - STATUS_BAR_BOOT_STARTED_AT),
+    );
+    const timeout = window.setTimeout(() => setInitializing(false), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [initializing]);
+
+  const statusCopy = deriveStatusCopy({ ...props, initializing });
 
   return (
     <div className="border-t border-dls-border bg-dls-surface">

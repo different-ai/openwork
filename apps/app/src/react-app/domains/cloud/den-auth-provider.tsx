@@ -16,9 +16,19 @@ import {
   DenApiError,
   ensureDenActiveOrganization,
   readDenSettings,
+  writeDenSettings,
   type DenUser,
 } from "../../../app/lib/den";
-import { denSessionUpdatedEvent } from "../../../app/lib/den-session-events";
+import {
+  denSessionUpdatedEvent,
+  dispatchDenSessionUpdated,
+} from "../../../app/lib/den-session-events";
+import {
+  deepLinkBridgeEvent,
+  drainPendingDeepLinks,
+  type DeepLinkBridgeDetail,
+} from "../../../app/lib/deep-link-bridge";
+import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
 
 export type DenAuthStatus = "checking" | "signed_in" | "signed_out";
 
@@ -48,6 +58,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [error, setError] = useState<string | null>(null);
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
+  const handledGrantsRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
@@ -113,6 +124,60 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleUrls = (urls: readonly string[]) => {
+      for (const rawUrl of urls) {
+        const parsed = parseDenAuthDeepLink(rawUrl);
+        if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
+        handledGrantsRef.current.add(parsed.grant);
+
+        void createDenClient({ baseUrl: parsed.denBaseUrl })
+          .exchangeDesktopHandoff(parsed.grant)
+          .then((result) => {
+            if (!result.token) {
+              throw new Error("Failed to sign in to OpenWork Cloud.");
+            }
+
+            writeDenSettings({
+              baseUrl: parsed.denBaseUrl,
+              authToken: result.token,
+              activeOrgId: null,
+              activeOrgSlug: null,
+              activeOrgName: null,
+            });
+
+            dispatchDenSessionUpdated({
+              status: "success",
+              baseUrl: parsed.denBaseUrl,
+              token: result.token,
+              user: result.user,
+              email: result.user?.email ?? null,
+            });
+          })
+          .catch((error) => {
+            handledGrantsRef.current.delete(parsed.grant);
+            dispatchDenSessionUpdated({
+              status: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to sign in to OpenWork Cloud.",
+            });
+          });
+      }
+    };
+
+    handleUrls(drainPendingDeepLinks(window));
+    const handleDeepLink = (event: Event) => {
+      handleUrls(((event as CustomEvent<DeepLinkBridgeDetail>).detail?.urls ?? []) as string[]);
+    };
+
+    window.addEventListener(deepLinkBridgeEvent, handleDeepLink);
+    return () => window.removeEventListener(deepLinkBridgeEvent, handleDeepLink);
+  }, []);
 
   const value = useMemo<DenAuthStore>(
     () => ({

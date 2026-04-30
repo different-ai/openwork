@@ -14,7 +14,8 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { isTauriRuntime } from "../../../../app/utils";
+import { openDesktopUrl } from "../../../../app/lib/desktop";
+import { isDesktopRuntime } from "../../../../app/utils";
 import { compareProviders } from "../../../../app/utils/providers";
 import { Button } from "../../../design-system/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -348,9 +349,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const openOauthUrl = async (url: string) => {
     if (!url) return;
-    if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
+    if (isDesktopRuntime()) {
+      await openDesktopUrl(url);
       setOauthBrowserOpened(true);
       return;
     }

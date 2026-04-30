@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { FolderOpen } from "lucide-react";
 
-import { isTauriRuntime } from "../../../../app/utils";
+import { isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
@@ -37,8 +37,8 @@ export function RecoveryView(props: RecoveryViewProps) {
             variant="outline"
             className="h-8 px-3 py-0 text-xs"
             onClick={() => void props.onRevealWorkspaceConfig()}
-            disabled={!isTauriRuntime() || props.revealConfigBusy || !props.workspaceConfigPath}
-            title={!isTauriRuntime() ? t("settings.reveal_config_requires_desktop") : ""}
+            disabled={!isDesktopRuntime() || props.revealConfigBusy || !props.workspaceConfigPath}
+            title={!isDesktopRuntime() ? t("settings.reveal_config_requires_desktop") : ""}
           >
             <FolderOpen size={13} className="mr-1.5" />
             {props.revealConfigBusy ? t("settings.opening") : t("settings.reveal_config")}
@@ -70,8 +70,8 @@ export function RecoveryView(props: RecoveryViewProps) {
           variant="secondary"
           className="h-8 shrink-0 px-3 py-0 text-xs"
           onClick={() => void props.onRepairOpencodeCache()}
-          disabled={props.cacheRepairBusy || !isTauriRuntime()}
-          title={isTauriRuntime() ? "" : t("settings.cache_repair_requires_desktop")}
+          disabled={props.cacheRepairBusy || !isDesktopRuntime()}
+          title={isDesktopRuntime() ? "" : t("settings.cache_repair_requires_desktop")}
         >
           {props.cacheRepairBusy ? t("settings.repairing_cache") : t("settings.repair_cache")}
         </Button>
@@ -89,9 +89,9 @@ export function RecoveryView(props: RecoveryViewProps) {
           variant="danger"
           className="h-8 shrink-0 px-3 py-0 text-xs"
           onClick={() => void props.onCleanupOpenworkDockerContainers()}
-          disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
+          disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isDesktopRuntime()}
           title={
-            !isTauriRuntime()
+            !isDesktopRuntime()
               ? t("settings.docker_requires_desktop")
               : props.anyActiveRuns
                 ? t("settings.stop_runs_before_cleanup")

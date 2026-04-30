@@ -6,7 +6,7 @@ import { t } from "../../../../i18n";
 import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import type { WorkspaceInfo } from "../../../../app/lib/tauri";
+import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,
@@ -29,6 +29,8 @@ import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   useWorkspaceShellLayout,
 } from "../../../shell/workspace-shell-layout";
+import { OwDotTicker } from "../../../shell/dot-ticker";
+import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 
 type StatusBarOverrides = Pick<
   StatusBarProps,
@@ -195,6 +197,14 @@ export function SessionPage(props: SessionPageProps) {
   const { leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
     defaultLeftWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
     expandedRightWidth: 280,
+  });
+  useReactRenderWatchdog("SessionPage", {
+    selectedSessionId: props.selectedSessionId,
+    selectedWorkspaceId: props.selectedWorkspaceId,
+    clientConnected: props.clientConnected,
+    startupPhase: props.startupPhase,
+    hasSurface: Boolean(props.surface),
+    workspaceCount: props.workspaces.length,
   });
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -442,14 +452,15 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {showDelayedSessionLoadingState ? (
-                <div className="px-6 py-24">
-                  <div className="mx-auto flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center" role="status" aria-live="polite">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface">
-                      <Loader2 size={20} className="animate-spin text-dls-secondary" />
-                    </div>
-                    <div className="space-y-1">
-                      <h3 className="text-base font-medium text-dls-text">{t("session.loading_title")}</h3>
-                      <p className="text-sm text-dls-secondary">{t("session.loading_detail")}</p>
+                <div className="px-6 py-16">
+                  <div
+                    className="mx-auto flex max-w-[320px] flex-col items-center gap-3 text-center"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <OwDotTicker size="md" />
+                    <div className="text-[12px] leading-5 text-dls-secondary">
+                      {t("session.loading_detail")}
                     </div>
                   </div>
                 </div>

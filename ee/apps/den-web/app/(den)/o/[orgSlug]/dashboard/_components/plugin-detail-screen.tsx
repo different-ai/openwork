@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, FileText, Puzzle, Server, Terminal, Users, Webhook } from "lucide-react";
+import { ArrowLeft, FileText, Puzzle, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
-import { buttonVariants } from "../../../../_components/ui/button";
+
 import { getPluginsRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -14,8 +14,6 @@ import {
   type PluginAgent,
   type PluginCommand,
   formatPluginTimestamp,
-  getPluginCategoryLabel,
-  getPluginPartsSummary,
   usePlugin,
 } from "./plugin-data";
 
@@ -25,9 +23,9 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
 
   if (isLoading && !plugin) {
     return (
-      <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
-        <div className="rounded-xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
-          Loading plugin details...
+      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
+        <div className="rounded-2xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
+          Loading plugin details…
         </div>
       </div>
     );
@@ -35,17 +33,24 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
 
   if (!plugin) {
     return (
-      <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
-        <div className="rounded-xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
+      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
+        <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
           {error instanceof Error ? error.message : "That plugin could not be found."}
         </div>
       </div>
     );
   }
 
+  const marketplaces = plugin.marketplaces ?? [];
+  const missingLabels: string[] = [];
+  if (plugin.skills.length === 0) missingLabels.push("skills");
+  if (plugin.agents.length === 0) missingLabels.push("agents");
+  if (plugin.commands.length === 0) missingLabels.push("commands");
+  if (plugin.hooks.length === 0) missingLabels.push("hooks");
+  if (plugin.mcps.length === 0) missingLabels.push("MCP servers");
+
   return (
-    <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
-      {/* Nav */}
+    <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
           href={getPluginsRoute(orgSlug)}
@@ -54,167 +59,110 @@ export function PluginDetailScreen({ pluginId }: { pluginId: string }) {
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-
-        <button
-          type="button"
-          className={buttonVariants({ variant: plugin.installed ? "secondary" : "primary", size: "sm" })}
-          disabled
-          aria-disabled="true"
-          title="Install/uninstall is not wired up yet in this preview."
-        >
-          {plugin.installed ? "Installed" : "Install"}
-        </button>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
-        {/* ── Main card ── */}
-        <section className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
-          {/* Gradient header — seeded by plugin id to match the list card */}
-          <div className="relative h-40 overflow-hidden border-b border-gray-100">
+      <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+        <div className="flex items-stretch">
+          <div className="relative w-[96px] shrink-0 overflow-hidden">
             <div className="absolute inset-0">
               <PaperMeshGradient seed={plugin.id} speed={0} />
             </div>
-            <div className="absolute bottom-[-20px] left-6 flex h-14 w-14 items-center justify-center rounded-[18px] border border-white/60 bg-white shadow-[0_12px_24px_-12px_rgba(15,23,42,0.3)]">
-              <Puzzle className="h-6 w-6 text-gray-700" />
+            <div className="relative flex h-full items-center justify-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
+                <Puzzle className="h-6 w-6 text-gray-700" aria-hidden />
+              </div>
             </div>
           </div>
 
-          <div className="px-6 pb-6 pt-10">
-            {/* Title + description + meta */}
+          <div className="min-w-0 flex-1 px-6 py-5">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[18px] font-semibold text-gray-900">{plugin.name}</h1>
-              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-500">
-                v{plugin.version}
-              </span>
-              <span className="text-[12px] text-gray-400">by {plugin.author}</span>
+              <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
+                {plugin.name}
+              </h1>
+              {plugin.version ? (
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  v{plugin.version}
+                </span>
+              ) : null}
             </div>
-            <p className="mt-1.5 text-[13px] leading-relaxed text-gray-500">{plugin.description}</p>
-            <p className="mt-2 text-[12px] text-gray-300">
-              {getPluginPartsSummary(plugin)} · Updated {formatPluginTimestamp(plugin.updatedAt)}
-            </p>
+            {plugin.description ? (
+              <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
+            ) : null}
 
-            {/* Skills */}
-            <PrimitiveSection
-              icon={FileText}
-              label="Skills"
-              emptyLabel="This plugin does not ship any skills."
-              items={plugin.skills}
-              render={(skill) => renderSkillRow(skill)}
-            />
+            {marketplaces.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {marketplaces.map((marketplace) => (
+                  <span
+                    key={marketplace.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-600"
+                  >
+                    <Store className="h-3 w-3 text-gray-400" aria-hidden />
+                    <span className="truncate">{marketplace.name}</span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
-            {/* Hooks */}
-            <PrimitiveSection
-              icon={Webhook}
-              label="Hooks"
-              emptyLabel="This plugin does not register any hooks."
-              items={plugin.hooks}
-              render={(hook) => renderHookRow(hook)}
-            />
-
-            {/* MCP Servers */}
-            <PrimitiveSection
-              icon={Server}
-              label="MCP Servers"
-              emptyLabel="This plugin does not bundle any MCP servers."
-              items={plugin.mcps}
-              render={(mcp) => renderMcpRow(mcp)}
-            />
-
-            {/* Agents */}
-            <PrimitiveSection
-              icon={Users}
-              label="Agents"
-              emptyLabel="This plugin does not define any sub-agents."
-              items={plugin.agents}
-              render={(agent) => renderAgentRow(agent)}
-            />
-
-            {/* Commands */}
-            <PrimitiveSection
-              icon={Terminal}
-              label="Commands"
-              emptyLabel="This plugin does not add any slash-commands."
-              items={plugin.commands}
-              render={(command) => renderCommandRow(command)}
-            />
-          </div>
-        </section>
-
-        {/* ── Sidebar ── */}
-        <aside className="grid gap-3 self-start">
-          {/* Category */}
-          <div className="rounded-xl border border-gray-100 bg-white p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">Category</p>
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-500">
-              {getPluginCategoryLabel(plugin.category)}
-            </span>
-          </div>
-
-          {/* Source */}
-          <div className="rounded-xl border border-gray-100 bg-white p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">Source</p>
-            <p className="text-[13px] font-medium text-gray-900">
-              {plugin.source.type === "marketplace"
-                ? "Marketplace"
-                : plugin.source.type === "github"
-                  ? "GitHub"
-                  : "Local"}
-            </p>
-            <p className="mt-0.5 break-words text-[12px] text-gray-400">
-              {plugin.source.type === "marketplace"
-                ? plugin.source.marketplace
-                : plugin.source.type === "github"
-                  ? plugin.source.repo
-                  : plugin.source.path}
+            <p className="mt-3 text-[11.5px] text-gray-400">
+              Updated {formatPluginTimestamp(plugin.updatedAt)}
             </p>
           </div>
+        </div>
+      </article>
 
-          {/* Status */}
-          <div className="rounded-xl border border-gray-100 bg-white p-4">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">Status</p>
-            <p className="text-[13px] font-medium text-gray-900">
-              {plugin.installed ? "Installed" : "Not installed"}
-            </p>
-            <p className="mt-0.5 text-[12px] text-gray-400">
-              Install and enable management will land in a follow-up.
-            </p>
-          </div>
-        </aside>
+      <div className="mt-6 space-y-6">
+        <PrimitiveSection icon={FileText} label="Skills" items={plugin.skills} render={renderSkillRow} />
+        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
+        <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
+        <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
+        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
       </div>
+
+      {missingLabels.length > 0 ? (
+        <p className="mt-6 text-center text-[12px] text-gray-400">
+          No {formatMissingList(missingLabels)} detected in this plugin.
+        </p>
+      ) : null}
     </div>
   );
 }
 
-// ── Section + row renderers ──────────────────────────────────────────────────
+function formatMissingList(labels: string[]) {
+  if (labels.length === 0) return "";
+  const lowered = labels.map((label) => label.toLowerCase());
+  if (lowered.length === 1) return lowered[0];
+  if (lowered.length === 2) return `${lowered[0]} or ${lowered[1]}`;
+  return `${lowered.slice(0, -1).join(", ")}, or ${lowered[lowered.length - 1]}`;
+}
 
 function PrimitiveSection<T>({
   icon: Icon,
   label,
   items,
-  emptyLabel,
   render,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   items: T[];
-  emptyLabel: string;
   render: (item: T) => React.ReactNode;
 }) {
-  return (
-    <div className="mt-6 border-t border-gray-100 pt-5">
-      <p className="mb-3 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">
-        <Icon className="h-3.5 w-3.5" />
-        {items.length === 0 ? label : `${items.length} ${label}`}
-      </p>
+  if (items.length === 0) {
+    return null;
+  }
 
-      {items.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-100 px-5 py-4 text-[13px] text-gray-400">
-          {emptyLabel}
-        </div>
-      ) : (
-        <div className="grid gap-1.5">{items.map((item) => render(item))}</div>
-      )}
-    </div>
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          <Icon className="h-3.5 w-3.5" />
+          {label}
+        </h2>
+        <p className="text-[11px] text-gray-400">
+          {items.length} {items.length === 1 ? "item" : "items"}
+        </p>
+      </div>
+      <div className="grid gap-2">{items.map((item) => render(item))}</div>
+    </section>
   );
 }
 
@@ -222,13 +170,12 @@ function renderSkillRow(skill: PluginSkill) {
   return (
     <div
       key={skill.id}
-      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3"
+      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-gray-900">{skill.name}</p>
-        <p className="mt-0.5 truncate text-[12px] text-gray-400">{skill.description}</p>
-      </div>
-      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">Skill</span>
+      <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{skill.name}</p>
+      {skill.description ? (
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{skill.description}</p>
+      ) : null}
     </div>
   );
 }
@@ -237,15 +184,19 @@ function renderHookRow(hook: PluginHook) {
   return (
     <div
       key={hook.id}
-      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3"
+      className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-gray-900">{hook.event}</p>
-        <p className="mt-0.5 truncate text-[12px] text-gray-400">{hook.description}</p>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-mono text-[13px] font-semibold text-gray-900">{hook.event}</p>
+        {hook.description ? (
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{hook.description}</p>
+        ) : null}
       </div>
-      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">
-        {hook.matcher ? `matcher: ${hook.matcher}` : "any"}
-      </span>
+      {hook.matcher ? (
+        <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
+          matcher: {hook.matcher}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -254,14 +205,16 @@ function renderMcpRow(mcp: PluginMcp) {
   return (
     <div
       key={mcp.id}
-      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3"
+      className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-gray-900">{mcp.name}</p>
-        <p className="mt-0.5 truncate text-[12px] text-gray-400">{mcp.description}</p>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{mcp.name}</p>
+        {mcp.description ? (
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{mcp.description}</p>
+        ) : null}
       </div>
-      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">
-        {mcp.transport} · {mcp.toolCount} tools
+      <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
+        {mcp.transport} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
       </span>
     </div>
   );
@@ -271,13 +224,12 @@ function renderAgentRow(agent: PluginAgent) {
   return (
     <div
       key={agent.id}
-      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3"
+      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-gray-900">{agent.name}</p>
-        <p className="mt-0.5 truncate text-[12px] text-gray-400">{agent.description}</p>
-      </div>
-      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">Agent</span>
+      <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{agent.name}</p>
+      {agent.description ? (
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{agent.description}</p>
+      ) : null}
     </div>
   );
 }
@@ -286,17 +238,14 @@ function renderCommandRow(command: PluginCommand) {
   return (
     <div
       key={command.id}
-      className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 px-4 py-3"
+      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
     >
-      <div className="min-w-0">
-        <p className="truncate font-mono text-[13px] font-medium text-gray-900">{command.name}</p>
-        <p className="mt-0.5 truncate text-[12px] text-gray-400">{command.description}</p>
-      </div>
-      <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-400">Command</span>
+      <p className="truncate font-mono text-[13px] font-semibold text-gray-900">{command.name}</p>
+      {command.description ? (
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{command.description}</p>
+      ) : null}
     </div>
   );
 }
 
-// Satisfy the type parameter of DenPlugin import even if unused at runtime.
-// (Keeps the file importable when you wire in edit forms later.)
 export type { DenPlugin };

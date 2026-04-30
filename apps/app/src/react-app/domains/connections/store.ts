@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 
-import { homeDir } from "@tauri-apps/api/path";
 import { parse } from "jsonc-parser";
 
 import { currentLocale, t } from "../../../i18n";
@@ -12,10 +11,11 @@ import {
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
+  getDesktopHomeDir,
   readOpencodeConfig,
   writeOpencodeConfig,
   type OpencodeConfigFile,
-} from "../../../app/lib/tauri";
+} from "../../../app/lib/desktop";
 import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
@@ -23,6 +23,7 @@ import {
   usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
+import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
 import type {
   Client,
   McpServerEntry,
@@ -30,7 +31,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
 } from "../../../app/types";
-import { isTauriRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
 
@@ -151,7 +152,7 @@ export function createConnectionsStore(options: {
       return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       return null;
     }
 
@@ -171,7 +172,9 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    activeClient = createClient(`${openworkBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
+    const mountedBaseUrl =
+      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, options.runtimeWorkspaceId()) ?? openworkBaseUrl;
+    activeClient = createClient(`${mountedBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
       token,
       mode: "openwork",
     });
@@ -323,7 +326,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       mutateState((current) => ({
         ...current,
         mcpStatus: "MCP configuration is only available for local workspaces.",
@@ -390,7 +393,7 @@ export function createConnectionsStore(options: {
     const openworkSnapshot = getOpenworkSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isTauriRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
     const projectDir = options.projectDir().trim();
     const entryType = entry.type ?? "remote";
 
@@ -412,7 +415,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseOpenworkServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", translate("mcp.desktop_required"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
@@ -478,10 +481,10 @@ export function createConnectionsStore(options: {
         if (
           slug === CHROME_DEVTOOLS_MCP_ID &&
           usesChromeDevtoolsAutoConnect(entry.command) &&
-          isTauriRuntime()
+          isDesktopRuntime()
         ) {
           try {
-            const hostHome = (await homeDir()).replace(/[\\/]+$/, "");
+            const hostHome = (await getDesktopHomeDir()).replace(/[\\/]+$/, "");
             if (hostHome) {
               mcpEnvironment = { HOME: hostHome };
               mcpEntryConfig["environment"] = mcpEnvironment;
@@ -530,30 +533,40 @@ export function createConnectionsStore(options: {
         }
       }
 
-      const mcpAddConfig =
-        entryType === "remote"
-          ? {
-              type: "remote" as const,
-              url: entry.url!,
-              enabled: true,
-              ...(entry.oauth ? { oauth: {} } : {}),
-            }
-          : {
-              type: "local" as const,
-              command: entry.command!,
-              enabled: true,
-              ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
-            };
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        // The OpenWork server is the source of truth for workspace-scoped MCP
+        // config in the React port. Avoid also calling the OpenCode SDK's MCP
+        // hot-add endpoint here: when the SDK client is rooted at the aggregate
+        // `/opencode` route it can resolve to an internal `local_*` workspace
+        // id that the OpenWork server does not expose, producing a confusing
+        // `workspace_not_found` after the config write already succeeded.
+        setStateField("mcpStatuses", filterConfiguredStatuses(snapshot.mcpStatuses, snapshot.mcpServers));
+      } else {
+        const mcpAddConfig =
+          entryType === "remote"
+            ? {
+                type: "remote" as const,
+                url: entry.url!,
+                enabled: true,
+                ...(entry.oauth ? { oauth: {} } : {}),
+              }
+            : {
+                type: "local" as const,
+                command: entry.command!,
+                enabled: true,
+                ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
+              };
 
-      const status = unwrap(
-        await activeClient.mcp.add({
-          directory: resolvedProjectDir,
-          name: slug,
-          config: mcpAddConfig,
-        }),
-      );
+        const status = unwrap(
+          await activeClient.mcp.add({
+            directory: resolvedProjectDir,
+            name: slug,
+            config: mcpAddConfig,
+          }),
+        );
 
-      setStateField("mcpStatuses", status as McpStatusMap);
+        setStateField("mcpStatuses", status as McpStatusMap);
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 
@@ -619,7 +632,7 @@ export function createConnectionsStore(options: {
     const openworkSnapshot = getOpenworkSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isTauriRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
     const projectDir = options.projectDir().trim();
 
     const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
@@ -630,7 +643,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseOpenworkServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", translate("mcp.desktop_required"));
       return;
     }
@@ -740,7 +753,7 @@ export function createConnectionsStore(options: {
     lastWorkspaceContextKey = workspaceContextKey;
     lastProjectDir = projectDir;
 
-    if (!started || disposed || !isTauriRuntime() || !changed) {
+    if (!started || disposed || !isDesktopRuntime() || !changed) {
       return;
     }
 
@@ -748,7 +761,9 @@ export function createConnectionsStore(options: {
   };
 
   const start = () => {
-    if (started || disposed) return;
+    if (started) return;
+    // StrictMode double-mount re-arms after dispose.
+    disposed = false;
     started = true;
     syncFromOptions();
   };

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { LANGUAGE_OPTIONS, t, type Language } from "../../../../i18n";
-import { isTauriRuntime } from "../../../../app/utils";
+import { isDesktopRuntime } from "../../../../app/utils";
 import { Button } from "../../../design-system/button";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
@@ -72,7 +72,7 @@ export function AppearanceView(props: AppearanceViewProps) {
         <div className="text-xs text-gray-8">{t("settings.theme_system_hint")}</div>
       </div>
 
-      {isTauriRuntime() ? (
+      {isDesktopRuntime() ? (
         <div className="space-y-3 rounded-2xl border border-gray-6/50 bg-gray-2/30 p-5">
           <div>
             <div className="text-sm font-medium text-gray-12">{t("settings.appearance_title")}</div>

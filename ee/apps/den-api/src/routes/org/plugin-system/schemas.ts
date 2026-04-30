@@ -344,6 +344,26 @@ export const githubConnectorSetupSchema = z.object({
   mappings: z.array(connectorMappingCreateSchema).max(100).default([]),
 })
 
+export const githubInstallStartSchema = z.object({
+  returnPath: z.string().trim().min(1).max(1024),
+})
+
+export const githubInstallCompleteSchema = z.object({
+  installationId: z.number().int().positive(),
+  state: z.string().trim().min(1).max(4096),
+})
+
+export const githubDiscoveryApplySchema = z.object({
+  autoImportNewPlugins: z.boolean().default(false),
+  selectedKeys: z.array(z.string().trim().min(1).max(255)).max(200),
+})
+
+export const githubDiscoveryTreeQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(255).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  prefix: z.string().trim().min(1).max(1024).optional(),
+})
+
 export const githubConnectorAccountCreateSchema = z.object({
   installationId: z.number().int().positive(),
   accountLogin: z.string().trim().min(1).max(255),
@@ -427,6 +447,10 @@ export const pluginSchema = z.object({
   updatedAt: z.string().datetime({ offset: true }),
   deletedAt: nullableTimestampSchema,
   memberCount: z.number().int().nonnegative().optional(),
+  marketplaces: z.array(z.object({
+    id: marketplaceIdSchema,
+    name: z.string().trim().min(1).max(255),
+  })).optional(),
 }).meta({ ref: "PluginArchPlugin" })
 
 export const marketplacePluginSchema = z.object({
@@ -461,6 +485,7 @@ export const connectorAccountSchema = z.object({
   externalAccountRef: z.string().trim().min(1).max(255).nullable(),
   displayName: z.string().trim().min(1).max(255),
   status: connectorAccountStatusSchema,
+  createdByName: z.string().trim().min(1).max(255).nullable().optional(),
   createdByOrgMembershipId: memberIdSchema,
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
@@ -672,6 +697,23 @@ export const pluginMembershipMutationResponseSchema = pluginArchMutationResponse
 export const marketplaceListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplaceListResponse", marketplaceSchema)
 export const marketplaceDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchMarketplaceDetailResponse", marketplaceSchema)
 export const marketplaceMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplaceMutationResponse", marketplaceSchema)
+
+export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchMarketplaceResolvedResponse",
+  z.object({
+    marketplace: marketplaceSchema,
+    plugins: z.array(pluginSchema.extend({
+      componentCounts: z.record(z.string(), z.number().int().nonnegative()).default({}),
+    })),
+    source: z.object({
+      connectorAccountId: connectorAccountIdSchema,
+      connectorInstanceId: connectorInstanceIdSchema,
+      accountLogin: z.string().trim().min(1).nullable(),
+      repositoryFullName: z.string().trim().min(1),
+      branch: z.string().trim().min(1).nullable(),
+    }).nullable(),
+  }),
+)
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)
 export const marketplacePluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplacePluginMutationResponse", marketplacePluginSchema)
 export const accessGrantListResponseSchema = pluginArchListResponseSchema("PluginArchAccessGrantListResponse", accessGrantSchema)
@@ -679,6 +721,42 @@ export const accessGrantMutationResponseSchema = pluginArchMutationResponseSchem
 export const connectorAccountListResponseSchema = pluginArchListResponseSchema("PluginArchConnectorAccountListResponse", connectorAccountSchema)
 export const connectorAccountDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConnectorAccountDetailResponse", connectorAccountSchema)
 export const connectorAccountMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConnectorAccountMutationResponse", connectorAccountSchema)
+export const connectorAccountDisconnectResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchConnectorAccountDisconnectResponse",
+  z.object({
+    deletedConfigObjectCount: z.number().int().nonnegative(),
+    deletedConnectorInstanceCount: z.number().int().nonnegative(),
+    deletedConnectorMappingCount: z.number().int().nonnegative(),
+    disconnectedAccountId: connectorAccountIdSchema,
+    reason: z.string().trim().nullable(),
+  }),
+)
+export const connectorInstanceConfiguredPluginSchema = pluginSchema.extend({
+  componentCounts: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  rootPath: z.string().nullable(),
+}).meta({ ref: "PluginArchConnectorInstanceConfiguredPlugin" })
+
+export const connectorInstanceConfigurationResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchConnectorInstanceConfigurationResponse",
+  z.object({
+    autoImportNewPlugins: z.boolean(),
+    configuredPlugins: z.array(connectorInstanceConfiguredPluginSchema),
+    connectorInstance: connectorInstanceSchema,
+    importedConfigObjectCount: z.number().int().nonnegative(),
+    mappingCount: z.number().int().nonnegative(),
+  }),
+)
+export const connectorInstanceAutoImportSchema = z.object({
+  autoImportNewPlugins: z.boolean(),
+})
+export const connectorInstanceRemoveResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchConnectorInstanceRemoveResponse",
+  z.object({
+    deletedConfigObjectCount: z.number().int().nonnegative(),
+    deletedConnectorMappingCount: z.number().int().nonnegative(),
+    removedConnectorInstanceId: connectorInstanceIdSchema,
+  }),
+)
 export const connectorInstanceListResponseSchema = pluginArchListResponseSchema("PluginArchConnectorInstanceListResponse", connectorInstanceSchema)
 export const connectorInstanceDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConnectorInstanceDetailResponse", connectorInstanceSchema)
 export const connectorInstanceMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConnectorInstanceMutationResponse", connectorInstanceSchema)
@@ -697,9 +775,95 @@ export const githubRepositorySchema = z.object({
   id: z.number().int().positive(),
   fullName: z.string().trim().min(1),
   defaultBranch: z.string().trim().min(1).nullable(),
+  hasPluginManifest: z.boolean().optional(),
+  manifestKind: z.enum(["marketplace", "plugin"]).nullable().optional(),
+  marketplacePluginCount: z.number().int().nonnegative().nullable().optional(),
   private: z.boolean(),
 }).meta({ ref: "PluginArchGithubRepository" })
 export const githubRepositoryListResponseSchema = pluginArchListResponseSchema("PluginArchGithubRepositoryListResponse", githubRepositorySchema)
+export const githubDiscoveryStepSchema = z.object({
+  id: z.enum(["read_repository_structure", "check_marketplace_manifest", "check_plugin_manifests", "prepare_discovered_plugins"]),
+  label: z.string().trim().min(1),
+  status: z.enum(["completed", "running", "warning"]),
+}).meta({ ref: "PluginArchGithubDiscoveryStep" })
+export const githubDiscoveryTreeSummarySchema = z.object({
+  scannedEntryCount: z.number().int().nonnegative(),
+  strategy: z.enum(["git-tree-recursive"]),
+  truncated: z.boolean(),
+}).meta({ ref: "PluginArchGithubDiscoveryTreeSummary" })
+export const githubDiscoveredPluginSchema = z.object({
+  key: z.string().trim().min(1),
+  sourceKind: z.enum(["marketplace_entry", "plugin_manifest", "standalone_claude", "folder_inference"]),
+  rootPath: z.string(),
+  displayName: z.string().trim().min(1),
+  description: nullableStringSchema,
+  selectedByDefault: z.boolean(),
+  supported: z.boolean(),
+  manifestPath: nullableStringSchema,
+  warnings: z.array(z.string().trim().min(1)),
+  componentKinds: z.array(z.enum(["skill", "command", "agent", "hook", "mcp_server", "lsp_server", "monitor", "settings"])),
+  componentPaths: z.object({
+    agents: z.array(z.string().trim().min(1)),
+    commands: z.array(z.string().trim().min(1)),
+    hooks: z.array(z.string().trim().min(1)),
+    lspServers: z.array(z.string().trim().min(1)),
+    mcpServers: z.array(z.string().trim().min(1)),
+    monitors: z.array(z.string().trim().min(1)),
+    settings: z.array(z.string().trim().min(1)),
+    skills: z.array(z.string().trim().min(1)),
+  }),
+  metadata: jsonObjectSchema,
+}).meta({ ref: "PluginArchGithubDiscoveredPlugin" })
+export const githubConnectorDiscoveryResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchGithubConnectorDiscoveryResponse",
+  z.object({
+    autoImportNewPlugins: z.boolean(),
+    classification: z.enum(["claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+    connectorInstance: connectorInstanceSchema,
+    connectorTarget: connectorTargetSchema,
+    discoveredPlugins: z.array(githubDiscoveredPluginSchema),
+    repositoryFullName: z.string().trim().min(1),
+    sourceRevisionRef: z.string().trim().min(1),
+    steps: z.array(githubDiscoveryStepSchema),
+    treeSummary: githubDiscoveryTreeSummarySchema,
+    warnings: z.array(z.string().trim().min(1)),
+  }),
+)
+export const githubDiscoveryTreeEntrySchema = z.object({
+  id: z.string().trim().min(1),
+  kind: z.enum(["blob", "tree"]),
+  path: z.string().trim().min(1),
+  sha: nullableStringSchema,
+  size: z.number().int().nonnegative().nullable(),
+}).meta({ ref: "PluginArchGithubDiscoveryTreeEntry" })
+export const githubDiscoveryTreeResponseSchema = pluginArchListResponseSchema("PluginArchGithubDiscoveryTreeResponse", githubDiscoveryTreeEntrySchema)
+export const githubDiscoveryApplyResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchGithubDiscoveryApplyResponse",
+  z.object({
+    autoImportNewPlugins: z.boolean(),
+    createdMarketplace: marketplaceSchema.nullable().optional(),
+    connectorInstance: connectorInstanceSchema,
+    connectorTarget: connectorTargetSchema,
+    createdPlugins: z.array(pluginSchema),
+    createdMappings: z.array(connectorMappingSchema),
+    materializedConfigObjects: z.array(configObjectSchema),
+    sourceRevisionRef: z.string().trim().min(1),
+  }),
+)
+export const githubInstallStartResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchGithubInstallStartResponse",
+  z.object({
+    redirectUrl: z.string().url(),
+    state: z.string().trim().min(1),
+  }),
+)
+export const githubInstallCompleteResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchGithubInstallCompleteResponse",
+  z.object({
+    connectorAccount: connectorAccountSchema,
+    repositories: z.array(githubRepositorySchema),
+  }),
+)
 export const githubSetupResponseSchema = pluginArchMutationResponseSchema(
   "PluginArchGithubSetupResponse",
   z.object({

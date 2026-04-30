@@ -20,13 +20,13 @@ import {
   writeOpencodeConfig,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
-} from "../../../../app/lib/tauri";
+} from "../../../../app/lib/desktop";
 import type {
   Client,
   ProviderListItem,
   WorkspaceDisplay,
 } from "../../../../app/types";
-import { isTauriRuntime, safeStringify } from "../../../../app/utils";
+import { isDesktopRuntime, safeStringify } from "../../../../app/utils";
 import {
   compareProviders,
   filterProviderList,
@@ -313,7 +313,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return config.openwork ?? {};
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       return (await workspaceOpenworkRead({
         workspacePath: root,
       })) as unknown as Record<string, unknown>;
@@ -343,7 +343,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return true;
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       const result = await workspaceOpenworkWrite({
         workspacePath: root,
         config: config as never,
@@ -408,7 +408,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return await openworkClient.readOpencodeConfigFile(openworkWorkspaceId, "project");
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       return await readOpencodeConfig("project", root);
     }
 
@@ -442,7 +442,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return true;
     }
 
-    if (isLocalWorkspace && isTauriRuntime() && root) {
+    if (isLocalWorkspace && isDesktopRuntime() && root) {
       const result = await writeOpencodeConfig("project", root, content);
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
@@ -1369,7 +1369,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const start = () => {
-    if (started || disposed) return;
+    if (started) return;
+    // StrictMode double-mount re-arms after dispose.
+    disposed = false;
     started = true;
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
@@ -1402,6 +1404,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    started = false;
     denSessionCleanup?.();
     denSessionCleanup = null;
     listeners.clear();

@@ -1,40 +1,37 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
 
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-
 import {
   FONT_ZOOM_STEP,
   applyFontZoom,
-  applyWebviewZoom,
   normalizeFontZoom,
   parseFontZoomShortcut,
   persistFontZoom,
   readStoredFontZoom,
 } from "../../app/lib/font-zoom";
-import { isTauriRuntime } from "../../app/utils";
+import { setDesktopZoomFactor } from "../../app/lib/desktop";
+import { isDesktopRuntime } from "../../app/utils";
 
 export function useDesktopFontZoomBehavior() {
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     const applyAndPersistFontZoom = (value: number) => {
       const next = normalizeFontZoom(value);
       persistFontZoom(window.localStorage, next);
 
-      try {
-        const webview = getCurrentWebview();
-        void applyWebviewZoom(webview, next)
-          .then(() => {
+      void setDesktopZoomFactor(next)
+        .then((applied) => {
+          if (applied) {
             document.documentElement.style.removeProperty("--openwork-font-size");
-          })
-          .catch(() => {
-            applyFontZoom(document.documentElement.style, next);
-          });
-      } catch {
-        applyFontZoom(document.documentElement.style, next);
-      }
+            return;
+          }
+          applyFontZoom(document.documentElement.style, next);
+        })
+        .catch(() => {
+          applyFontZoom(document.documentElement.style, next);
+        });
 
       return next;
     };
