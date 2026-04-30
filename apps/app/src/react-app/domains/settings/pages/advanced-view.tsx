@@ -21,6 +21,7 @@ type RuntimeStatusCardProps = {
   statusLabel: string;
   statusStyle: string;
   statusDot: string;
+  detailLines?: string[];
 };
 
 export type AdvancedViewProps = {
@@ -65,8 +66,24 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
         <span className={`h-2 w-2 rounded-full ${props.statusDot}`} />
         {props.statusLabel}
       </div>
+      {props.detailLines?.length ? (
+        <div className="space-y-1 border-t border-gray-6/50 pt-2 text-[11px] text-gray-9">
+          {props.detailLines.map((line) => (
+            <div key={line} className="truncate" title={line}>
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function formatOpencodeBinary(info: EngineInfo | null) {
+  const binary = info?.opencodeBinPath?.trim();
+  if (!binary) return "—";
+  const source = info?.opencodeBinSource?.trim();
+  return source ? `${binary} (${source})` : binary;
 }
 
 export function AdvancedView(props: AdvancedViewProps) {
@@ -211,6 +228,11 @@ export function AdvancedView(props: AdvancedViewProps) {
             statusLabel={clientStatusLabel}
             statusStyle={clientStatusStyle}
             statusDot={clientStatusDot}
+            detailLines={[
+              t("settings.diag_opencode_binary", undefined, {
+                binary: formatOpencodeBinary(props.engineInfo),
+              }),
+            ]}
           />
           <RuntimeStatusCard
             icon={<Server size={18} />}
@@ -226,7 +248,7 @@ export function AdvancedView(props: AdvancedViewProps) {
       <div className={`${settingsPanelClass} space-y-3`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.opencode_section_label")}</div>
-          <div className="text-xs text-gray-9">{t("settings.opencode_runtime_desc")}</div>
+          <div className="text-xs text-gray-9">{t("settings.opencode_engine_desc")}</div>
         </div>
 
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
@@ -370,7 +392,7 @@ export function AdvancedView(props: AdvancedViewProps) {
               disabled={props.busy || openworkRestartBusy}
             >
               <RefreshCcw size={14} className={`text-dls-secondary ${openworkRestartBusy ? "animate-spin" : ""}`} />
-              {openworkRestartBusy ? t("settings.restarting") : t("settings.restart_local_server")}
+              {openworkRestartBusy ? t("settings.restarting") : t("settings.restart_openwork_server")}
             </button>
           ) : null}
 

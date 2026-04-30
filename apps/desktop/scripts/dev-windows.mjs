@@ -22,7 +22,7 @@ const stopStaleSidecars = () => {
   const targetDir = tauriDebugDir.replace(/\\/g, "\\\\");
   const command = [
     `$targetDir = \"${targetDir}\"`,
-    "$names = @('opencode.exe','opencode-router.exe','openwork-server.exe','openwork-orchestrator.exe','chrome-devtools-mcp.exe')",
+    "$names = @('opencode.exe','openwork-server.exe','openwork-orchestrator.exe','chrome-devtools-mcp.exe')",
     "Get-CimInstance Win32_Process | Where-Object {",
     "  $_.ExecutablePath -and $_.ExecutablePath.StartsWith($targetDir, [System.StringComparison]::OrdinalIgnoreCase) -and $names.Contains([System.IO.Path]::GetFileName($_.ExecutablePath))",
     "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",

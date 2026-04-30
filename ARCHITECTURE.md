@@ -70,9 +70,7 @@ Agents, skills, and commands should model the following as OpenWork server behav
 - workspace creation and initialization
 - writes to `.opencode/`, `opencode.json`, and `opencode.jsonc`
 - OpenWork workspace config writes (`.opencode/openwork.json`)
-- workspace template export/import, including shareable `.opencode/**` files and `opencode.json` state
-- workspace template starter-session materialization from portable blueprint config (not copied runtime session history)
-- share-bundle publish/fetch flows used by OpenWork template links
+- share-bundle publish/fetch flows for supported OpenWork capability bundles such as skills
 - reload event generation after config or capability changes
 - other filesystem-backed capability changes that must work across desktop host mode and remote clients
 
@@ -89,22 +87,24 @@ If an agent needs one of the server-owned behaviors above and only a Tauri path 
 
 OpenWork desktop ships through two release channels:
 
-- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`.
-- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes a signed, notarized build to the rolling GitHub release tagged `alpha-macos-latest`. The alpha updater manifest lives at a stable URL: `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`.
+- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized Tauri bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`; when Electron publishing is enabled, the same release also carries signed, notarized Electron macOS assets plus `latest-mac.yml` at `https://github.com/different-ai/openwork/releases/latest/download/latest-mac.yml`.
+- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes signed, notarized Tauri and Electron builds to the rolling GitHub release tagged `alpha-macos-latest`. The Tauri alpha updater manifest lives at `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`; Electron alpha assets include `latest-mac.yml` at `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest-mac.yml` on the same release.
 
 Guidelines:
 
-- The alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- The Tauri alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The normal Updates toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- The Electron alpha channel is Debug-only during the migration window. Migrated Electron users can switch feeds from Settings → Debug → Electron alpha channel; the normal Updates page stays on the selected Electron feed and defaults to stable.
 - Alpha builds advertise the next patch version plus an `-alpha.<runNumber>+<sha>` prerelease suffix. That keeps semver ordering `stable < alpha.1 < alpha.2 < next stable` so alpha users migrate forward cleanly when the next stable ships.
 - Alpha and stable share the same Tauri updater signing keypair so an installed stable can upgrade into alpha and vice versa without re-installing manually.
-- Apple signing and notarization are required on both channels; the `MACOS_NOTARIZE` repo variable gates the signed path in `alpha-macos-aarch64.yml`.
+- Apple signing and notarization are required on both channels; `alpha-macos-aarch64.yml` fails closed unless `MACOS_NOTARIZE=true`, and the `Release App` Electron job reuses the same Tauri Apple signing/notary secrets.
 - The alpha workflow is the source of truth for the alpha channel's CI contract. Treat `.github/workflows/alpha-macos-aarch64.yml`, `apps/app/src/app/lib/release-channels.ts`, and this document as one coupled unit.
 
 Code references:
 
 - Workflow: `.github/workflows/alpha-macos-aarch64.yml`
 - Endpoint resolution: `apps/app/src/app/lib/release-channels.ts`
-- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`
+- Electron alpha resolver: `apps/app/src/app/lib/electron-alpha.ts`
+- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`, `apps/app/src/react-app/domains/settings/pages/debug-view.tsx`
 - Stable workflow (reference): `.github/workflows/release-macos-aarch64.yml`
 
 ## Reload-required flow
@@ -133,6 +133,13 @@ Do not invent a separate reload banner per feature. New UI that needs restart se
 3. rely on the shared reload popup to explain and execute the restart path
 
 Current examples that should use this shared flow include MCP changes, auto context compaction, default model changes, authorized folder updates, plugin changes, and other `opencode.json` writes.
+
+When the desktop shell asks the OpenWork server to manage OpenCode, the managed
+OpenCode process starts from a shell-owned local workdir under app data instead
+of the user's selected workspace. Workspace-specific file access still flows
+through the OpenWork server and `x-opencode-directory`, but startup no longer
+depends on opening a project `opencode.json` from slow cloud-synced folders such
+as iCloud Drive.
 
 ## opencode primitives
 how to pick the right extension abstraction for 
@@ -181,8 +188,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 - `/apps/app/`: OpenWork app UI (desktop/mobile/web client experience layer).
 - `/apps/desktop/`: Tauri desktop shell that hosts the app UI and manages native process lifecycles.
 - `/apps/server/`: OpenWork server (API/control layer consumed by the app).
-- `/apps/orchestrator/`: OpenWork orchestrator CLI/daemon. In `start`/`serve` host mode it manages OpenWork server + OpenCode + `opencode-router`; in daemon mode it manages workspace activation and OpenCode lifecycle for desktop runtime.
-- `/apps/opencode-router/`: first-party messaging bridge (Slack/Telegram) and directory router.
+- `/apps/orchestrator/`: OpenWork orchestrator CLI/daemon. In `start`/`serve` host mode it manages OpenWork server + OpenCode; in daemon mode it manages worker/sandbox lifecycle.
 - `/apps/share/`: share-link publisher service for OpenWork bundle imports.
 - `/ee/apps/landing/`: OpenWork landing page surfaces.
 - `/ee/apps/den-web/`: Den web UI for sign-in, worker creation, and future user-management flows.
@@ -207,7 +213,7 @@ OpenWork therefore has two runtime connection modes:
 - The OpenCode server runs on loopback (default `127.0.0.1:4096`).
 - The OpenWork server also defaults to loopback-only access. Remote sharing is an explicit opt-in that rebinds the OpenWork server to `0.0.0.0` while keeping OpenCode on loopback.
 - OpenWork UI connects via the official SDK and listens to events.
-- `openwork-orchestrator` is the CLI host path for this mode.
+- OpenWork server is the local API/control layer for this mode and owns the managed OpenCode child lifecycle.
 
 ### Mode B - Web/Cloud (can be mobile)
 
@@ -221,14 +227,11 @@ This model keeps the user experience consistent across self-hosted and hosted pa
 ### Mode A composition (Tauri shell + local services)
 
 - `/apps/app/` runs as the product UI; on desktop it is hosted inside `/apps/desktop/` (Tauri webview).
-- `/apps/desktop/` exposes native commands (`engine_*`, `orchestrator_*`, `openwork_server_*`, `opencodeRouter_*`) to start/stop local services and report status to the UI.
+- `/apps/desktop/` exposes native commands (`engine_*`, `orchestrator_*`, `openwork_server_*`) to start/stop local services and report status to the UI.
 - `/apps/desktop/` is also the source of truth for desktop bootstrap config that must survive updates, including Den server targeting and forced-sign-in startup behavior. The shell reads a predictable external `desktop-bootstrap.json` from the host config directory (or `OPENWORK_DESKTOP_BOOTSTRAP_PATH` when explicitly overridden). Default builds consume that file when present; custom builds seed or overwrite it when their bundled bootstrap differs from the standard default.
-- Runtime selection in desktop:
-  - `openwork-orchestrator` (default): Tauri launches `openwork daemon run` and uses it for workspace activation plus OpenCode lifecycle.
-  - `direct`: Tauri starts OpenCode directly.
-- In both desktop runtimes, OpenWork server (`/apps/server/`) is the API surface consumed by the UI; it is started with the resolved OpenCode base URL and proxies OpenCode and `opencode-router` routes.
+- Desktop host runtime is server-managed: the shell starts OpenWork server with managed OpenCode enabled, and the UI consumes OpenWork server APIs.
+- OpenWork server (`/apps/server/`) is the API surface consumed by the UI; it proxies OpenCode routes for the active workspace.
 - Desktop-launched OpenCode credentials are always random, per-launch values generated by OpenWork. OpenCode stays on loopback and is intended to be reached through OpenWork server rather than exposed directly.
-- `opencode-router` is optional in desktop host mode and is started as a local service when messaging routes are enabled.
 
 ```text
 /apps/app UI
@@ -236,17 +239,9 @@ This model keeps the user experience consistent across self-hosted and hosted pa
     v
 /apps/desktop (Tauri shell)
     |
-    +--> /apps/orchestrator (daemon or start/serve host)
-    |          |
-    |          v
-    |        OpenCode
-    |
     +--> /apps/server (OpenWork API + proxy surface)
-    |          |
-    |          +--> OpenCode
-    |          +--> /apps/opencode-router (optional)
-    |
-    +--> /apps/opencode-router (optional local child)
+               |
+               +--> OpenCode
 ```
 
 ### Mode B composition (Web/Cloud services)
@@ -277,155 +272,9 @@ OpenWork app/mobile client
     -> worker OpenWork server surface
 ```
 
-## OpenCode Router (Messaging Bridge)
+## Messaging Bridge
 
-OpenWork can expose a workspace through Slack and Telegram via `opencode-router`.
-
-- `opencode-router` is a local bridge that receives messages from messaging adapters and forwards them into OpenCode sessions.
-- The core routing key is `(channel, identityId, peerId) -> directory`.
-- Bindings and sessions are persisted locally so a chat can continue against the same workspace directory.
-- The router keeps one OpenCode client per directory and one event subscription per active directory.
-
-### Runtime shape
-
-```text
-Telegram bot / Slack app
-          |
-          v
-+---------------------------+
-| adapter per identity      |
-| (telegram/slack, id)      |
-+---------------------------+
-          |
-          v
- (channel, identityId, peerId)
-          |
-          v
-+---------------------------+
-| router state              |
-| - bindings                |
-| - sessions                |
-| - identity defaults       |
-+---------------------------+
-          |
-          v
-+---------------------------+
-| directory resolution      |
-| binding -> session ->     |
-| identity dir -> default   |
-+---------------------------+
-          |
-          v
-+---------------------------+
-| OpenCode client per dir   |
-+---------------------------+
-          |
-          v
-   OpenCode session.prompt
-          |
-          v
- reply back to same chat
-```
-
-### Directory scoping
-
-OpenWork optimizes for a predictable routing boundary.
-
-- The router starts with a single workspace root (`serve <path>` or `OPENCODE_DIRECTORY`).
-- Routed directories may be absolute or relative, but they must stay inside that root.
-- Relative chat commands like `/dir foo/bar` resolve against the router root.
-- Directories outside the root are rejected instead of silently accepted.
-
-This keeps the mental model simple: one router instance owns one root, and chat routing stays inside that tree.
-
-### Local HTTP control plane
-
-The router exposes a small local HTTP API for host-side configuration and dispatch:
-
-- `/health`
-- `/identities/telegram`
-- `/identities/slack`
-- `/bindings`
-- `/send`
-
-OpenWork server proxies `/opencode-router/*` and `/w/:id/opencode-router/*` to that local router API.
-
-### Workspace-scoped behavior in OpenWork
-
-OpenWork server treats messaging identities as workspace-scoped.
-
-- Each workspace maps to a normalized router identity id.
-- When the app/server upserts a Telegram or Slack identity for a workspace, it also persists that workspace path as the identity default directory.
-- Binding and send APIs are filtered through that workspace identity, so the UI talks about "this workspace" even though the underlying router can track multiple directories.
-
-```text
-Client UI / phone / web
-          |
-          v
-+---------------------------+
-| OpenWork server           |
-| /workspace/:id/...        |
-| /w/:id/opencode-router/*  |
-+---------------------------+
-          |
-          | workspace-scoped identity id
-          | workspace.path as default dir
-          v
-+---------------------------+
-| local opencode-router     |
-| HTTP control plane        |
-+---------------------------+
-          |
-          v
-+---------------------------+
-| OpenCode                  |
-+---------------------------+
-```
-
-### CLI mental model
-
-```text
-opencode-router serve /root/workspaces
-
-message arrives
-  -> lookup (channel, identityId, peerId)
-  -> resolve directory
-  -> ensure directory is under /root/workspaces
-  -> reuse/create OpenCode session for that directory
-  -> stream reply back to Slack or Telegram
-```
-
-### Multiple workspaces: what works today
-
-There are two layers here, and they matter:
-
-1. The router core can multiplex multiple directories.
-2. The current desktop embedding still runs a single router child process with a single root.
-
-```text
-Current desktop shape
-
-workspace A ----\
-workspace B -----+--> OpenWork server knows all workspaces
-workspace C ----/
-
-                   but desktop starts one router child
-                   with one configured root
-
-                 +-------------------------------+
-                 | opencode-router               |
-                 | root: runtime active workspace|
-                 | clients: many dirs under root |
-                 +-------------------------------+
-```
-
-Practical consequences:
-
-- If multiple workspaces live under one shared parent root, one router can serve them all.
-- If workspaces live in unrelated roots, directories outside the active router root are rejected.
-- OpenWork server is already multi-workspace aware.
-- Desktop router management is still effectively single-root at a time.
-- On desktop, the file watcher follows the runtime-connected workspace root, not just the workspace currently selected in the UI.
+OpenWork no longer starts or proxies an app-owned local messaging bridge in the desktop host runtime. Messaging surfaces must be provided by an external server/worker surface rather than Tauri, Electron, or OpenWork server launching a local `opencode-router` child.
 
 Terminology clarification:
 
@@ -664,4 +513,3 @@ Rules:
 
 - Best packaging strategy for Host mode engine (bundled vs user-installed Node/runtime).
 - Best remote transport for mobile client (LAN only vs optional tunnel).
-- Scheduling API surface (native in OpenCode server vs OpenWork-managed scheduler).

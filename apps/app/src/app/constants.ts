@@ -13,15 +13,7 @@ export const DEFAULT_MODEL: ModelRef = {
   modelID: "big-pickle",
 };
 
-export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
-  {
-    name: "opencode-scheduler",
-    packageName: "opencode-scheduler",
-    get description() { return t("plugins.scheduler_desc"); },
-    tags: ["automation", "jobs"],
-    installMode: "simple",
-  },
-];
+export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [];
 
 export type McpDirectoryInfo = {
   id?: string;

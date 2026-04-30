@@ -117,7 +117,7 @@ Design principles for hot reload:
 
 | Layer                | Technology                |
 | -------------------- | ------------------------- |
-| Desktop/Mobile shell | Tauri 2.x                 |
+| Desktop/Mobile shell | Tauri 2.x with Electron migration path |
 | Frontend             | SolidJS + TailwindCSS     |
 | State                | Solid stores + IndexedDB  |
 | IPC                  | Tauri commands + events   |
@@ -140,7 +140,7 @@ For `apps/app/src/app/**`, use CUPID: small public surfaces, intention-revealing
 * Treat shared utilities as a last resort; promote only after multiple real consumers exist.
 * Cross-domain imports should go through a small public API, not another domain's internals.
 * Keep global shell code thin and use it for routing, top-level layout, runtime wiring, and shared reload/update surfaces only.
-* Domain map: shell, workspace, session, connections, automations, cloud, app-settings, and kernel.
+* Domain map: shell, workspace, session, connections, cloud, app-settings, and kernel.
 * When changing app architecture, moving ownership, or editing hot spots like `app.tsx`, `pages/dashboard.tsx`, `pages/session.tsx`, or `pages/settings.tsx`, consult the workspace-root skill at `../../.opencode/skills/cupid-app-architecture/SKILL.md` first.
 
 ## Dev Debugging

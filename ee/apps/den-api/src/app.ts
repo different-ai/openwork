@@ -18,6 +18,7 @@ import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
+import { registerMcpRoutes } from "./mcp/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 
@@ -111,6 +112,7 @@ registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
+registerMcpRoutes(app)
 
 app.get(
   "/openapi.json",

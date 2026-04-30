@@ -181,6 +181,22 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     el.scrollIntoView({ block: "nearest" });
   }, []);
 
+  const selectRenderedItem = useCallback(
+    (item: RenderedItem | undefined) => {
+      if (!item) return;
+      if (item.kind === "provider") {
+        props.onClose({ restorePromptFocus: false });
+        props.onOpenSettings();
+        return;
+      }
+      props.onSelect({
+        providerID: item.opt.providerID,
+        modelID: item.opt.modelID,
+      });
+    },
+    [props],
+  );
+
   // Focus the search input whenever the modal opens.
   useEffect(() => {
     if (!props.open) return;
@@ -235,28 +251,17 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       }
       if (event.key === "Enter") {
         if (event.isComposing || event.keyCode === 229) return;
-        setActiveIndex((current) => {
-          const item = renderedItems[current];
-          if (!item) return current;
-          event.preventDefault();
-          event.stopPropagation();
-          if (item.kind === "provider") {
-            props.onClose({ restorePromptFocus: false });
-            props.onOpenSettings();
-            return current;
-          }
-          props.onSelect({
-            providerID: item.opt.providerID,
-            modelID: item.opt.modelID,
-          });
-          return current;
-        });
+        const item = renderedItems[activeIndex];
+        if (!item) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectRenderedItem(item);
       }
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [clampIndex, props, renderedItems, scrollActiveIntoView]);
+  }, [activeIndex, clampIndex, renderedItems, scrollActiveIntoView, selectRenderedItem]);
 
   if (!props.open) return null;
 

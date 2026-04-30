@@ -14,6 +14,7 @@ import {
   MonitorSmartphone,
   Plug2,
   Plus,
+  Power,
   Settings,
   Settings2,
   Unplug,
@@ -68,6 +69,7 @@ export type McpViewProps = {
   authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
+  setMcpEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
 };
 
 const statusDot = (status: ReactMcpStatus) => {
@@ -173,6 +175,7 @@ export function McpView(props: McpViewProps) {
   const [revealBusy, setRevealBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
+  const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
   const [controlChromeModalOpen, setControlChromeModalOpen] = useState(false);
   const [controlChromeModalMode, setControlChromeModalMode] = useState<"connect" | "edit">("connect");
   const [controlChromeExistingProfile, setControlChromeExistingProfile] = useState(false);
@@ -632,6 +635,27 @@ export function McpView(props: McpViewProps) {
                           >
                             <Settings size={13} />
                             {tr("mcp.control_chrome_edit")}
+                          </Button>
+                        ) : null}
+                        {props.setMcpEnabled && entry.source !== "config.global" ? (
+                          <Button
+                            variant="outline"
+                            className="!px-3 !py-1.5 !text-xs"
+                            disabled={props.busy || togglingMcp === entry.name}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (togglingMcp) return;
+                              const next = entry.config.enabled !== false ? false : true;
+                              setTogglingMcp(entry.name);
+                              void Promise.resolve(props.setMcpEnabled?.(entry.name, next)).finally(
+                                () => setTogglingMcp(null),
+                              );
+                            }}
+                          >
+                            <Power size={13} />
+                            {entry.config.enabled === false
+                              ? tr("mcp.enable_app")
+                              : tr("mcp.disable_app")}
                           </Button>
                         ) : null}
                         <Button

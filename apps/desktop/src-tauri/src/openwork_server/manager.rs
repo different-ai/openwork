@@ -23,6 +23,8 @@ pub struct OpenworkServerState {
     pub client_token: Option<String>,
     pub owner_token: Option<String>,
     pub host_token: Option<String>,
+    pub managed_opencode_bin_path: Option<String>,
+    pub managed_opencode_bin_source: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
 }
@@ -50,6 +52,8 @@ impl OpenworkServerManager {
             client_token: state.client_token.clone(),
             owner_token: state.owner_token.clone(),
             host_token: state.host_token.clone(),
+            managed_opencode_bin_path: state.managed_opencode_bin_path.clone(),
+            managed_opencode_bin_source: state.managed_opencode_bin_source.clone(),
             pid,
             last_stdout: state.last_stdout.clone(),
             last_stderr: state.last_stderr.clone(),
@@ -71,6 +75,8 @@ impl OpenworkServerManager {
         state.client_token = None;
         state.owner_token = None;
         state.host_token = None;
+        state.managed_opencode_bin_path = None;
+        state.managed_opencode_bin_source = None;
         state.last_stdout = None;
         state.last_stderr = None;
     }

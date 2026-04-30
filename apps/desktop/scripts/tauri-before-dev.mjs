@@ -66,15 +66,17 @@ const killProcessTree = (child) => {
   timer.unref?.();
 };
 
-const holdOpenUntilSignal = ({ uiChild } = {}) => {
+const holdOpenUntilSignal = ({ uiChild, watchedViteUrl } = {}) => {
   // Node 25+ may exit with a non-zero status when it detects an unsettled
   // top-level await. We avoid top-level await entirely and keep the event loop
   // alive with a timer until Tauri stops the dev process.
   const timer = setInterval(() => {}, 60_000);
+  let watchTimer = null;
+  let watchInFlight = false;
 
   let stopping = false;
 
-  const stop = () => {
+  const stop = (code = 0) => {
     if (stopping) return;
     stopping = true;
 
@@ -82,9 +84,29 @@ const holdOpenUntilSignal = ({ uiChild } = {}) => {
       killProcessTree(uiChild);
     }
 
+    if (watchTimer) {
+      clearInterval(watchTimer);
+    }
     clearInterval(timer);
-    process.exit(0);
+    process.exit(code);
   };
+
+  if (watchedViteUrl) {
+    watchTimer = setInterval(async () => {
+      if (stopping || watchInFlight) return;
+      watchInFlight = true;
+      try {
+        if (!(await looksLikeVite(watchedViteUrl))) {
+          console.error(
+            `[openwork] Reused UI dev server at ${watchedViteUrl} is no longer reachable; stopping desktop dev.`
+          );
+          stop(1);
+        }
+      } finally {
+        watchInFlight = false;
+      }
+    }, 2500);
+  }
 
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -274,7 +296,7 @@ const main = async () => {
       process.exit(1);
     }
     console.log(`[openwork] UI dev server already running at ${detectedViteUrl} (reusing).`);
-    holdOpenUntilSignal();
+    holdOpenUntilSignal({ watchedViteUrl: detectedViteUrl });
     return;
   }
 

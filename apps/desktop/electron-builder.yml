@@ -3,6 +3,10 @@
 # permissions. In-place migration from Tauri to Electron depends on this.
 appId: com.differentai.openwork
 productName: OpenWork
+protocols:
+  - name: OpenWork
+    schemes:
+      - openwork
 directories:
   output: dist-electron
 files:
@@ -11,10 +15,10 @@ files:
 extraResources:
   - from: ../app/dist
     to: app-dist
-  - from: src-tauri/sidecars
-    to: sidecars
 asar: true
 npmRebuild: false
+afterPack: scripts/electron-after-pack.cjs
+afterSign: scripts/electron-after-sign.cjs
 # electron-updater feed. Matches the existing release workflow's GitHub target
 # so both Tauri (latest.json) and Electron (latest*.yml) can live on the same
 # release assets during the migration window.
@@ -24,22 +28,78 @@ publish:
     repo: openwork
     releaseType: release
 mac:
-  icon: src-tauri/icons/icon.icns
+  icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
+  notarize: false
+  extraResources:
+    - from: resources/sidecars
+      to: sidecars
+      filter:
+        - opencode
+        - opencode-aarch64-apple-darwin
+        - opencode-x86_64-apple-darwin
+        - openwork-server
+        - openwork-server-aarch64-apple-darwin
+        - openwork-server-x86_64-apple-darwin
+        - openwork-orchestrator
+        - openwork-orchestrator-aarch64-apple-darwin
+        - openwork-orchestrator-x86_64-apple-darwin
+        - chrome-devtools-mcp
+        - chrome-devtools-mcp-aarch64-apple-darwin
+        - chrome-devtools-mcp-x86_64-apple-darwin
+        - versions.json
+        - versions.json-aarch64-apple-darwin
+        - versions.json-x86_64-apple-darwin
   target:
-    - target: dmg
-      arch: [x64, arm64]
-    - target: zip
-      arch: [x64, arm64]
+    - dmg
+    - zip
 linux:
-  icon: src-tauri/icons/icon.png
+  icon: resources/icons/icon.png
+  extraResources:
+    - from: resources/sidecars
+      to: sidecars
+      filter:
+        - opencode
+        - opencode-aarch64-unknown-linux-gnu
+        - opencode-x86_64-unknown-linux-gnu
+        - openwork-server
+        - openwork-server-aarch64-unknown-linux-gnu
+        - openwork-server-x86_64-unknown-linux-gnu
+        - openwork-orchestrator
+        - openwork-orchestrator-aarch64-unknown-linux-gnu
+        - openwork-orchestrator-x86_64-unknown-linux-gnu
+        - chrome-devtools-mcp
+        - chrome-devtools-mcp-aarch64-unknown-linux-gnu
+        - chrome-devtools-mcp-x86_64-unknown-linux-gnu
+        - versions.json
+        - versions.json-aarch64-unknown-linux-gnu
+        - versions.json-x86_64-unknown-linux-gnu
   target:
     - AppImage
     - tar.gz
 win:
-  icon: src-tauri/icons/icon.ico
+  icon: resources/icons/icon.ico
+  extraResources:
+    - from: resources/sidecars
+      to: sidecars
+      filter:
+        - opencode.exe
+        - opencode-aarch64-pc-windows-msvc.exe
+        - opencode-x86_64-pc-windows-msvc.exe
+        - openwork-server.exe
+        - openwork-server-aarch64-pc-windows-msvc.exe
+        - openwork-server-x86_64-pc-windows-msvc.exe
+        - openwork-orchestrator.exe
+        - openwork-orchestrator-aarch64-pc-windows-msvc.exe
+        - openwork-orchestrator-x86_64-pc-windows-msvc.exe
+        - chrome-devtools-mcp.exe
+        - chrome-devtools-mcp-aarch64-pc-windows-msvc.exe
+        - chrome-devtools-mcp-x86_64-pc-windows-msvc.exe
+        - versions.json
+        - versions.json-aarch64-pc-windows-msvc.exe
+        - versions.json-x86_64-pc-windows-msvc.exe
   target:
     - nsis
 artifactName: openwork-${os}-${arch}-${version}.${ext}

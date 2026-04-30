@@ -465,11 +465,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
         }
     }
 
-    let required_plugins: Vec<&str> = match preset {
-        "starter" => vec!["opencode-scheduler"],
-        "automation" => vec!["opencode-scheduler"],
-        _ => vec![],
-    };
+    let required_plugins: Vec<&str> = vec![];
 
     let should_seed_chrome_mcp = matches!(preset, "starter");
 

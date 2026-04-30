@@ -15,7 +15,6 @@ import { createWorkspaceSessionService, type WorkspaceSessionService } from "../
 import { createSystemService, type SystemService } from "../services/system-service.js";
 import { createWorkspaceRegistryService, type WorkspaceRegistryService } from "../services/workspace-registry-service.js";
 import { createRemoteServerService, type RemoteServerService } from "../services/remote-server-service.js";
-import { createSchedulerService, type SchedulerService } from "../services/scheduler-service.js";
 import { resolveServerV2Version } from "../version.js";
 
 export type AppDependencies = {
@@ -33,7 +32,6 @@ export type AppDependencies = {
       remoteServers: RemoteServerService;
       router: RouterProductService;
       runtime: RuntimeService;
-      scheduler: SchedulerService;
     sessions: WorkspaceSessionService;
     serverRegistry: ServerRegistryService;
     system: SystemService;
@@ -167,10 +165,6 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
   const remoteServers = createRemoteServerService({
     repositories: persistence.repositories,
   });
-  const scheduler = createSchedulerService({
-    workspaceRegistry,
-  });
-
   return {
     database,
     environment,
@@ -186,7 +180,6 @@ export function createAppDependencies(overrides: CreateAppDependenciesOverrides 
       remoteServers,
       router,
       runtime,
-      scheduler,
       sessions,
       serverRegistry,
       system: createSystemService({

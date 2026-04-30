@@ -1,9 +1,10 @@
 /** @jsxImportSource react */
 /**
- * Migration prompt — one-time modal that nudges Tauri v0.12.0 users over
- * to the Electron build. Dormant unless the build was produced with
- * `VITE_OPENWORK_MIGRATION_RELEASE=1`, so landing this code on dev has
- * zero user impact until the release script flips that flag.
+ * Migration prompt — one-time modal that nudges Tauri users over to the
+ * Electron build. Dormant unless the build was produced with
+ * `VITE_OPENWORK_MIGRATION_RELEASE=1` or the dev override
+ * `VITE_OPENWORK_FORCE_MIGRATION_PROMPT=1` is set, so landing this code
+ * on dev has zero user impact until a flag is explicitly flipped.
  */
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 
@@ -13,6 +14,7 @@ import {
   migrateToElectron,
   writeMigrationSnapshotFromTauri,
 } from "../../app/lib/migration";
+import { appBuildInfo } from "../../app/lib/desktop";
 import { isTauriRuntime } from "../../app/utils";
 
 type MigrationConfig = {
@@ -23,30 +25,69 @@ type MigrationConfig = {
    * Rust command).
    */
   macUrl?: string;
+  macArm64Url?: string;
+  macX64Url?: string;
   /** Optional sha256 check. */
   macSha256?: string;
   /** Windows installer URL. Stub until we wire the Rust path. */
   windowsUrl?: string;
+  windowsX64Url?: string;
   /** Linux AppImage URL. Stub until we wire the Rust path. */
   linuxUrl?: string;
+  linuxArm64Url?: string;
+  linuxX64Url?: string;
 };
 
 function readBuildTimeConfig(): MigrationConfig | null {
   const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
-  const enabled = env.VITE_OPENWORK_MIGRATION_RELEASE === "1";
-  if (!enabled) return null;
+  const isMigrationRelease = env.VITE_OPENWORK_MIGRATION_RELEASE === "1";
+  // Dev override: set VITE_OPENWORK_FORCE_MIGRATION_PROMPT=1 in .env.local
+  // to test the migration flow without cutting a release build.
+  const isDevForced = env.VITE_OPENWORK_FORCE_MIGRATION_PROMPT === "1";
+  if (!isMigrationRelease && !isDevForced) return null;
   return {
-    macUrl: env.VITE_OPENWORK_MIGRATION_MAC_URL,
+    macUrl: env.VITE_OPENWORK_MIGRATION_MAC_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
+    macArm64Url: env.VITE_OPENWORK_MIGRATION_MAC_ARM64_URL,
+    macX64Url: env.VITE_OPENWORK_MIGRATION_MAC_X64_URL,
     macSha256: env.VITE_OPENWORK_MIGRATION_MAC_SHA256,
-    windowsUrl: env.VITE_OPENWORK_MIGRATION_WINDOWS_URL,
-    linuxUrl: env.VITE_OPENWORK_MIGRATION_LINUX_URL,
+    windowsUrl: env.VITE_OPENWORK_MIGRATION_WINDOWS_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
+    windowsX64Url: env.VITE_OPENWORK_MIGRATION_WINDOWS_X64_URL,
+    linuxUrl: env.VITE_OPENWORK_MIGRATION_LINUX_URL ?? (isDevForced ? "https://github.com/different-ai/openwork/releases/latest" : undefined),
+    linuxArm64Url: env.VITE_OPENWORK_MIGRATION_LINUX_ARM64_URL,
+    linuxX64Url: env.VITE_OPENWORK_MIGRATION_LINUX_X64_URL,
   };
 }
 
-function currentPlatformUrl(cfg: MigrationConfig): { url?: string; sha256?: string } {
+async function currentPlatformUrl(cfg: MigrationConfig): Promise<{ url?: string; sha256?: string }> {
+  let build: Awaited<ReturnType<typeof appBuildInfo>> | null = null;
+  try {
+    build = await appBuildInfo();
+  } catch {
+    build = null;
+  }
+
+  const os = build?.os;
+  const arch = build?.arch;
+  if (os === "macos" || os === "darwin") {
+    if (arch === "aarch64" || arch === "arm64") return { url: cfg.macArm64Url ?? cfg.macUrl, sha256: cfg.macSha256 };
+    if (arch === "x86_64" || arch === "x64") return { url: cfg.macX64Url ?? cfg.macUrl, sha256: cfg.macSha256 };
+    return { url: cfg.macUrl, sha256: cfg.macSha256 };
+  }
+  if (os === "windows" || os === "win32") {
+    if (arch === "x86_64" || arch === "x64") return { url: cfg.windowsX64Url ?? cfg.windowsUrl };
+    return { url: cfg.windowsUrl };
+  }
+  if (os === "linux") {
+    if (arch === "aarch64" || arch === "arm64") return { url: cfg.linuxArm64Url ?? cfg.linuxUrl };
+    if (arch === "x86_64" || arch === "x64") return { url: cfg.linuxX64Url ?? cfg.linuxUrl };
+    return { url: cfg.linuxUrl };
+  }
+
   if (typeof navigator === "undefined") return {};
   const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("mac")) return { url: cfg.macUrl, sha256: cfg.macSha256 };
+  if (ua.includes("mac")) {
+    return { url: cfg.macUrl, sha256: cfg.macSha256 };
+  }
   if (ua.includes("windows") || ua.includes("win64") || ua.includes("win32")) {
     return { url: cfg.windowsUrl };
   }
@@ -75,7 +116,7 @@ export function MigrationPrompt(): ReactElement | null {
     setBusy(true);
     setError(null);
     try {
-      const { url, sha256 } = currentPlatformUrl(config);
+      const { url, sha256 } = await currentPlatformUrl(config);
       if (!url) {
         throw new Error(
           "Automatic migration isn't available for this platform yet. Please upgrade manually from the release page.",

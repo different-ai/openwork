@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:electron": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev:electron",
     "dev:server-v2": "node scripts/dev-server-v2.mjs",
     "dev:server-v2:server": "node scripts/dev-server-v2.mjs --no-app",
     "dev:windows": ".\\scripts\\dev-windows.cmd",

@@ -351,10 +351,8 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
     lastHeartbeat = now;
   }, 1000);
 
-  // When the page returns to visibility after being backgrounded, stale
-  // in-flight SSE subscriptions/Query caches can make the UI look frozen
-  // even though JS is fine. Nudge the app to re-resolve its connection and
-  // re-fetch route data.
+  // Track visibility changes for diagnostics only. Route-level code owns any
+  // refresh behavior so the logger does not accidentally fan out network calls.
   if (typeof document !== "undefined") {
     const handleVisibilityChange = () => {
       enqueue({
@@ -362,13 +360,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
         message: `visibilitychange: ${document.visibilityState}`,
         extra: { visibility: document.visibilityState },
       });
-      if (document.visibilityState === "visible") {
-        try {
-          window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
-        } catch {
-          // ignore
-        }
-      }
     };
     visibilityHandlerRef = handleVisibilityChange;
     document.addEventListener("visibilitychange", handleVisibilityChange);

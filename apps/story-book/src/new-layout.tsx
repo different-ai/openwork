@@ -18,7 +18,6 @@ import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "../../app/s
 import type { OpenworkServerClient } from "../../app/src/app/lib/openwork-server";
 import ExtensionsView from "../../app/src/app/pages/extensions";
 import IdentitiesView from "../../app/src/app/pages/identities";
-import AutomationsView from "../../app/src/app/pages/automations";
 import {
   applyThemeMode,
   getInitialThemeMode,
@@ -37,7 +36,6 @@ import type {
   ModelRef,
   PluginScope,
   ProviderListItem,
-  ScheduledJob,
   SlashCommandOption,
   SkillCard,
   WorkspaceConnectionState,
@@ -47,7 +45,7 @@ import type {
 import { sessionMessages, storyWorkspaces } from "./mock-data";
 
 type CommandPaletteMode = "root" | "sessions";
-type SettingsTab = "general" | "den" | "model" | "automations" | "skills" | "extensions" | "messaging" | "advanced" | "appearance" | "updates" | "recovery" | "debug";
+type SettingsTab = "general" | "den" | "model" | "skills" | "extensions" | "messaging" | "advanced" | "appearance" | "updates" | "recovery" | "debug";
 
 type CommandPaletteItem = {
   id: string;
@@ -236,41 +234,6 @@ const mockShareFields = [
   },
 ] as const;
 
-const initialScheduledJobs: ScheduledJob[] = [
-  {
-    slug: "design-review-sweep",
-    name: "Design review sweep",
-    schedule: "30 9 * * 1,3,5",
-    workdir: "/Users/benjaminshafii/openwork-enterprise/_repos/openwork",
-    createdAt: new Date(now - 9 * 24 * 60 * 60 * 1000).toISOString(),
-    lastRunAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
-    lastRunStatus: "success",
-    source: "story-book",
-    run: {
-      prompt: "Review the Storybook shell changes and summarize layout regressions before lunch.",
-      agent: "openwork-factory",
-      model: "gpt-5",
-      attachUrl: "https://share.openworklabs.com/runs/design-review-sweep",
-    },
-  },
-  {
-    slug: "worker-onboarding-smoke",
-    name: "Worker onboarding smoke",
-    schedule: "0 */6 * * *",
-    workdir: "/Users/benjaminshafii/openwork-enterprise/_repos/openwork",
-    createdAt: new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString(),
-    lastRunAt: new Date(now - 90 * 60 * 1000).toISOString(),
-    lastRunStatus: "running",
-    source: "story-book",
-    run: {
-      command: "pnpm",
-      arguments: "--filter @openwork/app test remote-onboarding",
-      agent: "openwork-factory",
-      model: "claude-sonnet-4-5",
-    },
-  },
-];
-
 const initialSkills: SkillCard[] = [
   {
     name: "workspace-guide",
@@ -366,10 +329,6 @@ export default function NewLayoutApp() {
   const [mockFolderPickCount, setMockFolderPickCount] = createSignal(0);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
-  const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
-  const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
-  const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
-  const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
   const [messageRows, setMessageRows] = createSignal<MessageWithParts[]>(sessionMessages);
   const [expandedStepIds, setExpandedStepIds] = createSignal(new Set<string>());
   const [headerActionBusy, setHeaderActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
@@ -379,7 +338,6 @@ export default function NewLayoutApp() {
   const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = createSignal(0);
   let commandPaletteInputEl: HTMLInputElement | undefined;
   const commandPaletteOptionRefs: HTMLButtonElement[] = [];
-  const [scheduledJobs, setScheduledJobs] = createSignal<ScheduledJob[]>(initialScheduledJobs);
   const [skills, setSkills] = createSignal<SkillCard[]>(initialSkills);
   const [skillContents, setSkillContents] = createSignal<Record<string, string>>(initialSkillContents);
   const [hubRepo, setHubRepo] = createSignal<HubSkillRepo | null>(initialHubRepo);
@@ -387,7 +345,7 @@ export default function NewLayoutApp() {
   const [hubSkills] = createSignal<HubSkillCard[]>(initialHubSkills);
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginInput, setPluginInput] = createSignal("");
-  const [pluginList, setPluginList] = createSignal<string[]>(["opencode-scheduler", "@openwork/browser-mcp"]);
+  const [pluginList, setPluginList] = createSignal<string[]>(["@openwork/browser-mcp"]);
   const [pluginStatus, setPluginStatus] = createSignal<string | null>("Sandbox plugin config loaded.");
   const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>("notion");
@@ -440,7 +398,6 @@ export default function NewLayoutApp() {
   const workspaceTabs = createMemo<SettingsTab[]>(() => [
     "general",
     "model",
-    "automations",
     "skills",
     "extensions",
     "messaging",
@@ -454,8 +411,6 @@ export default function NewLayoutApp() {
         return "Cloud";
       case "model":
         return "Model";
-      case "automations":
-        return "Automations";
       case "skills":
         return "Skills";
       case "extensions":
@@ -483,8 +438,6 @@ export default function NewLayoutApp() {
         return "Manage your OpenWork Cloud connection, hosted workers, and workspace access.";
       case "model":
         return "Tune the default model, runtime behavior, and assistant output settings.";
-      case "automations":
-        return "Review automation flows that used to live in the shell sidebar.";
       case "skills":
         return "Browse skill surfaces and pinned shortcuts for this workspace.";
       case "extensions":
@@ -526,24 +479,6 @@ export default function NewLayoutApp() {
     return workspace.path ?? null;
   });
   const selectedWorkspaceRoot = createMemo(() => activeWorkspace().path?.trim() || "");
-
-  const openChatWithPrompt = (prompt: string, toast?: string) => {
-    setComposerPrompt(prompt);
-    setShowingSettings(false);
-    if (toast) setComposerToast(toast);
-  };
-
-  const refreshScheduledJobs = () => setComposerToast("Story-book: refreshed automations.");
-
-  const deleteScheduledJob = async (name: string) => {
-    setScheduledJobs((current) => current.filter((job) => job.slug !== name));
-    setComposerToast(`Story-book: removed automation ${name}.`);
-  };
-
-  const createSessionAndOpen = () => {
-    setShowingSettings(false);
-    setComposerToast("Story-book: routed this action back to chat.");
-  };
 
   const refreshSkills = () => setComposerToast("Story-book: refreshed skills.");
   const refreshHubSkills = () => setComposerToast("Story-book: refreshed hub skills.");
@@ -968,30 +903,6 @@ export default function NewLayoutApp() {
   const openMockShareModal = (workspaceId?: string | null) => {
     const nextId = workspaceId?.trim() || selectedWorkspaceId();
     setShareWorkspaceId(nextId);
-    setShareWorkspaceProfileUrl(null);
-    setShareSkillsSetUrl(null);
-  };
-
-  const publishMockWorkspaceProfile = () => {
-    if (shareWorkspaceProfileBusy()) return;
-    setShareWorkspaceProfileBusy(true);
-    window.setTimeout(() => {
-      const workspace = shareWorkspace();
-      const slug = (workspace?.name || "workspace").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      setShareWorkspaceProfileUrl(`https://share.openworklabs.com/workspaces/${slug || "workspace"}`);
-      setShareWorkspaceProfileBusy(false);
-    }, 260);
-  };
-
-  const publishMockSkillsSet = () => {
-    if (shareSkillsSetBusy()) return;
-    setShareSkillsSetBusy(true);
-    window.setTimeout(() => {
-      const workspace = shareWorkspace();
-      const slug = (workspace?.name || "workspace").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      setShareSkillsSetUrl(`https://share.openworklabs.com/skills/${slug || "workspace"}`);
-      setShareSkillsSetBusy(false);
-    }, 260);
   };
 
   const totalSessionCount = createMemo(() =>
@@ -1492,32 +1403,6 @@ export default function NewLayoutApp() {
                         </div>
                       </Show>
 
-                      <Show when={settingsTab() === "automations"}>
-                        <AutomationsView
-                          jobs={scheduledJobs()}
-                          source="remote"
-                          sourceReady={true}
-                          status="Story-book sandbox schedules loaded."
-                          busy={false}
-                          lastUpdatedAt={now}
-                          refreshJobs={refreshScheduledJobs}
-                          deleteJob={deleteScheduledJob}
-                          isWindows={false}
-                          selectedWorkspaceRoot={selectedWorkspaceRoot()}
-                          createSessionAndOpen={createSessionAndOpen}
-                          setPrompt={(value) => openChatWithPrompt(value, "Automation draft moved to chat.")}
-                          newTaskDisabled={false}
-                          schedulerInstalled={true}
-                          canEditPlugins={true}
-                          addPlugin={addPlugin}
-                          reloadWorkspaceEngine={async () => {
-                            setComposerToast("Story-book: reloaded workspace engine.");
-                          }}
-                          reloadBusy={false}
-                          canReloadWorkspace
-                        />
-                      </Show>
-
                       <Show when={settingsTab() === "skills"}>
                         <div class="rounded-[20px] border border-dls-border bg-dls-surface p-6 text-[14px] text-dls-secondary">
                           Skills (installed, team catalog, GitHub hub) runs in the full app with{" "}
@@ -1599,7 +1484,6 @@ export default function NewLayoutApp() {
                         <DenSettingsPanel
                           developerMode
                           connectRemoteWorkspace={async () => true}
-                          openTeamBundle={async () => {}}
                         />
                       </Show>
 
@@ -1832,16 +1716,6 @@ export default function NewLayoutApp() {
         workspaceDetail={shareWorkspaceDetail()}
         fields={[...mockShareFields]}
         note="This is the real share modal from the app, mounted with safe mock values for shell review."
-        onShareWorkspaceProfile={publishMockWorkspaceProfile}
-        shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
-        shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
-        shareWorkspaceProfileError={null}
-        shareWorkspaceProfileDisabledReason={null}
-        onShareSkillsSet={publishMockSkillsSet}
-        shareSkillsSetBusy={shareSkillsSetBusy()}
-        shareSkillsSetUrl={shareSkillsSetUrl()}
-        shareSkillsSetError={null}
-        shareSkillsSetDisabledReason={null}
         onExportConfig={() => setComposerToast("Story-book: export config is mocked in this shell.")}
         exportDisabledReason={null}
         onOpenBots={() => setComposerToast("Story-book: bots sharing flow is mocked in this shell.")}
