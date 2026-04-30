@@ -198,7 +198,7 @@ export function PluginsScreen() {
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading plugin catalog...
         </div>
-      ) : !hasAnyIntegration ? (
+      ) : !hasAnyIntegration && plugins.length === 0 ? (
         <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
       ) : activeView === "plugins" ? (
         filteredPlugins.length === 0 ? (
@@ -206,7 +206,7 @@ export function PluginsScreen() {
             title={plugins.length === 0 ? "No plugins available yet." : "No plugins match that search."}
             description={
               plugins.length === 0
-                ? "None of your connected integrations expose plugins yet. Connect another repository to discover more."
+                ? "Imported plugins and connected integration plugins will show up here when they are available."
                 : "Try a different search term or browse the skills, hooks, or MCPs tabs."
             }
           />
@@ -461,4 +461,3 @@ function PrimitiveList({
     </div>
   );
 }
-

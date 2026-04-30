@@ -29,7 +29,7 @@ What it does:
 After the Den DB is running, seed a full local demo org with users, teams, pending invites, and imported plugin data from `anthropics/knowledge-work-plugins`:
 
 ```bash
-pnpm dev:den-seed-demo
+pnpm dev:den:seed-demo
 ```
 
 The seed is local/dev-only, idempotent for the `acme-robotics-demo` org, and does not create workers or live integrations. It imports plugin marketplace rows, plugin rows, access grants, and config objects so plugin pages look populated without connecting external services.
@@ -43,7 +43,7 @@ For the Docker stack with randomized MySQL ports, source the printed runtime env
 
 ```bash
 source tmp/.den-dev-env-<id>
-DATABASE_URL="$DEN_MYSQL_URL" pnpm dev:den-seed-demo
+DATABASE_URL="$DEN_MYSQL_URL" pnpm dev:den:seed-demo
 ```
 
 Set `DEN_DEMO_SEED_FETCH_GITHUB=0` to skip live GitHub source fetching and use built-in plugin fallbacks only.
@@ -72,13 +72,13 @@ If you are iterating on Den locally and do not need the full Dockerized web stac
 From the OpenWork repo root:
 
 ```bash
-pnpm dev:den-local
+pnpm dev:den
 ```
 
 Or from the OpenWork enterprise root:
 
 ```bash
-pnpm --dir _repos/openwork dev:den-local
+pnpm --dir _repos/openwork dev:den
 ```
 
 What it does:
@@ -88,6 +88,21 @@ What it does:
 - Reuses the existing local-dev wiring in `scripts/dev-web-local.sh`
 
 This is usually the fastest path for UI/auth/control-plane iteration because it avoids rebuilding the Docker web image on each boot.
+
+If you want to run the pieces in separate terminals, use the root package scripts:
+
+```bash
+pnpm dev:den:mysql
+pnpm dev:den:db-push
+pnpm dev:den:api
+pnpm dev:den:web
+```
+
+The split API/web flow defaults to Den API on `http://localhost:8790` and Den web on `http://localhost:3005`. Stop the local MySQL container with:
+
+```bash
+pnpm dev:den:mysql:down
+```
 
 ---
 
