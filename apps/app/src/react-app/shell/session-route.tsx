@@ -233,6 +233,7 @@ export function SessionRoute() {
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const refreshInFlightRef = useRef(false);
+  const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -404,7 +405,8 @@ export function SessionRoute() {
       // OpenCode engine bound to it re-reads opencode.jsonc and applies
       // permissions. Fire-and-forget; the route is idempotent and any
       // transport failure is non-fatal. See issue #870.
-      if (nextWorkspaceId) {
+      if (nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
+        launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         void openworkClient.activateWorkspace(nextWorkspaceId).catch(() => undefined);
       }
       recordInspectorEvent("route.refresh.complete", {
