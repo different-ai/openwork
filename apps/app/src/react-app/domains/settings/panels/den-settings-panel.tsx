@@ -39,6 +39,7 @@ import {
 import type { CloudImportedPlugin, CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
 import type { DenOrgSkillCard, SkillCard } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
+import { SelectMenu } from "../../../design-system/select-menu";
 import { TextInput } from "../../../design-system/text-input";
 
 type CloudSkillHubRow = {
@@ -267,6 +268,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   );
   const isSignedIn = Boolean(user && authToken.trim());
   const activeOrgName = activeOrg?.name || tr("den.no_org_selected");
+  const activeOrgOptions = useMemo(
+    () =>
+      orgs.map((org) => ({
+        value: org.id,
+        label: `${org.name} ${org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}`,
+      })),
+    [orgs, tr],
+  );
 
   const client = useMemo(
     () => createDenClient({ baseUrl, token: authToken }),
@@ -980,6 +989,26 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrgId, client, props, tr, tx],
   );
 
+  const handleActiveOrgChange = useCallback(
+    (nextId: string) => {
+      const nextOrg = orgs.find((org) => org.id === nextId) ?? null;
+      setActiveOrgId(nextId);
+      writeDenSettings({
+        baseUrl,
+        authToken: authToken || null,
+        activeOrgId: nextId || null,
+        activeOrgSlug: nextOrg?.slug ?? null,
+        activeOrgName: nextOrg?.name ?? null,
+      });
+      // Sync Better-Auth's active org so the next request resolves against `nextId`.
+      if (nextId) {
+        void ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+      }
+      setStatusMessage(tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }));
+    },
+    [authToken, baseUrl, orgs, tr, tx],
+  );
+
   const handleImportSkillHub = useCallback(
     async (hubId: string) => {
       const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
@@ -1384,37 +1413,16 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   <div className="truncate text-xs text-dls-secondary">{tr("den.active_org_hint")}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <select
-                    className={`ow-input h-10 max-w-[260px] rounded-xl px-4 py-2 text-sm font-medium text-dls-text ${quietControlClass}`}
-                    value={activeOrgId}
-                    onChange={(event) => {
-                      const nextId = event.currentTarget.value;
-                      const nextOrg = orgs.find((org) => org.id === nextId) ?? null;
-                      setActiveOrgId(nextId);
-                      writeDenSettings({
-                        baseUrl,
-                        authToken: authToken || null,
-                        activeOrgId: nextId || null,
-                        activeOrgSlug: nextOrg?.slug ?? null,
-                        activeOrgName: nextOrg?.name ?? null,
-                      });
-                      // Sync Better-Auth's active org so the next request
-                      // resolves against `nextId` (mirrors Solid ac41d58b).
-                      if (nextId) {
-                        void ensureDenActiveOrganization({
-                          forceServerSync: true,
-                        }).catch(() => null);
-                      }
-                      setStatusMessage(tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }));
-                    }}
-                    disabled={orgsBusy || orgs.length === 0}
-                  >
-                    {orgs.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name} {org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="w-[260px] max-w-full">
+                    <SelectMenu
+                      value={activeOrgId}
+                      options={activeOrgOptions}
+                      onChange={handleActiveOrgChange}
+                      disabled={orgsBusy || orgs.length === 0}
+                      placeholder={tr("den.no_org_selected")}
+                      ariaLabel={tr("den.active_org_title")}
+                    />
+                  </div>
                   <Button
                     variant="outline"
                     className={`h-10 px-4 text-sm ${quietControlClass}`}
