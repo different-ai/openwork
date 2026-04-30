@@ -211,10 +211,15 @@ test("accepts electron updater metadata with both mac architectures", () => {
   assert.deepEqual(
     validateElectronUpdaterManifest(validElectronManifest, {
       version: "v0.13.0",
+      assetTag: "v0.13.0",
       assets: ["openwork-mac-arm64-0.13.0.zip", "openwork-mac-x64-0.13.0.zip"],
     }),
     [],
   );
+});
+
+test("allows relative electron updater urls with asset tag checks", () => {
+  assert.deepEqual(validateElectronUpdaterManifest(validElectronManifest, { assetTag: "v0.13.0" }), []);
 });
 
 test("rejects electron updater metadata missing an expected architecture", () => {
@@ -232,6 +237,25 @@ test("rejects electron updater metadata missing an expected architecture", () =>
       },
     ),
     ["files must include openwork-mac-arm64-0.13.0.zip"],
+  );
+});
+
+test("rejects electron updater metadata with absolute urls from another tag", () => {
+  assert.deepEqual(
+    validateElectronUpdaterManifest(
+      {
+        ...validElectronManifest,
+        files: [
+          {
+            ...validElectronManifest.files[0],
+            url: "https://github.com/different-ai/openwork/releases/download/v0.12.9/openwork-mac-arm64-0.13.0.zip",
+          },
+        ],
+        path: "https://github.com/different-ai/openwork/releases/download/v0.12.9/openwork-mac-arm64-0.13.0.zip",
+      },
+      { version: "0.13.0", assetTag: "v0.13.0" },
+    ),
+    ["file 1 url must point at v0.13.0"],
   );
 });
 
@@ -300,12 +324,19 @@ test("rejects invalid retry arguments", () => {
 });
 
 test("release creation does not claim GitHub Latest before manifests are ready", () => {
+  const preflightIndex = publishReleaseStep.indexOf("Verify release updater feed before latest");
+  const publishIndex = publishReleaseStep.indexOf("Publish release after assets are ready");
+
   assert.match(releaseWorkflow, /gh release create[\s\S]*--latest=false[\s\S]*\$DRAFT_FLAG \$PRERELEASE_FLAG/);
   assert.doesNotMatch(releaseWorkflow, /needs\.resolve-release\.outputs\.draft == 'true'/);
+  assert.ok(preflightIndex >= 0, "publish-release should verify release downloads before latest");
+  assert.ok(publishIndex > preflightIndex, "publish-release should verify before setting make_latest");
   assert.match(publishReleaseStep, /needs\.publish-updater-json\.result == 'success'/);
   assert.match(publishReleaseStep, /needs\.publish-electron\.result == 'success'/);
   assert.match(publishReleaseStep, /needs\.publish-electron-updater-yml\.result == 'success'/);
-  assert.doesNotMatch(publishReleaseStep, /RELEASE_BUILD_TAURI/);
+  assert.match(publishReleaseStep, /releases\/download\/\$\{RELEASE_TAG\}\/latest\.json/);
+  assert.match(publishReleaseStep, /releases\/download\/\$\{RELEASE_TAG\}\/latest-mac\.yml/);
+  assert.match(publishReleaseStep, /RELEASE_BUILD_TAURI !== "true"[\s\S]*payload\.make_latest = "false"/);
   assert.match(publishReleaseStep, /payload\.make_latest = "false"[\s\S]*else \{[\s\S]*payload\.make_latest = "true"/);
   assert.match(releaseWorkflow, /OPENWORK_STABLE_UPDATER_PLATFORMS:.*darwin-aarch64/);
   assert.match(releaseWorkflow, /--platform "\$OPENWORK_STABLE_UPDATER_PLATFORMS"/);
@@ -318,6 +349,7 @@ test("electron updater metadata is consolidated after matrix publish", () => {
   assert.match(releaseWorkflow, /name: Save Electron updater metadata/);
   assert.match(releaseWorkflow, /name: Publish Electron updater metadata/);
   assert.match(releaseWorkflow, /consolidate-electron-updater-yml\.mjs/);
+  assert.match(releaseWorkflow, /--kind electron-yml[\s\S]*--asset-tag "\$RELEASE_TAG"/);
   assert.match(releaseWorkflow, /--kind electron-yml[\s\S]*--asset "openwork-mac-arm64-\$\{RELEASE_VERSION\}\.zip"/);
   assert.match(releaseWorkflow, /--asset "openwork-mac-x64-\$\{RELEASE_VERSION\}\.zip"/);
   assert.match(releaseWorkflow, /gh release upload "\$RELEASE_TAG" "\$RUNNER_TEMP\/electron-updater-final"\/latest\*\.yml/);
@@ -330,6 +362,7 @@ test("sidecar releases cannot replace the desktop latest release", () => {
 });
 
 test("alpha release uploads the endpoint asset as latest.json", () => {
+  assert.doesNotMatch(alphaWorkflow, /#latest\.json/);
   assert.doesNotMatch(alphaWorkflow, /alpha-latest\.json#latest\.json/);
   assert.match(alphaWorkflow, /"\$RUNNER_TEMP\/latest\.json"/);
   assert.match(alphaWorkflow, /verify-updater-endpoint\.mjs[\s\S]*--file "\$RUNNER_TEMP\/latest\.json"/);

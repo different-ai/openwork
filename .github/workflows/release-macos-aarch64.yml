@@ -221,6 +221,8 @@ jobs:
             PRERELEASE_FLAG="--prerelease"
           fi
 
+          # Keep new releases out of GitHub Latest until updater
+          # manifests have been uploaded and verified by tag.
           gh release create "${{ steps.resolve.outputs.release_tag }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.resolve.outputs.release_name }}" \
@@ -865,13 +867,15 @@ jobs:
             node scripts/release/verify-updater-endpoint.mjs \
               --kind electron-yml \
               --file "$file" \
-              --version "$RELEASE_VERSION"
+              --version "$RELEASE_VERSION" \
+              --asset-tag "$RELEASE_TAG"
           done
 
           node scripts/release/verify-updater-endpoint.mjs \
             --kind electron-yml \
             --file "$RUNNER_TEMP/electron-updater-final/latest-mac.yml" \
             --version "$RELEASE_VERSION" \
+            --asset-tag "$RELEASE_TAG" \
             --asset "openwork-mac-arm64-${RELEASE_VERSION}.zip" \
             --asset "openwork-mac-x64-${RELEASE_VERSION}.zip"
 
@@ -1242,9 +1246,47 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_BUILD_TAURI: ${{ needs.resolve-release.outputs.build_tauri }}
       RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+      ELECTRON_UPDATER_RESULT: ${{ needs.publish-electron-updater-yml.result }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify release updater feed before latest
+        if: env.RELEASE_BUILD_TAURI == 'true' && env.RELEASE_PRERELEASE != 'true'
+        run: |
+          set -euo pipefail
+          node scripts/release/verify-updater-endpoint.mjs \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/latest.json" \
+            --platform "$OPENWORK_STABLE_UPDATER_PLATFORMS" \
+            --version "${RELEASE_TAG#v}" \
+            --asset-tag "$RELEASE_TAG" \
+            --attempts 6 \
+            --delay-ms 10000
+
+          if [ "$ELECTRON_UPDATER_RESULT" = "success" ]; then
+            version="${RELEASE_TAG#v}"
+            node scripts/release/verify-updater-endpoint.mjs \
+              --kind electron-yml \
+              --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/latest-mac.yml" \
+              --version "$version" \
+              --asset-tag "$RELEASE_TAG" \
+              --asset "openwork-mac-arm64-${version}.zip" \
+              --asset "openwork-mac-x64-${version}.zip" \
+              --attempts 6 \
+              --delay-ms 10000
+          fi
+
       - name: Publish release after assets are ready
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1261,6 +1303,8 @@ jobs:
           }
           if (process.env.RELEASE_PRERELEASE === "true") {
             payload.prerelease = true;
+          }
+          if (process.env.RELEASE_PRERELEASE === "true" || process.env.RELEASE_BUILD_TAURI !== "true") {
             payload.make_latest = "false";
           } else {
             payload.make_latest = "true";

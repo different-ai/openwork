@@ -214,10 +214,15 @@ function parseElectronUpdaterYaml(body) {
   return manifest;
 }
 
-function validateElectronUpdaterManifest(manifest, { version = "", assets = [] } = {}) {
+function isAbsoluteUrl(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function validateElectronUpdaterManifest(manifest, { version = "", assets = [], assetTag = "" } = {}) {
   const errors = [];
   const expectedVersion = String(version || "").trim().replace(/^v/, "");
   const expectedAssets = assets.map((asset) => String(asset).trim()).filter(Boolean);
+  const expectedAssetTag = String(assetTag || "").trim();
 
   if (!isRecord(manifest)) {
     return ["manifest must be a YAML object"];
@@ -247,7 +252,11 @@ function validateElectronUpdaterManifest(manifest, { version = "", assets = [] }
       if (typeof file.url !== "string" || !file.url.trim()) {
         errors.push(`file ${index + 1} must include a non-empty url`);
       } else {
-        urls.push(file.url.trim());
+        const fileUrl = file.url.trim();
+        urls.push(fileUrl);
+        if (expectedAssetTag && isAbsoluteUrl(fileUrl) && !fileUrl.includes(`/releases/download/${expectedAssetTag}/`)) {
+          errors.push(`file ${index + 1} url must point at ${expectedAssetTag}`);
+        }
       }
       if (typeof file.sha512 !== "string" || !file.sha512.trim()) {
         errors.push(`file ${index + 1} must include a non-empty sha512`);
@@ -346,6 +355,7 @@ async function main() {
           : validateElectronUpdaterManifest(manifest, {
               version: options.version,
               assets: options.assets,
+              assetTag: options.assetTag,
             });
 
       if (errors.length) {
