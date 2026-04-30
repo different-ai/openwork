@@ -104,11 +104,16 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     let cancelled = false;
     void bridge
       .getChannel()
-      .then((state) => {
+      .then(async (state) => {
         if (cancelled) return;
         setAppVersion(state.currentVersion ?? null);
-        if (state.channel && state.channel !== releaseChannel) {
-          onReleaseChannelChange(state.channel);
+        if (state.channel && state.channel !== releaseChannel && bridge.setChannel) {
+          const nextState = await bridge.setChannel(releaseChannel);
+          if (cancelled) return;
+          setAppVersion(nextState.currentVersion ?? null);
+          if (nextState.channel && nextState.channel !== releaseChannel) {
+            onReleaseChannelChange(nextState.channel);
+          }
         }
       })
       .catch(() => {

@@ -4,9 +4,9 @@ name: Alpha Channel (macOS arm64)
 # alpha release channel.
 #
 # The alpha channel is macOS-only today. It lives as a rolling GitHub
-# release under the fixed tag `alpha-macos-latest` so the Tauri updater
-# manifest URL stays stable while the underlying artifact gets replaced on
-# every run.
+# release under the fixed tag `alpha-macos-latest` so both the Tauri updater
+# manifest and Electron updater feed stay stable while the underlying
+# artifacts get replaced on every run.
 #
 # See:
 #   - apps/app/src/app/lib/release-channels.ts (updater endpoint URLs)
@@ -306,7 +306,21 @@ jobs:
           uploadUpdaterJson: false
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
-      - name: Build Electron alpha package
+      - name: Reject unsigned Electron alpha release
+        if: env.MACOS_NOTARIZE != 'true'
+        shell: bash
+        run: |
+          echo "Electron alpha artifacts must be signed and notarized. Set MACOS_NOTARIZE=true and provide Apple signing secrets." >&2
+          exit 1
+
+      - name: Build Electron alpha app
+        if: env.MACOS_NOTARIZE == 'true'
+        shell: bash
+        env:
+          TARGET: aarch64-apple-darwin
+        run: pnpm --filter @openwork/desktop build:electron
+
+      - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
         env:
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
@@ -317,8 +331,11 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         run: |
           set -euo pipefail
-          pnpm --filter @openwork/desktop run build:electron
-          pnpm --dir apps/desktop exec electron-builder --config electron-builder.yml --mac --arm64 --publish never
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --mac \
+            --arm64 \
+            --publish never
 
       - name: Upload Electron alpha updater assets
         if: env.MACOS_NOTARIZE == 'true'
