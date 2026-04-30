@@ -73,6 +73,12 @@ const HUB_REPOS_STORAGE_KEY = "openwork.skills.hubRepos.v1";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
+type PluginListEntry = {
+  name: string;
+  source: "config" | "dir.project" | "dir.global";
+  removable: boolean;
+};
+
 export type ExtensionsStoreSnapshot = {
   workspaceContextKey: string;
   skills: SkillCard[];
@@ -93,7 +99,7 @@ export type ExtensionsStoreSnapshot = {
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
   pluginConfigPath: string | null;
-  pluginList: string[];
+  pluginList: PluginListEntry[];
   pluginInput: string;
   pluginStatus: string | null;
   activePluginGuide: string | null;
@@ -128,7 +134,7 @@ type MutableState = {
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
   pluginConfigPath: string | null;
-  pluginList: string[];
+  pluginList: PluginListEntry[];
   pluginInput: string;
   pluginStatus: string | null;
   activePluginGuide: string | null;
@@ -170,6 +176,42 @@ function uniqueSkillInstallName(base: string, taken: Set<string>, stableSuffix: 
     if (OPENCODE_SKILL_NAME_RE.test(candidate) && !taken.has(candidate)) return candidate;
   }
   return `skill-${suffixSource}`.slice(0, 64);
+}
+
+function toConfigPluginListEntries(names: string[]): PluginListEntry[] {
+  const next: PluginListEntry[] = [];
+  const seen = new Set<string>();
+  for (const rawName of names) {
+    const name = rawName.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    next.push({ name, source: "config", removable: true });
+  }
+  return next;
+}
+
+function toProjectPluginListEntries(
+  items: Array<{ spec: string; source: string }>,
+): PluginListEntry[] {
+  const byName = new Map<string, PluginListEntry>();
+  for (const item of items) {
+    const name = item.spec.trim();
+    if (!name) continue;
+    const source: PluginListEntry["source"] =
+      item.source === "dir.project" || item.source === "dir.global"
+        ? item.source
+        : "config";
+    const entry: PluginListEntry = {
+      name,
+      source,
+      removable: source === "config",
+    };
+    const existing = byName.get(name);
+    if (!existing || (entry.removable && !existing.removable)) {
+      byName.set(name, entry);
+    }
+  }
+  return [...byName.values()];
 }
 
 export function createExtensionsStore(options: {
@@ -1400,15 +1442,15 @@ export function createExtensionsStore(options: {
   }
 
   const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
-    isPluginInstalled(snapshot.pluginList, pluginName, aliases);
+    isPluginInstalled(snapshot.pluginList.map((entry) => entry.name), pluginName, aliases);
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
-    const nextPluginList: string[] = [];
+    const nextPluginNames: string[] = [];
     let nextPluginStatus: string | null = null;
     loadPluginsFromConfigHelpers(
       config,
       (value) => {
-        nextPluginList.splice(0, nextPluginList.length, ...applyStateAction(nextPluginList, value));
+        nextPluginNames.splice(0, nextPluginNames.length, ...applyStateAction(nextPluginNames, value));
       },
       (message) => {
         nextPluginStatus = message;
@@ -1416,7 +1458,7 @@ export function createExtensionsStore(options: {
     );
     mutateState((current) => ({
       ...current,
-      pluginList: nextPluginList,
+      pluginList: toConfigPluginListEntries(nextPluginNames),
       pluginStatus: nextPluginStatus,
     }));
   };
@@ -1624,11 +1666,11 @@ export function createExtensionsStore(options: {
         const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
         const projectItems = result.items.filter((item) => item.scope === "project");
-        const list = Array.from(new Set(projectItems.map((item) => item.spec)));
+        const list = toProjectPluginListEntries(projectItems);
         mutateState((current) => ({
           ...current,
           pluginList: list,
-          sidebarPluginList: list,
+          sidebarPluginList: list.map((entry) => entry.name),
           pluginStatus: list.length ? null : "No plugins configured yet.",
           sidebarPluginStatus: null,
           pluginsContextKey: getWorkspaceContextKey(),
@@ -1711,12 +1753,12 @@ export function createExtensionsStore(options: {
         nextSidebarPluginStatus = translate("skills.failed_parse_opencode");
       }
 
-      const nextPluginList: string[] = [];
+      const nextPluginNames: string[] = [];
       let nextPluginStatus: string | null = null;
       loadPluginsFromConfigHelpers(
         config,
         (value) => {
-          nextPluginList.splice(0, nextPluginList.length, ...applyStateAction(nextPluginList, value));
+          nextPluginNames.splice(0, nextPluginNames.length, ...applyStateAction(nextPluginNames, value));
         },
         (message) => {
           nextPluginStatus = message;
@@ -1725,7 +1767,7 @@ export function createExtensionsStore(options: {
 
       mutateState((current) => ({
         ...current,
-        pluginList: nextPluginList,
+        pluginList: toConfigPluginListEntries(nextPluginNames),
         pluginStatus: nextPluginStatus,
         sidebarPluginList: nextSidebarPluginList,
         sidebarPluginStatus: nextSidebarPluginStatus,
@@ -1841,6 +1883,11 @@ export function createExtensionsStore(options: {
     const name = pluginName.trim();
     if (!name) return;
     const triggerName = stripPluginVersion(name);
+    const existingPlugin = snapshot.pluginList.find((entry) => entry.name === name);
+    if (existingPlugin && !existingPlugin.removable) {
+      setStateField("pluginStatus", "Directory-discovered plugins are read-only.");
+      return;
+    }
 
     const isLocalWorkspace = options.workspaceType() === "local";
     const openworkSnapshot = getOpenworkServerSnapshot();
