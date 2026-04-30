@@ -1358,9 +1358,13 @@ export function SettingsRoute() {
           onEditWorkspaceConnection: () => {},
           onForgetWorkspace: () => {},
           onOpenCreateWorkspace: handleOpenCreateWorkspace,
+          onToggleSidebarCollapse: shellLayout.toggleLeftSidebar,
         }}
         onClose={() => navigate("/session")}
-        sidebarWidth={shellLayout.leftSidebarWidth}
+        sidebarCollapsed={shellLayout.leftSidebarCollapsed}
+        onToggleSidebarCollapsed={shellLayout.toggleLeftSidebar}
+        sidebarResizeActive={shellLayout.leftSidebarResizeActive}
+        sidebarWidth={shellLayout.effectiveLeftSidebarWidth}
         onSidebarResizeStart={shellLayout.startLeftSidebarResize}
         error={routeError}
       >

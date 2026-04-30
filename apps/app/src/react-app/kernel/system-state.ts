@@ -77,7 +77,9 @@ export function useSystemState(
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = useState<
     number | null
   >(null);
-  const [reloadTrigger, setReloadTrigger] = useState<ReloadTrigger | null>(null);
+  const [reloadTrigger, setReloadTrigger] = useState<ReloadTrigger | null>(
+    null,
+  );
   const [reloadBusy, setReloadBusy] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
 
@@ -164,7 +166,8 @@ export function useSystemState(
       await options.onReloadComplete?.();
       clearReloadRequired();
     } catch (error) {
-      const message = error instanceof Error ? error.message : safeStringify(error);
+      const message =
+        error instanceof Error ? error.message : safeStringify(error);
       setReloadError(message || t("system.reload_failed"));
     } finally {
       setReloadBusy(false);

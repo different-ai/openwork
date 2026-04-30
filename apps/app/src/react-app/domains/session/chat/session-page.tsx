@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
+import { Check, ChevronRight, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -28,6 +28,7 @@ import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { StatusBar, type StatusBarProps } from "./status-bar";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  WORKSPACE_LEFT_SIDEBAR_WIDTH_TRANSITION,
   useWorkspaceShellLayout,
 } from "../../../shell/workspace-shell-layout";
 import { OwDotTicker } from "../../../shell/dot-ticker";
@@ -153,7 +154,13 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 }
 
 export function SessionPage(props: SessionPageProps) {
-  const { leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+  const {
+    effectiveLeftSidebarWidth,
+    leftSidebarCollapsed,
+    leftSidebarResizeActive,
+    toggleLeftSidebar,
+    startLeftSidebarResize,
+  } = useWorkspaceShellLayout({
     defaultLeftWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
     expandedRightWidth: 280,
   });
@@ -276,43 +283,72 @@ export function SessionPage(props: SessionPageProps) {
     <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text">
       <div className="flex min-h-0 flex-1 gap-4 p-3 md:p-4">
         <aside
-          className="relative hidden min-h-0 shrink-0 overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar shadow-[var(--dls-shell-shadow)] lg:flex lg:flex-col"
-          style={{ width: leftSidebarWidth }}
+          className={`relative hidden min-h-0 shrink-0 overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar shadow-[var(--dls-shell-shadow)] lg:grid lg:grid-cols-1 lg:grid-rows-1 ${
+            leftSidebarResizeActive ? "transition-none" : WORKSPACE_LEFT_SIDEBAR_WIDTH_TRANSITION
+          }`}
+          style={{ width: effectiveLeftSidebarWidth }}
         >
-          <div className="flex min-h-0 flex-1">
-            <WorkspaceSessionList
-              workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
-              selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
-              developerMode={props.sidebar.developerMode}
-              selectedSessionId={props.sidebar.selectedSessionId}
-              showInitialLoading={sidebarInitialLoading}
-              showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession)}
-              sessionStatusById={props.sidebar.sessionStatusById}
-              connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
-              workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
-              newTaskDisabled={props.sidebar.newTaskDisabled}
-              onSelectWorkspace={props.sidebar.onSelectWorkspace}
-              onOpenSession={props.sidebar.onOpenSession}
-              onPrefetchSession={props.sidebar.onPrefetchSession}
-              onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
-              onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
-              onOpenDeleteSession={props.onDeleteSession ? () => setDeleteOpen(true) : undefined}
-              onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
-              onShareWorkspace={props.sidebar.onShareWorkspace}
-              onRevealWorkspace={props.sidebar.onRevealWorkspace}
-              onRecoverWorkspace={props.sidebar.onRecoverWorkspace}
-              onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
-              onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
-              onForgetWorkspace={props.sidebar.onForgetWorkspace}
-              onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+          <div
+            className={`relative col-start-1 row-start-1 flex min-h-0 flex-col transition-[opacity,transform] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none motion-reduce:opacity-100 ${
+              leftSidebarCollapsed ? "pointer-events-none z-0 -translate-x-2 opacity-0" : "z-10 translate-x-0 opacity-100"
+            }`}
+            aria-hidden={leftSidebarCollapsed}
+          >
+            <div className="flex min-h-0 flex-1">
+              <WorkspaceSessionList
+                onToggleSidebarCollapse={toggleLeftSidebar}
+                workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
+                selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
+                developerMode={props.sidebar.developerMode}
+                selectedSessionId={props.sidebar.selectedSessionId}
+                showInitialLoading={sidebarInitialLoading}
+                showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession)}
+                sessionStatusById={props.sidebar.sessionStatusById}
+                connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
+                workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
+                newTaskDisabled={props.sidebar.newTaskDisabled}
+                onSelectWorkspace={props.sidebar.onSelectWorkspace}
+                onOpenSession={props.sidebar.onOpenSession}
+                onPrefetchSession={props.sidebar.onPrefetchSession}
+                onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+                onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
+                onOpenDeleteSession={props.onDeleteSession ? () => setDeleteOpen(true) : undefined}
+                onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
+                onShareWorkspace={props.sidebar.onShareWorkspace}
+                onRevealWorkspace={props.sidebar.onRevealWorkspace}
+                onRecoverWorkspace={props.sidebar.onRecoverWorkspace}
+                onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
+                onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
+                onForgetWorkspace={props.sidebar.onForgetWorkspace}
+                onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+              />
+            </div>
+            <div
+              className="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
+              onPointerDown={startLeftSidebarResize}
+              title={t("session.resize_workspace_column")}
+              aria-label={t("session.resize_workspace_column")}
             />
           </div>
+
           <div
-            className="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
-            onPointerDown={startLeftSidebarResize}
-            title={t("session.resize_workspace_column")}
-            aria-label={t("session.resize_workspace_column")}
-          />
+            className={`col-start-1 row-start-1 flex min-h-0 flex-col items-center px-1 pt-3 transition-[opacity,transform] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none motion-reduce:opacity-100 lg:justify-center lg:pt-0 ${
+              leftSidebarCollapsed
+                ? "z-10 translate-x-0 opacity-100"
+                : "pointer-events-none z-0 translate-x-2 opacity-0"
+            }`}
+            aria-hidden={!leftSidebarCollapsed}
+          >
+            <button
+              type="button"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-10 transition-colors duration-200 hover:bg-gray-2/80 hover:text-dls-text active:scale-95 motion-reduce:active:scale-100"
+              onClick={toggleLeftSidebar}
+              title={t("workspace_sidebar.expand_sidebar")}
+              aria-label={t("workspace_sidebar.expand_sidebar")}
+            >
+              <ChevronRight size={18} className="transition-transform duration-200 ease-out" />
+            </button>
+          </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">

@@ -1,8 +1,9 @@
 /** @jsxImportSource react */
 import type { ComponentProps, PointerEventHandler, ReactNode } from "react";
-import { X } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 
 import { t } from "../../../../i18n";
+import { WORKSPACE_LEFT_SIDEBAR_WIDTH_TRANSITION } from "../../../shell/workspace-shell-layout";
 import { SettingsPage, getSettingsTabLabel } from "./settings-page";
 import { WorkspaceSessionList } from "../../session/sidebar/workspace-session-list";
 
@@ -14,6 +15,10 @@ export type SettingsShellProps = SettingsPageChromeProps & {
   busyHint?: string | null;
   workspaceSessionListProps: ComponentProps<typeof WorkspaceSessionList>;
   onClose: () => void;
+  sidebarCollapsed?: boolean;
+  onToggleSidebarCollapsed?: () => void;
+  /** When true, width transition is disabled (user is dragging the resize handle). */
+  sidebarResizeActive?: boolean;
   sidebarTopSlot?: ReactNode;
   headerLeadingSlot?: ReactNode;
   sidebarWidth?: number;
@@ -27,26 +32,61 @@ export type SettingsShellProps = SettingsPageChromeProps & {
 
 export function SettingsShell(props: SettingsShellProps) {
   const title = getSettingsTabLabel(props.activeTab);
+  const sidebarCollapsed = Boolean(props.sidebarCollapsed);
+  const sidebarWidthPx = props.sidebarWidth;
+  const sidebarResizeActive = Boolean(props.sidebarResizeActive);
 
   return (
     <div className="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 text-gray-12 md:p-4">
       <div className="flex h-full w-full gap-3 md:gap-4">
         <aside
-          className="relative hidden shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5 lg:flex"
-          style={props.sidebarWidth ? { width: `${props.sidebarWidth}px`, minWidth: `${props.sidebarWidth}px` } : undefined}
+          className={`relative hidden shrink-0 overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar lg:grid lg:grid-cols-1 lg:grid-rows-1 ${
+            sidebarResizeActive ? "transition-none" : WORKSPACE_LEFT_SIDEBAR_WIDTH_TRANSITION
+          }`}
+          style={
+            sidebarWidthPx != null
+              ? { width: `${sidebarWidthPx}px`, minWidth: `${sidebarWidthPx}px` }
+              : undefined
+          }
         >
-          {props.sidebarTopSlot ? <div className="shrink-0">{props.sidebarTopSlot}</div> : null}
-          <div className="flex min-h-0 flex-1">
-            <WorkspaceSessionList {...props.workspaceSessionListProps} />
+          <div
+            className={`relative col-start-1 row-start-1 flex h-full min-h-0 flex-col p-2.5 transition-[opacity,transform] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none motion-reduce:opacity-100 ${
+              sidebarCollapsed
+                ? "pointer-events-none z-0 -translate-x-2 opacity-0"
+                : "z-10 translate-x-0 opacity-100"
+            }`}
+            aria-hidden={sidebarCollapsed}
+          >
+            {props.sidebarTopSlot ? <div className="shrink-0">{props.sidebarTopSlot}</div> : null}
+            <div className="flex min-h-0 flex-1">
+              <WorkspaceSessionList {...props.workspaceSessionListProps} />
+            </div>
+            {props.onSidebarResizeStart ? (
+              <div
+                className="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
+                onPointerDown={props.onSidebarResizeStart}
+                title={t("session.resize_workspace_column")}
+                aria-label={t("session.resize_workspace_column")}
+              />
+            ) : null}
           </div>
-          {props.onSidebarResizeStart ? (
-            <div
-              className="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
-              onPointerDown={props.onSidebarResizeStart}
-              title={t("session.resize_workspace_column")}
-              aria-label={t("session.resize_workspace_column")}
-            />
-          ) : null}
+
+          <div
+            className={`col-start-1 row-start-1 flex min-h-0 flex-col items-center justify-start px-1 pt-3 transition-[opacity,transform] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none motion-reduce:opacity-100 lg:justify-center lg:pt-0 ${
+              sidebarCollapsed ? "z-10 translate-x-0 opacity-100" : "pointer-events-none z-0 translate-x-2 opacity-0"
+            }`}
+            aria-hidden={!sidebarCollapsed}
+          >
+            <button
+              type="button"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-10 transition-colors duration-200 hover:bg-gray-2/80 hover:text-dls-text active:scale-95 motion-reduce:active:scale-100"
+              onClick={() => props.onToggleSidebarCollapsed?.()}
+              title={t("workspace_sidebar.expand_sidebar")}
+              aria-label={t("workspace_sidebar.expand_sidebar")}
+            >
+              <ChevronRight size={18} className="transition-transform duration-200 ease-out" />
+            </button>
+          </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">

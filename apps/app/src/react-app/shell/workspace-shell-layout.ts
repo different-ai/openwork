@@ -2,12 +2,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
+const LEFT_SIDEBAR_COLLAPSED_KEY = "openwork.workspace-shell.left-collapsed.v1";
 const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
 
 export const DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH = 260;
 export const MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH = 220;
 export const MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH = 420;
+export const COLLAPSED_WORKSPACE_LEFT_SIDEBAR_WIDTH = 48;
 export const DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH = 72;
+
+/** Tailwind classes: width eases on collapse/expand; omitted while drag-resizing. */
+export const WORKSPACE_LEFT_SIDEBAR_WIDTH_TRANSITION =
+  "transition-[width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none";
 
 type WorkspaceShellLayoutOptions = {
   defaultLeftWidth?: number;
@@ -66,8 +72,16 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     return raw === "1";
   }, []);
 
+  const readLeftSidebarCollapsed = useCallback(() => {
+    const raw = readStorage(LEFT_SIDEBAR_COLLAPSED_KEY);
+    if (raw == null) return false;
+    return raw === "1";
+  }, []);
+
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(readLeftSidebarWidth);
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(readLeftSidebarCollapsed);
   const [rightSidebarExpanded, setRightSidebarExpanded] = useState(readRightSidebarExpanded);
+  const [leftSidebarResizeActive, setLeftSidebarResizeActive] = useState(false);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -81,6 +95,15 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     writeStorage(RIGHT_SIDEBAR_EXPANDED_KEY, rightSidebarExpanded ? "1" : "0");
   }, [rightSidebarExpanded]);
 
+  useEffect(() => {
+    writeStorage(LEFT_SIDEBAR_COLLAPSED_KEY, leftSidebarCollapsed ? "1" : "0");
+  }, [leftSidebarCollapsed]);
+
+  const effectiveLeftSidebarWidth = useMemo(
+    () => (leftSidebarCollapsed ? COLLAPSED_WORKSPACE_LEFT_SIDEBAR_WIDTH : leftSidebarWidth),
+    [leftSidebarCollapsed, leftSidebarWidth],
+  );
+
   const rightSidebarWidth = useMemo(
     () => (rightSidebarExpanded ? expandedRightWidth : collapsedRightWidth),
     [collapsedRightWidth, expandedRightWidth, rightSidebarExpanded],
@@ -89,6 +112,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
   const stopLeftSidebarResize = useCallback(() => {
     dragCleanupRef.current?.();
     dragCleanupRef.current = null;
+    setLeftSidebarResizeActive(false);
     if (typeof document === "undefined") return;
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
@@ -99,6 +123,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       if (event.button !== 0 || typeof window === "undefined") return;
 
       stopLeftSidebarResize();
+      setLeftSidebarResizeActive(true);
       const initialX = event.clientX;
       const initialWidth = leftSidebarWidth;
 
@@ -134,6 +159,10 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     setRightSidebarExpanded((current) => !current);
   }, []);
 
+  const toggleLeftSidebar = useCallback(() => {
+    setLeftSidebarCollapsed((current) => !current);
+  }, []);
+
   useEffect(() => {
     return () => {
       stopLeftSidebarResize();
@@ -142,10 +171,15 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
 
   return {
     leftSidebarWidth,
+    effectiveLeftSidebarWidth,
+    leftSidebarCollapsed,
+    leftSidebarResizeActive,
     rightSidebarExpanded,
     rightSidebarWidth,
+    setLeftSidebarCollapsed,
     setRightSidebarExpanded,
     startLeftSidebarResize,
+    toggleLeftSidebar,
     toggleRightSidebar,
   };
 }

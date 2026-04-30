@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -40,6 +40,8 @@ type Props = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  /** Pinned inline with workspace row actions (+ / ⋯); fallback row when no selection. */
+  onToggleSidebarCollapse?: () => void;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
@@ -166,9 +168,6 @@ const workspaceSwatchColor = (seed: string) => {
 };
 
 export function WorkspaceSessionList(props: Props) {
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = useState<Record<string, number>>({});
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
@@ -182,45 +181,10 @@ export function WorkspaceSessionList(props: Props) {
     ? t("workspace_list.reveal_explorer")
     : t("workspace_list.reveal_finder");
 
-  const expandWorkspace = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setExpandedWorkspaceIds((previous) => {
-      if (previous.has(id)) return previous;
-      const next = new Set(previous);
-      next.add(id);
-      return next;
-    });
-  };
-
-  const toggleWorkspaceExpanded = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setExpandedWorkspaceIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    const id = props.selectedWorkspaceId.trim();
-    if (!id) return;
-    // Keep the selected workspace visible without collapsing other workspaces.
-    // Collapsing the previous workspace on every cross-workspace session click
-    // makes the sidebar feel jumpy and hides the context the user just left.
-    expandWorkspace(id);
-  }, [props.selectedWorkspaceId]);
-
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
 
   const showMoreSessions = (workspaceId: string, totalRoots: number) => {
-    expandWorkspace(workspaceId);
     setPreviewCountByWorkspaceId((current) => {
       const next = { ...current };
       const existing = next[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -446,6 +410,21 @@ export function WorkspaceSessionList(props: Props) {
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pr-1">
         <div className="space-y-2 pb-3">
+          {props.onToggleSidebarCollapse &&
+          (!props.selectedWorkspaceId.trim() ||
+            !props.workspaceSessionGroups.some((g) => g.workspace.id === props.selectedWorkspaceId)) ? (
+            <div className="flex items-center justify-end rounded-xl px-3.5 py-2.5">
+              <button
+                type="button"
+                className="rounded-md p-1 text-gray-9 transition-colors duration-200 hover:bg-gray-3/80 hover:text-gray-11 active:scale-95 motion-reduce:active:scale-100"
+                onClick={() => props.onToggleSidebarCollapse?.()}
+                title={t("workspace_sidebar.collapse_sidebar")}
+                aria-label={t("workspace_sidebar.collapse_sidebar")}
+              >
+                <ChevronLeft size={14} className="transition-transform duration-200 ease-out" />
+              </button>
+            </div>
+          ) : null}
           {props.workspaceSessionGroups.map((group) => {
             const tree = buildSessionTreeState(group.sessions, props.sessionStatusById);
             const forcedExpandedSessionIds = new Set(
@@ -498,14 +477,12 @@ export function WorkspaceSessionList(props: Props) {
                         : "text-gray-10 hover:bg-gray-1/70 hover:text-gray-12"
                     } ${isConnecting ? "opacity-75" : ""}`}
                     onClick={() => {
-                      expandWorkspace(workspace.id);
                       void Promise.resolve(props.onSelectWorkspace(workspace.id));
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                       event.preventDefault();
-                      expandWorkspace(workspace.id);
                       void Promise.resolve(props.onSelectWorkspace(workspace.id));
                     }}
                   >
@@ -562,27 +539,22 @@ export function WorkspaceSessionList(props: Props) {
                         >
                           <MoreHorizontal size={14} />
                         </button>
+                        {props.onToggleSidebarCollapse && props.selectedWorkspaceId === workspace.id ? (
+                          <button
+                            type="button"
+                            className="rounded-md p-1 text-gray-9 transition-colors duration-200 hover:bg-gray-3/80 hover:text-gray-11 active:scale-95 motion-reduce:active:scale-100"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              props.onToggleSidebarCollapse?.();
+                            }}
+                            title={t("workspace_sidebar.collapse_sidebar")}
+                            aria-label={t("workspace_sidebar.collapse_sidebar")}
+                          >
+                            <ChevronLeft size={14} className="transition-transform duration-200 ease-out" />
+                          </button>
+                        ) : null}
                       </div>
-
-                      <button
-                        type="button"
-                        className="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
-                        aria-label={
-                          expandedWorkspaceIds.has(workspace.id)
-                            ? t("sidebar.collapse")
-                            : t("sidebar.expand")
-                        }
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleWorkspaceExpanded(workspace.id);
-                        }}
-                      >
-                        {expandedWorkspaceIds.has(workspace.id) ? (
-                          <ChevronDown size={14} />
-                        ) : (
-                          <ChevronRight size={14} />
-                        )}
-                      </button>
                     </div>
                   </div>
 
@@ -677,8 +649,7 @@ export function WorkspaceSessionList(props: Props) {
                   ) : null}
                 </div>
 
-                {expandedWorkspaceIds.has(workspace.id) ? (
-                  <div className="mt-3 px-1 pb-1">
+                <div className="mt-3 px-1 pb-1">
                     <div className="relative flex flex-col gap-1 pl-2.5 before:absolute before:bottom-2 before:left-0 before:top-2 before:w-[2px] before:bg-gray-3 before:content-['']">
                       {props.showInitialLoading ? (
                         <div className="space-y-2">
@@ -752,7 +723,6 @@ export function WorkspaceSessionList(props: Props) {
                       )}
                     </div>
                   </div>
-                ) : null}
               </div>
             );
           })}
