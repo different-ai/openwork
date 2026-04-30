@@ -112,6 +112,30 @@ function definePreviewWrapTests(mode: "desktop" | "mobile") {
     await page.waitForTimeout(450);
     await expect(previewDot).toHaveClass(/dot-skill/);
   });
+
+  test(`debounces package preview requests while editing on ${mode}`, async ({ page }) => {
+    let packageRequests = 0;
+
+    await page.route("**/v1/package", async (route) => {
+      packageRequests += 1;
+      await route.continue();
+    });
+
+    await page.goto("/");
+
+    const editor = page.locator(".preview-editor");
+    await expect(editor).toBeVisible();
+
+    await editor.fill(momTestSkill);
+    await page.waitForTimeout(100);
+    await editor.fill(`${momTestSkill}\n\nFollow-up note`);
+
+    await page.waitForTimeout(500);
+    expect(packageRequests).toBe(0);
+
+    await page.waitForTimeout(650);
+    expect(packageRequests).toBe(1);
+  });
 }
 
 test.describe("desktop", () => {

@@ -4,7 +4,6 @@ import {
   Box,
   ChevronLeft,
   ChevronRight,
-  History,
   MessageCircle,
   Redo2,
   Search,
@@ -48,7 +47,7 @@ import type {
 } from "../../app/src/app/types";
 import { sessionMessages, storyWorkspaces } from "./mock-data";
 
-type RightRailNav = "automations" | "skills" | "extensions" | "messaging" | "advanced";
+type RightRailNav = "skills" | "extensions" | "messaging" | "advanced";
 type CommandPaletteMode = "root" | "sessions";
 
 type CommandPaletteItem = {
@@ -280,7 +279,7 @@ const RightRailButton: Component<{
 export default function StoryBookApp() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = createSignal(localWorkspace.id);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("sb-session-shell");
-  const [rightRailNav, setRightRailNav] = createSignal<RightRailNav>("automations");
+  const [rightRailNav, setRightRailNav] = createSignal<RightRailNav>("skills");
   const [themeMode] = createSignal<ThemeMode>(getInitialThemeMode());
   const [composerPrompt, setComposerPrompt] = createSignal(
     "Use this mock shell to design layout changes before touching the live session runtime.",
@@ -297,10 +296,6 @@ export default function StoryBookApp() {
   const [mockFolderPickCount, setMockFolderPickCount] = createSignal(0);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
-  const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
-  const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
-  const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
-  const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
   const [messageRows, setMessageRows] = createSignal<MessageWithParts[]>(sessionMessages);
   const [expandedStepIds, setExpandedStepIds] = createSignal(new Set<string>());
   const [headerActionBusy, setHeaderActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
@@ -494,30 +489,6 @@ export default function StoryBookApp() {
   const openMockShareModal = (workspaceId?: string | null) => {
     const nextId = workspaceId?.trim() || selectedWorkspaceId();
     setShareWorkspaceId(nextId);
-    setShareWorkspaceProfileUrl(null);
-    setShareSkillsSetUrl(null);
-  };
-
-  const publishMockWorkspaceProfile = () => {
-    if (shareWorkspaceProfileBusy()) return;
-    setShareWorkspaceProfileBusy(true);
-    window.setTimeout(() => {
-      const workspace = shareWorkspace();
-      const slug = (workspace?.name || "workspace").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      setShareWorkspaceProfileUrl(`https://share.openworklabs.com/workspaces/${slug || "workspace"}`);
-      setShareWorkspaceProfileBusy(false);
-    }, 260);
-  };
-
-  const publishMockSkillsSet = () => {
-    if (shareSkillsSetBusy()) return;
-    setShareSkillsSetBusy(true);
-    window.setTimeout(() => {
-      const workspace = shareWorkspace();
-      const slug = (workspace?.name || "workspace").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      setShareSkillsSetUrl(`https://share.openworklabs.com/skills/${slug || "workspace"}`);
-      setShareSkillsSetBusy(false);
-    }, 260);
   };
 
   const totalSessionCount = createMemo(() =>
@@ -822,13 +793,6 @@ export default function StoryBookApp() {
       <div class={`flex-1 overflow-y-auto ${expanded ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
         <div class="space-y-1 mb-2">
           <RightRailButton
-            label="Automations"
-            icon={<History size={18} />}
-            active={rightRailNav() === "automations"}
-            expanded={expanded}
-            onClick={() => setRightRailNav("automations")}
-          />
-          <RightRailButton
             label="Skills"
             icon={<Zap size={18} />}
             active={rightRailNav() === "skills"}
@@ -1032,7 +996,6 @@ export default function StoryBookApp() {
                     <DenSettingsPanel
                       developerMode
                       connectRemoteWorkspace={async () => true}
-                      openTeamBundle={async () => {}}
                     />
                   </div>
                 </Show>
@@ -1097,7 +1060,7 @@ export default function StoryBookApp() {
             onSendFeedback={() => undefined}
             onOpenSettings={() => {
               if (showingSettings()) {
-                setRightRailNav("automations");
+                setRightRailNav("skills");
                 return;
               }
               if (!rightSidebarExpanded()) toggleRightSidebar();
@@ -1218,16 +1181,6 @@ export default function StoryBookApp() {
         workspaceDetail={shareWorkspaceDetail()}
         fields={[...mockShareFields]}
         note="This is the real share modal from the app, mounted with safe mock values for shell review."
-        onShareWorkspaceProfile={publishMockWorkspaceProfile}
-        shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
-        shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
-        shareWorkspaceProfileError={null}
-        shareWorkspaceProfileDisabledReason={null}
-        onShareSkillsSet={publishMockSkillsSet}
-        shareSkillsSetBusy={shareSkillsSetBusy()}
-        shareSkillsSetUrl={shareSkillsSetUrl()}
-        shareSkillsSetError={null}
-        shareSkillsSetDisabledReason={null}
         onExportConfig={() => setComposerToast("Story-book: export config is mocked in this shell.")}
         exportDisabledReason={null}
         onOpenBots={() => setComposerToast("Story-book: bots sharing flow is mocked in this shell.")}

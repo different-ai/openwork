@@ -20,8 +20,9 @@ import {
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   type DenOrgLlmProvider,
+  type DenOrgMarketplaceResolved,
+  type DenOrgPlugin,
   type DenOrgSkillHub,
-  type DenTemplate,
   type DenUser,
   createDenClient,
   ensureDenActiveOrganization,
@@ -31,16 +32,11 @@ import {
   writeDenSettings,
 } from "../../../../app/lib/den";
 import {
-  clearDenTemplateCache,
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../../app/lib/den-template-cache";
-import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
-import type { CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
+import type { CloudImportedPlugin, CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
 import type { DenOrgSkillCard, SkillCard } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
 import { TextInput } from "../../../design-system/text-input";
@@ -75,6 +71,13 @@ type CloudSkillRow = {
   installedName: string | null;
 };
 
+type CloudPluginRow = {
+  marketplaceId: string;
+  plugin: DenOrgPlugin;
+  imported: CloudImportedPlugin | null;
+  status: "available" | "imported" | "out_of_sync";
+};
+
 type AsyncResult = { ok: boolean; message: string };
 
 export type DenSettingsExtensionsStore = {
@@ -93,6 +96,11 @@ export type DenSettingsExtensionsStore = {
   importCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
   removeCloudOrgSkillHub: (hubId: string) => Promise<AsyncResult>;
   syncCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
+  cloudOrgMarketplaces: () => DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: () => string | null;
+  importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
+  refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
+  importCloudOrgPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => Promise<AsyncResult>;
 };
 
 export type DenSettingsPanelProps = {
@@ -105,12 +113,6 @@ export type DenSettingsPanelProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openTeamBundle: (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => void | Promise<void>;
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
@@ -200,23 +202,6 @@ function parseManualAuthInput(value: string) {
   return trimmed.length >= 12 ? { grant: trimmed } : null;
 }
 
-function formatTemplateTimestamp(value: string | null, tr: (key: string) => string) {
-  if (!value) return tr("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return tr("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function templateCreatorLabel(template: DenTemplate, tr: (key: string) => string) {
-  const creator = template.creator;
-  if (!creator) return tr("dashboard.unknown_creator");
-  return creator.name?.trim() || creator.email?.trim() || tr("dashboard.unknown_creator");
-}
-
 export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const tr = useCallback((key: string) => t(key, currentLocale()), []);
   const tx = useCallback(
@@ -227,15 +212,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
   const initial = useMemo(() => readDenSettings(), []);
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
-  const initialTemplateSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: initialBaseUrl,
-        token: initial.authToken?.trim() || "",
-        orgSlug: initial.activeOrgSlug?.trim() || null,
-      }),
-    [initial.activeOrgSlug, initial.authToken, initialBaseUrl],
-  );
 
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [baseUrlDraft, setBaseUrlDraft] = useState(initialBaseUrl);
@@ -249,7 +225,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [orgsBusy, setOrgsBusy] = useState(false);
   const [workersBusy, setWorkersBusy] = useState(false);
   const [openingWorkerId, setOpeningWorkerId] = useState<string | null>(null);
-  const [openingTemplateId, setOpeningTemplateId] = useState<string | null>(null);
   const [user, setUser] = useState<DenUser | null>(null);
   const [orgs, setOrgs] = useState<
     Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "member" }>
@@ -269,9 +244,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
   const [workersError, setWorkersError] = useState<string | null>(null);
-  const [templatesBusy, setTemplatesBusy] = useState(initialTemplateSnapshot.busy);
-  const [templates, setTemplates] = useState(initialTemplateSnapshot.templates);
-  const [templateError, setTemplateError] = useState<string | null>(initialTemplateSnapshot.error);
   const [skillHubsBusy, setSkillHubsBusy] = useState(false);
   const [skillHubActionId, setSkillHubActionId] = useState<string | null>(null);
   const [skillHubActionKind, setSkillHubActionKind] = useState<"import" | "remove" | "sync" | null>(null);
@@ -280,6 +252,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const [skillActionId, setSkillActionId] = useState<string | null>(null);
   const [skillActionKind, setSkillActionKind] = useState<"import" | "remove" | "sync" | null>(null);
   const [skillActionError, setSkillActionError] = useState<string | null>(null);
+  const [marketplacesBusy, setMarketplacesBusy] = useState(false);
+  const [activeMarketplaceId, setActiveMarketplaceId] = useState<string | null>(null);
+  const [pluginActionId, setPluginActionId] = useState<string | null>(null);
+  const [pluginActionError, setPluginActionError] = useState<string | null>(null);
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providerActionId, setProviderActionId] = useState<string | null>(null);
   const [providerActionKind, setProviderActionKind] = useState<"import" | "remove" | "sync" | null>(null);
@@ -306,6 +282,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const liveSkillHubs = props.extensions.cloudOrgSkillHubs();
   const liveSkills = props.extensions.cloudOrgSkills();
   const importedSkills = props.extensions.importedCloudSkills();
+  const liveMarketplaces = props.extensions.cloudOrgMarketplaces();
+  const importedPlugins = props.extensions.importedCloudPlugins();
 
   const skillHubRows = useMemo<CloudSkillHubRow[]>(() => {
     const rows: CloudSkillHubRow[] = liveSkillHubs.map((hub) => {
@@ -425,13 +403,34 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return rows;
   }, [props.cloudOrgProviders, props.importedCloudProviders]);
 
+  const marketplacePluginRows = useMemo<Record<string, CloudPluginRow[]>>(() => {
+    const next: Record<string, CloudPluginRow[]> = {};
+    for (const marketplace of liveMarketplaces) {
+      next[marketplace.marketplace.id] = marketplace.plugins.map((plugin) => {
+        const imported = importedPlugins[plugin.id] ?? null;
+        const status = !imported
+          ? "available"
+          : imported.updatedAt !== plugin.updatedAt || imported.files.length !== plugin.memberCount
+            ? "out_of_sync"
+            : "imported";
+        return { marketplaceId: marketplace.marketplace.id, plugin, imported, status };
+      });
+    }
+    return next;
+  }, [importedPlugins, liveMarketplaces]);
+
+  const selectedMarketplace = useMemo(() => {
+    if (liveMarketplaces.length === 0) return null;
+    return liveMarketplaces.find((entry) => entry.marketplace.id === activeMarketplaceId) ?? liveMarketplaces[0];
+  }, [activeMarketplaceId, liveMarketplaces]);
+
   const summaryTone = useMemo(() => {
     if (
       authError ||
       workersError ||
       orgsError ||
-      templateError ||
       skillActionError ||
+      pluginActionError ||
       providerActionError ||
       skillHubActionError
     ) {
@@ -441,8 +440,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       sessionBusy ||
       orgsBusy ||
       workersBusy ||
-      templatesBusy ||
       skillsBusy ||
+      marketplacesBusy ||
       providersBusy ||
       skillHubsBusy
     ) {
@@ -456,14 +455,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     orgsBusy,
     orgsError,
     providerActionError,
+    pluginActionError,
     providersBusy,
+    marketplacesBusy,
     sessionBusy,
     skillActionError,
     skillHubActionError,
     skillHubsBusy,
     skillsBusy,
-    templateError,
-    templatesBusy,
     workersBusy,
     workersError,
   ]);
@@ -482,9 +481,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     setActiveOrgId("");
     setOrgsError(null);
     setWorkersError(null);
-    setTemplateError(null);
-    setTemplates([]);
     setSkillHubActionError(null);
+    setPluginActionError(null);
     setProviderActionError(null);
     setSkillHubActionKind(null);
     setProviderActionKind(null);
@@ -493,16 +491,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const clearSignedInState = useCallback(
     (message?: string | null) => {
       clearDenSession({ includeBaseUrls: !props.developerMode });
-      clearDenTemplateCache();
       if (!props.developerMode) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
         setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
       }
       setAuthToken("");
       setOpeningWorkerId(null);
-      setOpeningTemplateId(null);
-      setTemplatesBusy(false);
       setSkillHubActionId(null);
+      setPluginActionId(null);
       setProviderActionId(null);
       setSkillHubActionKind(null);
       setProviderActionKind(null);
@@ -648,48 +644,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrg, activeOrgId, authToken, client, tr, tx],
   );
 
-  const refreshTemplates = useCallback(
-    async (quiet = false) => {
-      const orgSlug = activeOrg?.slug?.trim() ?? "";
-      if (!authToken.trim() || !orgSlug) return;
-
-      setTemplatesBusy(true);
-      setTemplateError(null);
-
-      try {
-        const nextTemplates = await loadDenTemplateCache(
-          {
-            baseUrl,
-            token: authToken,
-            orgSlug,
-          },
-          { force: true },
-        );
-        setTemplates(nextTemplates);
-        if (!quiet) {
-          setStatusMessage(
-            nextTemplates.length > 0
-              ? tx("den.status_loaded_templates", {
-                  count: nextTemplates.length,
-                  plural: nextTemplates.length === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                })
-              : tx("den.status_no_templates", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                }),
-          );
-        }
-      } catch (error) {
-        if (!quiet) {
-          setTemplateError(error instanceof Error ? error.message : tr("den.error_load_templates"));
-        }
-      } finally {
-        setTemplatesBusy(false);
-      }
-    },
-    [activeOrg, authToken, baseUrl, tr, tx],
-  );
-
   const refreshSkillHubs = useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
@@ -786,6 +740,35 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrg, activeOrgId, authToken, props, tr],
   );
 
+  const refreshMarketplaces = useCallback(
+    async (quiet = false) => {
+      const orgId = activeOrgId.trim();
+      if (!authToken.trim() || !orgId) return;
+
+      setMarketplacesBusy(true);
+      if (!quiet) setPluginActionError(null);
+
+      try {
+        await props.extensions.refreshCloudOrgMarketplaces({ force: true });
+        if (!quiet) {
+          const count = props.extensions.cloudOrgMarketplaces().length;
+          setStatusMessage(
+            count > 0
+              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
+              : `No marketplaces are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+          );
+        }
+      } catch (error) {
+        if (!quiet) {
+          setPluginActionError(error instanceof Error ? error.message : "Failed to load marketplaces.");
+        }
+      } finally {
+        setMarketplacesBusy(false);
+      }
+    },
+    [activeOrg, activeOrgId, authToken, props.extensions, tr],
+  );
+
   useEffect(() => {
     const token = authToken.trim();
     if (!token) {
@@ -835,11 +818,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   }, [activeOrgId, refreshWorkers, user]);
 
   useEffect(() => {
-    if (!user || !activeOrg?.slug?.trim()) return;
-    void refreshTemplates(true);
-  }, [activeOrg, refreshTemplates, user]);
-
-  useEffect(() => {
     if (!user || !activeOrgId.trim()) return;
     void refreshSkillHubs(true);
   }, [activeOrgId, refreshSkillHubs, user]);
@@ -848,6 +826,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     if (!user || !activeOrgId.trim()) return;
     void refreshSkills(true);
   }, [activeOrgId, refreshSkills, user]);
+
+  useEffect(() => {
+    if (!user || !activeOrgId.trim()) return;
+    void refreshMarketplaces(true);
+  }, [activeOrgId, refreshMarketplaces, user]);
 
   useEffect(() => {
     if (!user || !activeOrgId.trim()) return;
@@ -997,37 +980,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrgId, client, props, tr, tx],
   );
 
-  const handleOpenTemplate = useCallback(
-    async (template: DenTemplate) => {
-      if (openingTemplateId) return;
-
-      setOpeningTemplateId(template.id);
-      setTemplateError(null);
-
-      try {
-        await props.openTeamBundle({
-          templateId: template.id,
-          name: template.name,
-          templateData: template.templateData,
-          organizationName: activeOrg?.name ?? null,
-        });
-        const orgName = activeOrg?.name;
-        setStatusMessage(
-          orgName
-            ? tx("den.status_opened_template", { name: template.name, org: orgName })
-            : tx("den.status_opened_template_fallback", { name: template.name }),
-        );
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error ? error.message : tx("den.error_open_template", { name: template.name }),
-        );
-      } finally {
-        setOpeningTemplateId(null);
-      }
-    },
-    [activeOrg, openingTemplateId, props, tx],
-  );
-
   const handleImportSkillHub = useCallback(
     async (hubId: string) => {
       const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
@@ -1171,6 +1123,26 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [props.extensions, skillActionId, tr, tx],
   );
 
+  const handleImportPlugin = useCallback(
+    async (marketplaceId: string | null, plugin: DenOrgPlugin) => {
+      if (pluginActionId) return;
+
+      setPluginActionId(plugin.id);
+      setPluginActionError(null);
+
+      try {
+        const result = await props.extensions.importCloudOrgPlugin(marketplaceId, plugin);
+        if (!result.ok) throw new Error(result.message);
+        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+      } catch (error) {
+        setPluginActionError(error instanceof Error ? error.message : `Failed to import ${plugin.name}.`);
+      } finally {
+        setPluginActionId(null);
+      }
+    },
+    [pluginActionId, props.extensions, tr],
+  );
+
   const handleImportProvider = useCallback(
     async (cloudProviderId: string, providerName: string) => {
       if (providerActionId) return;
@@ -1311,7 +1283,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
         {baseUrlError ? <div className={errorBannerClass}>{baseUrlError}</div> : null}
 
-        {statusMessage && !authError && !workersError && !orgsError && !templateError ? (
+        {statusMessage && !authError && !workersError && !orgsError ? (
           <div className={softNoticeClass}>{statusMessage}</div>
         ) : null}
       </div>
@@ -1462,6 +1434,119 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
+                  <Boxes size={15} className="text-dls-secondary" />
+                  Marketplaces & Plugins
+                </div>
+                <div className="mt-1 text-xs text-dls-secondary">
+                  Browse organization marketplaces and import plugin files into this workspace.
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className={sectionPillClass}>
+                  <Users size={12} />
+                  {activeOrgName}
+                </div>
+                <Button
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => void refreshMarketplaces()}
+                  disabled={marketplacesBusy || !activeOrgId.trim()}
+                >
+                  <RefreshCcw size={13} className={marketplacesBusy ? "animate-spin" : ""} />
+                  {tr("den.refresh")}
+                </Button>
+              </div>
+            </div>
+
+            {pluginActionError || props.extensions.cloudOrgMarketplacesStatus() ? (
+              <div className={errorBannerClass}>{pluginActionError || props.extensions.cloudOrgMarketplacesStatus()}</div>
+            ) : null}
+
+            {!marketplacesBusy && liveMarketplaces.length === 0 ? (
+              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                {activeOrgId.trim() ? "No marketplaces are available yet." : "Choose an organization to view marketplaces."}
+              </div>
+            ) : null}
+
+            {liveMarketplaces.length > 0 ? (
+              <div className="space-y-3">
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {liveMarketplaces.map((entry) => {
+                    const selected = selectedMarketplace?.marketplace.id === entry.marketplace.id;
+                    return (
+                      <button
+                        key={entry.marketplace.id}
+                        type="button"
+                        onClick={() => setActiveMarketplaceId(entry.marketplace.id)}
+                        className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          selected
+                            ? "border-dls-border bg-dls-hover text-dls-text shadow-sm"
+                            : "border-dls-border bg-dls-hover text-dls-secondary hover:text-dls-text"
+                        }`}
+                      >
+                        {entry.marketplace.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedMarketplace ? (
+                  <div className="space-y-1">
+                    {(marketplacePluginRows[selectedMarketplace.marketplace.id] ?? []).map((row) => {
+                      const actionBusy = pluginActionId === row.plugin.id;
+                      const counts = Object.entries(row.plugin.componentCounts)
+                        .filter(([, count]) => count > 0)
+                        .map(([type, count]) => `${count} ${type}${count === 1 ? "" : "s"}`);
+                      return (
+                        <div
+                          key={row.plugin.id}
+                          className="flex flex-col gap-3 rounded-xl px-3 py-3 text-left text-[13px] transition-colors hover:bg-dls-hover sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="min-w-0 pr-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate font-medium text-dls-text">{row.plugin.name}</span>
+                              {row.status !== "available" ? (
+                                <span className={sectionPillClass}>
+                                  {row.status === "imported" ? tr("den.imported_badge") : tr("den.out_of_sync_badge")}
+                                </span>
+                              ) : null}
+                              {counts.length > 0 ? counts.map((label) => <span key={label} className={sectionPillClass}>{label}</span>) : null}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-dls-secondary">
+                              {row.plugin.description || "No description provided."}
+                            </div>
+                            {row.imported?.files.length ? (
+                              <div className="mt-1 truncate text-[11px] text-dls-secondary">
+                                Installed files: {row.imported.files.map((file) => file.path).join(", ")}
+                              </div>
+                            ) : null}
+                          </div>
+                          <Button
+                            variant={row.status === "available" ? "secondary" : "outline"}
+                            className="h-8 shrink-0 px-4 text-xs"
+                            onClick={() => void handleImportPlugin(row.marketplaceId, row.plugin)}
+                            disabled={pluginActionId !== null}
+                          >
+                            {actionBusy ? tr("den.importing") : row.status === "available" ? "Import plugin" : "Sync plugin"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    {(marketplacePluginRows[selectedMarketplace.marketplace.id] ?? []).length === 0 ? (
+                      <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
+                        This marketplace does not have plugins yet.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className={`${settingsPanelClass} space-y-4`}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Package size={15} className="text-dls-secondary" />
                   {tr("den.cloud_skills_title")}
                 </div>
@@ -1508,7 +1593,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1613,7 +1698,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={worker.workerId}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1638,73 +1723,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       title={!status.canOpen ? tr("den.worker_not_ready_title") : undefined}
                     >
                       {openingWorkerId === worker.workerId ? tr("den.opening") : tr("den.open")}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Boxes size={15} className="text-dls-secondary" />
-                  {tr("den.team_templates_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.team_templates_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshTemplates()}
-                  disabled={templatesBusy || !activeOrg?.slug?.trim()}
-                >
-                  <RefreshCcw size={13} className={templatesBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {templateError ? <div className={errorBannerClass}>{templateError}</div> : null}
-
-            {!templatesBusy && templates.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrg?.slug?.trim() ? tr("den.no_team_templates") : tr("den.choose_org_for_templates")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {templates.map((template) => {
-                const isMine = template.creator?.userId === user?.id;
-                const opening = openingTemplateId === template.id;
-                return (
-                  <div
-                    key={template.id}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{template.name}</span>
-                        <span className={sectionPillClass}>{tr("den.team_template_badge")}</span>
-                        {isMine ? <span className={sectionPillClass}>{tr("den.worker_mine_badge")}</span> : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        by {templateCreatorLabel(template, tr)} · {formatTemplateTimestamp(template.createdAt, tr)}
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      className="h-8 shrink-0 px-4 text-xs"
-                      onClick={() => void handleOpenTemplate(template)}
-                      disabled={openingTemplateId !== null}
-                    >
-                      {opening ? tr("den.opening") : tr("den.open")}
                     </Button>
                   </div>
                 );
@@ -1762,7 +1780,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1876,7 +1894,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 return (
                   <div
                     key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
+                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-dls-hover"
                   >
                     <div className="min-w-0 pr-4">
                       <div className="flex flex-wrap items-center gap-2">

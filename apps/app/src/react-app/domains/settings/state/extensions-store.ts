@@ -38,16 +38,26 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import type { OpenworkHubRepo, OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import type {
+  OpenworkHubRepo,
+  OpenworkServerCapabilities,
+  OpenworkServerClient,
+  OpenworkServerStatus,
+} from "../../../../app/lib/openwork-server";
 import {
   createDenClient,
   fetchDenOrgSkillsCatalog,
   readDenSettings,
+  type DenOrgMarketplaceResolved,
+  type DenOrgPlugin,
+  type DenOrgPluginResolved,
   type DenOrgSkillHub,
 } from "../../../../app/lib/den";
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
+  type CloudImportedPlugin,
+  type CloudImportedPluginFile,
   type CloudImportedSkill,
   type CloudImportedSkillHub,
 } from "../../../../app/cloud/import-state";
@@ -75,6 +85,9 @@ export type ExtensionsStoreSnapshot = {
   cloudOrgSkillHubs: DenOrgSkillHub[];
   cloudOrgSkillHubsStatus: string | null;
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
+  cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: string | null;
+  importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
@@ -107,6 +120,9 @@ type MutableState = {
   cloudOrgSkillHubs: DenOrgSkillHub[];
   cloudOrgSkillHubsStatus: string | null;
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
+  cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: string | null;
+  importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
@@ -163,6 +179,11 @@ export function createExtensionsStore(options: {
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
   openworkServer: OpenworkServerStore;
+  openworkServerConnection?: () => {
+    openworkServerClient: OpenworkServerClient | null;
+    openworkServerStatus: OpenworkServerStatus;
+    openworkServerCapabilities: OpenworkServerCapabilities | null;
+  };
   runtimeWorkspaceId: () => string | null;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
@@ -185,19 +206,23 @@ export function createExtensionsStore(options: {
   let refreshHubSkillsInFlight = false;
   let refreshCloudOrgSkillsInFlight = false;
   let refreshCloudOrgSkillHubsInFlight = false;
+  let refreshCloudOrgMarketplacesInFlight = false;
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
   let refreshCloudOrgSkillsAborted = false;
   let refreshCloudOrgSkillHubsAborted = false;
+  let refreshCloudOrgMarketplacesAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let cloudOrgSkillsLoaded = false;
   let cloudOrgSkillHubsLoaded = false;
+  let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let hubSkillsLoadKey = "";
   let cloudOrgSkillsLoadKey = "";
   let cloudOrgSkillHubsLoadKey = "";
+  let cloudOrgMarketplacesLoadKey = "";
 
   let state: MutableState = {
     skillsContextKey: "",
@@ -214,6 +239,9 @@ export function createExtensionsStore(options: {
     cloudOrgSkillHubs: [],
     cloudOrgSkillHubsStatus: null,
     importedCloudSkillHubs: {},
+    cloudOrgMarketplaces: [],
+    cloudOrgMarketplacesStatus: null,
+    importedCloudPlugins: {},
     hubRepo: DEFAULT_HUB_REPO,
     hubRepos: [DEFAULT_HUB_REPO],
     pluginScope: "project",
@@ -239,6 +267,18 @@ export function createExtensionsStore(options: {
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
   };
 
+  const getOpenworkServerSnapshot = () => {
+    const snapshot = options.openworkServer.getSnapshot();
+    const connection = options.openworkServerConnection?.();
+    if (!connection?.openworkServerClient) return snapshot;
+    return {
+      ...snapshot,
+      openworkServerClient: connection.openworkServerClient,
+      openworkServerStatus: connection.openworkServerStatus,
+      openworkServerCapabilities: connection.openworkServerCapabilities,
+    };
+  };
+
   const refreshSnapshot = () => {
     const workspaceContextKey = getWorkspaceContextKey();
     const orgId = readDenSettings().activeOrgId?.trim() ?? "";
@@ -254,6 +294,9 @@ export function createExtensionsStore(options: {
       cloudOrgSkillHubs: state.cloudOrgSkillHubs,
       cloudOrgSkillHubsStatus: state.cloudOrgSkillHubsStatus,
       importedCloudSkillHubs: state.importedCloudSkillHubs,
+      cloudOrgMarketplaces: state.cloudOrgMarketplaces,
+      cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
+      importedCloudPlugins: state.importedCloudPlugins,
       hubRepo: state.hubRepo,
       hubRepos: state.hubRepos,
       pluginScope: state.pluginScope,
@@ -321,7 +364,7 @@ export function createExtensionsStore(options: {
   const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -345,7 +388,7 @@ export function createExtensionsStore(options: {
   const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -397,6 +440,18 @@ export function createExtensionsStore(options: {
     }
   };
 
+  const refreshImportedCloudPlugins = async () => {
+    try {
+      const config = await readWorkspaceOpenworkConfigRecord();
+      const cloudImports = readWorkspaceCloudImports(config);
+      setStateField("importedCloudPlugins", cloudImports.plugins);
+      return cloudImports.plugins;
+    } catch {
+      setStateField("importedCloudPlugins", {});
+      return {};
+    }
+  };
+
   const persistImportedCloudSkillHubs = async (nextSkillHubs: Record<string, CloudImportedSkillHub>) => {
     const config = await readWorkspaceOpenworkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
@@ -425,6 +480,20 @@ export function createExtensionsStore(options: {
     setStateField("importedCloudSkills", nextSkills);
   };
 
+  const persistImportedCloudPlugins = async (nextPlugins: Record<string, CloudImportedPlugin>) => {
+    const config = await readWorkspaceOpenworkConfigRecord();
+    const cloudImports = readWorkspaceCloudImports(config);
+    const nextConfig = withWorkspaceCloudImports(config, {
+      ...cloudImports,
+      plugins: nextPlugins,
+    });
+    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    if (!persisted) {
+      throw new Error("OpenWork server unavailable. Connect to manage imported cloud plugins.");
+    }
+    setStateField("importedCloudPlugins", nextPlugins);
+  };
+
   const buildCloudSkillContent = (name: string, description: string, body: string) => {
     const safeDescription = description.replace(/\s+/g, " ").trim();
     const normalizedBody = body.replace(/^\s*\n?/, "");
@@ -447,7 +516,7 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -521,7 +590,7 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -590,6 +659,161 @@ export function createExtensionsStore(options: {
     return { nextSkillNames, nextSkillIds, removedSkillNames };
   };
 
+  const slugifyConfigObjectName = (title: string, fallback: string) => {
+    const slug = slugifyOpencodeSkillName(title || fallback);
+    return slug === "skill" && fallback ? slugifyOpencodeSkillName(fallback) : slug;
+  };
+
+  const pluginNamespace = (pluginName: string, pluginId: string) => {
+    const base = slugifyConfigObjectName(pluginName, pluginId);
+    return `${base.replace(/-plugin$/, "")}-plugin`;
+  };
+
+  const normalizePluginSourcePath = (path: string, objectType: string, namespace: string) => {
+    const parts = path.trim().replace(/^\/+/, "").split("/").filter(Boolean);
+    if (parts.length === 0 || parts.some((part) => part === ".." || part === ".")) return "";
+
+    const folderByType: Record<string, string> = {
+      agent: "agents",
+      command: "commands",
+      context: "context",
+      hook: "hooks",
+      mcp: "mcps",
+      skill: "skills",
+      tool: "tools",
+    };
+    const folder = folderByType[objectType];
+    if (!folder) return "";
+    const opencodeIndex = parts.findIndex((part) => part === ".opencode");
+    const searchParts = opencodeIndex >= 0 ? parts.slice(opencodeIndex + 1) : parts;
+    const folderIndex = searchParts.findIndex((part) => part === folder);
+    if (folderIndex < 0 || folderIndex === searchParts.length - 1) return "";
+    const rest = searchParts.slice(folderIndex + 1);
+    if (rest[0] === namespace) return [".opencode", folder, ...rest].join("/");
+    return [".opencode", folder, namespace, ...rest].join("/");
+  };
+
+  const getPluginObjectInstallPath = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+    namespace: string,
+  ) => {
+    const existing = normalizePluginSourcePath(object.currentRelativePath ?? "", object.objectType, namespace);
+    if (existing) {
+      if (object.objectType === "skill" && !/\/SKILL\.md$/i.test(existing)) {
+        const skillName = existing.split("/").filter(Boolean).at(-1) ?? slugifyConfigObjectName(object.title, object.id);
+        return `.opencode/skills/${namespace}/${skillName}/SKILL.md`;
+      }
+      return existing;
+    }
+    const name = slugifyConfigObjectName(object.title, object.id);
+    switch (object.objectType) {
+      case "skill":
+        return `.opencode/skills/${namespace}/${name}/SKILL.md`;
+      case "agent":
+        return `.opencode/agents/${namespace}/${name}.md`;
+      case "command":
+        return `.opencode/commands/${namespace}/${name}.md`;
+      case "mcp":
+        return `.opencode/mcps/${namespace}/${name}.json`;
+      case "hook":
+        return `.opencode/hooks/${namespace}/${name}.json`;
+      case "tool":
+        return `.opencode/tools/${namespace}/${name}.ts`;
+      case "context":
+        return `.opencode/context/${namespace}/${name}.md`;
+      default:
+        return `.opencode/plugins/${namespace}/${name}.txt`;
+    }
+  };
+
+  const pluginReloadReason = (objectType: string): ReloadReason => {
+    switch (objectType) {
+      case "skill":
+        return "skills";
+      case "agent":
+        return "agents";
+      case "command":
+        return "commands";
+      case "mcp":
+        return "mcp";
+      default:
+        return "config";
+    }
+  };
+
+  const writePluginWorkspaceFile = async (path: string, content: string) => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      typeof openworkClient.writeWorkspaceFile === "function"
+    ) {
+      await openworkClient.writeWorkspaceFile(openworkWorkspaceId, { path, content, force: true });
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to import plugin files into this workspace.");
+  };
+
+  const applyCloudOrgPluginImport = async (
+    marketplaceId: string | null,
+    resolved: DenOrgPluginResolved,
+  ): Promise<CloudImportedPluginFile[]> => {
+    const files: CloudImportedPluginFile[] = [];
+    const existing = snapshot.importedCloudPlugins[resolved.plugin.id];
+    const namespace = pluginNamespace(resolved.plugin.name, resolved.plugin.id);
+
+    for (const membership of resolved.memberships) {
+      const object = membership.configObject;
+      const version = object?.latestVersion ?? null;
+      if (!object || object.status !== "active" || version?.rawSourceText == null) continue;
+
+      const path = getPluginObjectInstallPath(object, namespace);
+      let content = version.rawSourceText;
+      if (object.objectType === "skill") {
+        const rawDesc = (object.description?.trim() || object.title).trim();
+        const description = rawDesc.slice(0, 1024) || object.title.slice(0, 1024) || "Skill";
+        const installName = path.match(/^\.opencode\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/)?.[1] ?? slugifyConfigObjectName(object.title, object.id);
+        content = buildCloudSkillContent(installName, description, extractSkillBodyMarkdown(content));
+      }
+      await writePluginWorkspaceFile(path, content);
+
+      files.push({
+        configObjectId: object.id,
+        versionId: version.id,
+        objectType: object.objectType,
+        title: object.title,
+        path,
+        updatedAt: object.updatedAt,
+      });
+      options.markReloadRequired?.(pluginReloadReason(object.objectType), {
+        type:
+          object.objectType === "skill" || object.objectType === "agent" || object.objectType === "command" || object.objectType === "mcp"
+            ? object.objectType
+            : "config",
+        name: object.title,
+        action: existing ? "updated" : "added",
+      });
+    }
+
+    const nextPlugins = {
+      ...snapshot.importedCloudPlugins,
+      [resolved.plugin.id]: {
+        pluginId: resolved.plugin.id,
+        marketplaceId,
+        name: resolved.plugin.name,
+        description: resolved.plugin.description,
+        updatedAt: resolved.plugin.updatedAt,
+        files,
+        importedAt: existing?.importedAt ?? Date.now(),
+      },
+    } satisfies Record<string, CloudImportedPlugin>;
+    await persistImportedCloudPlugins(nextPlugins);
+    return files;
+  };
+
   const persistHubRepos = () => {
     if (typeof window === "undefined") return;
     try {
@@ -607,10 +831,12 @@ export function createExtensionsStore(options: {
     hubSkillsLoaded = false;
     cloudOrgSkillsLoaded = false;
     cloudOrgSkillHubsLoaded = false;
+    cloudOrgMarketplacesLoaded = false;
     skillsRoot = "";
     hubSkillsLoadKey = "";
     cloudOrgSkillsLoadKey = "";
     cloudOrgSkillHubsLoadKey = "";
+    cloudOrgMarketplacesLoadKey = "";
   };
 
   const touch = () => {
@@ -622,7 +848,7 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const repo = snapshot.hubRepo;
     const loadKey = `${root}::${repo ? hubRepoKey(repo) : "none"}`;
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const canUseOpenworkServer =
       openworkSnapshot.openworkServerStatus === "connected" &&
@@ -856,6 +1082,100 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function refreshCloudOrgMarketplaces(optionsOverride?: { force?: boolean }) {
+    const wk = getWorkspaceContextKey();
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const loadKey = `${wk}::${orgId}`;
+
+    if (loadKey !== cloudOrgMarketplacesLoadKey) {
+      cloudOrgMarketplacesLoaded = false;
+    }
+
+    if (!optionsOverride?.force && cloudOrgMarketplacesLoaded) {
+      await refreshImportedCloudPlugins();
+      return;
+    }
+    if (refreshCloudOrgMarketplacesInFlight) return;
+
+    refreshCloudOrgMarketplacesInFlight = true;
+    refreshCloudOrgMarketplacesAborted = false;
+
+    try {
+      setStateField("cloudOrgMarketplacesStatus", null);
+
+      if (!token || !orgId) {
+        mutateState((current) => ({
+          ...current,
+          cloudOrgMarketplaces: [],
+          cloudOrgMarketplacesStatus: null,
+        }));
+        cloudOrgMarketplacesLoaded = true;
+        cloudOrgMarketplacesLoadKey = loadKey;
+        await refreshImportedCloudPlugins();
+        return;
+      }
+
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
+      const marketplaces = await client.listOrgMarketplaces(orgId);
+      const resolved = await Promise.all(
+        marketplaces.map((marketplace) => client.getOrgMarketplaceResolved(orgId, marketplace.id)),
+      );
+      if (refreshCloudOrgMarketplacesAborted) return;
+      mutateState((current) => ({
+        ...current,
+        cloudOrgMarketplaces: resolved,
+        cloudOrgMarketplacesStatus: resolved.length ? null : "No organization marketplaces are available yet.",
+      }));
+      cloudOrgMarketplacesLoaded = true;
+      cloudOrgMarketplacesLoadKey = loadKey;
+      await refreshImportedCloudPlugins();
+    } catch (error) {
+      if (refreshCloudOrgMarketplacesAborted) return;
+      mutateState((current) => ({
+        ...current,
+        cloudOrgMarketplaces: [],
+        cloudOrgMarketplacesStatus:
+          error instanceof Error ? error.message : "Failed to load organization marketplaces.",
+      }));
+    } finally {
+      refreshCloudOrgMarketplacesInFlight = false;
+    }
+  }
+
+  async function importCloudOrgPlugin(
+    marketplaceId: string | null,
+    plugin: DenOrgPlugin,
+  ): Promise<{ ok: boolean; message: string; files: CloudImportedPluginFile[] }> {
+    options.setBusy(true);
+    options.setError(null);
+    setStateField("cloudOrgMarketplacesStatus", null);
+
+    try {
+      const settings = readDenSettings();
+      const token = settings.authToken?.trim() ?? "";
+      const orgId = settings.activeOrgId?.trim() ?? "";
+      if (!token || !orgId) throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
+      const resolved = await client.getOrgPluginResolved(orgId, plugin);
+      const files = await applyCloudOrgPluginImport(marketplaceId, resolved);
+      await refreshSkills({ force: true });
+      await refreshCloudOrgMarketplaces({ force: true });
+      return {
+        ok: true,
+        message: `Imported ${plugin.name} with ${files.length} file${files.length === 1 ? "" : "s"}.`,
+        files,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, files: [] };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
   async function importCloudOrgSkillHub(hub: DenOrgSkillHub): Promise<{ ok: boolean; message: string; importedNames: string[] }> {
     const importedNames: string[] = [];
     options.setBusy(true);
@@ -972,7 +1292,7 @@ export function createExtensionsStore(options: {
     if (!repo) return { ok: false, message: "Select a hub repo before installing skills." };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1105,7 +1425,7 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1263,7 +1583,7 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1434,7 +1754,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1523,7 +1843,7 @@ export function createExtensionsStore(options: {
     const triggerName = stripPluginVersion(name);
 
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1636,7 +1956,7 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1793,7 +2113,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1847,7 +2167,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1917,6 +2237,7 @@ export function createExtensionsStore(options: {
     refreshHubSkillsAborted = true;
     refreshCloudOrgSkillsAborted = true;
     refreshCloudOrgSkillHubsAborted = true;
+    refreshCloudOrgMarketplacesAborted = true;
   }
 
   function ensureSkillsFresh() {
@@ -2025,6 +2346,7 @@ export function createExtensionsStore(options: {
       const onDenSessionUpdated = () => {
         cloudOrgSkillsLoaded = false;
         cloudOrgSkillHubsLoaded = false;
+        cloudOrgMarketplacesLoaded = false;
         mutateState((current) => ({ ...current, cloudOrgSkillsContextKey: "" }));
       };
       window.addEventListener("openwork-den-session-updated", onDenSessionUpdated);
@@ -2062,6 +2384,7 @@ export function createExtensionsStore(options: {
     void refreshPlugins();
     void refreshImportedCloudSkills();
     void refreshImportedCloudSkillHubs();
+    void refreshImportedCloudPlugins();
   };
 
   refreshSnapshot();
@@ -2091,6 +2414,9 @@ export function createExtensionsStore(options: {
     cloudOrgSkillHubs: () => snapshot.cloudOrgSkillHubs,
     cloudOrgSkillHubsStatus: () => snapshot.cloudOrgSkillHubsStatus,
     importedCloudSkillHubs: () => snapshot.importedCloudSkillHubs,
+    cloudOrgMarketplaces: () => snapshot.cloudOrgMarketplaces,
+    cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
+    importedCloudPlugins: () => snapshot.importedCloudPlugins,
     hubRepo: () => snapshot.hubRepo,
     hubRepos: () => snapshot.hubRepos,
     get pluginScope() {
@@ -2126,6 +2452,7 @@ export function createExtensionsStore(options: {
     refreshHubSkills,
     refreshCloudOrgSkills,
     refreshCloudOrgSkillHubs,
+    refreshCloudOrgMarketplaces,
     setHubRepo,
     addHubRepo,
     removeHubRepo,
@@ -2141,6 +2468,7 @@ export function createExtensionsStore(options: {
     importCloudOrgSkillHub,
     syncCloudOrgSkillHub,
     removeCloudOrgSkillHub,
+    importCloudOrgPlugin,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,

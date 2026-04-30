@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildOpenworkWorkspaceBaseUrl,
@@ -481,6 +481,12 @@ export function useMessagingViewProps(
     workspaceId,
   ]);
 
+  const refreshAllRef = useRef(refreshAll);
+
+  useEffect(() => {
+    refreshAllRef.current = refreshAll;
+  }, [refreshAll]);
+
   const repairAndReconnect = useCallback(async () => {
     if (options.openworkReconnectBusy) return;
     setReconnectStatus(null);
@@ -824,12 +830,12 @@ export function useMessagingViewProps(
   }, [resetAgentState, scopedOpenworkBaseUrl, workspaceId]);
 
   useEffect(() => {
-    void refreshAll({ force: true });
+    void refreshAllRef.current({ force: true });
     const interval = window.setInterval(() => {
-      void refreshAll();
+      void refreshAllRef.current();
     }, 10_000);
     return () => window.clearInterval(interval);
-  }, [refreshAll]);
+  }, [scopedOpenworkBaseUrl, serverReady, workspaceId]);
 
   return {
     busy: options.busy,

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "openwork",
+  "mcp": {
+    "chrome-devtools": {
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "type": "local"
+    },
+    "control-chrome": {
+      "type": "local",
+      "command": [
+        "chrome-devtools-mcp"
+      ]
+    },
+    "linear": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.linear.app/mcp",
+      "oauth": {}
+    },
+    "notion": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.notion.com/mcp",
+      "oauth": {}
+    },
+    "sentry": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.sentry.dev/mcp",
+      "oauth": {}
+    }
+  },
+  "plugin": [
+    "opencode-scheduler"
+  ],
+  "permission": {}
+}

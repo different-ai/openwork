@@ -2,9 +2,8 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
-  orchestratorWorkspaceActivate,
 } from "../../app/lib/desktop";
-import { writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "./app-inspector";
 
@@ -67,15 +66,11 @@ export async function ensureDesktopLocalOpenworkConnection(
     const engine = await engineInfo().catch(() => null);
     if (!engine?.running || !engine.baseUrl) {
       await engineStart(workspaceRoot, {
-        runtime: "openwork-orchestrator",
+        runtime: "direct",
         workspacePaths,
+        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
       });
     }
-
-    await orchestratorWorkspaceActivate({
-      workspacePath: workspaceRoot,
-      name: workspace.name ?? workspace.displayNameResolved ?? null,
-    });
 
     const info = await openworkServerInfo();
     if (!info?.baseUrl) {
@@ -85,6 +80,7 @@ export async function ensureDesktopLocalOpenworkConnection(
     writeOpenworkServerSettings({
       urlOverride: info.baseUrl,
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
+      hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
       remoteAccessEnabled: info.remoteAccessEnabled === true,
     });

@@ -24,8 +24,6 @@ import {
   routerSlackWriteSchema,
   routerTelegramInfoResponseSchema,
   routerTelegramWriteSchema,
-  scheduledJobDeleteResponseSchema,
-  scheduledJobListResponseSchema,
   sharedBundleFetchResponseSchema,
   sharedBundleFetchWriteSchema,
   sharedBundlePublishResponseSchema,
@@ -585,38 +583,6 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
     );
 
   app.get(
-    routePaths.workspaces.scheduler.base(),
-    describeRoute({
-      tags: ["Managed"],
-      summary: "List scheduled jobs",
-      description: "Returns the scheduled jobs for a local workspace via the desktop scheduler store.",
-      responses: withCommonErrorResponses({
-        200: jsonResponse("Scheduled jobs returned successfully.", scheduledJobListResponseSchema),
-      }, { includeNotFound: true, includeUnauthorized: true }),
-    }),
-    async (c) => {
-      const { requestContext, workspaceId } = requireWorkspace(c);
-      return c.json(buildSuccessResponse(requestContext.requestId, await requestContext.services.scheduler.listWorkspaceJobs(workspaceId)));
-    },
-  );
-
-  app.delete(
-    routePaths.workspaces.scheduler.byName(),
-    describeRoute({
-      tags: ["Managed"],
-      summary: "Delete scheduled job",
-      description: "Deletes a scheduled job for a local workspace via the desktop scheduler store.",
-      responses: withCommonErrorResponses({
-        200: jsonResponse("Scheduled job deleted successfully.", scheduledJobDeleteResponseSchema),
-      }, { includeNotFound: true, includeUnauthorized: true }),
-    }),
-    async (c) => {
-      const { requestContext, workspaceId } = requireWorkspace(c);
-      return c.json(buildSuccessResponse(requestContext.requestId, await requestContext.services.scheduler.deleteWorkspaceJob(workspaceId, c.req.param("name") ?? "")));
-    },
-  );
-
-  app.get(
     routePaths.workspaces.skills(),
     describeRoute({
       tags: ["Managed"],
@@ -716,14 +682,6 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
   addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/skills", (c) => {
     const { requestContext, workspaceId } = requireWorkspace(c);
     return c.json({ items: requestContext.services.managed.listWorkspaceSkills(workspaceId) });
-  });
-  addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/scheduler/jobs", async (c) => {
-    const { requestContext, workspaceId } = requireWorkspace(c);
-    return c.json(await requestContext.services.scheduler.listWorkspaceJobs(workspaceId));
-  });
-  addCompatibilityRoute(app, "DELETE", "/workspace/:workspaceId/scheduler/jobs/:name", async (c) => {
-    const { requestContext, workspaceId } = requireWorkspace(c);
-    return c.json(await requestContext.services.scheduler.deleteWorkspaceJob(workspaceId, c.req.param("name") ?? ""));
   });
   addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/skills/:name", (c) => {
     const { requestContext, workspaceId } = requireWorkspace(c);

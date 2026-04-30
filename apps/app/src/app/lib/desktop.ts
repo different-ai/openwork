@@ -14,6 +14,34 @@ declare global {
         openExternal?: (url: string) => Promise<void>;
         relaunch?: () => Promise<void>;
       };
+      migration?: {
+        readSnapshot?: () => Promise<unknown>;
+        ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;
+      };
+      updater?: {
+        getChannel?: () => Promise<{
+          channel: "stable" | "alpha";
+          feedUrl: string;
+          currentVersion: string;
+        }>;
+        setChannel?: (channel: "stable" | "alpha") => Promise<{
+          channel: "stable" | "alpha";
+          feedUrl: string;
+          currentVersion: string;
+        }>;
+        check?: () => Promise<{
+          available: boolean;
+          currentVersion?: string;
+          latestVersion?: string | null;
+          releaseDate?: string | null;
+          releaseNotes?: unknown;
+          channel?: "stable" | "alpha";
+          feedUrl?: string;
+          reason?: string;
+        }>;
+        download?: () => Promise<{ ok: boolean; reason?: string }>;
+        installAndRestart?: () => Promise<{ ok: boolean; reason?: string }>;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
@@ -86,9 +114,39 @@ export const desktopBridge: DesktopBridge = new Proxy({} as DesktopBridge, {
   },
 });
 
+function isLoopbackUrl(input: RequestInfo | URL): boolean {
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  try {
+    const url = new URL(raw);
+    return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 export const desktopFetch: typeof globalThis.fetch = (input, init) => {
   if (isElectronDesktopRuntime()) {
-    return globalThis.fetch(input, init);
+    if (isLoopbackUrl(input)) {
+      return globalThis.fetch(input, init);
+    }
+
+    return invokeElectronHelper<{
+      status: number;
+      statusText: string;
+      headers: [string, string][];
+      body: string;
+    }>("__fetch", typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url, {
+      method: init?.method,
+      headers: init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined,
+      body: typeof init?.body === "string" ? init.body : undefined,
+    }).then(
+      (result) =>
+        new Response(result.body, {
+          status: result.status,
+          statusText: result.statusText,
+          headers: result.headers,
+        }),
+    );
   }
   return tauriBridge.desktopFetch(input, init);
 };
@@ -199,9 +257,6 @@ const {
   opencodeCommandDelete,
   engineStop,
   engineRestart,
-  orchestratorStatus,
-  orchestratorWorkspaceActivate,
-  orchestratorInstanceDispose,
   appBuildInfo,
   getDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
@@ -213,6 +268,7 @@ const {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  runtimeBootstrap,
   engineInfo,
   engineDoctor,
   pickDirectory,
@@ -230,17 +286,7 @@ const {
   writeOpencodeConfig,
   resetOpenworkState,
   resetOpencodeCache,
-  schedulerListJobs,
-  schedulerDeleteJob,
-  getOpenCodeRouterStatus,
-  getOpenCodeRouterStatusDetailed,
-  opencodeRouterInfo,
-  getOpenCodeRouterGroupsEnabled,
-  setOpenCodeRouterGroupsEnabled,
   opencodeMcpAuth,
-  opencodeRouterStop,
-  opencodeRouterStart,
-  opencodeRouterRestart,
   setWindowDecorations,
 } = desktopBridge;
 
@@ -265,9 +311,6 @@ export {
   opencodeCommandDelete,
   engineStop,
   engineRestart,
-  orchestratorStatus,
-  orchestratorWorkspaceActivate,
-  orchestratorInstanceDispose,
   appBuildInfo,
   getDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
@@ -279,6 +322,7 @@ export {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  runtimeBootstrap,
   engineInfo,
   engineDoctor,
   pickDirectory,
@@ -296,16 +340,6 @@ export {
   writeOpencodeConfig,
   resetOpenworkState,
   resetOpencodeCache,
-  schedulerListJobs,
-  schedulerDeleteJob,
-  getOpenCodeRouterStatus,
-  getOpenCodeRouterStatusDetailed,
-  opencodeRouterInfo,
-  getOpenCodeRouterGroupsEnabled,
-  setOpenCodeRouterGroupsEnabled,
   opencodeMcpAuth,
-  opencodeRouterStop,
-  opencodeRouterStart,
-  opencodeRouterRestart,
   setWindowDecorations,
 };

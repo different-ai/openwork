@@ -65,8 +65,6 @@ impl WorkspaceOpenworkConfig {
 #[serde(rename_all = "lowercase")]
 pub enum EngineRuntime {
     Direct,
-    #[serde(rename = "openwork-orchestrator")]
-    Orchestrator,
 }
 
 impl Default for EngineRuntime {
@@ -86,6 +84,8 @@ pub struct EngineInfo {
     pub port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub opencode_bin_path: Option<String>,
+    pub opencode_bin_source: Option<String>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
@@ -105,93 +105,8 @@ pub struct OpenworkServerInfo {
     pub client_token: Option<String>,
     pub owner_token: Option<String>,
     pub host_token: Option<String>,
-    pub pid: Option<u32>,
-    pub last_stdout: Option<String>,
-    pub last_stderr: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorDaemonState {
-    pub pid: u32,
-    pub port: u16,
-    pub base_url: String,
-    pub started_at: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorOpencodeState {
-    pub pid: u32,
-    pub port: u16,
-    pub base_url: String,
-    pub started_at: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorBinaryInfo {
-    pub path: String,
-    pub source: String,
-    pub expected_version: Option<String>,
-    pub actual_version: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorBinaryState {
-    pub opencode: Option<OrchestratorBinaryInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorSidecarInfo {
-    pub dir: Option<String>,
-    pub base_url: Option<String>,
-    pub manifest_url: Option<String>,
-    pub target: Option<String>,
-    pub source: Option<String>,
-    pub opencode_source: Option<String>,
-    pub allow_external: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorWorkspace {
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    pub workspace_type: String,
-    pub base_url: Option<String>,
-    pub directory: Option<String>,
-    pub created_at: Option<u64>,
-    pub last_used_at: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestratorStatus {
-    pub running: bool,
-    pub data_dir: String,
-    pub daemon: Option<OrchestratorDaemonState>,
-    pub opencode: Option<OrchestratorOpencodeState>,
-    pub cli_version: Option<String>,
-    pub sidecar: Option<OrchestratorSidecarInfo>,
-    pub binaries: Option<OrchestratorBinaryState>,
-    pub active_id: Option<String>,
-    pub workspace_count: usize,
-    pub workspaces: Vec<OrchestratorWorkspace>,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenCodeRouterInfo {
-    pub running: bool,
-    pub version: Option<String>,
-    pub workspace_path: Option<String>,
-    pub opencode_url: Option<String>,
-    pub health_port: Option<u16>,
+    pub managed_opencode_bin_path: Option<String>,
+    pub managed_opencode_bin_source: Option<String>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
@@ -203,6 +118,7 @@ pub struct EngineDoctorResult {
     pub found: bool,
     pub in_path: bool,
     pub resolved_path: Option<String>,
+    pub resolved_source: Option<String>,
     pub version: Option<String>,
     pub supports_serve: bool,
     pub notes: Vec<String>,
@@ -245,48 +161,6 @@ pub struct DesktopBootstrapConfig {
     pub api_base_url: Option<String>,
     #[serde(default)]
     pub require_signin: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ScheduledJobRun {
-    pub prompt: Option<String>,
-    pub command: Option<String>,
-    pub arguments: Option<String>,
-    pub files: Option<Vec<String>>,
-    pub agent: Option<String>,
-    pub model: Option<String>,
-    pub variant: Option<String>,
-    pub title: Option<String>,
-    pub share: Option<bool>,
-    #[serde(rename = "continue")]
-    pub continue_flag: Option<bool>,
-    pub session: Option<String>,
-    pub run_format: Option<String>,
-    pub attach_url: Option<String>,
-    pub port: Option<u32>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ScheduledJob {
-    pub scope_id: Option<String>,
-    pub timeout_seconds: Option<i32>,
-    pub slug: String,
-    pub name: String,
-    pub schedule: String,
-    pub prompt: Option<String>,
-    pub attach_url: Option<String>,
-    pub run: Option<ScheduledJobRun>,
-    pub source: Option<String>,
-    pub workdir: Option<String>,
-    pub created_at: String,
-    pub updated_at: Option<String>,
-    pub last_run_at: Option<String>,
-    pub last_run_exit_code: Option<i32>,
-    pub last_run_error: Option<String>,
-    pub last_run_source: Option<String>,
-    pub last_run_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

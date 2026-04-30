@@ -176,10 +176,6 @@ export const routePaths = {
       unrevert: (sessionId: string = ":sessionId", workspaceId: string = WORKSPACE_ID_PARAMETER) =>
         `${workspaceSessionPath(sessionId, workspaceId)}/unrevert`,
     },
-    scheduler: {
-      base: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/scheduler/jobs`,
-      byName: (name: string = ":name", workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/scheduler/jobs/${name}`,
-    },
     skills: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/skills`,
     hubSkills: "/hub/skills",
     simpleContent: (workspaceId: string = WORKSPACE_ID_PARAMETER) => `${workspaceRoutePath(workspaceId)}/files/content`,

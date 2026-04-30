@@ -158,16 +158,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         },
       },
       {
-        id: "settings-mcp",
-        title: t("settings.tab_messaging"),
-        detail: t("settings.tab_description_messaging"),
-        meta: t("session.cmd_settings_meta"),
-        action: () => {
-          props.onClose();
-          props.onOpenSettings("/settings/mcp");
-        },
-      },
-      {
         id: "settings-appearance",
         title: t("settings.tab_appearance"),
         detail: t("settings.tab_description_appearance"),

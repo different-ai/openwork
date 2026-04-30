@@ -145,13 +145,40 @@ export function createWorkspaceSessionService(input: {
     }
   }
 
+  async function runAsyncMutation(workspaceId: string, operation: (backend: SessionBackend) => Promise<unknown>) {
+    const workspace = getWorkspaceOrThrow(workspaceId);
+    let backend: SessionBackend;
+    try {
+      backend = resolveBackend(workspace);
+    } catch (error) {
+      remapBackendError(error);
+      throw error;
+    }
+
+    void operation(backend)
+      .then(() => recordSuccess(input.repositories, workspace, { refresh: true, sync: true }))
+      .catch((error) => {
+        const remapped = (() => {
+          try {
+            remapBackendError(error);
+          } catch (next) {
+            return next;
+          }
+          return error;
+        })();
+        recordError(input.repositories, workspace, remapped as Error);
+      });
+
+    return { accepted: true };
+  }
+
   return {
     abortSession(workspaceId: string, sessionId: string) {
       return runMutation(workspaceId, (backend) => backend.abortSession(sessionId));
     },
 
     command(workspaceId: string, sessionId: string, body: Record<string, unknown>) {
-      return runMutation(workspaceId, (backend) => backend.command(sessionId, body));
+      return runAsyncMutation(workspaceId, (backend) => backend.command(sessionId, body));
     },
 
     createSession(workspaceId: string, body: Record<string, unknown>) {

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "openwork",
+  "mcp": {
+    "chrome-devtools": {
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "type": "local"
+    },
+    "control-chrome": {
+      "command": [
+        "chrome-devtools-mcp"
+      ],
+      "type": "local"
+    },
+    "notion": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.notion.com/mcp",
+      "oauth": {}
+    }
+  },
+  "plugin": [
+    "opencode-scheduler"
+  ],
+  "permission": {}
+}

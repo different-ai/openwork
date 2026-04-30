@@ -149,6 +149,8 @@ export type MigrateToElectronRequest = {
   url: string;
   /** Optional sha256 to verify before touching the filesystem. */
   sha256?: string;
+  /** Optional electron-builder sha512 (base64) from latest-mac.yml. */
+  sha512?: string;
   /**
    * Override where the Electron .app ends up (macOS). Defaults to
    * replacing the currently-running .app bundle in place.

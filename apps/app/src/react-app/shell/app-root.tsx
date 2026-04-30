@@ -10,8 +10,10 @@ import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
+import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
+import { WelcomeRoute } from "./welcome-route";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -78,7 +80,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   ]);
 
   if (requireSignin && denAuth.status === "checking") {
-    return null;
+    return <ForcedSigninPage developerMode={false} />;
   }
 
   return <>{children}</>;
@@ -97,6 +99,14 @@ export function AppRoot() {
               element={
                 <DevProfiler id="SigninRoute">
                   <ForcedSigninPage developerMode={false} />
+                </DevProfiler>
+              }
+            />
+            <Route
+              path="/welcome"
+              element={
+                <DevProfiler id="WelcomeRoute">
+                  <WelcomeRoute />
                 </DevProfiler>
               }
             />
@@ -142,6 +152,7 @@ export function AppRoot() {
         true app-level signal.
       */}
       <DevProfilerOverlay />
+      <ReactRenderWatchdogOverlay />
     </>
   );
 }

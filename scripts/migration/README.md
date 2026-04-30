@@ -17,6 +17,43 @@ scripts/migration/03-post-migration-cleanup.mjs  # delete src-tauri, flip defaul
 | 02   | Right after the workflow finishes | Dogfood validation — no user effect |
 | 03   | After 1-2 weeks of stable Electron telemetry | Dev repo is Electron-only; no user effect |
 
+## Current safe-prep rollout
+
+The next release is intentionally **non-destructive**:
+
+- Tauri remains the main/stable desktop build and keeps using the existing
+  Tauri updater feed (`latest.json`).
+- The alpha macOS arm64 release now carries both notarized Tauri artifacts
+  (`latest.json`) and notarized Electron artifacts (`latest-mac.yml`) on the
+  rolling `alpha-macos-latest` release.
+- Electron is built as a preview artifact on every push by
+  `.github/workflows/build-electron-desktop.yml`.
+- Pushes to `dev` or `main` refresh the rolling prerelease bucket at
+  <https://github.com/different-ai/openwork/releases/tag/electron-preview-latest>.
+- The Debug settings migration controls are Tauri-only and developer-mode only.
+  The default action, **Prepare migration data**, only writes
+  `migration-snapshot.v1.json`; it does not quit, replace, or delete Tauri.
+- The install handoff requires a pasted Electron artifact URL plus two explicit
+  confirmations. On macOS the native handoff keeps the previous bundle at
+  `OpenWork.app.migrate-bak` for rollback.
+
+Use this safe-prep release to test migration data capture and preview downloads
+before enabling any user-facing migration prompt.
+
+### Sharing Electron preview downloads
+
+1. Wait for `Build Electron Desktop Preview` to finish on the target commit.
+2. Share the rolling preview release page:
+   <https://github.com/different-ai/openwork/releases/tag/electron-preview-latest>
+3. Ask testers to download the matching platform artifact:
+   - macOS Apple Silicon: `openwork-mac-arm64-*.dmg` or `.zip`
+   - macOS Intel: `openwork-mac-x64-*.dmg` or `.zip`
+   - Windows: `openwork-win-x64-*.exe`
+   - Linux: `openwork-linux-x64-*.AppImage` or `.tar.gz`
+
+Do not point stable Tauri users at these preview assets as an automatic update
+until the explicit migration release is cut and validated.
+
 ## 01 — cut-migration-release.mjs
 
 ```bash
@@ -77,7 +114,9 @@ Once v0.12.x has been stable for 1-2 weeks:
    - `dev` → `node ./scripts/electron-dev.mjs`
    - `build` → `node ./scripts/electron-build.mjs`
    - `package` → `pnpm run build && pnpm exec electron-builder …`
-2. Removes `apps/desktop/src-tauri/` entirely.
+2. Removes `apps/desktop/src-tauri/` entirely. Electron icons and generated
+   sidecars already live under `apps/desktop/resources/`, so this step no
+   longer removes anything the Electron packager needs.
 3. Strips `@tauri-apps/*` from `apps/app/package.json` and
    `apps/story-book/package.json`.
 4. Collapses `apps/app/src/app/lib/desktop-tauri.ts` into

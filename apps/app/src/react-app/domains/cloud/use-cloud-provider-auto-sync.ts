@@ -4,29 +4,30 @@ import { useEffect, useRef } from "react";
 import { CLOUD_SYNC_INTERVAL_MS } from "../../../app/cloud/sync/constants";
 import { useDenAuth } from "./den-auth-provider";
 
-type RefreshFn = (options?: { force?: boolean }) => Promise<unknown>;
+type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
+type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
 
 /**
- * Periodic cloud-provider refresh, ported from dev #1509 "auto-sync cloud
- * providers". Calls the provided `refreshCloudOrgProviders` every
- * `CLOUD_SYNC_INTERVAL_MS` while the Den session is signed-in; suspends
- * while signed-out and runs an immediate tick when auth flips back on.
+ * Periodic cloud-provider reconciliation, ported from dev #1509 "auto-sync
+ * cloud providers". Runs the provided sync function every
+ * `CLOUD_SYNC_INTERVAL_MS` while the Den session is signed-in; suspends while
+ * signed-out and lets the provider-auth store own user-visible errors.
  *
  * Mount once (e.g. from the settings route) — the hook is idempotent
  * within a single mount, and avoids overlapping ticks using an in-flight
  * ref guard.
  */
-export function useCloudProviderAutoSync(refresh: RefreshFn) {
+export function useCloudProviderAutoSync(sync: SyncFn) {
   const denAuth = useDenAuth();
-  const refreshRef = useRef(refresh);
+  const syncRef = useRef(sync);
   const inFlightRef = useRef(false);
 
   // Keep the ref current so we always call the latest closure (store
   // identity can change between mounts and we don't want to restart the
   // timer just because the parent re-rendered).
   useEffect(() => {
-    refreshRef.current = refresh;
-  }, [refresh]);
+    syncRef.current = sync;
+  }, [sync]);
 
   useEffect(() => {
     if (!denAuth.isSignedIn) return;
@@ -37,7 +38,7 @@ export function useCloudProviderAutoSync(refresh: RefreshFn) {
       if (inFlightRef.current || cancelled) return;
       inFlightRef.current = true;
       try {
-        await refreshRef.current({ force: true });
+        await syncRef.current("interval");
       } catch {
         // Network errors, org misconfig, etc. are non-fatal — we'll try
         // again on the next interval. The refresh function owns surfacing
