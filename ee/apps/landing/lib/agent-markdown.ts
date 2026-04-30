@@ -94,13 +94,12 @@ const download = `# Download OpenWork
 
 ## Windows
 
-- **x64** — MSI installer
+- **x64** — Electron ".exe" installer
 
 ## Linux
 
-- **Arch / AUR** — \`yay -S openwork\` (or \`paru -S openwork\`)
-- **Ubuntu / Debian** — \`.deb\` for x64 and arm64
-- **Fedora / RHEL / openSUSE** — \`.rpm\` for x64 and arm64
+- **AppImage** — Electron build for x64 and arm64
+- **Tarball** — Electron \`.tar.gz\` build for x64 and arm64
 
 Direct download URLs resolve from the latest GitHub release. Browse all assets at [github.com/openworklabs/openwork/releases/latest](https://github.com/openworklabs/openwork/releases/latest).
 
