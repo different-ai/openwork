@@ -1,5 +1,6 @@
 .turbo/
 node_modules/
+apps/desktop/dist-electron/
 packages/*/node_modules/
 apps/*/node_modules/
 ee/apps/*/node_modules/
@@ -21,6 +22,7 @@ packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/sidecars/
+apps/desktop/resources/sidecars/
 
 # Env
 .env

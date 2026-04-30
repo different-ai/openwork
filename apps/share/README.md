@@ -40,8 +40,6 @@ It keeps the existing bundle APIs, but the public share surface now runs as a si
   - A single skill install payload.
 - `skills-set`
   - A full skills pack (multiple skills) exported from a worker.
-- `workspace-profile`
-  - Full workspace template payload (config, MCP/OpenCode settings, commands, skills, and extra shareable `.opencode/**` files, excluding env/runtime files).
 
 ## Packager input support
 

@@ -1,6 +1,6 @@
 {
   "name": "openwork-server",
-  "version": "0.11.212",
+  "version": "0.13.3",
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {

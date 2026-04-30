@@ -48,3 +48,6 @@ types — get caught.
 
 - [`react-session-flows.md`](./react-session-flows.md) — the 9 core
   session/settings flows verified during the React port cutover.
+- [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the 7
+  onboarding/welcome flows covering first-run experience and folder
+  explanation.

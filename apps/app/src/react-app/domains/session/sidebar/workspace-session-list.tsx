@@ -210,14 +210,10 @@ export function WorkspaceSessionList(props: Props) {
   useEffect(() => {
     const id = props.selectedWorkspaceId.trim();
     if (!id) return;
-    // Keep the selected workspace expanded and collapse the rest by default.
-    // Without this, repeated switching leaves multiple large session trees open
-    // at once, which makes the sidebar increasingly expensive to render as
-    // histories grow.
-    setExpandedWorkspaceIds((previous) => {
-      if (previous.size === 1 && previous.has(id)) return previous;
-      return new Set([id]);
-    });
+    // Keep the selected workspace visible without collapsing other workspaces.
+    // Collapsing the previous workspace on every cross-workspace session click
+    // makes the sidebar feel jumpy and hides the context the user just left.
+    expandWorkspace(id);
   }, [props.selectedWorkspaceId]);
 
   const previewCount = (workspaceId: string) =>
@@ -763,7 +759,7 @@ export function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div className="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
+      <div className="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar px-3 pt-3 pb-4">
         <button
           type="button"
           className="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"

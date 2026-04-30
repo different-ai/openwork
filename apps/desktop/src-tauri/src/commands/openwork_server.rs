@@ -1,7 +1,6 @@
 use tauri::{AppHandle, State};
 
 use crate::engine::manager::EngineManager;
-use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::openwork_server::manager::OpenworkServerManager;
 use crate::openwork_server::start_openwork_server;
 use crate::types::{OpenworkServerInfo, WorkspaceType};
@@ -21,7 +20,6 @@ pub fn openwork_server_restart(
     app: AppHandle,
     manager: State<OpenworkServerManager>,
     engine_manager: State<EngineManager>,
-    opencode_router_manager: State<OpenCodeRouterManager>,
     remote_access_enabled: Option<bool>,
 ) -> Result<OpenworkServerInfo, String> {
     let (workspace_paths, opencode_url, opencode_username, opencode_password) = {
@@ -59,12 +57,6 @@ pub fn openwork_server_restart(
         }
     }
 
-    let opencode_router_health_port = opencode_router_manager
-        .inner
-        .lock()
-        .ok()
-        .and_then(|state| state.health_port);
-
     start_openwork_server(
         &app,
         &manager,
@@ -72,7 +64,9 @@ pub fn openwork_server_restart(
         opencode_url.as_deref(),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
-        opencode_router_health_port,
         remote_access_enabled.unwrap_or(false),
+        false,
+        None,
+        None,
     )
 }

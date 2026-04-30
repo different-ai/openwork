@@ -1,0 +1,13 @@
+{
+  "authorizedRoots": [],
+  "blueprint": null,
+  "reload": null,
+  "version": 1,
+  "workspace": {
+    "configDir": "/Users/benjaminshafii/openwork-enterprise/_repos/openwork/apps/server-v2/.openwork-server-v2-test/workspaces/ws_2d329df6f18e/config",
+    "createdAt": 1777342554599,
+    "dataDir": null,
+    "name": "Control Workspace",
+    "preset": "remote"
+  }
+}

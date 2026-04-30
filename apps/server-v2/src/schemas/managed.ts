@@ -71,55 +71,6 @@ export const workspacePluginListResponseSchema = successResponseSchema(
 );
 export const workspacePluginWriteSchema = z.object({ spec: z.string() }).meta({ ref: "OpenWorkServerV2WorkspacePluginWrite" });
 
-export const scheduledJobRunSchema = z.object({
-  agent: z.string().optional(),
-  arguments: z.string().optional(),
-  attachUrl: z.string().optional(),
-  command: z.string().optional(),
-  continue: z.boolean().optional(),
-  files: z.array(z.string()).optional(),
-  model: z.string().optional(),
-  port: z.number().int().optional(),
-  prompt: z.string().optional(),
-  runFormat: z.string().optional(),
-  session: z.string().optional(),
-  share: z.boolean().optional(),
-  timeoutSeconds: z.number().int().optional(),
-  title: z.string().optional(),
-  variant: z.string().optional(),
-}).meta({ ref: "OpenWorkServerV2ScheduledJobRun" });
-
-export const scheduledJobSchema = z.object({
-  attachUrl: z.string().optional(),
-  createdAt: isoTimestampSchema,
-  invocation: z.object({ args: z.array(z.string()), command: z.string() }).optional(),
-  lastRunAt: isoTimestampSchema.optional(),
-  lastRunError: z.string().optional(),
-  lastRunExitCode: z.number().int().optional(),
-  lastRunSource: z.string().optional(),
-  lastRunStatus: z.string().optional(),
-  name: z.string(),
-  prompt: z.string().optional(),
-  run: scheduledJobRunSchema.optional(),
-  schedule: z.string(),
-  scopeId: z.string().optional(),
-  slug: z.string(),
-  source: z.string().optional(),
-  timeoutSeconds: z.number().int().optional(),
-  updatedAt: isoTimestampSchema.optional(),
-  workdir: z.string().optional(),
-}).meta({ ref: "OpenWorkServerV2ScheduledJob" });
-
-export const scheduledJobListResponseSchema = successResponseSchema(
-  "OpenWorkServerV2ScheduledJobListResponse",
-  z.object({ items: z.array(scheduledJobSchema) }),
-);
-
-export const scheduledJobDeleteResponseSchema = successResponseSchema(
-  "OpenWorkServerV2ScheduledJobDeleteResponse",
-  z.object({ job: scheduledJobSchema }),
-);
-
 export const workspaceSkillItemSchema = z.object({
   description: z.string(),
   name: z.string(),

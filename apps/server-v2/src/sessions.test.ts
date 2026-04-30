@@ -54,14 +54,14 @@ function withMockOpencodeBaseUrl(dependencies: ReturnType<typeof createAppDepend
   });
 }
 
-function startMockOpencode(options?: { expectBearer?: string; mountPrefix?: string }) {
+function startMockOpencode(options?: { expectBearer?: string; holdCommand?: Promise<void>; mountPrefix?: string }) {
   const requests: Array<{ method: string; pathname: string; authorization: string | null; body: unknown }> = [];
   const prefix = options?.mountPrefix?.replace(/\/+$/, "") ?? "";
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
       const pathname = prefix && url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || "/" : url.pathname;
       const authorization = request.headers.get("authorization");
@@ -183,6 +183,7 @@ function startMockOpencode(options?: { expectBearer?: string; mountPrefix?: stri
       }
 
       if (pathname === "/session/ses_1/command" && request.method === "POST") {
+        await options?.holdCommand;
         return Response.json({ ok: true });
       }
 
@@ -213,6 +214,14 @@ function startMockOpencode(options?: { expectBearer?: string; mountPrefix?: stri
     requests,
     url: `http://127.0.0.1:${server.port}`,
   };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 describe("workspace session routes", () => {
@@ -277,7 +286,8 @@ describe("workspace session routes", () => {
   });
 
   test("routes remote workspace sessions through the mounted remote backend", async () => {
-    const remote = startMockOpencode({ expectBearer: "secret", mountPrefix: "/w/alpha/opencode" });
+    const command = deferred();
+    const remote = startMockOpencode({ expectBearer: "secret", holdCommand: command.promise, mountPrefix: "/w/alpha/opencode" });
     const { app, dependencies } = createTestApp();
     const workspace = dependencies.persistence.registry.importRemoteWorkspace({
       baseUrl: `${remote.url}/w/alpha/opencode`,
@@ -297,11 +307,17 @@ describe("workspace session routes", () => {
     expect(listResponse.status).toBe(200);
     expect((await listResponse.json()).data.items[0].id).toBe("ses_1");
 
-    const commandResponse = await app.request(`http://openwork.local/workspaces/${workspace.id}/sessions/ses_1/command`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: "review" }),
-    });
+    const commandResponse = await Promise.race([
+      app.request(`http://openwork.local/workspaces/${workspace.id}/sessions/ses_1/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: "review" }),
+      }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+    ]);
+    expect(commandResponse).not.toBe("timeout");
+    command.resolve();
+    if (!(commandResponse instanceof Response)) throw new Error("Command response timed out");
     expect(commandResponse.status).toBe(200);
     expect((await commandResponse.json()).data.accepted).toBe(true);
   });

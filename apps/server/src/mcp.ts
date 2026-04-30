@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { McpItem } from "./types.js";
-import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
+import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel } from "./jsonc.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
 
@@ -92,5 +92,32 @@ export async function removeMcp(workspaceRoot: string, name: string): Promise<bo
   if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
   delete mcpMap[name];
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  return true;
+}
+
+// Flips `enabled` on a workspace MCP entry. Returns false for "toggle does
+// not apply": missing, non-object, or malformed enough that OpenCode would
+// fail to load it. The HTTP layer maps false to 404. Globals are out of
+// scope by design — only workspace-level entries.
+//
+// `updateJsoncPath` (vs `updateJsoncTopLevel`) preserves inline comments
+// inside the MCP entry — see the regression that motivated #1444.
+export async function setMcpEnabled(
+  workspaceRoot: string,
+  name: string,
+  enabled: boolean,
+): Promise<boolean> {
+  validateMcpName(name);
+  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const mcpMap = getMcpConfig(data);
+  if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
+  const current = mcpMap[name];
+  if (!current || typeof current !== "object" || Array.isArray(current)) return false;
+  try {
+    validateMcpConfig({ ...(current as Record<string, unknown>), enabled });
+  } catch {
+    return false;
+  }
+  await updateJsoncPath(opencodeConfigPath(workspaceRoot), ["mcp", name, "enabled"], enabled);
   return true;
 }
