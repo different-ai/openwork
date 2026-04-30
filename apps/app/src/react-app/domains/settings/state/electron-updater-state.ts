@@ -138,7 +138,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
         return;
       }
-      if (update.version && !(await isUpdateAllowed(update.version, desktopConfig))) {
+      if (releaseChannel !== "alpha" && update.version && !(await isUpdateAllowed(update.version, desktopConfig))) {
         tauriUpdateRef.current = null;
         setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
         return;
@@ -212,7 +212,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } finally {
       unsubProgress?.();
     }
-  }, [desktopConfig, setError]);
+  }, [desktopConfig, releaseChannel, setError]);
 
   const checkForUpdates = useCallback(async () => {
     if (isTauriRuntime()) {
@@ -220,9 +220,9 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const update = (await check()) as TauriUpdate | null;
-        const allowed = update?.version
-          ? await isUpdateAllowed(update.version, desktopConfig)
-          : true;
+        const allowed = releaseChannel === "alpha" || !update?.version
+          ? true
+          : await isUpdateAllowed(update.version, desktopConfig);
         if (!allowed) {
           tauriUpdateRef.current = null;
           setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
@@ -275,9 +275,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
 
-      const availableAllowed = result.available && result.latestVersion
-        ? await isUpdateAllowed(result.latestVersion, desktopConfig)
-        : result.available;
+      const availableAllowed = releaseChannel === "alpha"
+        ? result.available
+        : result.available && result.latestVersion
+          ? await isUpdateAllowed(result.latestVersion, desktopConfig)
+          : result.available;
       const nextStatus: Exclude<SettingsUpdateStatus, null> = availableAllowed
         ? {
             state: "available",
