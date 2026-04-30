@@ -458,13 +458,14 @@ export async function getGithubRepositoryTextFile(input: {
   path: string
   ref: string
   repositoryFullName: string
+  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await createGithubInstallationAccessToken(input)
   const response = await requestGithubJson<{ content?: string; encoding?: string }>({
     allowStatuses: [404],
     fetchFn: input.fetchFn,
@@ -491,13 +492,14 @@ export async function getGithubRepositoryTree(input: {
   fetchFn?: GithubFetch
   installationId: number
   repositoryFullName: string
+  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await createGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }
@@ -568,6 +570,7 @@ export async function validateGithubInstallationTarget(input: {
   ref: string
   repositoryFullName: string
   repositoryId: number
+  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
@@ -578,7 +581,7 @@ export async function validateGithubInstallationTarget(input: {
     }
   }
 
-  const token = await createGithubInstallationAccessToken(input)
+  const token = input.token ?? await createGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }

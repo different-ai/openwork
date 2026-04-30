@@ -286,3 +286,34 @@ select:disabled {
 @utility animate-progress-shimmer {
   animation: progress-shimmer 2s infinite linear;
 }
+
+/* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
+   illuminating left-to-right like a subtle running light. Used for boot,
+   "awaiting first token", and any idle-but-alive hint. */
+@keyframes ow-dot-ticker {
+  0% {
+    background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
+    box-shadow: 0 0 0 rgba(var(--dls-accent-rgb), 0);
+  }
+  20% {
+    background-color: rgba(var(--dls-accent-rgb), 0.95);
+    box-shadow: 0 0 8px rgba(var(--dls-accent-rgb), 0.45);
+  }
+  55%,
+  100% {
+    background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
+    box-shadow: 0 0 0 rgba(var(--dls-accent-rgb), 0);
+  }
+}
+
+.ow-dot-ticker {
+  animation: ow-dot-ticker 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  background-color: rgba(var(--dls-secondary-rgb, 120, 120, 120), 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ow-dot-ticker {
+    animation: none;
+    background-color: rgba(var(--dls-accent-rgb), 0.6);
+  }
+}
