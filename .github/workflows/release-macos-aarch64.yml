@@ -821,6 +821,69 @@ jobs:
             ${{ matrix.electron_args }} \
             --publish always
 
+      - name: Save Electron updater metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-updater-${{ matrix.artifact }}
+          path: apps/desktop/dist-electron/latest*.yml
+          if-no-files-found: error
+
+  publish-electron-updater-yml:
+    name: Publish Electron updater metadata
+    needs: [resolve-release, verify-release, publish-electron]
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      needs.publish-electron.result == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Download Electron updater metadata
+        uses: actions/download-artifact@v4
+        with:
+          pattern: electron-updater-*
+          path: ${{ runner.temp }}/electron-updater-raw
+
+      - name: Consolidate and validate Electron updater metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release/consolidate-electron-updater-yml.mjs \
+            --input-dir "$RUNNER_TEMP/electron-updater-raw" \
+            --output-dir "$RUNNER_TEMP/electron-updater-final"
+
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          for file in "$RUNNER_TEMP/electron-updater-final"/latest*.yml; do
+            node scripts/release/verify-updater-endpoint.mjs \
+              --kind electron-yml \
+              --file "$file" \
+              --version "$RELEASE_VERSION"
+          done
+
+          node scripts/release/verify-updater-endpoint.mjs \
+            --kind electron-yml \
+            --file "$RUNNER_TEMP/electron-updater-final/latest-mac.yml" \
+            --version "$RELEASE_VERSION" \
+            --asset "openwork-mac-arm64-${RELEASE_VERSION}.zip" \
+            --asset "openwork-mac-x64-${RELEASE_VERSION}.zip"
+
+      - name: Upload Electron updater metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/electron-updater-final"/latest*.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
     needs: [resolve-release, verify-release]
@@ -1161,6 +1224,7 @@ jobs:
       - publish-tauri
       - publish-updater-json
       - publish-electron
+      - publish-electron-updater-yml
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
@@ -1171,6 +1235,7 @@ jobs:
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
       (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
+      (needs.publish-electron-updater-yml.result == 'success' || needs.publish-electron-updater-yml.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
@@ -1211,6 +1276,7 @@ jobs:
     needs:
       - resolve-release
       - publish-updater-json
+      - publish-electron-updater-yml
       - release-orchestrator-sidecars
       - publish-release
     if: |
@@ -1219,11 +1285,13 @@ jobs:
       needs.resolve-release.outputs.build_tauri == 'true' &&
       needs.resolve-release.outputs.prerelease != 'true' &&
       needs.publish-updater-json.result == 'success' &&
+      (needs.publish-electron-updater-yml.result == 'success' || needs.publish-electron-updater-yml.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       needs.publish-release.result == 'success'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      ELECTRON_UPDATER_RESULT: ${{ needs.publish-electron-updater-yml.result }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -1241,3 +1309,15 @@ jobs:
             --asset-tag "$RELEASE_TAG" \
             --attempts 6 \
             --delay-ms 10000
+
+          if [ "$ELECTRON_UPDATER_RESULT" = "success" ]; then
+            version="${RELEASE_TAG#v}"
+            node scripts/release/verify-updater-endpoint.mjs \
+              --kind electron-yml \
+              --url "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest-mac.yml" \
+              --version "$version" \
+              --asset "openwork-mac-arm64-${version}.zip" \
+              --asset "openwork-mac-x64-${version}.zip" \
+              --attempts 6 \
+              --delay-ms 10000
+          fi
