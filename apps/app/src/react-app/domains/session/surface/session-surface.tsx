@@ -379,8 +379,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   const renderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
-    [snapshot, transcriptState],
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, includeLiveOnlyMessages: chatStreaming }),
+    [chatStreaming, snapshot, transcriptState],
   );
   const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {

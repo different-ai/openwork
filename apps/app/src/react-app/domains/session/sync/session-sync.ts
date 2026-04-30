@@ -7,6 +7,7 @@ import { normalizeEvent } from "../../../../app/utils";
 import type { OpencodeEvent, PendingPermission } from "../../../../app/types";
 import { snapshotToUIMessages } from "./usechat-adapter";
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import { mergeSnapshotIntoCachedMessages } from "./message-merge";
 
 type SyncOptions = {
   workspaceId: string;
@@ -582,29 +583,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     // for in-progress parts while the cache already accumulated text via
     // deltas.  Merge so we never overwrite longer cached text with shorter
     // server text.
-    const merged = incoming.map((incomingMsg) => {
-      const cachedMsg = existing.find((m) => m.id === incomingMsg.id);
-      if (!cachedMsg) return incomingMsg;
-      const parts = incomingMsg.parts.map((inPart, index) => {
-        const cachedPart = cachedMsg.parts[index];
-        if (!cachedPart) return inPart;
-        if (
-          (inPart.type === "text" || inPart.type === "reasoning") &&
-          (cachedPart.type === "text" || cachedPart.type === "reasoning") &&
-          cachedPart.text.length > inPart.text.length
-        ) {
-          return { ...inPart, text: cachedPart.text };
-        }
-        return inPart;
-      });
-      // Keep any extra cached parts the server doesn't know about yet
-      if (cachedMsg.parts.length > incomingMsg.parts.length) {
-        for (let i = incomingMsg.parts.length; i < cachedMsg.parts.length; i++) {
-          parts.push(cachedMsg.parts[i]);
-        }
-      }
-      return { ...incomingMsg, parts };
-    });
+    const merged = mergeSnapshotIntoCachedMessages(incoming, existing);
     queryClient.setQueryData(key, merged);
   } else {
     queryClient.setQueryData(key, incoming);

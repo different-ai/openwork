@@ -1,6 +1,7 @@
 import type { UIMessage } from "ai";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import { mergeSnapshotAndLiveMessages, messageListContainsAll } from "../sync/message-merge";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 
 export function resolveRenderedSessionSnapshot(input: {
@@ -23,12 +24,23 @@ export function resolveRenderedSessionSnapshot(input: {
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
+  includeLiveOnlyMessages?: boolean;
 }) {
-  if (input.transcriptState && input.transcriptState.length > 0) {
-    return input.transcriptState;
+  const liveMessages = input.transcriptState ?? [];
+  const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
+    ? snapshotToUIMessages(input.snapshot)
+    : [];
+
+  if (liveMessages.length > 0 && snapshotMessages.length === 0) return liveMessages;
+  if (liveMessages.length === 0 && snapshotMessages.length > 0) return snapshotMessages;
+  if (liveMessages.length > 0 && snapshotMessages.length > 0) {
+    if (messageListContainsAll(liveMessages, snapshotMessages)) return liveMessages;
+    return mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
+      appendLiveOnlyMessages: input.includeLiveOnlyMessages,
+    });
   }
   if (input.snapshot && input.snapshot.messages.length > 0) {
-    return snapshotToUIMessages(input.snapshot);
+    return snapshotMessages;
   }
   return input.transcriptState ?? [];
 }

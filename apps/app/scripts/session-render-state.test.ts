@@ -6,8 +6,12 @@ import {
   deriveRenderedSessionMessages,
   resolveRenderedSessionSnapshot,
 } from "../src/react-app/domains/session/surface/session-render-state";
+import { mergeSnapshotIntoCachedMessages } from "../src/react-app/domains/session/sync/message-merge";
 
-function snapshotWithText(text: string, sessionId = "ses_test"): OpenworkSessionSnapshot {
+function snapshotWithMessages(
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string }>,
+  sessionId = "ses_test",
+): OpenworkSessionSnapshot {
   return {
     session: {
       id: sessionId,
@@ -17,29 +21,59 @@ function snapshotWithText(text: string, sessionId = "ses_test"): OpenworkSession
       share: undefined,
       version: "0",
     },
-    messages: [
-      {
-        info: {
-          id: "msg_user",
-          role: "user",
-          sessionID: sessionId,
-          time: { created: 1 },
-        },
-        parts: [
-          {
-            id: "part_text",
-            type: "text",
-            text,
-            sessionID: sessionId,
-            messageID: "msg_user",
-          },
-        ],
+    messages: messages.map((message, index) => ({
+      info: {
+        id: message.id,
+        role: message.role,
+        sessionID: sessionId,
+        time: { created: index + 1 },
       },
-    ],
+      parts: [
+        {
+          id: `part_${message.id}`,
+          type: "text",
+          text: message.text,
+          sessionID: sessionId,
+          messageID: message.id,
+        },
+      ],
+    })),
     todos: [],
     status: { type: "idle" },
   } as unknown as OpenworkSessionSnapshot;
 }
+
+function uiMessage(id: string, role: "user" | "assistant", text: string): UIMessage {
+  return {
+    id,
+    role,
+    parts: [{ type: "text", text, state: "done" }],
+  };
+}
+
+function snapshotWithText(text: string, sessionId = "ses_test"): OpenworkSessionSnapshot {
+  return snapshotWithMessages([{ id: "msg_user", role: "user", text }], sessionId);
+}
+
+describe("mergeSnapshotIntoCachedMessages", () => {
+  it("keeps older cached messages when a busy snapshot only contains the active tail", () => {
+    const merged = mergeSnapshotIntoCachedMessages(
+      [uiMessage("msg_current_user", "user", "latest prompt")],
+      [
+        uiMessage("msg_old_user", "user", "old prompt"),
+        uiMessage("msg_old_assistant", "assistant", "old answer"),
+        uiMessage("msg_current_user", "user", "latest"),
+      ],
+    );
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
+      "msg_current_user",
+    ]);
+    expect(merged[2]?.parts[0]).toMatchObject({ text: "latest prompt" });
+  });
+});
 
 describe("deriveRenderedSessionMessages", () => {
   it("falls back to snapshot messages when transcript cache is empty", () => {
@@ -55,10 +89,10 @@ describe("deriveRenderedSessionMessages", () => {
     });
   });
 
-  it("keeps live transcript cache when present", () => {
+  it("keeps live transcript cache when it covers the snapshot", () => {
     const cached: UIMessage[] = [
       {
-        id: "msg_live",
+        id: "msg_user",
         role: "assistant",
         parts: [{ type: "text", text: "live text", state: "done" }],
       },
@@ -68,6 +102,35 @@ describe("deriveRenderedSessionMessages", () => {
       transcriptState: cached,
       snapshot: snapshotWithText("snapshot text"),
     })).toBe(cached);
+  });
+
+  it("keeps snapshot history visible when the live cache only has the active turn", () => {
+    const messages = deriveRenderedSessionMessages({
+      transcriptState: [
+        {
+          id: "msg_current_user",
+          role: "user",
+          parts: [{ type: "text", text: "latest prompt", state: "done" }],
+        },
+        {
+          id: "msg_current_assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "streaming answer", state: "streaming" }],
+        },
+      ],
+      snapshot: snapshotWithMessages([
+        { id: "msg_old_user", role: "user", text: "old prompt" },
+        { id: "msg_old_assistant", role: "assistant", text: "old answer" },
+      ]),
+      includeLiveOnlyMessages: true,
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
+      "msg_current_user",
+      "msg_current_assistant",
+    ]);
   });
 
   it("returns an empty list only when there is no cache or snapshot content", () => {
