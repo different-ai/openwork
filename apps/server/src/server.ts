@@ -182,6 +182,10 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
   }
 }
 
+function isSessionCommandProxyRequest(method: string, proxyPath: string) {
+  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
+}
+
 interface Route {
   method: string;
   regex: RegExp;
@@ -489,6 +493,17 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  if (isSessionCommandProxyRequest(method, proxyPath)) {
+    const bufferedBody = body ? await input.request.arrayBuffer() : undefined;
+    void fetch(targetUrl, {
+      method,
+      headers,
+      body: bufferedBody,
+    }).catch(() => {
+      // Command failures are surfaced through the OpenCode event stream.
+    });
+    return jsonResponse({ ok: true, accepted: true });
+  }
   const response = await fetch(targetUrl, {
     method,
     headers,
