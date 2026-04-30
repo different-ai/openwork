@@ -1,4 +1,4 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -21,6 +21,8 @@ import { auth } from "../src/auth.js"
 import { db } from "../src/db.js"
 import { env } from "../src/env.js"
 import { seedDefaultOrganizationRoles } from "../src/orgs.js"
+
+const RESET_MODE = process.argv.includes("--reset")
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
@@ -861,6 +863,46 @@ async function fetchPluginContent(plugin: DemoPlugin): Promise<PluginContentObje
   return objects
 }
 
+function log(icon: string, message: string) {
+  console.log(`  ${icon} ${message}`)
+}
+
+async function resetDemoOrg() {
+  const existing = await db.select().from(OrganizationTable).where(eq(OrganizationTable.slug, DEMO_ORG_SLUG)).limit(1)
+  if (!existing[0]) {
+    log("⊘", "no existing demo org to reset")
+    return
+  }
+  const orgId = existing[0].id
+  log("↻", `resetting demo org ${orgId}…`)
+
+  const pluginIds = (await db.select({ id: PluginTable.id }).from(PluginTable).where(eq(PluginTable.organizationId, orgId))).map((r) => r.id)
+  const marketplaceIds = (await db.select({ id: MarketplaceTable.id }).from(MarketplaceTable).where(eq(MarketplaceTable.organizationId, orgId))).map((r) => r.id)
+  const configObjectIds = (await db.select({ id: ConfigObjectTable.id }).from(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, orgId))).map((r) => r.id)
+
+  if (configObjectIds.length > 0) {
+    await db.delete(ConfigObjectVersionTable).where(inArray(ConfigObjectVersionTable.configObjectId, configObjectIds))
+    await db.delete(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.configObjectId, configObjectIds))
+    await db.delete(ConfigObjectAccessGrantTable).where(inArray(ConfigObjectAccessGrantTable.configObjectId, configObjectIds))
+    await db.delete(ConfigObjectTable).where(inArray(ConfigObjectTable.id, configObjectIds))
+  }
+  if (pluginIds.length > 0) {
+    await db.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIds))
+    await db.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIds))
+    await db.delete(PluginTable).where(inArray(PluginTable.id, pluginIds))
+  }
+  if (marketplaceIds.length > 0) {
+    await db.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds))
+    await db.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIds))
+  }
+  await db.delete(InvitationTable).where(eq(InvitationTable.organizationId, orgId))
+  await db.delete(TeamMemberTable).where(inArray(TeamMemberTable.teamId, (await db.select({ id: TeamTable.id }).from(TeamTable).where(eq(TeamTable.organizationId, orgId))).map((r) => r.id)))
+  await db.delete(TeamTable).where(eq(TeamTable.organizationId, orgId))
+  await db.delete(MemberTable).where(eq(MemberTable.organizationId, orgId))
+  await db.delete(OrganizationTable).where(eq(OrganizationTable.id, orgId))
+  log("✓", "demo org data deleted")
+}
+
 async function seedPeopleAndTeams(organizationId: OrganizationId) {
   const userIdsByEmail = new Map<string, UserId>()
   const memberIdsByEmail = new Map<string, MemberId>()
@@ -907,6 +949,8 @@ async function seedPlugins(input: {
   organizationId: OrganizationId
   teamIdsByName: Map<string, TeamId>
 }) {
+  let seededPlugins = 0
+  let seededObjects = 0
   for (const plugin of demoPlugins) {
     const pluginId = await ensurePlugin({ ...input, plugin })
     if (plugin.orgWide) {
@@ -927,32 +971,66 @@ async function seedPlugins(input: {
         organizationId: input.organizationId,
         pluginId,
       })
+      seededObjects++
     }
+    seededPlugins++
+    log("✓", `plugin ${seededPlugins}/${demoPlugins.length}: ${plugin.slug} (${contentObjects.length} objects)`)
   }
+  return { seededObjects, seededPlugins }
 }
 
 async function main() {
   assertSafeDevTarget()
-  console.log(`[den demo seed] seeding ${DEMO_ORG_NAME} (${DEMO_ORG_SLUG}) into ${env.databaseUrl}`)
-  console.log(`[den demo seed] GitHub content fetch: ${SHOULD_FETCH_GITHUB ? "enabled" : "disabled"}`)
+  const startMs = Date.now()
 
+  console.log()
+  console.log(`  den demo seed · ${DEMO_ORG_NAME}`)
+  console.log(`  ${"─".repeat(40)}`)
+  log("◈", `org slug: ${DEMO_ORG_SLUG}`)
+  log("◈", `database: ${env.databaseUrl?.replace(/:[^@]*@/, ":***@") ?? "unknown"}`)
+  log("◈", `github fetch: ${SHOULD_FETCH_GITHUB ? "enabled" : "disabled"}`)
+  if (RESET_MODE) log("◈", "reset mode: will delete existing demo org first")
+  console.log()
+
+  if (RESET_MODE) {
+    await resetDemoOrg()
+    console.log()
+  }
+
+  log("…", "creating owner account")
   const ownerUserId = await ensureSignedInOwnerUser()
+  log("✓", `owner: ${DEMO_OWNER_EMAIL}`)
+
+  log("…", "creating organization")
   const organizationId = await ensureOrganization(ownerUserId)
+  log("✓", `org: ${organizationId}`)
+  console.log()
+
+  log("…", `seeding ${demoPeople.length} users and teams`)
   const { memberIdsByEmail, teamIdsByName } = await seedPeopleAndTeams(organizationId)
+  log("✓", `${memberIdsByEmail.size} members · ${teamIdsByName.size} teams · ${pendingInvites.length} pending invites`)
+  console.log()
+
   const ownerMembershipId = memberIdsByEmail.get(DEMO_OWNER_EMAIL.toLowerCase())
   if (!ownerMembershipId) throw new Error("Demo owner membership missing after seed.")
 
+  log("…", "creating marketplace")
   const marketplaceId = await ensureMarketplace({ createdByOrgMembershipId: ownerMembershipId, organizationId })
-  await seedPlugins({ createdByOrgMembershipId: ownerMembershipId, marketplaceId, organizationId, teamIdsByName })
+  log("✓", `marketplace: ${marketplaceId}`)
+  console.log()
 
-  const pluginCount = (await db.select({ id: PluginTable.id }).from(PluginTable).where(eq(PluginTable.organizationId, organizationId))).length
-  const configObjectCount = (await db.select({ id: ConfigObjectTable.id }).from(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, organizationId))).length
-  const teamCount = teamIdsByName.size
-  const memberCount = memberIdsByEmail.size
+  log("…", `seeding ${demoPlugins.length} plugins`)
+  const { seededObjects, seededPlugins } = await seedPlugins({ createdByOrgMembershipId: ownerMembershipId, marketplaceId, organizationId, teamIdsByName })
+  console.log()
 
-  console.log(`[den demo seed] done: org=${organizationId} members=${memberCount} teams=${teamCount} plugins=${pluginCount} configObjects=${configObjectCount}`)
-  console.log(`[den demo seed] owner login: ${DEMO_OWNER_EMAIL} / ${DEMO_OWNER_PASSWORD}`)
-  console.log(`[den demo seed] open /organization or /o/${DEMO_ORG_SLUG}/dashboard in the Den web app after signing in.`)
+  const elapsedSeconds = ((Date.now() - startMs) / 1000).toFixed(1)
+  console.log(`  ${"─".repeat(40)}`)
+  log("✓", `done in ${elapsedSeconds}s`)
+  log(" ", `${memberIdsByEmail.size} members · ${teamIdsByName.size} teams · ${seededPlugins} plugins · ${seededObjects} config objects`)
+  console.log()
+  log("→", `login: ${DEMO_OWNER_EMAIL} / ${DEMO_OWNER_PASSWORD}`)
+  log("→", `open: /organization or /o/${DEMO_ORG_SLUG}/dashboard`)
+  console.log()
 }
 
 main()
