@@ -1,8 +1,11 @@
 use std::env;
-use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::fs::{self, OpenOptions};
+#[cfg(windows)]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(windows)]
 use tauri::Manager;
 
 #[cfg(target_os = "macos")]
@@ -129,6 +132,7 @@ pub fn sidecar_path_candidates(
     unique
 }
 
+#[cfg(windows)]
 fn writable_probe_name() -> String {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -137,6 +141,7 @@ fn writable_probe_name() -> String {
     format!(".openwork-write-test-{}-{nonce}", std::process::id())
 }
 
+#[cfg(windows)]
 fn ensure_dir_writable(path: &Path) -> bool {
     if fs::create_dir_all(path).is_err() {
         return false;

@@ -7,7 +7,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
-use crate::paths::{prepended_path_env, resolve_process_working_dir, sidecar_path_candidates};
+use crate::paths::{prepended_path_env, sidecar_path_candidates};
 
 struct DevModePaths {
     home_dir: PathBuf,
@@ -92,8 +92,7 @@ pub fn spawn_engine(
         app.shell().command(program)
     };
 
-    let cwd = resolve_process_working_dir(app, Path::new(project_dir), "opencode")?;
-    let mut command = command.args(args).current_dir(cwd);
+    let mut command = command.args(args).current_dir(project_dir);
 
     if dev_mode {
         let dev_paths = resolve_dev_mode_paths(app)?;
