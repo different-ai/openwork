@@ -12,6 +12,7 @@ import {
   opencodeRouterRestart as opencodeRouterRestartCmd,
   opencodeRouterStop as opencodeRouterStopCmd,
   orchestratorStatus as orchestratorStatusCmd,
+  pickFile,
   resetOpenworkState,
   sandboxDebugProbe as sandboxDebugProbeCmd,
   workspaceBootstrap as workspaceBootstrapCmd,
@@ -21,13 +22,13 @@ import {
   type OpenworkServerInfo,
   type OrchestratorStatus,
   type SandboxDebugProbeResult,
-} from "../../../../app/lib/tauri";
+} from "../../../../app/lib/desktop";
 import {
   writeOpenworkServerSettings,
 } from "../../../../app/lib/openwork-server";
 import {
   clearStartupPreference,
-  isTauriRuntime,
+  isDesktopRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -272,7 +273,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [developerLogStatus, setDeveloperLogStatus] = useState<string | null>(null);
 
   const refreshEngineInfo = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     try {
       const info = await engineInfoCmd();
       setEngineInfoState(info);
@@ -284,7 +285,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   useEffect(() => {
     if (!developerMode) return;
     void (async () => {
-      if (!isTauriRuntime()) return;
+      if (!isDesktopRuntime()) return;
       try {
         const build = await appBuildInfoCmd();
         setAppBuild(build);
@@ -438,7 +439,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [developerLog]);
 
   const onRunSandboxDebugProbe = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     setSandboxProbeBusy(true);
     setSandboxProbeStatus(null);
     try {
@@ -481,13 +482,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   );
 
   const onPickEngineBinary = useCallback(async () => {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setServiceRestartError(t("settings.sandbox_requires_desktop"));
       return;
     }
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const target = await open({ title: t("settings.custom_binary_label"), multiple: false });
+      const target = await pickFile({ title: t("settings.custom_binary_label"), multiple: false });
       if (typeof target === "string" && target.trim()) {
         setEngineCustomBinPath(target);
         writeStoredString(ENGINE_CUSTOM_BIN_KEY, target);
@@ -562,7 +562,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [openworkServerStore, refreshEngineInfo]);
 
   const onRestartLocalServer = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     setOpenworkRestartBusy(true);
     setServiceRestartError(null);
     setOpenworkRestartStatus(null);
@@ -578,7 +578,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [bootFullEngineStack, pushDeveloperLog]);
 
   const onRestartOpencode = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     setOpencodeRestarting(true);
     setServiceRestartError(null);
     setOpenworkRestartStatus(null);
@@ -594,7 +594,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [bootFullEngineStack, pushDeveloperLog]);
 
   const onRestartOpenworkServer = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     setOpenworkServerRestarting(true);
     setServiceRestartError(null);
     setOpenworkRestartStatus(null);
@@ -617,7 +617,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   ]);
 
   const onRestartOpencodeRouter = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     const workspacePath = optionsRef.current.selectedWorkspaceRoot.trim();
     if (!workspacePath) {
       setServiceRestartError("Select a workspace before restarting the OpenCode Router.");
@@ -642,7 +642,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [pushDeveloperLog]);
 
   const onStopOpencodeRouter = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     try {
       await opencodeRouterStopCmd();
       pushDeveloperLog("Stopped opencode-router");
@@ -653,7 +653,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   const onOpenResetModal = useCallback(
     (mode: ResetModalMode) => {
-      if (!isTauriRuntime()) return;
+      if (!isDesktopRuntime()) return;
       const message =
         mode === "all"
           ? "Reset ALL OpenWork app data? Open sessions and workspaces will be removed."
@@ -682,7 +682,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   );
 
   const onNukeOpenworkAndOpencodeConfig = useCallback(async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     const confirmed =
       typeof window === "undefined"
         ? true

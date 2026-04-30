@@ -11,6 +11,7 @@ import { useState } from "react";
 import { BookCallForm } from "./book-call-form";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import { LandingBackground } from "./landing-background";
+import { LandingEnterpriseHero } from "./landing-enterprise-hero";
 import {
   defaultLandingDemoFlowId,
   landingDemoFlows,
@@ -77,44 +78,53 @@ export function LandingEnterprise(props: Props) {
         </div>
 
         <main className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
-          <section className="max-w-4xl">
-            <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-              A privacy-first alternative to Claude Cowork<br />for your organization
-            </h1>
+          <section>
+            <div className="max-w-4xl">
+              <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
+                A privacy-first alternative to Claude Cowork<br />for your organization
+              </h1>
 
-            <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
-              Get your entire organisation running on shared skills, plugins,
-              and AI workflows. Bring your own LLM providers, choose from 50+
-              supported models, and integrate with LiteLLM out of the box.
-            </p>
+              <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
+                Get your entire organisation running on shared skills, plugins,
+                and AI workflows. Bring your own LLM providers, choose from 50+
+                supported models, and integrate with LiteLLM out of the box.
+              </p>
 
-            <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-              <a
-                href={props.calUrl || "#book"}
-                target={props.calUrl ? "_blank" : undefined}
-                rel={props.calUrl ? "noreferrer" : undefined}
-                className="doc-button"
-              >
-                Book a call
-              </a>
-              <a href="/trust" className="secondary-button">
-                Security Review
-              </a>
+              <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+                <a
+                  href={props.calUrl || "#book"}
+                  target={props.calUrl ? "_blank" : undefined}
+                  rel={props.calUrl ? "noreferrer" : undefined}
+                  className="doc-button"
+                >
+                  Book a call
+                </a>
+                <a href="/trust" className="secondary-button">
+                  Security Review
+                </a>
 
-              <div className="flex items-center gap-2 opacity-80 sm:ml-4">
-                <span className="text-[13px] font-medium text-gray-500">
-                  Backed by
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <div className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] font-bold leading-none text-white">
-                    Y
-                  </div>
-                  <span className="text-[13px] font-semibold tracking-tight text-gray-600">
-                    Combinator
+                <div className="flex items-center gap-2 opacity-80 sm:ml-4">
+                  <span className="text-[13px] font-medium text-gray-500">
+                    Backed by
                   </span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] font-bold leading-none text-white">
+                      Y
+                    </div>
+                    <span className="text-[13px] font-semibold tracking-tight text-gray-600">
+                      Combinator
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
+
+            <figure
+              aria-label="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
+              className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16 lg:-mx-16 xl:-mx-32"
+            >
+              <LandingEnterpriseHero />
+            </figure>
           </section>
 
           <section className="space-y-6">

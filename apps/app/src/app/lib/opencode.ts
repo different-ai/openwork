@@ -1,8 +1,8 @@
 import { createOpencodeClient, type Message, type Part, type Session, type Todo } from "@opencode-ai/sdk/v2/client";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
+import { desktopFetch } from "./desktop";
 import { createOpenworkServerClient, OpenworkServerError } from "./openwork-server";
-import { isTauriRuntime } from "../utils";
+import { isDesktopRuntime } from "../utils";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -292,7 +292,7 @@ function nativeFetchRef(): typeof globalThis.fetch {
   return globalThis.fetch as typeof globalThis.fetch;
 }
 
-const createTauriFetch = (auth?: OpencodeAuth) => {
+const createDesktopFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -305,7 +305,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
     const shouldStream = requestIsStreaming(input, init);
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
-      : (tauriFetch as unknown as typeof globalThis.fetch);
+      : desktopFetch;
     // Streams should never be timed out at the transport layer; the caller
     // aborts via AbortSignal when the subscription unmounts.
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
@@ -346,15 +346,15 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
 
 export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
   const headers: Record<string, string> = {};
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
     if (authHeader) {
       headers.Authorization = authHeader;
     }
   }
 
-  const fetchImpl = isTauriRuntime()
-    ? createTauriFetch(auth)
+  const fetchImpl = isDesktopRuntime()
+    ? createDesktopFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
         fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   const client = createOpencodeClient({

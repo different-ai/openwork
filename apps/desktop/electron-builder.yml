@@ -1,0 +1,45 @@
+# IMPORTANT: appId intentionally matches the Tauri shell so both builds share
+# the same macOS bundle identifier, keychain entries, Launchpad slot, and TCC
+# permissions. In-place migration from Tauri to Electron depends on this.
+appId: com.differentai.openwork
+productName: OpenWork
+directories:
+  output: dist-electron
+files:
+  - electron/**/*
+  - package.json
+extraResources:
+  - from: ../app/dist
+    to: app-dist
+  - from: src-tauri/sidecars
+    to: sidecars
+asar: true
+npmRebuild: false
+# electron-updater feed. Matches the existing release workflow's GitHub target
+# so both Tauri (latest.json) and Electron (latest*.yml) can live on the same
+# release assets during the migration window.
+publish:
+  - provider: github
+    owner: different-ai
+    repo: openwork
+    releaseType: release
+mac:
+  icon: src-tauri/icons/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+linux:
+  icon: src-tauri/icons/icon.png
+  target:
+    - AppImage
+    - tar.gz
+win:
+  icon: src-tauri/icons/icon.ico
+  target:
+    - nsis
+artifactName: openwork-${os}-${arch}-${version}.${ext}

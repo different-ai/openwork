@@ -1,8 +1,8 @@
 import {
-  nativeDeepLinkEvent,
   pushPendingDeepLinks,
 } from "../../app/lib/deep-link-bridge";
-import { isTauriRuntime } from "../../app/utils";
+import { subscribeDesktopDeepLinks } from "../../app/lib/desktop";
+import { isDesktopRuntime } from "../../app/utils";
 
 let started = false;
 
@@ -10,32 +10,16 @@ export function startDeepLinkBridge(): void {
   if (typeof window === "undefined" || started) return;
   started = true;
 
-  if (!isTauriRuntime()) {
+  if (!isDesktopRuntime()) {
     pushPendingDeepLinks(window, [window.location.href]);
     return;
   }
 
   void (async () => {
     try {
-      const [{ getCurrent, onOpenUrl }, { listen }] = await Promise.all([
-        import("@tauri-apps/plugin-deep-link"),
-        import("@tauri-apps/api/event"),
-      ]);
-
-      const startUrls = await getCurrent().catch(() => null);
-      if (Array.isArray(startUrls)) {
-        pushPendingDeepLinks(window, startUrls);
-      }
-
-      await onOpenUrl((urls) => {
+      await subscribeDesktopDeepLinks((urls) => {
         pushPendingDeepLinks(window, urls);
-      }).catch(() => undefined);
-
-      await listen<string[]>(nativeDeepLinkEvent, (event) => {
-        if (Array.isArray(event.payload)) {
-          pushPendingDeepLinks(window, event.payload);
-        }
-      }).catch(() => undefined);
+      });
     } catch {
       // ignore startup failures
     }

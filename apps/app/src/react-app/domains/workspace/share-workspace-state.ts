@@ -19,10 +19,10 @@ import type {
   EngineInfo,
   OpenworkServerInfo,
   WorkspaceInfo,
-} from "../../../app/lib/tauri";
+} from "../../../app/lib/desktop";
 import type { OpenworkServerSettings } from "../../../app/lib/openwork-server";
 import { t } from "../../../i18n";
-import { isTauriRuntime, normalizeDirectoryPath } from "../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
 
 export type ShareWorkspaceState = ReturnType<typeof useShareWorkspaceState>;
 
@@ -182,7 +182,7 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
         {
           label: t("session.share_worker_url"),
           value: url,
-          placeholder: !isTauriRuntime()
+          placeholder: !isDesktopRuntime()
             ? t("session.share_desktop_app_required")
             : t("session.share_starting_server"),
           hint: mountedUrl
@@ -195,7 +195,7 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
           label: t("session.share_password"),
           value: ownerToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isDesktopRuntime() ? "-" : t("session.share_desktop_app_required"),
           hint: mountedUrl
             ? t("session.share_worker_url_phones_hint")
             : t("session.share_owner_permission_hint"),
@@ -204,7 +204,7 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
           label: t("session.share_collaborator_label"),
           value: collaboratorToken,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : t("session.share_desktop_app_required"),
+          placeholder: isDesktopRuntime() ? "-" : t("session.share_desktop_app_required"),
           hint: mountedUrl
             ? t("session.share_collaborator_hint")
             : t("session.share_collaborator_host_hint"),
@@ -549,7 +549,7 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
     if (workspace.workspaceType === "remote") {
       return t("session.export_local_only");
     }
-    if (!isTauriRuntime()) return t("session.export_desktop_only");
+    if (!isDesktopRuntime()) return t("session.export_desktop_only");
     if (options.exportWorkspaceBusy) return t("session.export_already_running");
     return null;
   }, [options.exportWorkspaceBusy, shareWorkspace]);

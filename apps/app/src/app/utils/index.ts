@@ -10,7 +10,7 @@ import type {
   PlaceholderAssistantMessage,
   ProviderListItem,
 } from "../types";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -71,6 +71,14 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
 
 export function isTauriRuntime() {
   return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
+}
+
+export function isElectronRuntime() {
+  return typeof window !== "undefined" && (window as Window).__OPENWORK_ELECTRON__ != null;
+}
+
+export function isDesktopRuntime() {
+  return isTauriRuntime() || isElectronRuntime();
 }
 
 export function isWindowsPlatform() {

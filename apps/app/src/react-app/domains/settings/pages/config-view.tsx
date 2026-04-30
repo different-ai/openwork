@@ -10,8 +10,8 @@ import {
   type OpenworkServerSettings,
   type OpenworkServerStatus,
 } from "../../../../app/lib/openwork-server";
-import type { OpenworkServerInfo } from "../../../../app/lib/tauri";
-import { isTauriRuntime } from "../../../../app/utils";
+import type { OpenworkServerInfo } from "../../../../app/lib/desktop";
+import { isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { TextInput } from "../../../design-system/text-input";
@@ -165,7 +165,7 @@ export function ConfigView(props: ConfigViewProps) {
     const bundle = {
       capturedAt: new Date().toISOString(),
       runtime: {
-        tauri: isTauriRuntime(),
+        tauri: isDesktopRuntime(),
         developerMode: props.developerMode,
       },
       workspace: {
@@ -608,7 +608,7 @@ export function ConfigView(props: ConfigViewProps) {
         </div>
       </div>
 
-      {!isTauriRuntime() ? (
+      {!isDesktopRuntime() ? (
         <div className="text-xs text-gray-9">
           {t("config.desktop_only_hint")}
         </div>
