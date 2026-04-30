@@ -24,6 +24,30 @@ What it does:
 - Points the web app's auth + API proxy routes at the local Den service
 - Prints randomized host URLs so multiple stacks can run side by side
 
+### Demo org seed
+
+After the Den DB is running, seed a full local demo org with users, teams, pending invites, and imported plugin data from `anthropics/knowledge-work-plugins`:
+
+```bash
+pnpm dev:den-seed-demo
+```
+
+The seed is local/dev-only, idempotent for the `acme-robotics-demo` org, and does not create workers or live integrations. It imports plugin marketplace rows, plugin rows, access grants, and config objects so plugin pages look populated without connecting external services.
+
+Default demo login:
+
+- Email: `alex@acme.test`
+- Password: `OpenWorkDemo123!`
+
+For the Docker stack with randomized MySQL ports, source the printed runtime env file first and pass `DEN_MYSQL_URL` as `DATABASE_URL`:
+
+```bash
+source tmp/.den-dev-env-<id>
+DATABASE_URL="$DEN_MYSQL_URL" pnpm dev:den-seed-demo
+```
+
+Set `DEN_DEMO_SEED_FETCH_GITHUB=0` to skip live GitHub source fetching and use built-in plugin fallbacks only.
+
 Useful commands:
 - Logs: `docker compose -p <project> -f packaging/docker/docker-compose.den-dev.yml logs`
 - Tear down: `docker compose -p <project> -f packaging/docker/docker-compose.den-dev.yml down`
