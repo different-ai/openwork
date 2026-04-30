@@ -762,6 +762,14 @@ export function SettingsRoute() {
   const selectedWorkspaceName = selectedWorkspace?.displayNameResolved ?? t("session.workspace_fallback");
   const workspaceType = selectedWorkspace?.workspaceType ?? "local";
   const isRemoteWorkspace = workspaceType === "remote";
+  const canWriteWorkspaceSkills =
+    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWriteSkills;
+  const canWriteWorkspacePlugins =
+    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWritePlugins;
+  const skillsAccessHint =
+    isRemoteWorkspace && !canWriteWorkspaceSkills ? t("app.skills_hint_readonly") : null;
+  const pluginsAccessHint =
+    isRemoteWorkspace && !canWriteWorkspacePlugins ? t("app.plugins_hint_readonly") : null;
   const defaultModelLabel = local.prefs.defaultModel
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
     : t("session.default_model");
@@ -933,7 +941,7 @@ export function SettingsRoute() {
             createSessionAndOpen={async () => undefined}
             newTaskDisabled={!opencodeClient}
             schedulerInstalled={false}
-            canEditPlugins={!isRemoteWorkspace}
+            canEditPlugins={canWriteWorkspacePlugins}
             addPlugin={async () => {
               setRouteError("Scheduler plugin install is not wired into the React settings route yet.");
             }}
@@ -950,9 +958,9 @@ export function SettingsRoute() {
           <SkillsView
             workspaceName={selectedWorkspaceName}
             busy={busy}
-            canInstallSkillCreator={!isRemoteWorkspace}
+            canInstallSkillCreator={canWriteWorkspaceSkills}
             canUseDesktopTools={!isRemoteWorkspace}
-            accessHint={isRemoteWorkspace ? t("app.skills_hint_readonly") : null}
+            accessHint={skillsAccessHint}
             extensions={extensionsStore}
             onOpenLink={(url) => platform.openLink(url)}
             createSessionAndOpen={async () => undefined}
@@ -964,9 +972,9 @@ export function SettingsRoute() {
             busy={busy}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
             isRemoteWorkspace={isRemoteWorkspace}
-            canEditPlugins={!isRemoteWorkspace}
+            canEditPlugins={canWriteWorkspacePlugins}
             canUseGlobalScope={!isRemoteWorkspace}
-            accessHint={isRemoteWorkspace ? t("app.plugins_hint_readonly") : null}
+            accessHint={pluginsAccessHint}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
             mcpConnectedAppsCount={mcpConnectedAppsCount}
