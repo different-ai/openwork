@@ -81,7 +81,6 @@ async function applyElectronUpdaterFeed(app, updater) {
   const channel = await readElectronUpdaterChannel(app);
   const state = updaterChannelState(app, channel);
   updater.allowPrerelease = state.channel === "alpha";
-  updater.channel = state.channel;
   if (updater?.setFeedURL) {
     updater.setFeedURL({ provider: "generic", url: state.feedUrl });
   }
