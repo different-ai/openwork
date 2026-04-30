@@ -24,15 +24,20 @@ import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archiv
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
+const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
+const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+const APP_NAME = isDevMode ? "OpenWork - Dev" : "OpenWork";
+const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 
-// Share the same on-disk state folder as the Tauri shell so in-place
-// migration is a no-op for almost every file. Done BEFORE whenReady so all
-// app.getPath("userData") callers see the unified path.
+// Production Electron shares the same on-disk state folder as the Tauri shell
+// so in-place migration is a no-op for almost every file. Dev mode uses the
+// separate dev identifier so it can run beside the production app.
 //
 // Override via OPENWORK_ELECTRON_USERDATA so dogfooders can isolate their
 // Electron install from the real Tauri app.
-app.setName("OpenWork");
+app.setName(APP_NAME);
+app.setAppUserModelId(APP_IDENTIFIER);
 if (app.isPackaged) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
@@ -42,7 +47,7 @@ if (userDataOverride) {
 } else {
   app.setPath(
     "userData",
-    path.join(app.getPath("appData"), TAURI_APP_IDENTIFIER),
+    path.join(app.getPath("appData"), APP_IDENTIFIER),
   );
 }
 
@@ -51,7 +56,15 @@ if (userDataOverride) {
 // the Electron default icon is shown without this.
 function resolveAppIconPath() {
   const candidates = [
-    // Dev: repo-relative path to the Electron resource icon set.
+    // Dev: match Tauri's separate dev icon so the dev app is visibly distinct.
+    ...(isDevMode
+      ? [
+          path.resolve(__dirname, "../resources/icons/dev/icon.png"),
+          path.resolve(__dirname, "../resources/icons/dev/128x128@2x.png"),
+          path.resolve(__dirname, "../resources/icons/dev/icon-dev.icns"),
+        ]
+      : []),
+    // Repo-relative path to the Electron resource icon set.
     path.resolve(__dirname, "../resources/icons/icon.png"),
     // Packaged: electron-builder copies extraResources but we fall back to this
     // if custom packaging ever exposes the icon here.
@@ -1325,7 +1338,7 @@ async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
-    title: "OpenWork",
+    title: APP_NAME,
     show: false,
     ...(APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty() ? { icon: APP_ICON_IMAGE } : {}),
     webPreferences: {
@@ -1336,7 +1349,18 @@ async function createMainWindow() {
     },
   });
 
+  if (isDevMode) {
+    mainWindow.on("page-title-updated", (event) => {
+      event.preventDefault();
+      mainWindow?.setTitle(APP_NAME);
+    });
+    mainWindow.setTitle(APP_NAME);
+  }
+
   mainWindow.once("ready-to-show", () => {
+    if (isDevMode) {
+      mainWindow?.setTitle(APP_NAME);
+    }
     mainWindow?.show();
     flushPendingDeepLinks();
   });
