@@ -12,8 +12,10 @@ import {
   Copy,
   Edit2,
   FolderOpen,
+  Globe,
   Loader2,
   Package,
+  Plug,
   Plus,
   RefreshCw,
   Rocket,
@@ -46,6 +48,12 @@ import type {
   HubSkillRepo,
   SkillCard,
 } from "../../../../app/types";
+import {
+  buildPublishedWorkflowMcpUrl,
+  type PublishedWorkflow,
+  type PublishedWorkflowCreated,
+  type PublishedWorkflowCreatePayload,
+} from "../../../../app/lib/openwork-server";
 import {
   inputClass,
   modalHeaderButtonClass,
@@ -125,6 +133,12 @@ export type SkillsExtensionsStore = {
     description?: string;
   }) => void | Promise<void>;
   uninstallSkill: (name: string) => void | Promise<void>;
+  publishedWorkflows: () => PublishedWorkflow[];
+  publishedWorkflowsStatus: () => string | null;
+  publishedWorkflowsServerBaseUrl: () => string | null;
+  refreshPublishedWorkflows: (force?: boolean) => void | Promise<void>;
+  publishWorkflow: (payload: PublishedWorkflowCreatePayload) => Promise<PublishedWorkflowCreated>;
+  revokePublishedWorkflow: (workflowId: string) => Promise<void>;
 };
 
 export type SkillsViewProps = {
@@ -176,6 +190,14 @@ export function SkillsView(props: SkillsViewProps) {
   const [installingCloudSkillId, setInstallingCloudSkillId] = useState<string | null>(null);
   const [denUiTick, setDenUiTick] = useState(0);
 
+  const [publishTarget, setPublishTarget] = useState<SkillCard | null>(null);
+  const [publishToolName, setPublishToolName] = useState("");
+  const [publishDescription, setPublishDescription] = useState("");
+  const [publishBusy, setPublishBusy] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishedRecord, setPublishedRecord] = useState<PublishedWorkflowCreated | null>(null);
+  const [revokingWorkflowId, setRevokingWorkflowId] = useState<string | null>(null);
+
   const showToast = useCallback(
     (title: string, tone: ToastTone = "info") => {
       props.onToast?.({ title, tone });
@@ -192,6 +214,7 @@ export function SkillsView(props: SkillsViewProps) {
   useEffect(() => {
     void extensions.ensureHubSkillsFresh();
     void extensions.ensureCloudOrgSkillsFresh();
+    void extensions.refreshPublishedWorkflows();
     const onDenSession = () => {
       setDenUiTick((value) => value + 1);
       setCloudSessionNonce((value) => value + 1);
@@ -200,6 +223,18 @@ export function SkillsView(props: SkillsViewProps) {
     window.addEventListener("openwork-den-session-updated", onDenSession);
     return () => window.removeEventListener("openwork-den-session-updated", onDenSession);
   }, [extensions]);
+
+  useEffect(() => {
+    if (!publishTarget) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (publishBusy) return;
+      event.preventDefault();
+      setPublishTarget(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [publishBusy, publishTarget]);
 
   useEffect(() => {
     if (!shareTarget) return;
@@ -283,6 +318,10 @@ export function SkillsView(props: SkillsViewProps) {
   const hubSkills = extensions.hubSkills();
   const cloudOrgSkills = extensions.cloudOrgSkills();
   const importedCloudSkills = extensions.importedCloudSkills();
+  const publishedWorkflows = extensions.publishedWorkflows();
+  const publishedWorkflowsStatus = extensions.publishedWorkflowsStatus();
+  const publishedServerBaseUrl = extensions.publishedWorkflowsServerBaseUrl();
+  const canPublishWorkflows = Boolean(publishedServerBaseUrl);
   const hubRepo = extensions.hubRepo();
   const hubRepos = extensions.hubRepos();
   const skillsStatus = extensions.skillsStatus();
@@ -621,6 +660,89 @@ export function SkillsView(props: SkillsViewProps) {
     }
   }, [shareUrl, showToast]);
 
+  const openPublishModal = useCallback(
+    (skill: SkillCard) => {
+      if (props.busy) return;
+      if (!canPublishWorkflows) {
+        showToast(t("settings.publishedWorkflows.error_disconnected"), "warning");
+        return;
+      }
+      setPublishTarget(skill);
+      setPublishToolName(skill.name);
+      setPublishDescription(skill.description ?? "");
+      setPublishBusy(false);
+      setPublishError(null);
+      setPublishedRecord(null);
+    },
+    [canPublishWorkflows, props.busy, showToast],
+  );
+
+  const closePublishModal = useCallback(() => {
+    if (publishBusy) return;
+    setPublishTarget(null);
+    setPublishToolName("");
+    setPublishDescription("");
+    setPublishError(null);
+    setPublishedRecord(null);
+  }, [publishBusy]);
+
+  const submitPublish = useCallback(async () => {
+    if (!publishTarget || publishBusy) return;
+    const description = publishDescription.trim();
+    if (!description) {
+      setPublishError(t("settings.publishedWorkflows.validation_description_required"));
+      return;
+    }
+    setPublishBusy(true);
+    setPublishError(null);
+    try {
+      const created = await extensions.publishWorkflow({
+        skillName: publishTarget.name,
+        description,
+        toolName: publishToolName.trim() || undefined,
+      });
+      setPublishedRecord(created);
+    } catch (error) {
+      setPublishError(maskError(error));
+    } finally {
+      setPublishBusy(false);
+    }
+  }, [extensions, maskError, publishBusy, publishDescription, publishTarget, publishToolName]);
+
+  const copyPublishedUrl = useCallback(
+    async (url: string) => {
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast(t("settings.publishedWorkflows.url_copied"), "success");
+      } catch {
+        showToast(t("skills.copy_link_failed"), "error");
+      }
+    },
+    [showToast],
+  );
+
+  const handleRevokeWorkflow = useCallback(
+    async (workflow: PublishedWorkflow) => {
+      if (revokingWorkflowId) return;
+      const confirmed = window.confirm(
+        t("settings.publishedWorkflows.confirm_revoke", undefined, {
+          name: workflow.toolName,
+        }),
+      );
+      if (!confirmed) return;
+      setRevokingWorkflowId(workflow.id);
+      try {
+        await extensions.revokePublishedWorkflow(workflow.id);
+        showToast(t("settings.publishedWorkflows.revoked_toast"), "success");
+      } catch (error) {
+        showToast(maskError(error), "error");
+      } finally {
+        setRevokingWorkflowId(null);
+      }
+    },
+    [extensions, maskError, revokingWorkflowId, showToast],
+  );
+
   const openSkill = useCallback(
     async (skill: SkillCard) => {
       if (props.busy) return;
@@ -856,6 +978,24 @@ export function SkillsView(props: SkillsViewProps) {
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
+                            openPublishModal(skill);
+                          }}
+                          disabled={props.busy || !canPublishWorkflows}
+                          title={
+                            canPublishWorkflows
+                              ? t("settings.publishedWorkflows.publish_button")
+                              : t("settings.publishedWorkflows.error_disconnected")
+                          }
+                        >
+                          <Plug size={14} />
+                          {t("settings.publishedWorkflows.publish_button")}
+                        </button>
+                        <button
+                          type="button"
+                          className={pillGhostClass}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
                             openShareLink(skill);
                           }}
                           disabled={props.busy}
@@ -904,6 +1044,20 @@ export function SkillsView(props: SkillsViewProps) {
             </div>
           )}
         </div>
+      ) : null}
+
+      {showInstalledSection ? (
+        <PublishedWorkflowsSection
+          workflows={publishedWorkflows}
+          status={publishedWorkflowsStatus}
+          serverBaseUrl={publishedServerBaseUrl}
+          canPublish={canPublishWorkflows}
+          revokingWorkflowId={revokingWorkflowId}
+          onCopyUrl={copyPublishedUrl}
+          onRevoke={handleRevokeWorkflow}
+          onRefresh={() => void extensions.refreshPublishedWorkflows(true)}
+          busy={props.busy}
+        />
       ) : null}
 
       {showCloudSection ? (
@@ -1069,9 +1223,8 @@ export function SkillsView(props: SkillsViewProps) {
                     <button
                       type="button"
                       onClick={() => selectHubRepo(repo)}
-                      className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                        active ? "bg-dls-accent text-white" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
-                      }`}
+                      className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${active ? "bg-dls-accent text-white" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+                        }`}
                       disabled={props.busy}
                     >
                       {key}
@@ -1165,9 +1318,8 @@ export function SkillsView(props: SkillsViewProps) {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    selectedDirty && !props.busy ? "bg-dls-text text-dls-surface hover:opacity-90" : "bg-dls-active text-dls-secondary"
-                  }`}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${selectedDirty && !props.busy ? "bg-dls-text text-dls-surface hover:opacity-90" : "bg-dls-active text-dls-secondary"
+                    }`}
                   disabled={!selectedDirty || props.busy}
                   onClick={() => void saveSelectedSkill()}
                 >
@@ -1426,7 +1578,278 @@ export function SkillsView(props: SkillsViewProps) {
           </div>
         </div>
       ) : null}
+
+      {publishTarget ? (
+        <PublishWorkflowModal
+          skill={publishTarget}
+          serverBaseUrl={publishedServerBaseUrl}
+          toolName={publishToolName}
+          description={publishDescription}
+          onChangeToolName={setPublishToolName}
+          onChangeDescription={setPublishDescription}
+          busy={publishBusy}
+          error={publishError}
+          published={publishedRecord}
+          onClose={closePublishModal}
+          onSubmit={() => void submitPublish()}
+          onCopyUrl={copyPublishedUrl}
+        />
+      ) : null}
     </section>
+  );
+}
+
+type PublishedWorkflowsSectionProps = {
+  workflows: PublishedWorkflow[];
+  status: string | null;
+  serverBaseUrl: string | null;
+  canPublish: boolean;
+  revokingWorkflowId: string | null;
+  onCopyUrl: (url: string) => void | Promise<void>;
+  onRevoke: (workflow: PublishedWorkflow) => void | Promise<void>;
+  onRefresh: () => void;
+  busy: boolean;
+};
+
+function PublishedWorkflowsSection(props: PublishedWorkflowsSectionProps) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h3 className={sectionTitleClass}>{t("settings.publishedWorkflows.section_title")}</h3>
+          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-dls-secondary">
+            {t("settings.publishedWorkflows.section_subtitle")}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={props.onRefresh}
+          disabled={props.busy || !props.canPublish}
+          className={pillSecondaryClass}
+        >
+          <RefreshCw size={14} />
+          {t("common.refresh")}
+        </button>
+      </div>
+
+      {!props.canPublish ? (
+        <div className="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-6 text-[14px] text-dls-secondary">
+          {t("settings.publishedWorkflows.error_disconnected")}
+        </div>
+      ) : props.status ? (
+        <div className="whitespace-pre-wrap break-words rounded-[20px] border border-dls-border bg-dls-hover px-5 py-4 text-[13px] text-dls-secondary">
+          {props.status}
+        </div>
+      ) : props.workflows.length === 0 ? (
+        <div className="rounded-[20px] border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-[14px] text-dls-secondary">
+          {t("settings.publishedWorkflows.empty")}
+        </div>
+      ) : (
+        <div className="rounded-[24px] bg-dls-hover p-4">
+          <div className="grid grid-cols-1 gap-4">
+            {props.workflows.map((workflow) => {
+              const urlPattern = props.serverBaseUrl
+                ? `${props.serverBaseUrl.replace(/\/+$/, "")}/published/<token>/mcp`
+                : "";
+              const isRevoking = props.revokingWorkflowId === workflow.id;
+              return (
+                <div key={workflow.id} className={`${panelCardClass} flex flex-col gap-3 text-left`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                      <Globe size={16} className="text-dls-secondary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="truncate text-[14px] font-semibold text-dls-text">{workflow.toolName}</h4>
+                        <span className={tagClass}>
+                          {t("settings.publishedWorkflows.skill_tag", undefined, { name: workflow.skillName })}
+                        </span>
+                      </div>
+                      {workflow.description ? (
+                        <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
+                          {workflow.description}
+                        </p>
+                      ) : null}
+                      {urlPattern ? (
+                        <p className="mt-2 break-all font-mono text-[12px] text-dls-secondary">{urlPattern}</p>
+                      ) : null}
+                      <p className="mt-1 text-[12px] text-dls-secondary">
+                        {t("settings.publishedWorkflows.token_hint")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 border-t border-dls-border pt-3">
+                    {urlPattern ? (
+                      <button
+                        type="button"
+                        className={pillGhostClass}
+                        onClick={() => void props.onCopyUrl(urlPattern)}
+                        disabled={props.busy}
+                        title={t("settings.publishedWorkflows.copy_url_pattern")}
+                      >
+                        <Copy size={14} />
+                        {t("settings.publishedWorkflows.copy_url_pattern")}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={pillGhostClass}
+                      onClick={() => void props.onRevoke(workflow)}
+                      disabled={props.busy || isRevoking}
+                      title={t("settings.publishedWorkflows.revoke")}
+                    >
+                      {isRevoking ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      {t("settings.publishedWorkflows.revoke")}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PublishWorkflowModalProps = {
+  skill: SkillCard;
+  serverBaseUrl: string | null;
+  toolName: string;
+  description: string;
+  onChangeToolName: (value: string) => void;
+  onChangeDescription: (value: string) => void;
+  busy: boolean;
+  error: string | null;
+  published: PublishedWorkflowCreated | null;
+  onClose: () => void;
+  onSubmit: () => void;
+  onCopyUrl: (url: string) => void | Promise<void>;
+};
+
+function PublishWorkflowModal(props: PublishWorkflowModalProps) {
+  const fullUrl =
+    props.published && props.serverBaseUrl
+      ? buildPublishedWorkflowMcpUrl(props.serverBaseUrl, props.published.token)
+      : null;
+  return (
+    <div className={`${modalOverlayClass} items-start pt-[10vh]`}>
+      <div className={`${modalShellClass} max-h-[80vh] max-w-md`} role="dialog" aria-modal="true">
+        <div className={modalHeaderClass}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className={modalTitleClass}>{t("settings.publishedWorkflows.modal_title")}</h2>
+              <span className={tagClass}>{props.skill.name}</span>
+            </div>
+            <p className={modalSubtitleClass}>{t("settings.publishedWorkflows.modal_subtitle")}</p>
+          </div>
+          <button
+            type="button"
+            onClick={props.onClose}
+            disabled={props.busy}
+            className={modalHeaderButtonClass}
+            aria-label={t("common.close")}
+            title={t("common.close")}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 pb-7 pt-2">
+          {!props.published ? (
+            <div className="space-y-5">
+              <label className="space-y-1 block">
+                <div className="text-xs font-semibold uppercase tracking-widest text-dls-secondary">
+                  {t("settings.publishedWorkflows.field_tool_name")}
+                </div>
+                <input
+                  type="text"
+                  value={props.toolName}
+                  onChange={(event) => props.onChangeToolName(event.currentTarget.value)}
+                  placeholder={props.skill.name}
+                  className={inputClass}
+                  spellCheck={false}
+                  disabled={props.busy}
+                />
+                <div className="text-[12px] text-dls-secondary">
+                  {t("settings.publishedWorkflows.field_tool_name_hint")}
+                </div>
+              </label>
+
+              <label className="space-y-1 block">
+                <div className="text-xs font-semibold uppercase tracking-widest text-dls-secondary">
+                  {t("settings.publishedWorkflows.field_description")}
+                </div>
+                <textarea
+                  value={props.description}
+                  onChange={(event) => props.onChangeDescription(event.currentTarget.value)}
+                  rows={4}
+                  className={`${inputClass} resize-none`}
+                  spellCheck={false}
+                  disabled={props.busy}
+                />
+                <div className="text-[12px] text-dls-secondary">
+                  {t("settings.publishedWorkflows.field_description_hint")}
+                </div>
+              </label>
+
+              {props.error ? <div className={modalNoticeErrorClass}>{props.error}</div> : null}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={props.onClose} disabled={props.busy}>
+                  {t("common.cancel")}
+                </Button>
+                <Button variant="secondary" onClick={props.onSubmit} disabled={props.busy}>
+                  {props.busy ? (
+                    <>
+                      <Loader2 size={14} className="mr-1 inline animate-spin" />
+                      {t("settings.publishedWorkflows.publishing")}
+                    </>
+                  ) : (
+                    t("settings.publishedWorkflows.publish_submit")
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className={modalNoticeSuccessClass}>{t("settings.publishedWorkflows.success_notice")}</div>
+              <div className={surfaceCardClass}>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-dls-secondary">
+                  {t("settings.publishedWorkflows.url_label")}
+                </div>
+                {fullUrl ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={fullUrl}
+                      className={`${inputClass} flex-1 font-mono text-[12px]`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void props.onCopyUrl(fullUrl)}
+                      className={pillSecondaryClass}
+                    >
+                      <Copy size={14} className="mr-1 inline" />
+                      {t("common.copy")}
+                    </button>
+                  </div>
+                ) : null}
+                <p className="mt-3 text-[12px] text-dls-secondary">
+                  {t("settings.publishedWorkflows.token_warning")}
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={props.onClose}>
+                  {t("common.done")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

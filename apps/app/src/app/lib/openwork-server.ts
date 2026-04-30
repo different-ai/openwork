@@ -117,9 +117,9 @@ export type OpenworkSessionSnapshot = {
   messages: OpenworkSessionMessage[];
   todos: Todo[];
   status:
-    | { type: "idle" }
-    | { type: "busy" }
-    | { type: "retry"; attempt: number; message: string; next: number };
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number };
 };
 
 export type OpenworkPluginItem = {
@@ -680,7 +680,7 @@ async function requestMultipartRaw(
   baseUrl: string,
   path: string,
   options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
-): Promise<{ ok: boolean; status: number; text: string }>{
+): Promise<{ ok: boolean; status: number; text: string }> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
@@ -701,7 +701,7 @@ async function requestBinary(
   baseUrl: string,
   path: string,
   options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
-): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
+): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
   const response = await fetchWithTimeout(
@@ -1227,7 +1227,70 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "DELETE",
         timeoutMs: timeouts.config,
       }),
+
+    // Published workflows (host-auth admin surface, see
+    // apps/server/src/published-workflows.ts and
+    // apps/app/pr/published-workflows-mcp.md). The plaintext token is only
+    // returned from create(); callers must surface it immediately.
+    listPublishedWorkflows: (workspaceId: string) =>
+      requestJson<{ items: PublishedWorkflow[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/published-workflows`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    createPublishedWorkflow: (
+      workspaceId: string,
+      payload: PublishedWorkflowCreatePayload,
+    ) =>
+      requestJson<PublishedWorkflowCreated>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/published-workflows`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.config,
+        },
+      ),
+
+    revokePublishedWorkflow: (workspaceId: string, workflowId: string) =>
+      requestJson<{ ok: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/published-workflows/${encodeURIComponent(workflowId)}`,
+        { token, hostToken, method: "DELETE", timeoutMs: timeouts.config },
+      ),
   };
+}
+
+export type PublishedWorkflow = {
+  id: string;
+  workspaceId: string;
+  skillName: string;
+  toolName: string;
+  description: string;
+  agent?: string | null;
+  label?: string | null;
+  inputSchema?: Record<string, unknown> | null;
+  createdAt: number;
+};
+
+export type PublishedWorkflowCreated = PublishedWorkflow & {
+  token: string;
+};
+
+export type PublishedWorkflowCreatePayload = {
+  skillName: string;
+  description: string;
+  toolName?: string;
+  agent?: string;
+  label?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
+export function buildPublishedWorkflowMcpUrl(baseUrl: string, token: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/published/${encodeURIComponent(token)}/mcp`;
 }
 
 export type OpenworkServerClient = ReturnType<typeof createOpenworkServerClient>;

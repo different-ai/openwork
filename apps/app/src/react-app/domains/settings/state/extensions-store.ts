@@ -43,6 +43,9 @@ import type {
   OpenworkServerCapabilities,
   OpenworkServerClient,
   OpenworkServerStatus,
+  PublishedWorkflow,
+  PublishedWorkflowCreated,
+  PublishedWorkflowCreatePayload,
 } from "../../../../app/lib/openwork-server";
 import {
   createDenClient,
@@ -103,6 +106,8 @@ export type ExtensionsStoreSnapshot = {
   pluginsStale: boolean;
   hubSkillsStale: boolean;
   cloudOrgSkillsStale: boolean;
+  publishedWorkflows: PublishedWorkflow[];
+  publishedWorkflowsStatus: string | null;
 };
 
 type MutableState = {
@@ -134,6 +139,9 @@ type MutableState = {
   activePluginGuide: string | null;
   sidebarPluginList: string[];
   sidebarPluginStatus: string | null;
+  publishedWorkflows: PublishedWorkflow[];
+  publishedWorkflowsStatus: string | null;
+  publishedWorkflowsContextKey: string;
 };
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
@@ -253,6 +261,9 @@ export function createExtensionsStore(options: {
     activePluginGuide: null,
     sidebarPluginList: [],
     sidebarPluginStatus: null,
+    publishedWorkflows: [],
+    publishedWorkflowsStatus: null,
+    publishedWorkflowsContextKey: "",
   };
 
   const emitChange = () => {
@@ -312,6 +323,8 @@ export function createExtensionsStore(options: {
       pluginsStale: state.pluginsContextKey !== workspaceContextKey,
       hubSkillsStale: state.hubSkillsContextKey !== workspaceContextKey,
       cloudOrgSkillsStale: state.cloudOrgSkillsContextKey !== `${workspaceContextKey}::${orgId}`,
+      publishedWorkflows: state.publishedWorkflows,
+      publishedWorkflowsStatus: state.publishedWorkflowsStatus,
     };
   };
 
@@ -890,11 +903,11 @@ export function createExtensionsStore(options: {
         if (refreshHubSkillsAborted) return;
         const next: HubSkillCard[] = Array.isArray(response?.items)
           ? response.items.map((entry) => ({
-              name: String(entry.name ?? ""),
-              description: typeof entry.description === "string" ? entry.description : undefined,
-              trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
-              source: entry.source,
-            }))
+            name: String(entry.name ?? ""),
+            description: typeof entry.description === "string" ? entry.description : undefined,
+            trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
+            source: entry.source,
+          }))
           : [];
         mutateState((current) => ({
           ...current,
@@ -917,9 +930,9 @@ export function createExtensionsStore(options: {
       const listing = (await listingRes.json()) as unknown;
       const dirs: string[] = Array.isArray(listing)
         ? listing
-            .filter((entry) => entry && typeof entry === "object" && (entry as { type?: string }).type === "dir")
-            .map((entry) => String((entry as { name?: string }).name ?? ""))
-            .filter(Boolean)
+          .filter((entry) => entry && typeof entry === "object" && (entry as { type?: string }).type === "dir")
+          .map((entry) => String((entry as { name?: string }).name ?? ""))
+          .filter(Boolean)
         : [];
 
       const next: HubSkillCard[] = dirs.map((dirName) => ({
@@ -1456,11 +1469,11 @@ export function createExtensionsStore(options: {
         if (refreshSkillsAborted) return;
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
-              name: entry.name,
-              description: entry.description,
-              path: entry.path,
-              trigger: entry.trigger,
-            }))
+            name: entry.name,
+            description: entry.description,
+            path: entry.path,
+            trigger: entry.trigger,
+          }))
           : [];
         mutateState((current) => ({
           ...current,
@@ -1496,11 +1509,11 @@ export function createExtensionsStore(options: {
         if (refreshSkillsAborted) return;
         const next: SkillCard[] = Array.isArray(local)
           ? local.map((entry) => ({
-              name: entry.name,
-              description: entry.description,
-              path: entry.path,
-              trigger: entry.trigger,
-            }))
+            name: entry.name,
+            description: entry.description,
+            path: entry.path,
+            trigger: entry.trigger,
+          }))
           : [];
         mutateState((current) => ({
           ...current,
@@ -1555,10 +1568,10 @@ export function createExtensionsStore(options: {
       if (refreshSkillsAborted) return;
       const next: SkillCard[] = Array.isArray(result.data)
         ? result.data.map((entry) => ({
-            name: entry.name,
-            description: entry.description,
-            path: formatSkillPath(entry.location),
-          }))
+          name: entry.name,
+          description: entry.description,
+          path: formatSkillPath(entry.location),
+        }))
         : [];
       mutateState((current) => ({
         ...current,
@@ -2044,6 +2057,84 @@ export function createExtensionsStore(options: {
     }
   }
 
+  function getPublishedWorkflowsClient(): {
+    client: OpenworkServerClient;
+    workspaceId: string;
+  } | null {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const client = openworkSnapshot.openworkServerClient;
+    const workspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus !== "connected" ||
+      !client ||
+      !workspaceId
+    ) {
+      return null;
+    }
+    return { client, workspaceId };
+  }
+
+  async function refreshPublishedWorkflows(force = false): Promise<void> {
+    const workspaceContextKey = getWorkspaceContextKey();
+    if (!force && state.publishedWorkflowsContextKey === workspaceContextKey) return;
+
+    const ctx = getPublishedWorkflowsClient();
+    if (!ctx) {
+      mutateState((current) => ({
+        ...current,
+        publishedWorkflows: [],
+        publishedWorkflowsStatus: null,
+        publishedWorkflowsContextKey: workspaceContextKey,
+      }));
+      return;
+    }
+    try {
+      const { items } = await ctx.client.listPublishedWorkflows(ctx.workspaceId);
+      mutateState((current) => ({
+        ...current,
+        publishedWorkflows: items,
+        publishedWorkflowsStatus: null,
+        publishedWorkflowsContextKey: workspaceContextKey,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : translate("common.something_went_wrong");
+      mutateState((current) => ({
+        ...current,
+        publishedWorkflowsStatus: message,
+        publishedWorkflowsContextKey: workspaceContextKey,
+      }));
+    }
+  }
+
+  async function publishWorkflow(
+    payload: PublishedWorkflowCreatePayload,
+  ): Promise<PublishedWorkflowCreated> {
+    const ctx = getPublishedWorkflowsClient();
+    if (!ctx) {
+      throw new Error(translate("settings.publishedWorkflows.error_disconnected"));
+    }
+    const created = await ctx.client.createPublishedWorkflow(ctx.workspaceId, payload);
+    const { token: _token, ...record } = created;
+    mutateState((current) => ({
+      ...current,
+      publishedWorkflows: [record, ...current.publishedWorkflows.filter((entry) => entry.id !== record.id)],
+      publishedWorkflowsStatus: null,
+    }));
+    return created;
+  }
+
+  async function revokePublishedWorkflow(workflowId: string): Promise<void> {
+    const ctx = getPublishedWorkflowsClient();
+    if (!ctx) {
+      throw new Error(translate("settings.publishedWorkflows.error_disconnected"));
+    }
+    await ctx.client.revokePublishedWorkflow(ctx.workspaceId, workflowId);
+    mutateState((current) => ({
+      ...current,
+      publishedWorkflows: current.publishedWorkflows.filter((entry) => entry.id !== workflowId),
+    }));
+  }
+
   async function revealSkillsFolder() {
     if (!isDesktopRuntime()) {
       setStateField("skillsStatus", translate("skills.desktop_required"));
@@ -2385,6 +2476,7 @@ export function createExtensionsStore(options: {
     void refreshImportedCloudSkills();
     void refreshImportedCloudSkillHubs();
     void refreshImportedCloudPlugins();
+    void refreshPublishedWorkflows(true);
   };
 
   refreshSnapshot();
@@ -2478,6 +2570,13 @@ export function createExtensionsStore(options: {
     ensurePluginsFresh,
     ensureHubSkillsFresh,
     ensureCloudOrgSkillsFresh,
+    publishedWorkflows: () => snapshot.publishedWorkflows,
+    publishedWorkflowsStatus: () => snapshot.publishedWorkflowsStatus,
+    publishedWorkflowsServerBaseUrl: () =>
+      getOpenworkServerSnapshot().openworkServerClient?.baseUrl ?? null,
+    refreshPublishedWorkflows,
+    publishWorkflow,
+    revokePublishedWorkflow,
   };
 }
 
