@@ -9,6 +9,7 @@ import { getPackageStatus, getPreviewFilename } from "./share-home-state";
 
 const DEFAULT_STATUS = "Upload a single file or paste skill content below.";
 const MULTI_FILE_ERROR = "Upload or paste a single skill to continue.";
+const PREVIEW_DEBOUNCE_MS = 1000;
 
 const BASELINE_BODY = `# Agent Creator
 
@@ -125,6 +126,7 @@ export default function ShareHomeClient() {
   const [errorMessage, setErrorMessage] = useState("");
   const [predictedPreviewItem, setPredictedPreviewItem] = useState<PreviewItem | null>(null);
   const requestIdRef = useRef<number>(0);
+  const previewRequestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const trimmedDocument = useMemo(() => editorValue.trim(), [editorValue]);
   const hasContent = trimmedDocument.length > 0;
@@ -184,8 +186,14 @@ export default function ShareHomeClient() {
   }, [hasContent, inferredSkillName]);
 
   useEffect(() => {
+    if (previewRequestTimerRef.current) {
+      clearTimeout(previewRequestTimerRef.current);
+      previewRequestTimerRef.current = null;
+    }
+
     if (uploadedFileCount > 1) {
       requestIdRef.current += 1;
+      setBusyMode(null);
       setPreview(null);
       setWarnings([]);
       setErrorMessage(MULTI_FILE_ERROR);
@@ -194,6 +202,7 @@ export default function ShareHomeClient() {
 
     if (!hasContent) {
       requestIdRef.current += 1;
+      setBusyMode(null);
       setPreview(null);
       setWarnings([]);
       setErrorMessage("");
@@ -204,32 +213,41 @@ export default function ShareHomeClient() {
     requestIdRef.current = currentRequestId;
     let cancelled = false;
 
-    setBusyMode("preview");
+    previewRequestTimerRef.current = setTimeout(() => {
+      previewRequestTimerRef.current = null;
+      if (cancelled || requestIdRef.current !== currentRequestId) return;
 
-    void (async () => {
-      try {
-        const nextPreview = await requestPackage(true);
-        if (cancelled || requestIdRef.current !== currentRequestId) return;
-        setPreview(nextPreview);
-        setWarnings(Array.isArray(nextPreview.warnings) ? nextPreview.warnings : []);
-        setErrorMessage("");
-        if (nextPreview.items?.[0]) {
-          setPredictedPreviewItem(nextPreview.items[0]);
+      setBusyMode("preview");
+
+      void (async () => {
+        try {
+          const nextPreview = await requestPackage(true);
+          if (cancelled || requestIdRef.current !== currentRequestId) return;
+          setPreview(nextPreview);
+          setWarnings(Array.isArray(nextPreview.warnings) ? nextPreview.warnings : []);
+          setErrorMessage("");
+          if (nextPreview.items?.[0]) {
+            setPredictedPreviewItem(nextPreview.items[0]);
+          }
+        } catch (error) {
+          if (cancelled || requestIdRef.current !== currentRequestId) return;
+          setPreview(null);
+          setWarnings([]);
+          setErrorMessage(error instanceof Error ? error.message : "Packaging failed.");
+        } finally {
+          if (!cancelled && requestIdRef.current === currentRequestId) {
+            setBusyMode(null);
+          }
         }
-      } catch (error) {
-        if (cancelled || requestIdRef.current !== currentRequestId) return;
-        setPreview(null);
-        setWarnings([]);
-        setErrorMessage(error instanceof Error ? error.message : "Packaging failed.");
-      } finally {
-        if (!cancelled && requestIdRef.current === currentRequestId) {
-          setBusyMode(null);
-        }
-      }
-    })();
+      })();
+    }, PREVIEW_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
+      if (previewRequestTimerRef.current) {
+        clearTimeout(previewRequestTimerRef.current);
+        previewRequestTimerRef.current = null;
+      }
     };
   }, [effectiveEntries, hasContent, uploadedFileCount]);
 
@@ -272,6 +290,11 @@ export default function ShareHomeClient() {
   const publishBundle = async () => {
     if (publishDisabled) return;
 
+    requestIdRef.current += 1;
+    if (previewRequestTimerRef.current) {
+      clearTimeout(previewRequestTimerRef.current);
+      previewRequestTimerRef.current = null;
+    }
     setBusyMode("publish");
 
     try {

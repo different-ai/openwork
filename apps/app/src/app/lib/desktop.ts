@@ -86,9 +86,39 @@ export const desktopBridge: DesktopBridge = new Proxy({} as DesktopBridge, {
   },
 });
 
+function isLoopbackUrl(input: RequestInfo | URL): boolean {
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  try {
+    const url = new URL(raw);
+    return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 export const desktopFetch: typeof globalThis.fetch = (input, init) => {
   if (isElectronDesktopRuntime()) {
-    return globalThis.fetch(input, init);
+    if (isLoopbackUrl(input)) {
+      return globalThis.fetch(input, init);
+    }
+
+    return invokeElectronHelper<{
+      status: number;
+      statusText: string;
+      headers: [string, string][];
+      body: string;
+    }>("__fetch", typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url, {
+      method: init?.method,
+      headers: init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined,
+      body: typeof init?.body === "string" ? init.body : undefined,
+    }).then(
+      (result) =>
+        new Response(result.body, {
+          status: result.status,
+          statusText: result.statusText,
+          headers: result.headers,
+        }),
+    );
   }
   return tauriBridge.desktopFetch(input, init);
 };
@@ -213,6 +243,7 @@ const {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  runtimeBootstrap,
   engineInfo,
   engineDoctor,
   pickDirectory,
@@ -279,6 +310,7 @@ export {
   sandboxDebugProbe,
   openworkServerInfo,
   openworkServerRestart,
+  runtimeBootstrap,
   engineInfo,
   engineDoctor,
   pickDirectory,

@@ -30,6 +30,7 @@ import {
   GithubConnectorRequestError,
   getGithubAppSummary,
   getGithubConnectorAppConfig,
+  getGithubInstallationAccessToken,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
   getGithubInstallationSummary,
@@ -41,8 +42,10 @@ import {
   buildGithubRepoDiscovery,
   type GithubDiscoveredPlugin,
   type GithubDiscoveryClassification,
+  type GithubMarketplaceInfo,
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
+import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -83,6 +86,7 @@ type ConnectorMappingId = ConnectorMappingRow["id"]
 type ConnectorSyncEventId = ConnectorSyncEventRow["id"]
 type MemberRow = typeof MemberTable.$inferSelect
 type OrganizationRow = typeof OrganizationTable.$inferSelect
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 type CursorPage<TItem extends { id: string }> = {
   items: TItem[]
@@ -101,12 +105,45 @@ type GithubConnectorDiscoveryTreeSummary = {
   truncated: boolean
 }
 
+type GithubDiscoveryImportPlan = {
+  objectType: ConnectorMappingRow["objectType"]
+  paths: string[]
+  selector: string
+}
+
+type GithubDiscoveryCacheEntry = {
+  branch: string
+  classification: GithubDiscoveryClassification
+  discoveredPlugins: GithubDiscoveredPlugin[]
+  importPlansByPluginKey: Record<string, GithubDiscoveryImportPlan[]>
+  marketplace: GithubMarketplaceInfo | null
+  ref: string
+  repositoryFullName: string
+  sourceRevisionRef: string
+  treeSummary: GithubConnectorDiscoveryTreeSummary
+  warnings: string[]
+}
+
+type GithubConnectorDiscoveryComputation = GithubDiscoveryCacheEntry & {
+  connectorInstance: ReturnType<typeof serializeConnectorInstance>
+  connectorTarget: ReturnType<typeof serializeConnectorTarget>
+  treeEntries: GithubDiscoveryTreeEntry[]
+}
+
+type GithubDiscoverySnapshot = GithubDiscoveryCacheEntry & {
+  treeEntries: GithubDiscoveryTreeEntry[]
+}
+
 type ConfigObjectInput = {
   metadata?: Record<string, unknown>
   normalizedPayloadJson?: Record<string, unknown>
   parserMode?: string
   rawSourceText?: string
   schemaVersion?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
 }
 
 type AccessGrantWrite = {
@@ -1702,36 +1739,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
     }
 
-    if (connectorPluginIds.length > 0) {
-      const remainingMemberships = await tx
-        .select({ pluginId: PluginConfigObjectTable.pluginId })
-        .from(PluginConfigObjectTable)
-        .where(inArray(PluginConfigObjectTable.pluginId, connectorPluginIds))
-      const pluginsWithOtherContent = new Set(remainingMemberships.map((entry) => entry.pluginId))
-      const pluginIdsToDelete = connectorPluginIds.filter((pluginId) => !pluginsWithOtherContent.has(pluginId))
-
-      if (pluginIdsToDelete.length > 0) {
-        await tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
-      }
-
-      const marketplaceRows = await tx
-        .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
-        .from(MarketplacePluginTable)
-      const marketplacesWithMembers = new Set(marketplaceRows.map((entry) => entry.marketplaceId))
-      const orphanMarketplaces = await tx
-        .select({ id: MarketplaceTable.id })
-        .from(MarketplaceTable)
-        .where(eq(MarketplaceTable.organizationId, organizationId))
-      const orphanIds = orphanMarketplaces
-        .map((entry) => entry.id)
-        .filter((marketplaceId) => !marketplacesWithMembers.has(marketplaceId))
-      if (orphanIds.length > 0) {
-        await tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, orphanIds))
-        await tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, orphanIds))
-      }
-    }
+    await cleanupConnectorImportedResources({ seedPluginIds: connectorPluginIds, tx })
 
     await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.id, row.id))
   })
@@ -1867,6 +1875,129 @@ function commonSelectorRootPath(selectors: string[]): string | null {
   return ""
 }
 
+async function assertConnectorImportedResourceCleanup(input: {
+  marketplaceIdsToDelete: MarketplaceId[]
+  pluginIdsToDelete: PluginId[]
+  tx: DbTransaction
+}) {
+  if (input.pluginIdsToDelete.length > 0) {
+    const [remainingPlugins, remainingPluginMappings, remainingPluginMemberships, remainingPluginGrants] = await Promise.all([
+      input.tx.select({ id: PluginTable.id }).from(PluginTable).where(inArray(PluginTable.id, input.pluginIdsToDelete)),
+      input.tx.select({ id: ConnectorMappingTable.id }).from(ConnectorMappingTable).where(inArray(ConnectorMappingTable.pluginId, input.pluginIdsToDelete)),
+      input.tx.select({ id: PluginConfigObjectTable.id }).from(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.pluginId, input.pluginIdsToDelete)),
+      input.tx.select({ id: PluginAccessGrantTable.id }).from(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, input.pluginIdsToDelete)),
+    ])
+
+    if (remainingPlugins.length > 0 || remainingPluginMappings.length > 0 || remainingPluginMemberships.length > 0 || remainingPluginGrants.length > 0) {
+      throw new Error("Connector cleanup left plugin records behind.")
+    }
+  }
+
+  if (input.marketplaceIdsToDelete.length > 0) {
+    const [remainingMarketplaces, remainingMarketplaceMemberships, remainingMarketplaceGrants] = await Promise.all([
+      input.tx.select({ id: MarketplaceTable.id }).from(MarketplaceTable).where(inArray(MarketplaceTable.id, input.marketplaceIdsToDelete)),
+      input.tx.select({ id: MarketplacePluginTable.id }).from(MarketplacePluginTable).where(inArray(MarketplacePluginTable.marketplaceId, input.marketplaceIdsToDelete)),
+      input.tx.select({ id: MarketplaceAccessGrantTable.id }).from(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, input.marketplaceIdsToDelete)),
+    ])
+
+    if (remainingMarketplaces.length > 0 || remainingMarketplaceMemberships.length > 0 || remainingMarketplaceGrants.length > 0) {
+      throw new Error("Connector cleanup left marketplace records behind.")
+    }
+  }
+}
+
+async function cleanupConnectorImportedResources(input: {
+  seedPluginIds: PluginId[]
+  tx: DbTransaction
+}) {
+  const seedPluginIds = uniqueIds(input.seedPluginIds)
+  if (seedPluginIds.length === 0) {
+    return { deletedMarketplaceCount: 0, deletedPluginCount: 0 }
+  }
+
+  const connectorMarketplaceRows = await input.tx
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
+    .from(MarketplacePluginTable)
+    .where(and(
+      inArray(MarketplacePluginTable.pluginId, seedPluginIds),
+      eq(MarketplacePluginTable.membershipSource, "connector"),
+      isNull(MarketplacePluginTable.removedAt),
+    ))
+  const candidateMarketplaceIds = uniqueIds(connectorMarketplaceRows.map((row) => row.marketplaceId))
+
+  const activeMarketplaceMemberships = candidateMarketplaceIds.length === 0
+    ? []
+    : await input.tx
+      .select({
+        marketplaceId: MarketplacePluginTable.marketplaceId,
+        membershipSource: MarketplacePluginTable.membershipSource,
+        pluginId: MarketplacePluginTable.pluginId,
+      })
+      .from(MarketplacePluginTable)
+      .where(and(
+        inArray(MarketplacePluginTable.marketplaceId, candidateMarketplaceIds),
+        isNull(MarketplacePluginTable.removedAt),
+      ))
+
+  const candidatePluginIds = uniqueIds([
+    ...seedPluginIds,
+    ...activeMarketplaceMemberships
+      .filter((membership) => membership.membershipSource === "connector")
+      .map((membership) => membership.pluginId),
+  ])
+
+  const activePluginMembershipRows = candidatePluginIds.length === 0
+    ? []
+    : await input.tx
+      .select({ pluginId: PluginConfigObjectTable.pluginId })
+      .from(PluginConfigObjectTable)
+      .where(and(
+        inArray(PluginConfigObjectTable.pluginId, candidatePluginIds),
+        isNull(PluginConfigObjectTable.removedAt),
+      ))
+
+  const activeMappingRows = candidatePluginIds.length === 0
+    ? []
+    : await input.tx
+      .select({ pluginId: ConnectorMappingTable.pluginId })
+      .from(ConnectorMappingTable)
+      .where(inArray(ConnectorMappingTable.pluginId, candidatePluginIds))
+
+  const { marketplaceIdsToDelete, pluginIdsToDelete } = planConnectorImportedResourceCleanup({
+    activeMarketplaceMemberships,
+    activeMappingPluginIds: activeMappingRows
+      .map((row) => row.pluginId)
+      .filter((pluginId): pluginId is PluginId => Boolean(pluginId)),
+    activePluginMembershipPluginIds: activePluginMembershipRows.map((row) => row.pluginId),
+    candidateMarketplaceIds,
+    candidatePluginIds,
+  })
+
+  if (pluginIdsToDelete.length > 0) {
+    await input.tx.delete(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
+    await input.tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
+  }
+
+  if (marketplaceIdsToDelete.length > 0) {
+    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.marketplaceId, marketplaceIdsToDelete))
+    await input.tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIdsToDelete))
+    await input.tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIdsToDelete))
+  }
+
+  await assertConnectorImportedResourceCleanup({
+    marketplaceIdsToDelete,
+    pluginIdsToDelete,
+    tx: input.tx,
+  })
+
+  return {
+    deletedMarketplaceCount: marketplaceIdsToDelete.length,
+    deletedPluginCount: pluginIdsToDelete.length,
+  }
+}
+
 export async function getConnectorInstanceConfiguration(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const instance = await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
   const mappings = await db
@@ -1959,7 +2090,6 @@ export async function setConnectorInstanceAutoImport(input: { autoImportNewPlugi
 }
 
 export async function removeConnectorInstance(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const organizationId = input.context.organizationContext.organization.id
   const instance = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
 
   const mappingRows = await db
@@ -1996,36 +2126,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
 
-    if (pluginIds.length > 0) {
-      const remainingMemberships = await tx
-        .select({ pluginId: PluginConfigObjectTable.pluginId })
-        .from(PluginConfigObjectTable)
-        .where(inArray(PluginConfigObjectTable.pluginId, pluginIds))
-      const pluginsWithOtherContent = new Set(remainingMemberships.map((entry) => entry.pluginId))
-      const pluginIdsToDelete = pluginIds.filter((pluginId) => !pluginsWithOtherContent.has(pluginId))
-
-      if (pluginIdsToDelete.length > 0) {
-        await tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
-        await tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
-      }
-
-      const marketplaceMembershipRows = await tx
-        .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
-        .from(MarketplacePluginTable)
-      const marketplacesWithMembers = new Set(marketplaceMembershipRows.map((entry) => entry.marketplaceId))
-      const orphanMarketplaces = await tx
-        .select({ id: MarketplaceTable.id })
-        .from(MarketplaceTable)
-        .where(eq(MarketplaceTable.organizationId, organizationId))
-      const orphanIds = orphanMarketplaces
-        .map((entry) => entry.id)
-        .filter((marketplaceId) => !marketplacesWithMembers.has(marketplaceId))
-      if (orphanIds.length > 0) {
-        await tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, orphanIds))
-        await tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, orphanIds))
-      }
-    }
+    await cleanupConnectorImportedResources({ seedPluginIds: pluginIds, tx })
   })
 
   return {
@@ -2258,6 +2359,78 @@ function discoveryStep(status: GithubConnectorDiscoveryStep["status"], id: Githu
   return { id, label, status }
 }
 
+function buildGithubConnectorDiscoverySteps(input: {
+  classification: GithubDiscoveryClassification
+  discoveredPlugins: GithubDiscoveredPlugin[]
+}) {
+  return [
+    discoveryStep("completed", "read_repository_structure", "Read repository structure"),
+    discoveryStep(input.classification === "claude_marketplace_repo" ? "completed" : "warning", "check_marketplace_manifest", "Check for Claude marketplace manifest"),
+    discoveryStep(
+      input.classification === "claude_single_plugin_repo" || input.classification === "claude_multi_plugin_repo"
+        ? "completed"
+        : "warning",
+      "check_plugin_manifests",
+      "Check for plugin manifests",
+    ),
+    discoveryStep(input.discoveredPlugins.length > 0 ? "completed" : "warning", "prepare_discovered_plugins", "Prepare discovered plugins"),
+  ] satisfies GithubConnectorDiscoveryStep[]
+}
+
+function buildGithubDiscoveryImportPlans(input: { discoveredPlugins: GithubDiscoveredPlugin[]; treeEntries: GithubDiscoveryTreeEntry[] }) {
+  return Object.fromEntries(input.discoveredPlugins.map((plugin) => [
+    plugin.key,
+    discoveryMappingsForPlugin(plugin).map((mapping) => ({
+      objectType: mapping.objectType,
+      paths: importableGithubPathsForMapping({ mapping, treeEntries: input.treeEntries }).map((entry) => entry.path),
+      selector: mapping.selector,
+    } satisfies GithubDiscoveryImportPlan)),
+  ])) satisfies Record<string, GithubDiscoveryImportPlan[]>
+}
+
+function readGithubDiscoveryCache(config: Record<string, unknown> | null) {
+  const cache = config && isRecord(config.githubDiscoveryCache) ? config.githubDiscoveryCache : null
+  if (!cache) {
+    return null
+  }
+
+  const repositoryFullName = typeof cache.repositoryFullName === "string" ? cache.repositoryFullName : null
+  const branch = typeof cache.branch === "string" ? cache.branch : null
+  const ref = typeof cache.ref === "string" ? cache.ref : null
+  const sourceRevisionRef = typeof cache.sourceRevisionRef === "string" ? cache.sourceRevisionRef : null
+  const discoveredPlugins = Array.isArray(cache.discoveredPlugins) ? cache.discoveredPlugins as GithubDiscoveredPlugin[] : null
+  const warnings = Array.isArray(cache.warnings) ? cache.warnings.filter((entry): entry is string => typeof entry === "string") : null
+  const treeSummary = isRecord(cache.treeSummary) ? cache.treeSummary as GithubConnectorDiscoveryTreeSummary : null
+  const importPlansByPluginKey = isRecord(cache.importPlansByPluginKey)
+    ? cache.importPlansByPluginKey as Record<string, GithubDiscoveryImportPlan[]>
+    : null
+  const classification = typeof cache.classification === "string" ? cache.classification as GithubDiscoveryClassification : null
+
+  if (!repositoryFullName || !branch || !ref || !sourceRevisionRef || !discoveredPlugins || !warnings || !treeSummary || !importPlansByPluginKey || !classification) {
+    return null
+  }
+
+  return {
+    branch,
+    classification,
+    discoveredPlugins,
+    importPlansByPluginKey,
+    marketplace: isRecord(cache.marketplace) || cache.marketplace === null ? cache.marketplace as GithubMarketplaceInfo | null : null,
+    ref,
+    repositoryFullName,
+    sourceRevisionRef,
+    treeSummary,
+    warnings,
+  } satisfies GithubDiscoveryCacheEntry
+}
+
+function withGithubDiscoveryCache(config: Record<string, unknown>, cache: GithubDiscoveryCacheEntry) {
+  return {
+    ...config,
+    githubDiscoveryCache: cache,
+  }
+}
+
 async function getGithubDiscoveryContext(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const connectorInstance = await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
   if (connectorInstance.connectorType !== "github") {
@@ -2375,11 +2548,11 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   }
 
   const context = await buildConnectorAutomationContext({ connectorInstance: input.connectorInstance })
-  const discovery = await computeGithubConnectorDiscovery({
+  const discovery = await resolveGithubConnectorDiscovery({
     connectorInstanceId: input.connectorInstance.id,
     context,
   })
-  const selectedKeys = discovery.discoveredPlugins
+  const selectedKeys = discovery.cache.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => plugin.key)
 
@@ -2402,6 +2575,7 @@ async function getGithubDiscoveryFileTexts(input: {
   config: ReturnType<typeof githubConnectorAppConfig>
   installationId: number
   repositoryFullName: string
+  token?: string
   treeEntries: GithubDiscoveryTreeEntry[]
 }) {
   const interestingPaths = new Set<string>()
@@ -2426,6 +2600,7 @@ async function getGithubDiscoveryFileTexts(input: {
         path,
         ref: input.branch,
         repositoryFullName: input.repositoryFullName,
+        token: input.token,
       })
     } catch (error) {
       wrapGithubConnectorError(error)
@@ -2443,25 +2618,36 @@ function pagedGithubDiscoveryTree(input: { cursor?: string; entries: GithubDisco
   return pageItems(filtered, normalizeDiscoveryCursor(input.cursor), input.limit)
 }
 
-async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const discoveryContext = await getGithubDiscoveryContext(input)
+async function computeGithubDiscoverySnapshot(input: {
+  branch: string
+  installationId: number
+  ref: string
+  repositoryFullName: string
+  token?: string
+}) {
+  const token = input.token ?? await getGithubInstallationAccessToken({
+    config: githubConnectorAppConfig(),
+    installationId: input.installationId,
+  })
   let treeSnapshot: Awaited<ReturnType<typeof getGithubRepositoryTree>>
   try {
     treeSnapshot = await getGithubRepositoryTree({
-      branch: discoveryContext.branch,
+      branch: input.branch,
       config: githubConnectorAppConfig(),
-      installationId: discoveryContext.installationId,
-      repositoryFullName: discoveryContext.repositoryFullName,
+      installationId: input.installationId,
+      repositoryFullName: input.repositoryFullName,
+      token,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
   }
 
   const fileTextByPath = await getGithubDiscoveryFileTexts({
-    branch: discoveryContext.branch,
+    branch: input.branch,
     config: githubConnectorAppConfig(),
-    installationId: discoveryContext.installationId,
-    repositoryFullName: discoveryContext.repositoryFullName,
+    installationId: input.installationId,
+    repositoryFullName: input.repositoryFullName,
+    token,
     treeEntries: treeSnapshot.treeEntries,
   })
   const discovery = buildGithubRepoDiscovery({
@@ -2469,23 +2655,18 @@ async function computeGithubConnectorDiscovery(input: { connectorInstanceId: Con
     fileTextByPath,
   })
 
-  const steps: GithubConnectorDiscoveryStep[] = [
-    discoveryStep("completed", "read_repository_structure", "Read repository structure"),
-    discoveryStep(treeSnapshot.treeEntries.some((entry) => entry.path === ".claude-plugin/marketplace.json") ? "completed" : "warning", "check_marketplace_manifest", "Check for Claude marketplace manifest"),
-    discoveryStep(discovery.classification === "claude_single_plugin_repo" || discovery.classification === "claude_multi_plugin_repo" ? "completed" : "warning", "check_plugin_manifests", "Check for plugin manifests"),
-    discoveryStep(discovery.discoveredPlugins.length > 0 ? "completed" : "warning", "prepare_discovered_plugins", "Prepare discovered plugins"),
-  ]
-
   return {
-    autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
+    branch: input.branch,
     classification: discovery.classification,
-    connectorInstance: serializeConnectorInstance(discoveryContext.connectorInstance),
-    connectorTarget: serializeConnectorTarget(discoveryContext.connectorTarget),
     discoveredPlugins: discovery.discoveredPlugins,
+    importPlansByPluginKey: buildGithubDiscoveryImportPlans({
+      discoveredPlugins: discovery.discoveredPlugins,
+      treeEntries: treeSnapshot.treeEntries,
+    }),
     marketplace: discovery.marketplace,
-    repositoryFullName: discoveryContext.repositoryFullName,
+    ref: input.ref,
+    repositoryFullName: input.repositoryFullName,
     sourceRevisionRef: treeSnapshot.headSha,
-    steps,
     treeEntries: treeSnapshot.treeEntries,
     treeSummary: {
       scannedEntryCount: treeSnapshot.treeEntries.length,
@@ -2493,6 +2674,89 @@ async function computeGithubConnectorDiscovery(input: { connectorInstanceId: Con
       truncated: treeSnapshot.truncated,
     } satisfies GithubConnectorDiscoveryTreeSummary,
     warnings: discovery.warnings,
+  } satisfies GithubDiscoverySnapshot
+}
+
+async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext; token?: string }) {
+  const discoveryContext = await getGithubDiscoveryContext(input)
+  const snapshot = await computeGithubDiscoverySnapshot({
+    branch: discoveryContext.branch,
+    installationId: discoveryContext.installationId,
+    ref: discoveryContext.ref,
+    repositoryFullName: discoveryContext.repositoryFullName,
+    token: input.token,
+  })
+
+  return {
+    ...snapshot,
+    connectorInstance: serializeConnectorInstance(discoveryContext.connectorInstance),
+    connectorTarget: serializeConnectorTarget(discoveryContext.connectorTarget),
+  } satisfies GithubConnectorDiscoveryComputation
+}
+
+async function persistGithubConnectorDiscoveryCache(input: {
+  cache: GithubDiscoveryCacheEntry
+  connectorTargetId: ConnectorTargetId
+  context: PluginArchActorContext
+}) {
+  const target = await getConnectorTargetRow(input.context.organizationContext.organization.id, input.connectorTargetId)
+  if (!target) {
+    return
+  }
+
+  const targetConfig = target.targetConfigJson && typeof target.targetConfigJson === "object"
+    ? target.targetConfigJson as Record<string, unknown>
+    : {}
+  await updateConnectorTarget({
+    config: withGithubDiscoveryCache(targetConfig, input.cache),
+    connectorTargetId: target.id,
+    context: input.context,
+    externalTargetRef: target.externalTargetRef,
+    remoteId: target.remoteId,
+  })
+}
+
+async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
+  const discoveryContext = await getGithubDiscoveryContext(input)
+  const targetConfig = discoveryContext.connectorTarget.targetConfigJson && typeof discoveryContext.connectorTarget.targetConfigJson === "object"
+    ? discoveryContext.connectorTarget.targetConfigJson as Record<string, unknown>
+    : null
+  const cached = readGithubDiscoveryCache(targetConfig)
+  if (cached
+    && cached.branch === discoveryContext.branch
+    && cached.ref === discoveryContext.ref
+    && cached.repositoryFullName === discoveryContext.repositoryFullName) {
+    return {
+      autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
+      cache: cached,
+      connectorInstance: serializeConnectorInstance(discoveryContext.connectorInstance),
+      connectorTarget: serializeConnectorTarget(discoveryContext.connectorTarget),
+    }
+  }
+
+  const computed = await computeGithubConnectorDiscovery(input)
+  const cache = {
+    branch: computed.branch,
+    classification: computed.classification,
+    discoveredPlugins: computed.discoveredPlugins,
+    importPlansByPluginKey: computed.importPlansByPluginKey,
+    marketplace: computed.marketplace,
+    ref: computed.ref,
+    repositoryFullName: computed.repositoryFullName,
+    sourceRevisionRef: computed.sourceRevisionRef,
+    treeSummary: computed.treeSummary,
+    warnings: computed.warnings,
+  } satisfies GithubDiscoveryCacheEntry
+  await persistGithubConnectorDiscoveryCache({
+    cache,
+    connectorTargetId: computed.connectorTarget.id,
+    context: input.context,
+  })
+  return {
+    autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
+    cache,
+    connectorInstance: computed.connectorInstance,
+    connectorTarget: computed.connectorTarget,
   }
 }
 
@@ -2516,7 +2780,10 @@ function mappingSelectorMatchesPath(selector: string, path: string) {
   return normalizedPath === normalizedSelector
 }
 
-function importableGithubPathsForMapping(input: { mapping: ReturnType<typeof serializeConnectorMapping>; treeEntries: GithubDiscoveryTreeEntry[] }) {
+function importableGithubPathsForMapping(input: {
+  mapping: Pick<ReturnType<typeof serializeConnectorMapping>, "objectType" | "selector">
+  treeEntries: GithubDiscoveryTreeEntry[]
+}) {
   const matchingBlobs = input.treeEntries
     .filter((entry) => entry.kind === "blob")
     .filter((entry) => mappingSelectorMatchesPath(input.mapping.selector, entry.path))
@@ -2808,13 +3075,12 @@ async function materializeGithubImportedObject(input: {
   return getConfigObjectDetail(input.context, binding.configObjectId)
 }
 
-async function materializeGithubMappings(input: {
+async function materializeGithubImportPlans(input: {
   connectorInstance: ReturnType<typeof serializeConnectorInstance>
   connectorTarget: ReturnType<typeof serializeConnectorTarget>
   context: PluginArchActorContext
-  mappings: Array<ReturnType<typeof serializeConnectorMapping>>
+  importPlans: Array<{ mapping: ReturnType<typeof serializeConnectorMapping>; paths: string[] }>
   sourceRevisionRef: string
-  treeEntries: GithubDiscoveryTreeEntry[]
 }) {
   const config = githubConnectorAppConfig()
   const targetConfig = input.connectorTarget.targetConfigJson && typeof input.connectorTarget.targetConfigJson === "object"
@@ -2829,18 +3095,22 @@ async function materializeGithubMappings(input: {
     throw new PluginArchRouteFailure(409, "invalid_github_materialization_context", "GitHub connector target is missing required materialization context.")
   }
 
+  const token = await getGithubInstallationAccessToken({
+    config,
+    installationId,
+  })
   const materializedConfigObjects: ReturnType<typeof serializeConfigObject>[] = []
-  for (const mapping of input.mappings) {
-    const importableFiles = importableGithubPathsForMapping({ mapping, treeEntries: input.treeEntries })
-    for (const file of importableFiles) {
+  for (const plan of input.importPlans) {
+    for (const path of plan.paths) {
       let rawSourceText: string | null
       try {
         rawSourceText = await getGithubRepositoryTextFile({
           config,
           installationId,
-          path: file.path,
+          path,
           ref: branch,
           repositoryFullName,
+          token,
         })
       } catch (error) {
         wrapGithubConnectorError(error)
@@ -2850,10 +3120,10 @@ async function materializeGithubMappings(input: {
       }
       materializedConfigObjects.push(await materializeGithubImportedObject({
         connectorInstance: input.connectorInstance,
-        connectorMapping: mapping,
+        connectorMapping: plan.mapping,
         connectorTarget: input.connectorTarget,
         context: input.context,
-        externalLocator: file.path,
+        externalLocator: path,
         rawSourceText,
         sourceRevisionRef: input.sourceRevisionRef,
       }))
@@ -3063,17 +3333,21 @@ export async function completeGithubConnectorInstall(input: { context: PluginArc
 }
 
 export async function getGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const discovery = await computeGithubConnectorDiscovery(input)
+  const discovery = await resolveGithubConnectorDiscovery(input)
   return {
-    classification: discovery.classification,
+    autoImportNewPlugins: discovery.autoImportNewPlugins,
+    classification: discovery.cache.classification,
     connectorInstance: discovery.connectorInstance,
     connectorTarget: discovery.connectorTarget,
-    discoveredPlugins: discovery.discoveredPlugins,
-    repositoryFullName: discovery.repositoryFullName,
-    sourceRevisionRef: discovery.sourceRevisionRef,
-    steps: discovery.steps,
-    treeSummary: discovery.treeSummary,
-    warnings: discovery.warnings,
+    discoveredPlugins: discovery.cache.discoveredPlugins,
+    repositoryFullName: discovery.cache.repositoryFullName,
+    sourceRevisionRef: discovery.cache.sourceRevisionRef,
+    steps: buildGithubConnectorDiscoverySteps({
+      classification: discovery.cache.classification,
+      discoveredPlugins: discovery.cache.discoveredPlugins,
+    }),
+    treeSummary: discovery.cache.treeSummary,
+    warnings: discovery.cache.warnings,
   }
 }
 
@@ -3088,9 +3362,9 @@ export async function getGithubConnectorDiscoveryTree(input: { connectorInstance
 }
 
 export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugins: boolean; connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext; selectedKeys: string[] }) {
-  const discovery = await computeGithubConnectorDiscovery({ connectorInstanceId: input.connectorInstanceId, context: input.context })
+  const discovery = await resolveGithubConnectorDiscovery({ connectorInstanceId: input.connectorInstanceId, context: input.context })
   const selectedKeySet = new Set(input.selectedKeys.map((key) => key.trim()).filter(Boolean))
-  const selectedPlugins = discovery.discoveredPlugins.filter((plugin) => plugin.supported && selectedKeySet.has(plugin.key))
+  const selectedPlugins = discovery.cache.discoveredPlugins.filter((plugin) => plugin.supported && selectedKeySet.has(plugin.key))
   await db.update(ConnectorInstanceTable).set({
     instanceConfigJson: {
       ...((discovery.connectorInstance.instanceConfigJson && typeof discovery.connectorInstance.instanceConfigJson === "object")
@@ -3101,11 +3375,11 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
     updatedAt: new Date(),
   }).where(eq(ConnectorInstanceTable.id, discovery.connectorInstance.id))
 
-  const marketplaceInfo = discovery.marketplace
-  const marketplaceName = marketplaceInfo?.name?.trim() || discovery.repositoryFullName
+  const marketplaceInfo = discovery.cache.marketplace
+  const marketplaceName = marketplaceInfo?.name?.trim() || discovery.cache.repositoryFullName
   const marketplaceDescription = marketplaceInfo?.description?.trim()
-    ?? `Imported from GitHub marketplace repository ${discovery.repositoryFullName}.`
-  const createdMarketplace = discovery.classification === "claude_marketplace_repo"
+    ?? `Imported from GitHub marketplace repository ${discovery.cache.repositoryFullName}.`
+  const createdMarketplace = discovery.cache.classification === "claude_marketplace_repo"
     ? await ensureDiscoveryMarketplace({
         context: input.context,
         description: marketplaceDescription,
@@ -3115,6 +3389,7 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
 
   const plugins = [] as Array<ReturnType<typeof serializePlugin>>
   const mappings = [] as Array<ReturnType<typeof serializeConnectorMapping>>
+  const importPlans = [] as Array<{ mapping: ReturnType<typeof serializeConnectorMapping>; paths: string[] }>
   for (const discoveredPlugin of selectedPlugins) {
     const plugin = await ensureDiscoveryPlugin({
       context: input.context,
@@ -3132,24 +3407,25 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
       })
     }
 
-    for (const mapping of discoveryMappingsForPlugin(discoveredPlugin)) {
-      mappings.push(await ensureDiscoveryMapping({
+    for (const plan of discovery.cache.importPlansByPluginKey[discoveredPlugin.key] ?? []) {
+      const mapping = await ensureDiscoveryMapping({
         connectorTargetId: discovery.connectorTarget.id,
         context: input.context,
-        objectType: mapping.objectType,
+        objectType: plan.objectType,
         pluginId: plugin.id,
-        selector: mapping.selector,
-      }))
+        selector: plan.selector,
+      })
+      mappings.push(mapping)
+      importPlans.push({ mapping, paths: plan.paths })
     }
   }
 
-  const materializedConfigObjects = await materializeGithubMappings({
+  const materializedConfigObjects = await materializeGithubImportPlans({
     connectorInstance: discovery.connectorInstance,
     connectorTarget: discovery.connectorTarget,
     context: input.context,
-    mappings,
-    sourceRevisionRef: discovery.sourceRevisionRef,
-    treeEntries: discovery.treeEntries,
+    importPlans,
+    sourceRevisionRef: discovery.cache.sourceRevisionRef,
   })
 
   return {
@@ -3160,7 +3436,7 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
     createdPlugins: plugins,
     createdMappings: mappings,
     materializedConfigObjects,
-    sourceRevisionRef: discovery.sourceRevisionRef,
+    sourceRevisionRef: discovery.cache.sourceRevisionRef,
   }
 }
 
@@ -3202,7 +3478,10 @@ export async function listGithubRepositories(input: { connectorAccountId: Connec
       repositories: repositories.map((repository) => ({
         defaultBranch: repository.defaultBranch,
         fullName: repository.fullName,
+        hasPluginManifest: repository.hasPluginManifest ?? false,
         id: repository.id,
+        manifestKind: repository.manifestKind ?? null,
+        marketplacePluginCount: repository.marketplacePluginCount ?? null,
         private: repository.private,
       })),
       repositorySelection: installationSummary.repositorySelection,
@@ -3229,15 +3508,24 @@ export async function listGithubRepositories(input: { connectorAccountId: Connec
   }
 }
 
-export async function validateGithubTarget(input: { branch: string; installationId: number; ref: string; repositoryFullName: string; repositoryId: number }) {
+export async function validateGithubTarget(input: {
+  branch: string
+  config?: ReturnType<typeof githubConnectorAppConfig>
+  installationId: number
+  ref: string
+  repositoryFullName: string
+  repositoryId: number
+  token?: string
+}) {
   try {
     return await validateGithubInstallationTarget({
       branch: input.branch,
-      config: githubConnectorAppConfig(),
+      config: input.config ?? githubConnectorAppConfig(),
       installationId: input.installationId,
       ref: input.ref,
       repositoryFullName: input.repositoryFullName,
       repositoryId: input.repositoryId,
+      token: input.token,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -3255,12 +3543,19 @@ export async function githubSetup(input: {
   repositoryFullName: string
   repositoryId: number
 }) {
+  const githubConfig = githubConnectorAppConfig()
+  const installationToken = await getGithubInstallationAccessToken({
+    config: githubConfig,
+    installationId: input.installationId,
+  })
   const validation = await validateGithubTarget({
     branch: input.branch,
+    config: githubConfig,
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
     repositoryId: input.repositoryId,
+    token: installationToken,
   })
   if (!validation.repositoryAccessible) {
     throw new PluginArchRouteFailure(409, "github_repository_not_accessible", "GitHub repository is not accessible for this installation.")
@@ -3268,6 +3563,14 @@ export async function githubSetup(input: {
   if (!validation.branchExists) {
     throw new PluginArchRouteFailure(409, "github_branch_not_found", "GitHub branch/ref could not be validated for this repository.")
   }
+
+  const discovery = await computeGithubDiscoverySnapshot({
+    branch: input.branch,
+    installationId: input.installationId,
+    ref: input.ref,
+    repositoryFullName: input.repositoryFullName,
+    token: installationToken,
+  })
 
   let connectorAccountId = input.connectorAccountId as ConnectorAccountId | undefined
   let connectorAccountDetail = connectorAccountId ? await getConnectorAccountDetail(input.context, connectorAccountId) : null
@@ -3295,13 +3598,24 @@ export async function githubSetup(input: {
   })
 
   const connectorTarget = await createConnectorTarget({
-    config: {
+    config: withGithubDiscoveryCache({
       branch: input.branch,
       defaultBranch: validation.defaultBranch,
       ref: input.ref,
       repositoryFullName: input.repositoryFullName,
       repositoryId: input.repositoryId,
-    },
+    }, {
+      branch: discovery.branch,
+      classification: discovery.classification,
+      discoveredPlugins: discovery.discoveredPlugins,
+      importPlansByPluginKey: discovery.importPlansByPluginKey,
+      marketplace: discovery.marketplace,
+      ref: discovery.ref,
+      repositoryFullName: discovery.repositoryFullName,
+      sourceRevisionRef: discovery.sourceRevisionRef,
+      treeSummary: discovery.treeSummary,
+      warnings: discovery.warnings,
+    }),
     connectorInstanceId: connectorInstance.id,
     connectorType: "github",
     context: input.context,

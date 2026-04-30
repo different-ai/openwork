@@ -23,6 +23,7 @@ import {
   usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
+import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
 import type {
   Client,
   McpServerEntry,
@@ -171,7 +172,9 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    activeClient = createClient(`${openworkBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
+    const mountedBaseUrl =
+      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, options.runtimeWorkspaceId()) ?? openworkBaseUrl;
+    activeClient = createClient(`${mountedBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
       token,
       mode: "openwork",
     });
@@ -530,30 +533,40 @@ export function createConnectionsStore(options: {
         }
       }
 
-      const mcpAddConfig =
-        entryType === "remote"
-          ? {
-              type: "remote" as const,
-              url: entry.url!,
-              enabled: true,
-              ...(entry.oauth ? { oauth: {} } : {}),
-            }
-          : {
-              type: "local" as const,
-              command: entry.command!,
-              enabled: true,
-              ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
-            };
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        // The OpenWork server is the source of truth for workspace-scoped MCP
+        // config in the React port. Avoid also calling the OpenCode SDK's MCP
+        // hot-add endpoint here: when the SDK client is rooted at the aggregate
+        // `/opencode` route it can resolve to an internal `local_*` workspace
+        // id that the OpenWork server does not expose, producing a confusing
+        // `workspace_not_found` after the config write already succeeded.
+        setStateField("mcpStatuses", filterConfiguredStatuses(snapshot.mcpStatuses, snapshot.mcpServers));
+      } else {
+        const mcpAddConfig =
+          entryType === "remote"
+            ? {
+                type: "remote" as const,
+                url: entry.url!,
+                enabled: true,
+                ...(entry.oauth ? { oauth: {} } : {}),
+              }
+            : {
+                type: "local" as const,
+                command: entry.command!,
+                enabled: true,
+                ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
+              };
 
-      const status = unwrap(
-        await activeClient.mcp.add({
-          directory: resolvedProjectDir,
-          name: slug,
-          config: mcpAddConfig,
-        }),
-      );
+        const status = unwrap(
+          await activeClient.mcp.add({
+            directory: resolvedProjectDir,
+            name: slug,
+            config: mcpAddConfig,
+          }),
+        );
 
-      setStateField("mcpStatuses", status as McpStatusMap);
+        setStateField("mcpStatuses", status as McpStatusMap);
+      }
       options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 

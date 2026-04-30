@@ -11,6 +11,7 @@ import { useState } from "react";
 import { BookCallForm } from "./book-call-form";
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
 import { LandingBackground } from "./landing-background";
+import { LandingEnterpriseHero } from "./landing-enterprise-hero";
 import {
   defaultLandingDemoFlowId,
   landingDemoFlows,
@@ -118,15 +119,12 @@ export function LandingEnterprise(props: Props) {
               </div>
             </div>
 
-            <div className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16">
-              <img
-                src="/enterprise-hero.png"
-                alt="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
-                className="block h-auto w-full"
-                width={2048}
-                height={1152}
-              />
-            </div>
+            <figure
+              aria-label="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
+              className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16 lg:-mx-16 xl:-mx-32"
+            >
+              <LandingEnterpriseHero />
+            </figure>
           </section>
 
           <section className="space-y-6">

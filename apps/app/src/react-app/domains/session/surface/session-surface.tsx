@@ -24,6 +24,8 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
+import { OwDotTicker } from "../../../shell/dot-ticker";
+import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
 import { SessionTranscript } from "./message-list";
@@ -106,6 +108,25 @@ function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   );
 }
 
+function messageHasVisibleAssistantOutput(message: UIMessage) {
+  if (message.role !== "assistant") return false;
+  return message.parts.some((part) => {
+    if ("text" in part && typeof part.text === "string") return part.text.trim().length > 0;
+    return part.type === "dynamic-tool" || part.type === "file";
+  });
+}
+
+function AssistantWaitingCard() {
+  return (
+    <div className="flex justify-start py-2" role="status" aria-live="polite">
+      <div className="inline-flex items-center gap-3 rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-[12px] text-dls-secondary">
+        <OwDotTicker size="sm" />
+        <span>Thinking</span>
+      </div>
+    </div>
+  );
+}
+
 function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }) {
   if (!attachment.previewUrl) return;
   URL.revokeObjectURL(attachment.previewUrl);
@@ -120,6 +141,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
+  const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
@@ -181,6 +203,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setSending(false);
     setShowDelayedLoading(false);
+    setAwaitingAssistantBaseline(null);
     // Clear draft + attachments + mentions on session change so typed text
     // doesn't bleed across sessions (and across workspaces). The sessionId
     // effectively changes when the workspace changes too because the route
@@ -270,6 +293,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
   const renderedMessages = transcriptState ?? [];
   const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
+  const assistantOutputAfterAwaitStart = useMemo(() => {
+    if (awaitingAssistantBaseline === null) return false;
+    return renderedMessages
+      .slice(awaitingAssistantBaseline)
+      .some(messageHasVisibleAssistantOutput);
+  }, [awaitingAssistantBaseline, renderedMessages]);
+  const showAssistantWaitState = awaitingAssistantBaseline !== null && !assistantOutputAfterAwaitStart;
+  useReactRenderWatchdog("SessionSurface", {
+    sessionId: props.sessionId,
+    workspaceId: props.workspaceId,
+    messageCount: renderedMessages.length,
+    liveStatus: liveStatus.type,
+    sending,
+    pendingSessionLoad,
+    showAssistantWaitState,
+    hasSnapshot: Boolean(snapshot),
+  });
 
   useEffect(() => {
     if (!pendingSessionLoad) {
@@ -279,6 +319,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const id = window.setTimeout(() => setShowDelayedLoading(true), 2000);
     return () => window.clearTimeout(id);
   }, [pendingSessionLoad]);
+
+  useEffect(() => {
+    if (awaitingAssistantBaseline === null) return;
+    if (assistantOutputAfterAwaitStart) {
+      setAwaitingAssistantBaseline(null);
+      return;
+    }
+    if (sending || liveStatus.type !== "idle" || renderedMessages.length <= awaitingAssistantBaseline) return;
+    const id = window.setTimeout(() => setAwaitingAssistantBaseline(null), 1200);
+    return () => window.clearTimeout(id);
+  }, [assistantOutputAfterAwaitStart, awaitingAssistantBaseline, liveStatus.type, renderedMessages.length, sending]);
 
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
@@ -336,6 +387,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // talking" behavior that the Solid composer had.
     setError(null);
     setSending(true);
+    setAwaitingAssistantBaseline(renderedMessages.length);
     try {
       const nextDraft = buildDraft(text, attachments);
       await props.onSendDraft(nextDraft);
@@ -346,6 +398,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSending(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
+      setAwaitingAssistantBaseline(null);
       setSending(false);
     }
   };
@@ -560,20 +613,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   {error || (snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load React session view.")}
                 </div>
               </div>
-            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
-              <div className="px-6 py-16">
-                <div className="mx-auto max-w-sm rounded-3xl border border-dls-border bg-dls-hover/60 px-8 py-10 text-center">
-                  <div className="text-sm text-dls-secondary">No transcript yet.</div>
-                </div>
+            ) : renderedMessages.length === 0 && showAssistantWaitState ? (
+              <div className="px-6 py-12">
+                <AssistantWaitingCard />
               </div>
+            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
+              null
             ) : (
               <DevProfiler id="SessionTranscript">
-                <SessionTranscript
-                  messages={renderedMessages}
-                  isStreaming={chatStreaming}
-                  developerMode={props.developerMode}
-                  scrollElement={() => scrollRef.current}
-                />
+                <>
+                  <SessionTranscript
+                    messages={renderedMessages}
+                    isStreaming={chatStreaming}
+                    developerMode={props.developerMode}
+                    scrollElement={() => scrollRef.current}
+                  />
+                  {showAssistantWaitState ? <AssistantWaitingCard /> : null}
+                </>
               </DevProfiler>
             )}
           </div>
