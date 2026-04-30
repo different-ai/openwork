@@ -22,6 +22,8 @@ import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
+import { PublishedWorkflowsService, type PublishedWorkflowRecord } from "./published-workflows.js";
+import { handleMcpRequest, type McpToolDescriptor } from "./published-mcp.js";
 import { EnvService, EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
@@ -209,6 +211,7 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
+  const publishedWorkflows = new PublishedWorkflowsService(config);
   const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
@@ -216,7 +219,7 @@ export function startServer(config: ServerConfig) {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
-  const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
+  const routes = createRoutes(config, approvals, tokens, publishedWorkflows, env, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -236,16 +239,16 @@ export function startServer(config: ServerConfig) {
       const finalize = (response: Response) => {
         const wrapped = withCors(response, request, config);
         if (config.logRequests) {
-            logRequest({
-              logger,
-              request,
-              response: wrapped,
-              durationMs: Date.now() - startedAt,
-              authMode,
-              proxyService,
-              proxyBaseUrl,
-              error: errorMessage,
-            });
+          logRequest({
+            logger,
+            request,
+            response: wrapped,
+            durationMs: Date.now() - startedAt,
+            authMode,
+            proxyService,
+            proxyBaseUrl,
+            error: errorMessage,
+          });
         }
         return wrapped;
       };
@@ -457,6 +460,77 @@ async function fetchOpencodeJson(
     });
   }
   return json;
+}
+
+// Synchronous bridge for the published-workflows MCP transport. Spins up a
+// fresh OpenCode session, sends a single prompt, and waits for the assistant
+// response so the MCP `tools/call` round-trip can return real data in one
+// HTTP cycle. Hard-caps run time so a stuck agent cannot pin a worker.
+const PUBLISHED_WORKFLOW_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.OPENWORK_PUBLISHED_WORKFLOW_TIMEOUT_MS ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : 60_000;
+})();
+
+async function executePublishedWorkflow(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  record: PublishedWorkflowRecord,
+  args: Record<string, unknown>,
+): Promise<{ text: string; isError?: boolean }> {
+  const sessionResponse = await fetchOpencodeJson(config, workspace, "/session", {
+    method: "POST",
+    body: { title: `MCP: ${record.toolName}` },
+  });
+  const sessionId =
+    sessionResponse && typeof sessionResponse === "object" && "id" in sessionResponse && typeof sessionResponse.id === "string"
+      ? sessionResponse.id.trim()
+      : "";
+  if (!sessionId) {
+    throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
+  }
+
+  const argsJson = JSON.stringify(args, null, 2);
+  const promptText = `Run the \`${record.skillName}\` skill with the following input:\n\n\`\`\`json\n${argsJson}\n\`\`\``;
+
+  const promptBody: Record<string, unknown> = {
+    parts: [{ type: "text", text: promptText }],
+  };
+  if (record.agent) promptBody.agent = record.agent;
+
+  // OpenCode's synchronous prompt endpoint is `POST /session/:id/message`
+  // (the SDK's `client.session.prompt`). The async/queued variant is
+  // `/session/:id/prompt_async`. We need the synchronous one so the MCP
+  // `tools/call` round-trip can return the assistant text in one HTTP turn.
+  const promptPromise = fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
+    method: "POST",
+    body: promptBody,
+  });
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new ApiError(504, "published_workflow_timeout", "Workflow timed out")), PUBLISHED_WORKFLOW_TIMEOUT_MS);
+  });
+
+  const result = await Promise.race([promptPromise, timeoutPromise]);
+  return { text: extractAssistantText(result) };
+}
+
+function extractAssistantText(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const root = value as Record<string, unknown>;
+  // OpenCode session.prompt returns either { info, parts } directly or a
+  // wrapped envelope. Normalize both shapes before pulling out text parts.
+  const parts = Array.isArray(root.parts)
+    ? root.parts
+    : Array.isArray((root.message as { parts?: unknown[] } | undefined)?.parts)
+      ? (root.message as { parts: unknown[] }).parts
+      : [];
+  const chunks: string[] = [];
+  for (const part of parts) {
+    if (part && typeof part === "object" && (part as { type?: unknown }).type === "text") {
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string" && text) chunks.push(text);
+    }
+  }
+  return chunks.join("\n").trim() || "(no text response)";
 }
 
 async function proxyOpencodeRequest(input: {
@@ -1026,11 +1100,11 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   const opencode =
     workspace.baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
       ? {
-          baseUrl: workspace.baseUrl,
-          directory: opencodeDirectory ?? undefined,
-          username: opencodeUsername,
-          password: opencodePassword,
-        }
+        baseUrl: workspace.baseUrl,
+        directory: opencodeDirectory ?? undefined,
+        username: opencodeUsername,
+        password: opencodePassword,
+      }
       : undefined;
   return {
     ...rest,
@@ -1042,6 +1116,7 @@ function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
   tokens: TokenService,
+  publishedWorkflows: PublishedWorkflowsService,
   env: EnvService,
   onWorkspacesChanged: () => void,
 ): Route[] {
@@ -1437,10 +1512,10 @@ function createRoutes(
     config.workspaces = config.workspaces.map((entry) =>
       entry.id === workspace.id
         ? {
-            ...entry,
-            displayName: nextDisplayName,
-            name: nextDisplayName ?? entry.name,
-          }
+          ...entry,
+          displayName: nextDisplayName,
+          name: nextDisplayName ?? entry.name,
+        }
         : entry,
     );
 
@@ -1644,7 +1719,7 @@ function createRoutes(
     }
 
     // OpenCode session deletion via the upstream API.
-        await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
+    await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
 
@@ -1730,7 +1805,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
 
-      await reloadOpencodeEngine(config, workspace);
+    await reloadOpencodeEngine(config, workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -2427,10 +2502,10 @@ function createRoutes(
     const repoPayload = body?.repo && typeof body.repo === "object" ? (body.repo as Record<string, unknown>) : undefined;
     const repo = repoPayload
       ? {
-          owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
-          repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
-          ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
-        }
+        owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
+        repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
+        ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
+      }
       : undefined;
 
     await requireApproval(ctx, {
@@ -2874,7 +2949,7 @@ function createRoutes(
     const bundle = await fetchSharedBundle(body.bundleUrl, {
       timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
     });
-  return jsonResponse(bundle);
+    return jsonResponse(bundle);
   });
 
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
@@ -2890,6 +2965,123 @@ function createRoutes(
     }
     return jsonResponse({ ok: true, allowed: result.allowed });
   });
+
+  // Published workflows admin (host-only): manage which skills are exposed
+  // as MCP tools and over what tokens. Listing/creation/revocation lives on
+  // the workspace surface so each workspace owns its own publications.
+  addRoute(routes, "GET", "/workspace/:id/published-workflows", "host", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await publishedWorkflows.list(workspace.id);
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/published-workflows", "host", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+
+    const skillName = typeof body.skillName === "string" ? body.skillName.trim() : "";
+    if (!skillName) {
+      throw new ApiError(400, "invalid_payload", "skillName is required");
+    }
+    const description = typeof body.description === "string" ? body.description.trim() : "";
+    if (!description) {
+      throw new ApiError(400, "invalid_payload", "description is required");
+    }
+
+    // Default the public tool name to the skill name, but let callers pick
+    // a different identifier (e.g. snake_case vs kebab-case) for MCP clients.
+    const rawToolName = typeof body.toolName === "string" ? body.toolName.trim() : "";
+    const toolName = rawToolName || skillName;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(toolName)) {
+      throw new ApiError(400, "invalid_payload", "toolName must match [A-Za-z0-9_-]{1,64}");
+    }
+
+    const agent = typeof body.agent === "string" && body.agent.trim() ? body.agent.trim() : undefined;
+    const label = typeof body.label === "string" && body.label.trim() ? body.label.trim() : undefined;
+    const inputSchema =
+      body.inputSchema && typeof body.inputSchema === "object" && (body.inputSchema as { type?: unknown }).type === "object"
+        ? (body.inputSchema as PublishedWorkflowRecord["inputSchema"])
+        : undefined;
+
+    const issued = await publishedWorkflows.create({
+      workspaceId: workspace.id,
+      skillName,
+      toolName,
+      description,
+      agent,
+      label,
+      inputSchema,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "published-workflow.create",
+      target: issued.id,
+      summary: `Published skill ${skillName} as MCP tool ${toolName}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse(issued, 201);
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/published-workflows/:workflowId", "host", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workflowId = ctx.params.workflowId;
+    const existing = await publishedWorkflows.get(workflowId);
+    if (!existing || existing.workspaceId !== workspace.id) {
+      throw new ApiError(404, "published_workflow_not_found", "Published workflow not found");
+    }
+    const ok = await publishedWorkflows.revoke(workflowId);
+    if (!ok) {
+      throw new ApiError(404, "published_workflow_not_found", "Published workflow not found");
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "published-workflow.revoke",
+      target: workflowId,
+      summary: `Revoked published workflow ${existing.toolName}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ ok: true });
+  });
+
+  // Public MCP transport. Auth is the URL-embedded token; we reject anything
+  // that does not match a stored hash. The handler dispatches JSON-RPC and
+  // forwards `tools/call` to the synchronous OpenCode `/session/:id/prompt`.
+  const mcpHandler = async (ctx: RequestContext): Promise<Response> => {
+    const token = ctx.params.token ?? "";
+    const record = await publishedWorkflows.findByToken(token);
+    if (!record) {
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized" } }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const workspace = config.workspaces.find((entry) => entry.id === record.workspaceId);
+    if (!workspace) {
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32002, message: "Workspace unavailable" } }), {
+        status: 410,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const tool: McpToolDescriptor = {
+      name: record.toolName,
+      description: record.description,
+      inputSchema: record.inputSchema ?? { type: "object", properties: { input: { type: "string" } } },
+    };
+    return handleMcpRequest({
+      request: ctx.request,
+      tool,
+      execute: (args) => executePublishedWorkflow(config, workspace, record, args),
+    });
+  };
+  addRoute(routes, "POST", "/published/:token/mcp", "none", mcpHandler);
+  addRoute(routes, "GET", "/published/:token/mcp", "none", mcpHandler);
+  addRoute(routes, "DELETE", "/published/:token/mcp", "none", mcpHandler);
 
   return routes;
 }

@@ -1,0 +1,134 @@
+# Real-OpenCode curl verification — published-workflows MCP
+#
+# Captured against a live OpenWork server with managed OpenCode
+# (OPENWORK_MANAGE_OPENCODE=1) bound to a workspace at
+# ~/openwork-mcp-test containing a single skill: echo.
+#
+# Server: bun apps/server/src/cli.ts --host 127.0.0.1 --port 4747
+#         --token $CLIENT_TOKEN --host-token $HOST_TOKEN
+#         --workspace ~/openwork-mcp-test --verbose
+#
+# Outcome: A (success). tools/call returned the agent's text reply
+# with no isError, confirming the bridge runs through real OpenCode
+# /session and /session/:id/message.
+
+$ export HOST_TOKEN=owt_test_host
+$ export CLIENT_TOKEN=owt_test_client
+$ BASE=http://127.0.0.1:4747
+
+# --- Step 3: list workspaces, capture id ---
+$ curl -s "$BASE/workspaces" -H "Authorization: Bearer $CLIENT_TOKEN" | jq
+{
+  "items": [
+    {
+      "id": "ws_30eed34021d9",
+      "name": "openwork-mcp-test",
+      "path": "/Users/harshithpeta/openwork-mcp-test",
+      "preset": "starter",
+      "workspaceType": "local",
+      "baseUrl": "http://127.0.0.1:56999",
+      "directory": "/Users/harshithpeta/openwork-mcp-test",
+      "opencode": {
+        "baseUrl": "http://127.0.0.1:56999",
+        "directory": "/Users/harshithpeta/openwork-mcp-test",
+        "username": "<redacted>",
+        "password": "<redacted>"
+      }
+    }
+  ],
+  "activeId": "ws_30eed34021d9"
+}
+$ WS_ID=ws_30eed34021d9
+
+# --- Step 4: confirm skill name ---
+$ curl -s "$BASE/workspace/$WS_ID/skills" -H "Authorization: Bearer $CLIENT_TOKEN" \
+    | jq '.items[].name'
+"echo"
+
+# --- Step 5: publish the skill ---
+$ curl -s -X POST "$BASE/workspace/$WS_ID/published-workflows" \
+    -H "x-openwork-host-token: $HOST_TOKEN" \
+    -H "content-type: application/json" \
+    -d '{
+          "skillName": "echo",
+          "description": "Echo the input back verbatim",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "input": { "type": "string", "description": "Text to echo" } },
+            "required": ["input"]
+          }
+        }' | jq
+{
+  "id": "c3b84969-a9d1-45c8-ad4f-ae6b33a502a9",
+  "workspaceId": "ws_30eed34021d9",
+  "skillName": "echo",
+  "toolName": "echo",
+  "description": "Echo the input back verbatim",
+  "createdAt": 1777580681405,
+  "inputSchema": {
+    "type": "object",
+    "properties": { "input": { "type": "string", "description": "Text to echo" } },
+    "required": ["input"]
+  },
+  "token": "pwt_233a57851f024a09a86cadaff77ae2bf536e1a50b937446b9a43c8ff50c184b0"
+}
+$ TOKEN=pwt_233a57851f024a09a86cadaff77ae2bf536e1a50b937446b9a43c8ff50c184b0
+
+# --- Step 7: initialize ---
+$ curl -s -X POST "$BASE/published/$TOKEN/mcp" \
+    -H "content-type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": { "tools": {} },
+    "serverInfo": {
+      "name": "openwork-published-workflow",
+      "version": "0.1.0"
+    }
+  }
+}
+
+# --- Step 8: tools/list ---
+$ curl -s -X POST "$BASE/published/$TOKEN/mcp" \
+    -H "content-type: application/json" \
+    -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "echo",
+        "description": "Echo the input back verbatim",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "input": { "type": "string", "description": "Text to echo" } },
+          "required": ["input"]
+        }
+      }
+    ]
+  }
+}
+
+# --- Step 9: tools/call (real bridge through OpenCode) ---
+$ curl -s -X POST "$BASE/published/$TOKEN/mcp" \
+    -H "content-type: application/json" \
+    -d '{
+          "jsonrpc":"2.0","id":3,"method":"tools/call",
+          "params":{"name":"echo","arguments":{"input":"hello from MCP"}}
+        }' | jq
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "```json\n{\n  \"input\": \"hello from MCP\"\n}\n```"
+      }
+    ]
+  }
+}
