@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeWorkspaceRelativePath } from "./server.js";
+import { isSupportedWorkspaceTextFilePath, normalizeWorkspaceRelativePath } from "./server.js";
 
 describe("normalizeWorkspaceRelativePath", () => {
   test("accepts a plain workspace-relative path", () => {
@@ -32,5 +32,17 @@ describe("normalizeWorkspaceRelativePath", () => {
   test("treats workspace/ with no file as invalid", () => {
     expect(() => normalizeWorkspaceRelativePath("workspace/", { allowSubdirs: true })).toThrow();
     expect(() => normalizeWorkspaceRelativePath("/workspace/", { allowSubdirs: true })).toThrow();
+  });
+});
+
+describe("isSupportedWorkspaceTextFilePath", () => {
+  test("accepts plugin import text file extensions", () => {
+    expect(isSupportedWorkspaceTextFilePath(".opencode/tools/cloud.ts")).toBe(true);
+    expect(isSupportedWorkspaceTextFilePath(".opencode/mcps/cloud.json")).toBe(true);
+    expect(isSupportedWorkspaceTextFilePath(".opencode/plugins/cloud.txt")).toBe(true);
+  });
+
+  test("rejects unsupported binary-like extensions", () => {
+    expect(isSupportedWorkspaceTextFilePath(".opencode/plugins/cloud.bin")).toBe(false);
   });
 });

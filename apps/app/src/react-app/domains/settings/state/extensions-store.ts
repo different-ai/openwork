@@ -38,7 +38,12 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import type { OpenworkHubRepo, OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import type {
+  OpenworkHubRepo,
+  OpenworkServerCapabilities,
+  OpenworkServerClient,
+  OpenworkServerStatus,
+} from "../../../../app/lib/openwork-server";
 import {
   createDenClient,
   fetchDenOrgSkillsCatalog,
@@ -174,6 +179,11 @@ export function createExtensionsStore(options: {
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
   openworkServer: OpenworkServerStore;
+  openworkServerConnection?: () => {
+    openworkServerClient: OpenworkServerClient | null;
+    openworkServerStatus: OpenworkServerStatus;
+    openworkServerCapabilities: OpenworkServerCapabilities | null;
+  };
   runtimeWorkspaceId: () => string | null;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
@@ -255,6 +265,18 @@ export function createExtensionsStore(options: {
     const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
     const workspaceType = options.workspaceType();
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
+  };
+
+  const getOpenworkServerSnapshot = () => {
+    const snapshot = options.openworkServer.getSnapshot();
+    const connection = options.openworkServerConnection?.();
+    if (!connection?.openworkServerClient) return snapshot;
+    return {
+      ...snapshot,
+      openworkServerClient: connection.openworkServerClient,
+      openworkServerStatus: connection.openworkServerStatus,
+      openworkServerCapabilities: connection.openworkServerCapabilities,
+    };
   };
 
   const refreshSnapshot = () => {
@@ -342,7 +364,7 @@ export function createExtensionsStore(options: {
   const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -366,7 +388,7 @@ export function createExtensionsStore(options: {
   const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -494,7 +516,7 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -568,7 +590,7 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -720,7 +742,7 @@ export function createExtensionsStore(options: {
   };
 
   const writePluginWorkspaceFile = async (path: string, content: string) => {
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     if (
@@ -826,7 +848,7 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const repo = snapshot.hubRepo;
     const loadKey = `${root}::${repo ? hubRepoKey(repo) : "none"}`;
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const canUseOpenworkServer =
       openworkSnapshot.openworkServerStatus === "connected" &&
@@ -1270,7 +1292,7 @@ export function createExtensionsStore(options: {
     if (!repo) return { ok: false, message: "Select a hub repo before installing skills." };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1403,7 +1425,7 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1561,7 +1583,7 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1732,7 +1754,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1821,7 +1843,7 @@ export function createExtensionsStore(options: {
     const triggerName = stripPluginVersion(name);
 
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -1934,7 +1956,7 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -2091,7 +2113,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =
@@ -2145,7 +2167,7 @@ export function createExtensionsStore(options: {
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const openworkWorkspaceId = options.runtimeWorkspaceId();
     const canUseOpenworkServer =

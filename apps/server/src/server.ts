@@ -741,6 +741,13 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
   return parts.join("/");
 }
 
+export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
+  const lowered = relativePath.toLowerCase();
+  return [".md", ".mdx", ".markdown", ".json", ".jsonc", ".ts", ".js", ".mjs", ".cjs", ".txt"].some((ext) =>
+    lowered.endsWith(ext),
+  );
+}
+
 function resolveSafeChildPath(root: string, child: string): string {
   const rootResolved = resolve(root);
   const candidate = resolve(rootResolved, child);
@@ -2203,10 +2210,8 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = (ctx.url.searchParams.get("path") ?? "").trim();
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     const absPath = resolveSafeChildPath(workspace.path, relativePath);
@@ -2235,10 +2240,8 @@ function createRoutes(
 
     const requestedPath = String(body.path ?? "");
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     if (typeof body.content !== "string") {

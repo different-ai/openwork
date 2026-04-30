@@ -75,6 +75,14 @@ type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
 };
 
+const ROUTE_OPENWORK_CAPABILITIES: OpenworkServerCapabilities = {
+  skills: { read: true, write: true, source: "openwork" },
+  plugins: { read: true, write: true },
+  mcp: { read: true, write: true },
+  commands: { read: true, write: true },
+  config: { read: true, write: true },
+};
+
 function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   return {
     ...workspace,
@@ -373,6 +381,9 @@ export function SettingsRoute() {
     selectedWorkspaceRoot: "",
     selectedWorkspaceType: "local" as "local" | "remote",
     runtimeWorkspaceId: null as string | null,
+    openworkServerClient: null as OpenworkServerClient | null,
+    openworkServerStatus: "disconnected" as "connected" | "disconnected",
+    openworkServerCapabilities: null as OpenworkServerCapabilities | null,
     selectedWorkspaceDisplay: emptyWorkspaceDisplay as WorkspaceDisplay,
     providerItems: [] as ProviderListItem[],
     providerDefaults: {} as Record<string, string>,
@@ -408,6 +419,9 @@ export function SettingsRoute() {
     selectedWorkspaceRoot,
     selectedWorkspaceType: selectedWorkspace?.workspaceType ?? "local",
     runtimeWorkspaceId: selectedWorkspace?.id ?? null,
+    openworkServerClient: openworkClient,
+    openworkServerStatus: openworkClient ? "connected" : "disconnected",
+    openworkServerCapabilities: openworkClient ? ROUTE_OPENWORK_CAPABILITIES : null,
     selectedWorkspaceDisplay,
     providerItems: providers,
     providerDefaults,
@@ -557,6 +571,11 @@ export function SettingsRoute() {
         selectedWorkspaceRoot: () => routeStateRef.current.selectedWorkspaceRoot,
         workspaceType: () => routeStateRef.current.selectedWorkspaceType,
         openworkServer: openworkServerStore,
+        openworkServerConnection: () => ({
+          openworkServerClient: routeStateRef.current.openworkServerClient,
+          openworkServerStatus: routeStateRef.current.openworkServerStatus,
+          openworkServerCapabilities: routeStateRef.current.openworkServerCapabilities,
+        }),
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         setBusy,
         setBusyLabel,
@@ -911,13 +930,7 @@ export function SettingsRoute() {
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
-    ? {
-        skills: { read: true, write: true, source: "openwork" },
-        plugins: { read: true, write: true },
-        mcp: { read: true, write: true },
-        commands: { read: true, write: true },
-        config: { read: true, write: true },
-      }
+    ? ROUTE_OPENWORK_CAPABILITIES
     : null;
   const environmentRuntimeKey = buildOpenworkEnvRuntimeKey({
     baseUrl: openworkServerSnapshot.openworkServerBaseUrl || openworkServerSnapshot.openworkServerUrl,
