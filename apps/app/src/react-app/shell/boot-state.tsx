@@ -49,7 +49,7 @@ const PHASE_MESSAGES: Record<BootPhaseId, string> = {
   idle: "",
   "bootstrapping-workspaces": "Loading your workspaces",
   "starting-openwork-server": "Starting the OpenWork server",
-  "starting-engine": "Starting OpenCode",
+  "starting-engine": "Preparing workspace",
   "activating-workspace": "Activating your workspace",
   ready: "Ready",
   error: "Something went wrong",
@@ -130,7 +130,12 @@ export function useBootState(): BootStateContextValue {
  */
 export function useBootOverlayVisible(): boolean {
   const { phase, routeReady } = useBootState();
-  const canHide = phase === "ready" && routeReady;
+  // HMR can remount the provider while the route tree stays mounted. In that
+  // state the boot phase falls back to `idle`, but the already-rendered route
+  // is interactive and can mark itself ready again. Treat `idle + routeReady`
+  // the same as `ready + routeReady` so the full-screen boot overlay never
+  // becomes a permanent pointer-events blocker during development.
+  const canHide = routeReady && (phase === "ready" || phase === "idle");
   const [visible, setVisible] = useState(!canHide);
 
   useEffect(() => {

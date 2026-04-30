@@ -7,6 +7,7 @@ import {
   openworkServerInfo,
   orchestratorWorkspaceActivate,
   resolveWorkspaceListSelectedId,
+  runtimeBootstrap,
   workspaceBootstrap,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
@@ -26,8 +27,9 @@ let BOOT_STARTED = false;
  *   2) if a local workspace is selected, restart the embedded OpenWork server
  *   3) start the OpenCode engine pointed at the workspace
  *   4) activate the workspace in the orchestrator
- *   5) persist the resulting base URL + token into local OpenWork settings so the
- *      React routes (session-route / settings-route) see a live `readOpenworkServerSettings()`
+ *   5) notify React routes that fresh desktop runtime info is available. Electron
+ *      routes read live runtime info directly instead of persisting ephemeral
+ *      localhost ports/tokens into OpenWork settings.
  *
  * Safe to call multiple times — gated by a `didBoot` ref so it runs once per mount.
  */
@@ -82,6 +84,45 @@ export function useDesktopRuntimeBoot() {
           return;
         }
 
+        if (isElectronRuntime()) {
+          setPhase("starting-engine", "Starting your workspace");
+          const boot = (await runtimeBootstrap().catch((error) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : safeStringify(error),
+          }))) as {
+            ok?: boolean;
+            skipped?: boolean;
+            error?: string;
+            engine?: { baseUrl?: string | null };
+            openworkServer?: {
+              baseUrl?: string | null;
+              ownerToken?: string | null;
+              clientToken?: string | null;
+              port?: number | null;
+              remoteAccessEnabled?: boolean;
+            };
+          };
+
+          if (boot.ok === false) {
+            setError(boot.error || "Failed to start OpenWork runtime");
+            return;
+          }
+
+          if (boot.engine?.baseUrl) {
+            setActive(boot.engine.baseUrl);
+          }
+          const serverInfo = boot.openworkServer;
+          if (serverInfo?.baseUrl) {
+            try {
+              window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+            } catch {
+              /* ignore */
+            }
+          }
+          markReady();
+          return;
+        }
+
         // FAST PATH ─────────────────────────────────────────────────────
         // Cheap status probe: if engine is already running just publish the
         // current openwork-server base URL + token and finish in <1s.
@@ -130,7 +171,7 @@ export function useDesktopRuntimeBoot() {
           if (!workspacePaths.includes(path)) workspacePaths.push(path);
         }
 
-        setPhase("starting-engine", "Launching the OpenCode engine");
+        setPhase("starting-engine", "Starting your workspace");
         const engineStartResult = await engineStart(workspaceRoot, {
           runtime: "openwork-orchestrator",
           workspacePaths,

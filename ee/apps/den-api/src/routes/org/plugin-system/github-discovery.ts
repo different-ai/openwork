@@ -243,15 +243,19 @@ function readStringArray(value: unknown) {
     : []
 }
 
-function marketplaceComponentPaths(entry: MarketplaceEntry, knownPaths: Set<string>, rootPath: string) {
+function declaredComponentPaths(input: {
+  declared: Partial<Record<keyof GithubDiscoveredPlugin["componentPaths"], unknown>>
+  knownPaths: Set<string>
+  rootPath: string
+}) {
   const collect = (values: unknown, { file, directory }: { file?: boolean; directory?: boolean }) => {
     const paths: string[] = []
     for (const value of readStringArray(values)) {
-      const candidate = joinPath(rootPath, value)
-      if (!candidate && !rootPath) {
+      const candidate = joinPath(input.rootPath, value)
+      if (!candidate && !input.rootPath) {
         continue
       }
-      if ((directory && hasDescendant(knownPaths, candidate)) || (file && hasPath(knownPaths, candidate))) {
+      if ((directory && hasDescendant(input.knownPaths, candidate)) || (file && hasPath(input.knownPaths, candidate))) {
         paths.push(candidate)
       }
     }
@@ -259,15 +263,30 @@ function marketplaceComponentPaths(entry: MarketplaceEntry, knownPaths: Set<stri
   }
 
   return {
-    agents: collect(entry.agents, { directory: true }),
-    commands: collect(entry.commands, { directory: true }),
-    hooks: collect(entry.hooks, { file: true, directory: true }),
+    agents: collect(input.declared.agents, { directory: true }),
+    commands: collect(input.declared.commands, { directory: true }),
+    hooks: collect(input.declared.hooks, { file: true, directory: true }),
     lspServers: [],
-    mcpServers: collect(entry.mcpServers, { file: true }),
+    mcpServers: collect(input.declared.mcpServers, { file: true }),
     monitors: [],
-    settings: collect(entry.settings, { file: true }),
-    skills: collect(entry.skills, { directory: true }),
+    settings: collect(input.declared.settings, { file: true }),
+    skills: collect(input.declared.skills, { directory: true }),
   } satisfies GithubDiscoveredPlugin["componentPaths"]
+}
+
+function marketplaceComponentPaths(entry: MarketplaceEntry, knownPaths: Set<string>, rootPath: string) {
+  return declaredComponentPaths({
+    declared: {
+      agents: entry.agents,
+      commands: entry.commands,
+      hooks: entry.hooks,
+      mcpServers: entry.mcpServers,
+      settings: entry.settings,
+      skills: entry.skills,
+    },
+    knownPaths,
+    rootPath,
+  })
 }
 
 function hasAnyComponentPaths(componentPaths: GithubDiscoveredPlugin["componentPaths"]) {
@@ -301,7 +320,13 @@ function buildDiscoveredPlugin(input: {
   warnings?: string[]
 }) {
   const metadata = readPluginMetadata(input.fileTextByPath, input.rootPath, input.manifestPath)
-  const componentPaths = input.componentPathsOverride ?? collectComponentPaths(input.knownPaths, input.rootPath)
+  const manifestDeclaredPaths = declaredComponentPaths({
+    declared: metadata.metadata,
+    knownPaths: input.knownPaths,
+    rootPath: input.rootPath,
+  })
+  const componentPaths = input.componentPathsOverride
+    ?? (hasAnyComponentPaths(manifestDeclaredPaths) ? manifestDeclaredPaths : collectComponentPaths(input.knownPaths, input.rootPath))
   const displayName = input.displayName?.trim()
     || metadata.name
     || basename(input.rootPath)

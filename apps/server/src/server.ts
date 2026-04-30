@@ -486,23 +486,30 @@ async function fetchOpencodeJson(
 
   const url = new URL(baseUrl);
   url.pathname = path.startsWith("/") ? path : `/${path}`;
+  const directory = resolveOpencodeDirectory(workspace);
   if (init.query instanceof URLSearchParams) {
-    url.search = init.query.toString();
+    const params = new URLSearchParams(init.query);
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
+    url.search = params.toString();
   } else if (init.query) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(init.query)) {
       if (value === undefined || value === null) continue;
       params.set(key, String(value));
     }
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
     url.search = params.toString();
   } else {
-    url.search = "";
+    url.search = directory ? new URLSearchParams({ directory }).toString() : "";
   }
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
 
-  const directory = resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }

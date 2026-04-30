@@ -648,6 +648,14 @@ export async function engineInfo(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_info");
 }
 
+export async function runtimeBootstrap(): Promise<unknown> {
+  return {
+    ok: true,
+    skipped: true,
+    reason: "unsupported-runtime",
+  };
+}
+
 export async function engineDoctor(options?: {
   preferSidecar?: boolean;
   opencodeBinPath?: string | null;
@@ -668,6 +676,7 @@ export async function pickDirectory(options?: {
     title: options?.title,
     defaultPath: options?.defaultPath,
     directory: true,
+    canCreateDirectories: true,
     multiple: options?.multiple,
   });
 }

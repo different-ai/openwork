@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
+import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { createServerLogger, startServer } from "./server.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -18,6 +19,31 @@ if (args.version) {
 
 const config = await resolveServerConfig(args);
 const logger = createServerLogger(config);
+let managedOpencode: ManagedOpencodeServer | null = null;
+
+if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
+  const workspace = config.workspaces[0];
+  if (workspace?.path) {
+    managedOpencode = await createManagedOpencodeServer({
+      bin: process.env.OPENWORK_OPENCODE_BIN,
+      cwd: workspace.path,
+      env: {
+        ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+      },
+    });
+    config.opencodeBaseUrl = managedOpencode.url;
+    config.opencodeUsername = managedOpencode.username;
+    config.opencodePassword = managedOpencode.password;
+    for (const entry of config.workspaces) {
+      entry.baseUrl ??= managedOpencode.url;
+      entry.opencodeUsername ??= managedOpencode.username;
+      entry.opencodePassword ??= managedOpencode.password;
+      entry.directory ??= entry.path;
+    }
+    logger.log("info", `Managed OpenCode listening on ${managedOpencode.url}`);
+  }
+}
+
 const server = startServer(config);
 
 const url = `http://${config.host}:${server.port}`;
@@ -46,3 +72,17 @@ if (args.verbose) {
   logger.log("info", `Token source: ${config.tokenSource}`);
   logger.log("info", `Host token source: ${config.hostTokenSource}`);
 }
+
+const shutdown = () => {
+  managedOpencode?.close();
+  (server as { stop?: (closeActiveConnections?: boolean) => void }).stop?.(true);
+};
+
+process.once("SIGINT", () => {
+  shutdown();
+  process.exit(0);
+});
+process.once("SIGTERM", () => {
+  shutdown();
+  process.exit(0);
+});
