@@ -1179,7 +1179,6 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
-      RELEASE_BUILD_TAURI: ${{ needs.resolve-release.outputs.build_tauri }}
     steps:
       - name: Publish release after assets are ready
         env:
@@ -1198,10 +1197,8 @@ jobs:
           if (process.env.RELEASE_PRERELEASE === "true") {
             payload.prerelease = true;
             payload.make_latest = "false";
-          } else if (process.env.RELEASE_BUILD_TAURI === "true") {
-            payload.make_latest = "true";
           } else {
-            payload.make_latest = "false";
+            payload.make_latest = "true";
           }
           process.stdout.write(`${JSON.stringify(payload)}\n`);
           NODE

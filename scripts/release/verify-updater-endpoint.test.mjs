@@ -16,6 +16,8 @@ const validManifest = {
 };
 
 const releaseWorkflow = readFileSync(new URL("../../.github/workflows/release-macos-aarch64.yml", import.meta.url), "utf8");
+const alphaWorkflow = readFileSync(new URL("../../.github/workflows/alpha-macos-aarch64.yml", import.meta.url), "utf8");
+const publishReleaseStep = releaseWorkflow.match(/publish-release:[\s\S]*?verify-stable-updater-feed:/)?.[0] || "";
 
 test("accepts a valid updater manifest", () => {
   assert.deepEqual(validateUpdaterManifest(validManifest, { platform: "darwin-aarch64" }), []);
@@ -172,10 +174,26 @@ test("rejects invalid retry arguments", () => {
 test("release creation does not claim GitHub Latest before manifests are ready", () => {
   assert.match(releaseWorkflow, /gh release create[\s\S]*--latest=false[\s\S]*\$DRAFT_FLAG \$PRERELEASE_FLAG/);
   assert.doesNotMatch(releaseWorkflow, /needs\.resolve-release\.outputs\.draft == 'true'/);
-  assert.match(releaseWorkflow, /payload\.make_latest = "true"/);
+  assert.match(publishReleaseStep, /needs\.publish-updater-json\.result == 'success'/);
+  assert.match(publishReleaseStep, /needs\.publish-electron\.result == 'success'/);
+  assert.doesNotMatch(publishReleaseStep, /RELEASE_BUILD_TAURI/);
+  assert.match(publishReleaseStep, /payload\.make_latest = "false"[\s\S]*else \{[\s\S]*payload\.make_latest = "true"/);
   assert.match(releaseWorkflow, /OPENWORK_STABLE_UPDATER_PLATFORMS:.*darwin-aarch64/);
   assert.match(releaseWorkflow, /--platform "\$OPENWORK_STABLE_UPDATER_PLATFORMS"/);
   assert.match(releaseWorkflow, /--version "\$\{RELEASE_TAG#v\}"/);
   assert.match(releaseWorkflow, /--asset-tag "\$RELEASE_TAG"/);
   assert.match(releaseWorkflow, /needs\.publish-release\.result == 'success'/);
+});
+
+test("sidecar releases cannot replace the desktop latest release", () => {
+  assert.match(releaseWorkflow, /gh release create "\$tag"[\s\S]*--latest=false/);
+  assert.match(releaseWorkflow, /Keep orchestrator release out of GitHub latest/);
+  assert.match(releaseWorkflow, /"make_latest":\s*"false"/);
+});
+
+test("alpha release uploads the endpoint asset as latest.json", () => {
+  assert.doesNotMatch(alphaWorkflow, /alpha-latest\.json#latest\.json/);
+  assert.match(alphaWorkflow, /"\$RUNNER_TEMP\/latest\.json"/);
+  assert.match(alphaWorkflow, /verify-updater-endpoint\.mjs[\s\S]*--file "\$RUNNER_TEMP\/latest\.json"/);
+  assert.match(alphaWorkflow, /releases\/download\/\$\{ALPHA_RELEASE_TAG\}\/latest\.json/);
 });
