@@ -1,23 +1,18 @@
 ---
 title: "Self-host"
-description: "Run OpenWork on your own server with openwork-orchestrator."
+description: "Run OpenWork on your own server or infrastructure."
 ---
 
-Most users just use the [desktop app](https://openworklabs.com/download). This guide covers self-hosting OpenWork via the CLI so you can run tasks on your own server and connect the desktop app to it remotely.
+Most users just use the [desktop app](https://openworklabs.com/download). Self-hosting is for teams that want OpenWork to run on their own server, VPC, or private cloud and then connect the desktop app to it remotely.
 
 Want hosted workspaces, team skill hubs, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
 
-## Step 1: Install on your server
+## The simple path
+
+Run one OpenWork worker on a server you control.
 
 ```bash
 npm install -g openwork-orchestrator
-```
-
-## Step 2: Start OpenWork in your workspace
-
-Run it where your code lives:
-
-```bash
 openwork start --workspace /path/to/your/workspace --approval auto
 ```
 
@@ -30,23 +25,71 @@ Copy:
 - `OpenWork URL`
 - `OpenWork Owner Token`
 
-## Step 3: Connect the desktop app
+Then open the OpenWork desktop app on your local machine:
 
-On your local machine, open the OpenWork desktop app and connect to the remote workspace:
-
-- Click `+ Add workspace` (bottom left)
-- Click `+ Connect Remote workspace`
-- Paste the `OpenWork URL` and `OpenWork Owner Token` from Step 2
+1. Click `+ Add workspace`.
+2. Click `+ Connect Remote workspace`.
+3. Paste the `OpenWork URL` and `OpenWork Owner Token`.
 
 <Frame>
   ![Add Remote Workspace dialog in OpenWork desktop app](/images/get-started-add-remote-workspace.png)
 </Frame>
 
-## What this gives you
+This keeps your code, data, models, and credentials on your server while your local machine stays light.
 
-- Your code, data, models, and credentials stay on your machine.
-- Your local machine stays light — work runs on the server.
-- A fast path from install to a connected remote OpenWork workspace.
+## What you deploy
+
+OpenWork is split into normal services:
+
+- **OpenWork app**: the desktop or web client people use.
+- **OpenWork server / worker runtime**: the API surface the app connects to, with opencode running behind it.
+- **Den web**: the web app for sign-in, worker launch, and connect links if you want a cloud-style setup.
+- **Den controller**: the control plane for auth, workers, and provisioning.
+- **Worker proxy**: optional layer for provider-backed workers and signed runtime URLs.
+
+If you only need one private remote workspace, deploy the worker runtime. If you want OpenWork Cloud-style accounts, teams, and worker creation, deploy Den web, Den controller, the worker proxy, and worker runtimes.
+
+## How we deploy hosted workers
+
+Our hosted deployment uses Render for long-running services and worker provisioning. Render gives us service deploys, env vars, health checks, logs, and worker builds without asking us to operate raw AWS services directly. If you want to run closer to AWS yourself, use the same service boundaries on ECS/Fargate, EC2, Kubernetes, or another container platform.
+
+The production shape is straightforward:
+
+- Put HTTPS in front of every public service.
+- Expose the OpenWork server/worker URL, not raw opencode.
+- Keep workspace and data paths on durable storage.
+- Configure public URLs, auth origins, CORS origins, tokens, and provider credentials with env vars.
+- Run Den database migrations before the Den controller receives traffic.
+
+For a containerized worker runtime, start from the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker) in the repo.
+
+## Databases and storage
+
+- Worker runtimes use filesystem state and opencode SQLite data inside the mounted workspace/data paths.
+- The Den control plane uses a MySQL-compatible database. Local Docker uses MySQL 8.4; production can use standard MySQL or PlanetScale-compatible credentials.
+- Postgres is not required by the current Den deployment path.
+- The share service stores public bundle payloads in Vercel Blob in our hosted setup. Local/dev can fall back to filesystem storage. If you self-host share, use equivalent object storage or leave share disabled.
+
+## Auth and SSO
+
+Den uses Better Auth. It runs in your deployment, uses your database, and is configured with your `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, trusted origins, and optional GitHub/Google OAuth credentials.
+
+SSO (SAML/OIDC) is in the current rollout and is designed to run against your own identity provider. When enabled, callback URLs and trusted origins should point at your self-hosted Den web/controller hosts.
+
+If you do not deploy Den, worker access is token-based with `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN`.
+
+## Optional vendors
+
+OpenWork does not require many third-party services for the core runtime. These are optional or deployment-specific:
+
+- Render: our current hosted service and worker deployment path.
+- Daytona: optional sandbox provider for cloud workers.
+- Vercel: optional Den web/share hosting and worker DNS automation.
+- Vercel Blob: optional storage for public share bundles.
+- PostHog: optional analytics for public web surfaces. You can point it at self-hosted PostHog with `NEXT_PUBLIC_POSTHOG_HOST`, or remove/clear the key in your self-hosted web build if you do not want analytics.
+- Polar: optional billing/paywall for hosted cloud workers.
+- Loops: optional user sync and lifecycle messaging.
+- GitHub/Google OAuth: optional social sign-in providers for Better Auth.
 
 ## Don't want to run infra?
 
@@ -56,7 +99,7 @@ Cloud also gives you org-wide primitives you'd otherwise have to build: [team sk
 
 ## Looking for support for a larger rollout?
 
-If you're rolling OpenWork out across a company of 150+ employees, the orchestrator on a single VM might be harder to manage. 
+If you're rolling OpenWork out across a company of 150+ employees, the orchestrator on a single VM might be harder to manage.
 
 At that scale our customers typically want:
 
