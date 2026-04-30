@@ -213,6 +213,50 @@ describe("mcp routes", () => {
     expect(eventsBody.items.some((event) => event.reason === "mcp")).toBe(false);
   });
 
+  test("legacy POST enable route shares PATCH toggle semantics", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const { base, token } = startOpenworkServer({ workspaceRoot });
+
+    const pause = await fetch(`${base}/workspace/ws_1/mcp/stripe/enabled`, {
+      method: "POST",
+      headers: auth(token),
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(pause.status).toBe(200);
+    const pauseBody = (await pause.json()) as {
+      changed: boolean;
+      enabled: boolean;
+      items: Array<{ name: string; config: Record<string, unknown> }>;
+    };
+    expect(pauseBody.changed).toBe(true);
+    expect(pauseBody.enabled).toBe(false);
+    expect(pauseBody.items.find((entry) => entry.name === "stripe")?.config.enabled).toBe(false);
+
+    const audits = await readAuditEntries(workspaceRoot, "ws_1");
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      action: "mcp.disable",
+      summary: "Disabled MCP stripe",
+    });
+
+    const noOp = await fetch(`${base}/workspace/ws_1/mcp/stripe/enabled`, {
+      method: "POST",
+      headers: auth(token),
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(noOp.status).toBe(200);
+    const noOpBody = (await noOp.json()) as { changed: boolean; enabled: boolean };
+    expect(noOpBody).toMatchObject({ changed: false, enabled: false });
+
+    const auditsAfterNoOp = await readAuditEntries(workspaceRoot, "ws_1");
+    expect(auditsAfterNoOp).toHaveLength(1);
+
+    const events = await fetch(`${base}/workspace/ws_1/events?since=0`, { headers: auth(token) });
+    expect(events.status).toBe(200);
+    const eventsBody = (await events.json()) as { items: Array<{ reason: string }> };
+    expect(eventsBody.items.filter((event) => event.reason === "mcp")).toHaveLength(1);
+  });
+
   test("PATCH returns current state if the MCP app is removed during approval", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const { base, token, hostToken } = startOpenworkServer({ workspaceRoot, approvalMode: "manual" });

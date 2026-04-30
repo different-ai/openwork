@@ -2583,17 +2583,25 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
-  addRoute(routes, "PATCH", "/workspace/:id/mcp/:name", "client", async (ctx) => {
+  const updateMcpEnabled = async (
+    ctx: RequestContext,
+    labels: {
+      action: (enabled: boolean) => string;
+      approvalVerb: (enabled: boolean) => string;
+      auditVerb: (enabled: boolean) => string;
+    },
+  ) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = String(ctx.params.name ?? "").trim();
     const body = await readJsonBody(ctx.request);
-    if (typeof body.enabled !== "boolean") {
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
       throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
     }
+    const enabled = body.enabled;
 
-    const planned = await setMcpEnabled(workspace.path, name, body.enabled, { dryRun: true });
+    const planned = await setMcpEnabled(workspace.path, name, enabled, { dryRun: true });
     if (!planned.changed) {
       const items = await listMcp(workspace.path);
       return jsonResponse({ items, enabled: planned.enabled, changed: false });
@@ -2601,18 +2609,18 @@ function createRoutes(
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
-      action: "mcp.update",
-      summary: `${body.enabled ? "Resume" : "Pause"} MCP ${name}`,
+      action: labels.action(enabled),
+      summary: `${labels.approvalVerb(enabled)} MCP ${name}`,
       paths: [opencodeConfigPath(workspace.path)],
     });
 
     let result: Awaited<ReturnType<typeof setMcpEnabled>>;
     try {
-      result = await setMcpEnabled(workspace.path, name, body.enabled);
+      result = await setMcpEnabled(workspace.path, name, enabled);
     } catch (error) {
       if (error instanceof ApiError && error.status === 404 && error.code === "mcp_not_found") {
         const items = await listMcp(workspace.path);
-        return jsonResponse({ items, enabled: body.enabled, changed: false });
+        return jsonResponse({ items, enabled, changed: false });
       }
       throw error;
     }
@@ -2621,9 +2629,9 @@ function createRoutes(
         id: shortId(),
         workspaceId: workspace.id,
         actor: ctx.actor ?? { type: "remote" },
-        action: "mcp.update",
+        action: labels.action(enabled),
         target: "opencode.json",
-        summary: `${body.enabled ? "Resumed" : "Paused"} MCP ${name}`,
+        summary: `${labels.auditVerb(enabled)} MCP ${name}`,
         timestamp: Date.now(),
       });
       emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
@@ -2635,6 +2643,14 @@ function createRoutes(
 
     const items = await listMcp(workspace.path);
     return jsonResponse({ items, enabled: result.enabled, changed: result.changed });
+  };
+
+  addRoute(routes, "PATCH", "/workspace/:id/mcp/:name", "client", async (ctx) => {
+    return updateMcpEnabled(ctx, {
+      action: () => "mcp.update",
+      approvalVerb: (enabled) => (enabled ? "Resume" : "Pause"),
+      auditVerb: (enabled) => (enabled ? "Resumed" : "Paused"),
+    });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name", "client", async (ctx) => {
@@ -2674,47 +2690,13 @@ function createRoutes(
     return jsonResponse({ items, removed });
   });
 
-  // Toggle `enabled` on a workspace MCP. Strict body validation — `Boolean(body.enabled)`
-  // would silently disable on `{}` or coerce `"false"` to true.
+  // Compatibility route kept for clients that adopted #1562 before PATCH existed.
   addRoute(routes, "POST", "/workspace/:id/mcp/:name/enabled", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const name = ctx.params.name ?? "";
-    const body = await readJsonBody(ctx.request);
-    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
-      throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
-    }
-    const enabled = body.enabled;
-    const action = enabled ? "mcp.enable" : "mcp.disable";
-    const summary = `${enabled ? "Enable" : "Disable"} MCP ${name}`;
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action,
-      summary,
-      paths: [opencodeConfigPath(workspace.path)],
+    return updateMcpEnabled(ctx, {
+      action: (enabled) => (enabled ? "mcp.enable" : "mcp.disable"),
+      approvalVerb: (enabled) => (enabled ? "Enable" : "Disable"),
+      auditVerb: (enabled) => (enabled ? "Enabled" : "Disabled"),
     });
-    const updated = await setMcpEnabled(workspace.path, name, enabled);
-    if (!updated) {
-      throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
-    }
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action,
-      target: "opencode.json",
-      summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
-      timestamp: Date.now(),
-    });
-    // ReloadTrigger.action only allows added/removed/updated, so toggle => "updated".
-    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
-      type: "mcp",
-      name,
-      action: "updated",
-    });
-    const items = await listMcp(workspace.path);
-    return jsonResponse({ items });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name/auth", "client", async (ctx) => {
