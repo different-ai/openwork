@@ -203,7 +203,8 @@ pub fn spawn_openwork_server(
     opencode_directory: Option<&str>,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
-    opencode_router_health_port: Option<u16>,
+    manage_opencode: bool,
+    opencode_bin_path: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
     let command = match app.shell().sidecar("openwork-server") {
         Ok(command) => command,
@@ -223,12 +224,22 @@ pub fn spawn_openwork_server(
         .unwrap_or_else(|| Path::new("."));
     let mut command = command.args(args).current_dir(cwd);
 
+    // User env first so it can never override OPENWORK_TOKEN / credentials.
+    for (key, value) in crate::env_file::load_user_env_file() {
+        command = command.env(key, value);
+    }
+
     command = command
         .env("OPENWORK_TOKEN", token)
         .env("OPENWORK_HOST_TOKEN", host_token);
 
-    if let Some(port) = opencode_router_health_port {
-        command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());
+    if manage_opencode {
+        command = command.env("OPENWORK_MANAGE_OPENCODE", "1");
+        if let Some(path) = opencode_bin_path {
+            if !path.trim().is_empty() {
+                command = command.env("OPENWORK_OPENCODE_BIN", path);
+            }
+        }
     }
 
     if let Some(username) = opencode_username {

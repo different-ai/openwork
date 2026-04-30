@@ -92,6 +92,13 @@
       "when": 1776632400000,
       "tag": "0013_desktop_app_restrictions",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1777400000000,
+      "tag": "0014_drop_temp_template_sharing",
+      "breakpoints": true
     }
   ]
 }

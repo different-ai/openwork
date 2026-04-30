@@ -5,7 +5,6 @@ import {
   Copy,
   Eye,
   EyeOff,
-  MessageSquare,
 } from "lucide-react";
 
 import {
@@ -45,12 +44,12 @@ export type ShareWorkspaceAccessPanelProps = {
     enabled: boolean;
     busy: boolean;
     error?: string | null;
+    status?: string | null;
     onSave: (enabled: boolean) => void | Promise<void>;
   };
   remoteAccessEnabled: boolean;
   onRemoteAccessEnabledChange: (value: boolean) => void;
   note?: string | null;
-  onOpenBots?: () => void;
 };
 
 export function ShareWorkspaceAccessPanel(
@@ -64,6 +63,21 @@ export function ShareWorkspaceAccessPanel(
   const primaryAccessFields = accessFields.filter(
     (field) => !isCollaboratorField(field.label),
   );
+  const remoteAccessNeedsEnable = Boolean(
+    props.remoteAccess && !props.remoteAccess.enabled && !props.remoteAccessEnabled,
+  );
+  const remoteSaveDisabled = props.remoteAccess
+    ? props.remoteAccess.busy ||
+      (props.remoteAccess.enabled &&
+        props.remoteAccessEnabled === props.remoteAccess.enabled)
+    : true;
+  const remoteSaveLabel = props.remoteAccess?.busy
+    ? "Saving…"
+    : remoteAccessNeedsEnable
+      ? "Enable remote access"
+      : props.remoteAccess?.enabled === false && props.remoteAccessEnabled
+        ? "Save & restart worker"
+        : "Save";
 
   const renderCredentialField = (
     field: ShareField,
@@ -156,22 +170,24 @@ export function ShareWorkspaceAccessPanel(
 
           <div className="mt-4 flex items-center justify-between gap-3">
             <div className="text-[13px] text-dls-secondary">
-              {props.remoteAccess.enabled
-                ? "Remote access is currently enabled."
-                : "Remote access is currently disabled."}
+              {props.remoteAccess.status?.trim() ||
+                (props.remoteAccess.enabled
+                  ? "Remote access is currently enabled."
+                  : "Remote access is currently disabled.")}
             </div>
             <button
               type="button"
-              onClick={() =>
-                void props.remoteAccess?.onSave(props.remoteAccessEnabled)
-              }
-              disabled={
-                props.remoteAccess.busy ||
-                props.remoteAccessEnabled === props.remoteAccess.enabled
-              }
+              onClick={() => {
+                if (remoteAccessNeedsEnable) {
+                  props.onRemoteAccessEnabledChange(true);
+                  return;
+                }
+                void props.remoteAccess?.onSave(props.remoteAccessEnabled);
+              }}
+              disabled={remoteSaveDisabled}
               className={pillSecondaryClass}
             >
-              {props.remoteAccess.busy ? "Saving…" : "Save"}
+              {remoteSaveLabel}
             </button>
           </div>
 
@@ -182,30 +198,6 @@ export function ShareWorkspaceAccessPanel(
           ) : null}
         </div>
       ) : null}
-
-      <div className={surfaceCardClass}>
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={`${iconTileClass} h-9 w-9 rounded-full`}>
-            <MessageSquare size={16} />
-          </div>
-          <div className="min-w-0">
-            <h4 className="text-[18px] font-semibold tracking-[-0.3px] text-dls-text">
-              Connect messaging
-            </h4>
-            <p className="mt-1 truncate text-[14px] text-dls-secondary">
-              Use this workspace from Slack, Telegram, and others.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => props.onOpenBots?.()}
-          disabled={!props.onOpenBots}
-          className={`${pillSecondaryClass} mt-5`}
-        >
-          Setup
-        </button>
-      </div>
 
       {primaryAccessFields.length > 0 ? (
         <div className={surfaceCardClass}>

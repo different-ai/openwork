@@ -46,14 +46,34 @@ export function validateMcpConfig(config: Record<string, unknown>): void {
   }
   if (type === "local") {
     const command = config.command;
-    if (!Array.isArray(command) || command.length === 0) {
+    if (
+      !Array.isArray(command) ||
+      command.length === 0 ||
+      command.some((part) => typeof part !== "string" || part.trim().length === 0)
+    ) {
       throw new ApiError(400, "invalid_mcp_config", "Local MCP requires command array");
     }
   }
   if (type === "remote") {
     const url = config.url;
-    if (!url || typeof url !== "string") {
+    if (!url || typeof url !== "string" || url.trim().length === 0) {
       throw new ApiError(400, "invalid_mcp_config", "Remote MCP requires url");
+    }
+    const normalizedUrl = url.trim();
+    if (url !== normalizedUrl) {
+      throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must not include surrounding whitespace");
+    }
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must start with http(s)://");
+    }
+    try {
+      const parsed = new URL(normalizedUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new ApiError(400, "invalid_mcp_config", "Remote MCP url must use http(s)");
+      }
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(400, "invalid_mcp_config", "Remote MCP requires a valid url");
     }
   }
 }

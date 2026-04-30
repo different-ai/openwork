@@ -19,10 +19,42 @@ import { seedDefaultOrganizationRoles } from "./orgs.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { APIError } from "better-call";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { emailOTP, organization } from "better-auth/plugins";
+import { emailOTP, jwt, organization } from "better-auth/plugins";
+
+function localMcpResourceAliases(resource: string) {
+  if (!env.devMode) {
+    return [];
+  }
+
+  try {
+    const url = new URL(resource);
+    if (url.hostname === "127.0.0.1") {
+      url.hostname = "localhost";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+  } catch {}
+
+  return [];
+}
+
+export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? `${env.betterAuthUrl}/mcp`;
+export const DEN_MCP_RESOURCES = Array.from(new Set([
+  DEN_MCP_RESOURCE,
+  ...localMcpResourceAliases(DEN_MCP_RESOURCE),
+]));
+export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];
+export const DEN_MCP_TOKEN_USE_CLAIM = "https://openworklabs.com/token_use";
+export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
+export const DEN_MCP_RESOURCE_CLAIM = "https://openworklabs.com/resource";
+export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -63,6 +95,10 @@ function buildInvitationLink(invitationId: string) {
     `/join-org?invite=${encodeURIComponent(invitationId)}`,
     getInvitationOrigin(),
   ).toString();
+}
+
+function hasMcpScope(scopes: readonly string[]) {
+  return scopes.some((scope) => scope.startsWith("mcp:"));
 }
 
 export const auth = betterAuth({
@@ -113,6 +149,14 @@ export const auth = betterAuth({
           case "apikey":
           case "apiKey":
             return createDenTypeId("apiKey");
+          case "oauthClient":
+            return createDenTypeId("oauthClient");
+          case "oauthAccessToken":
+            return createDenTypeId("oauthAccessToken");
+          case "oauthRefreshToken":
+            return createDenTypeId("oauthRefreshToken");
+          case "oauthConsent":
+            return createDenTypeId("oauthConsent");
           case "rateLimit":
             return createDenTypeId("rateLimit");
           case "organization":
@@ -177,6 +221,7 @@ export const auth = betterAuth({
     requireEmailVerification: true,
   },
   plugins: [
+    jwt(),
     emailOTP({
       overrideDefaultEmailVerification: true,
       otpLength: 6,
@@ -240,6 +285,67 @@ export const auth = betterAuth({
             });
           }
         },
+      },
+    }),
+    oauthProvider({
+      loginPage: env.betterAuthUrl,
+      consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
+      scopes: [...DEN_MCP_SCOPES],
+      validAudiences: DEN_MCP_RESOURCES,
+      allowPublicClientPrelogin: true,
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
+      clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
+      advertisedMetadata: {
+        scopes_supported: [...DEN_MCP_SCOPES],
+        claims_supported: [
+          DEN_MCP_TOKEN_USE_CLAIM,
+          DEN_MCP_ORG_ID_CLAIM,
+          DEN_MCP_RESOURCE_CLAIM,
+        ],
+      },
+      postLogin: {
+        page: `${env.betterAuthUrl}/mcp/select-organization`,
+        shouldRedirect: async ({ session, scopes }) => {
+          if (!hasMcpScope(scopes)) {
+            return false;
+          }
+
+          return !session.activeOrganizationId;
+        },
+        consentReferenceId: async ({ session, scopes }) => {
+          if (!hasMcpScope(scopes)) {
+            return undefined;
+          }
+
+          const activeOrganizationId = typeof session.activeOrganizationId === "string"
+            ? session.activeOrganizationId
+            : undefined;
+          if (!activeOrganizationId) {
+            throw new APIError("BAD_REQUEST", {
+              message: "Select an organization before authorizing MCP access.",
+            });
+          }
+
+          return normalizeDenTypeId("organization", activeOrganizationId);
+        },
+      },
+      customAccessTokenClaims: ({ referenceId, resource, scopes }) => {
+        const claims: Record<string, string> = {};
+        if (hasMcpScope(scopes) || resource === DEN_MCP_RESOURCE) {
+          claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";
+          claims[DEN_MCP_RESOURCE_CLAIM] = resource ?? DEN_MCP_RESOURCE;
+        }
+        if (referenceId) {
+          claims[DEN_MCP_ORG_ID_CLAIM] = referenceId;
+        }
+        return claims;
+      },
+      prefix: {
+        opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
+        refreshToken: "ow_mcp_rt_",
+        clientSecret: "ow_mcp_cs_",
       },
     }),
     apiKey({

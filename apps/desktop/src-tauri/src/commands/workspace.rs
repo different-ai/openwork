@@ -9,8 +9,8 @@ use crate::types::{
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
     load_workspace_state, load_workspace_state_fast, normalize_local_workspace_path,
-    save_workspace_state,
-    stable_workspace_id, stable_workspace_id_for_openwork, stable_workspace_id_for_remote,
+    save_workspace_state, stable_workspace_id, stable_workspace_id_for_openwork,
+    stable_workspace_id_for_remote,
 };
 use crate::workspace::watch::{update_workspace_watch, WorkspaceWatchState};
 use serde::Serialize;

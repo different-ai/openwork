@@ -255,6 +255,7 @@ export function createConnectionsStore(options: {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
         }));
 
         let nextStatuses: McpStatusMap = {};
@@ -294,6 +295,7 @@ export function createConnectionsStore(options: {
         const next = response.items.map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
+          source: entry.source,
         }));
 
         let nextStatuses: McpStatusMap = {};
@@ -730,6 +732,75 @@ export function createConnectionsStore(options: {
     }
   }
 
+  function notifyMcpReloading() {
+    setStateField("mcpStatus", translate("mcp.reloading_status"));
+  }
+
+  // OpenCode reconnects MCP servers asynchronously after /instance/dispose,
+  // so an immediate mcp.status query returns stale "disconnected". Poll on
+  // a backoff until every enabled MCP reaches a terminal status, with the
+  // banner up the whole time so users see continuous feedback.
+  async function pollMcpServersAfterReload(): Promise<void> {
+    if (disposed) return;
+    notifyMcpReloading();
+    await refreshMcpServers();
+
+    const settled = (statuses: McpStatusMap, servers: McpServerEntry[]) => {
+      const expected = servers.filter((s) => s.config.enabled !== false);
+      if (expected.length === 0) return true;
+      return expected.every((server) => {
+        const status = statuses[server.name]?.status;
+        return status === "connected" || status === "needs_auth" || status === "failed";
+      });
+    };
+
+    const delays = [400, 800, 1500, 2500, 4000];
+    for (const delay of delays) {
+      if (disposed) return;
+      if (settled(snapshot.mcpStatuses, snapshot.mcpServers)) break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      await refreshMcpServers();
+    }
+
+    if (disposed) return;
+    // Only clear the reloading banner if it's still ours. refreshMcpServers
+    // may have already replaced it with a real message (e.g. "No MCP servers").
+    if (snapshot.mcpStatus === translate("mcp.reloading_status")) {
+      setStateField("mcpStatus", null);
+    }
+  }
+
+  // Server-only path. Local fallback would rewrite opencode.jsonc whole and
+  // clobber inline comments — settings-route.tsx already gates the prop so
+  // this never gets called when the server is unavailable. Reload UX comes
+  // from the existing reload-required popup; no extra banner here.
+  async function setMcpEnabled(name: string, enabled: boolean) {
+    try {
+      const openworkSnapshot = getOpenworkSnapshot();
+      const openworkClient = openworkSnapshot.openworkServerClient;
+      const openworkWorkspaceId = options.runtimeWorkspaceId();
+      const canUseOpenworkServer =
+        openworkSnapshot.openworkServerStatus === "connected" &&
+        openworkClient &&
+        openworkWorkspaceId &&
+        openworkSnapshot.openworkServerCapabilities?.mcp?.write;
+
+      if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+        setStateField("mcpStatus", translate("mcp.toggle_requires_server"));
+        return;
+      }
+
+      await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
+      options.markReloadRequired?.("mcp", { type: "mcp", name, action: "updated" });
+      await refreshMcpServers();
+    } catch (error) {
+      setStateField(
+        "mcpStatus",
+        error instanceof Error ? error.message : translate("mcp.toggle_failed"),
+      );
+    }
+  }
+
   function closeMcpAuthModal() {
     mutateState((current) => ({
       ...current,
@@ -819,6 +890,9 @@ export function createConnectionsStore(options: {
     authorizeMcp,
     logoutMcpAuth,
     removeMcp,
+    setMcpEnabled,
+    notifyMcpReloading,
+    pollMcpServersAfterReload,
     get mcpAuthModalOpen() {
       return snapshot.mcpAuthModalOpen;
     },

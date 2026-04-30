@@ -759,7 +759,7 @@ export function WorkspaceSessionList(props: Props) {
         </div>
       </div>
 
-      <div className="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar pt-3">
+      <div className="relative mt-auto border-t border-dls-border/80 bg-dls-sidebar px-3 pt-3 pb-4">
         <button
           type="button"
           className="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"

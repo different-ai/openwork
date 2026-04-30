@@ -100,7 +100,7 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
         return [];
       }
 
-      return [{ name, config }];
+      return [{ name, config, source: "config.project" as const }];
     });
   } catch {
     return [];

@@ -3,8 +3,8 @@ mod commands;
 mod config;
 mod desktop_bootstrap;
 mod engine;
+mod env_file;
 mod fs;
-mod opencode_router;
 mod openwork_server;
 mod orchestrator;
 mod paths;
@@ -29,17 +29,11 @@ use commands::misc::{
     app_build_info, nuke_openwork_and_opencode_config_and_exit, opencode_mcp_auth,
     reset_opencode_cache, reset_openwork_state,
 };
-use commands::opencode_router::{
-    opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
-    opencodeRouter_stop,
-};
 use commands::openwork_server::{openwork_server_info, openwork_server_restart};
 use commands::orchestrator::{
-    orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
-    orchestrator_workspace_activate, sandbox_cleanup_openwork_containers, sandbox_debug_probe,
+    orchestrator_start_detached, sandbox_cleanup_openwork_containers, sandbox_debug_probe,
     sandbox_doctor, sandbox_stop,
 };
-use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::skills::{
     import_skill, install_skill_template, list_local_skills, read_local_skill, uninstall_skill,
     write_local_skill,
@@ -49,11 +43,10 @@ use commands::window::set_window_decorations;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
-    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active, workspace_set_selected,
-    workspace_update_display_name, workspace_update_remote,
+    workspace_openwork_write, workspace_set_active, workspace_set_runtime_active,
+    workspace_set_selected, workspace_update_display_name, workspace_update_remote,
 };
 use engine::manager::EngineManager;
-use opencode_router::manager::OpenCodeRouterManager;
 use openwork_server::manager::OpenworkServerManager;
 use orchestrator::manager::OrchestratorManager;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
@@ -127,9 +120,6 @@ fn stop_managed_services(app_handle: &tauri::AppHandle) {
     if let Ok(mut openwork_server) = app_handle.state::<OpenworkServerManager>().inner.lock() {
         OpenworkServerManager::stop_locked(&mut openwork_server);
     }
-    if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
-        OpenCodeRouterManager::stop_locked(&mut opencode_router);
-    }
 }
 
 pub fn run() {
@@ -157,7 +147,6 @@ pub fn run() {
         .manage(EngineManager::default())
         .manage(OrchestratorManager::default())
         .manage(OpenworkServerManager::default())
-        .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
@@ -166,9 +155,6 @@ pub fn run() {
             engine_doctor,
             engine_install,
             engine_restart,
-            orchestrator_status,
-            orchestrator_workspace_activate,
-            orchestrator_instance_dispose,
             orchestrator_start_detached,
             sandbox_doctor,
             sandbox_debug_probe,
@@ -176,11 +162,6 @@ pub fn run() {
             sandbox_cleanup_openwork_containers,
             openwork_server_info,
             openwork_server_restart,
-            opencodeRouter_info,
-            opencodeRouter_start,
-            opencodeRouter_stop,
-            opencodeRouter_status,
-            opencodeRouter_config_set,
             workspace_bootstrap,
             workspace_set_selected,
             workspace_set_runtime_active,
@@ -216,16 +197,13 @@ pub fn run() {
             reset_openwork_state,
             reset_opencode_cache,
             opencode_mcp_auth,
-            scheduler_list_jobs,
-            scheduler_delete_job,
             set_window_decorations
         ])
         .build(tauri::generate_context!())
         .expect("error while building OpenWork");
 
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
-    // running after the UI quits (especially during dev), leading to multiple
-    // orchestrator/opencode/openwork-server processes and stale ports.
+    // running after the UI quits (especially during dev), leading to stale ports.
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { .. } | RunEvent::Exit => stop_managed_services(&app_handle),
         // On macOS the default behavior is to keep the process alive after the

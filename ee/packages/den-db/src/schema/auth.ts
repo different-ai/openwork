@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto"
 import { sql } from "drizzle-orm"
 import { bigint, boolean, index, int, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
@@ -109,8 +110,135 @@ export const AuthApiKeyTable = mysqlTable(
   ],
 )
 
+export const AuthJwksTable = mysqlTable("jwks", {
+  id: varchar("id", { length: 64 })
+    .notNull()
+    .$defaultFn(() => crypto.randomUUID())
+    .primaryKey(),
+  publicKey: text("public_key").notNull(),
+  privateKey: text("private_key").notNull(),
+  createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { fsp: 3 }),
+  alg: varchar("alg", { length: 32 }),
+  crv: varchar("crv", { length: 32 }),
+})
+
+export const OAuthClientTable = mysqlTable(
+  "oauthClient",
+  {
+    id: denTypeIdColumn("oauthClient", "id").notNull().primaryKey(),
+    clientId: varchar("client_id", { length: 255 }).notNull(),
+    clientSecret: text("client_secret"),
+    disabled: boolean("disabled").default(false),
+    skipConsent: boolean("skip_consent"),
+    enableEndSession: boolean("enable_end_session"),
+    subjectType: varchar("subject_type", { length: 64 }),
+    scopes: text("scopes"),
+    userId: denTypeIdColumn("user", "user_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+    name: varchar("name", { length: 255 }),
+    uri: text("uri"),
+    icon: text("icon"),
+    contacts: text("contacts"),
+    tos: text("tos"),
+    policy: text("policy"),
+    softwareId: varchar("software_id", { length: 255 }),
+    softwareVersion: varchar("software_version", { length: 255 }),
+    softwareStatement: text("software_statement"),
+    redirectUris: text("redirect_uris").notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris"),
+    tokenEndpointAuthMethod: varchar("token_endpoint_auth_method", { length: 128 }),
+    grantTypes: text("grant_types"),
+    responseTypes: text("response_types"),
+    public: boolean("public"),
+    type: varchar("type", { length: 64 }),
+    requirePKCE: boolean("require_pkce"),
+    referenceId: varchar("reference_id", { length: 64 }),
+    metadata: text("metadata"),
+  },
+  (table) => [
+    uniqueIndex("oauth_client_client_id").on(table.clientId),
+    index("oauth_client_user_id").on(table.userId),
+    index("oauth_client_reference_id").on(table.referenceId),
+  ],
+)
+
+export const OAuthRefreshTokenTable = mysqlTable(
+  "oauthRefreshToken",
+  {
+    id: denTypeIdColumn("oauthRefreshToken", "id").notNull().primaryKey(),
+    token: text("token").notNull(),
+    clientId: varchar("client_id", { length: 255 }).notNull(),
+    sessionId: denTypeIdColumn("session", "session_id"),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    referenceId: varchar("reference_id", { length: 64 }),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    revoked: timestamp("revoked", { fsp: 3 }),
+    authTime: timestamp("auth_time", { fsp: 3 }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_refresh_token_client_id").on(table.clientId),
+    index("oauth_refresh_token_session_id").on(table.sessionId),
+    index("oauth_refresh_token_user_id").on(table.userId),
+    index("oauth_refresh_token_reference_id").on(table.referenceId),
+  ],
+)
+
+export const OAuthAccessTokenTable = mysqlTable(
+  "oauthAccessToken",
+  {
+    id: denTypeIdColumn("oauthAccessToken", "id").notNull().primaryKey(),
+    token: text("token").notNull(),
+    clientId: varchar("client_id", { length: 255 }).notNull(),
+    sessionId: denTypeIdColumn("session", "session_id"),
+    userId: denTypeIdColumn("user", "user_id"),
+    referenceId: varchar("reference_id", { length: 64 }),
+    refreshId: denTypeIdColumn("oauthRefreshToken", "refresh_id"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("oauth_access_token_client_id").on(table.clientId),
+    index("oauth_access_token_session_id").on(table.sessionId),
+    index("oauth_access_token_user_id").on(table.userId),
+    index("oauth_access_token_reference_id").on(table.referenceId),
+    index("oauth_access_token_refresh_id").on(table.refreshId),
+  ],
+)
+
+export const OAuthConsentTable = mysqlTable(
+  "oauthConsent",
+  {
+    id: denTypeIdColumn("oauthConsent", "id").notNull().primaryKey(),
+    clientId: varchar("client_id", { length: 255 }).notNull(),
+    userId: denTypeIdColumn("user", "user_id"),
+    referenceId: varchar("reference_id", { length: 64 }),
+    scopes: text("scopes").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("oauth_consent_client_id").on(table.clientId),
+    index("oauth_consent_user_id").on(table.userId),
+    index("oauth_consent_reference_id").on(table.referenceId),
+  ],
+)
+
 export const user = AuthUserTable
 export const session = AuthSessionTable
 export const account = AuthAccountTable
 export const verification = AuthVerificationTable
 export const apikey = AuthApiKeyTable
+export const jwks = AuthJwksTable
+export const oauthClient = OAuthClientTable
+export const oauthRefreshToken = OAuthRefreshTokenTable
+export const oauthAccessToken = OAuthAccessTokenTable
+export const oauthConsent = OAuthConsentTable

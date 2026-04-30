@@ -76,9 +76,8 @@ pub fn repair_workspace_state(state: &mut WorkspaceState) {
             WorkspaceType::Local => {
                 // Canonicalize only currently selected/watched entries. Full canonicalization across
                 // every workspace can block startup/switch paths when mounts are slow.
-                let canonicalize_for_active_workspace =
-                    workspace.id == old_selected_workspace_id
-                        || workspace.id == old_watched_workspace_id;
+                let canonicalize_for_active_workspace = workspace.id == old_selected_workspace_id
+                    || workspace.id == old_watched_workspace_id;
                 let normalized = if canonicalize_for_active_workspace {
                     normalize_local_workspace_path(&workspace.path)
                 } else {
