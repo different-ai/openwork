@@ -266,7 +266,7 @@ const adHocSignDarwin = (filePath) => {
     }
     throw sign.error;
   }
-  if (sign.status !== 0) {
+  if (sign.status !== 0 && remove.status === 0) {
     const stderr = sign.stderr?.trim();
     throw new Error(`Failed to codesign ${filePath}${stderr ? `: ${stderr}` : ""}`);
   }
