@@ -7,18 +7,19 @@ import th from "./locales/th";
 import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
+import ru from "./locales/ru";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru"];
 
 /**
  * Language options for UI - single source of truth
@@ -33,6 +34,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "fr" as Language, label: "French", nativeName: "Français" },
   { value: "ca" as Language, label: "Català", nativeName: "Català" },
   { value: "es" as Language, label: "Español", nativeName: "Español" },
+  { value: "ru" as Language, label: "Русский", nativeName: "Русский" },
 ] as const;
 
 /**
@@ -48,6 +50,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   fr,
   ca,
   es,
+  ru,
 };
 
 /**
