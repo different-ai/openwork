@@ -1,0 +1,38 @@
+apps/app/tsconfig.json
+  4f44978b7ac0d3a2 10-13,19,23,25
+apps/app/vite.config.ts
+  4f44978b7ac0d3a2 105-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "467fdd3bcc95ddd80273c8bc7e1bb67dbd3bbef7",
+  "prompts": {
+    "4f44978b7ac0d3a2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5267c7f5-34a4-4ad1-a69f-238850824c87",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 1,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "ce50b782a0a07210": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "dc328fad-a4e9-4112-9193-df3a57cc4579",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 279,
+      "total_deletions": 264,
+      "accepted_lines": 79,
+      "overriden_lines": 20
+    }
+  }
+}
