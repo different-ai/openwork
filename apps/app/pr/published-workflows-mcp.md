@@ -2,6 +2,17 @@
 
 Closes: N/A — Path B submission / exploratory product PR.
 
+## Commits
+
+Reviewable in three logical passes:
+
+1. `feat(server): publish workflows as MCP tools` — storage,
+   admin routes, MCP transport, sync OpenCode bridge, server tests.
+2. `feat(app): publish workflows UI in skills settings` — Publish action,
+   modal, list panel, store + HTTP helpers, English i18n keys.
+3. `chore(i18n): mirror publishedWorkflows keys to all locales` —
+   English placeholders across `ca / es / fr / ja / pt-BR / th / vi / zh`.
+
 ## Why
 
 OpenWork already runs OpenCode agents against a workspace, with skills,
@@ -82,7 +93,7 @@ Each create/revoke is mirrored into the workspace audit log.
 
 One public route, registered for `POST/GET/DELETE`:
 
-```
+```text
 /published/:token/mcp
 ```
 
@@ -126,14 +137,85 @@ Errors inside `execute` are caught by the JSON-RPC dispatcher and
 returned as `{ isError: true, content: [{ type: "text", text: <message> }] }`
 so the calling LLM gets a useful tool error instead of an HTTP 500.
 
-## UI (next half)
+## UI
 
 Skills view at `apps/app/src/react-app/domains/settings/pages/skills-view.tsx`
-gains a **Publish** action per skill plus a "Published workflows" panel
-listing active publications with copy-URL and revoke. i18n keys land
-under `settings.publishedWorkflows.*` mirroring the env-vars precedent.
-Implementation lives in the follow-up commit so this PR is reviewable in
-two passes.
+gains a **Publish** action on every installed skill card, plus a new
+**Published workflows** panel listing active publications.
+
+- Publish modal: tool name (defaults to skill name), description, optional
+  JSON input schema. Validates locally before POST.
+- Success state surfaces the full MCP URL with the token **once** (the
+  token is never returned again — same pattern as `TokenService`).
+- Listed rows show the token-redacted URL pattern, copy-pattern, and
+  revoke. Revoke confirms inline.
+- Auto-refreshes on mount; manual refresh button on the panel.
+- Gated on a connected OpenWork server — disconnected state shows a
+  warning toast instead of a 401.
+- 25 new i18n keys under `settings.publishedWorkflows.*` + `common.copy`
+  in `en.ts`, mirrored as English placeholders to all 8 other locales
+  in a separate `chore(i18n)` commit (matches the
+  `settings.environment.*` precedent).
+
+State lives in `apps/app/src/react-app/domains/settings/state/extensions-store.ts`;
+HTTP helpers (`listPublishedWorkflows`, `createPublishedWorkflow`,
+`revokePublishedWorkflow`) live in `apps/app/src/app/lib/openwork-server.ts`
+and use the existing host-token plumbing.
+
+## How to try it
+
+The fastest reproducible path is curl-only against a local server. A full
+transcript is in
+[`published-workflows-mcp.curl.txt`](./published-workflows-mcp.curl.txt);
+the short version:
+
+```bash
+# 1. Make a workspace dir with one skill in it
+mkdir -p ~/openwork-mcp-test/.opencode/skill/echo
+cat > ~/openwork-mcp-test/.opencode/skill/echo/SKILL.md <<'EOF'
+---
+description: Echo the input back verbatim
+---
+Echo the input back verbatim as a JSON code block.
+EOF
+
+# 2. Run the server with a workspace and explicit tokens
+export CLIENT_TOKEN=owt_test_client
+export HOST_TOKEN=owt_test_host
+pnpm --filter openwork-server dev -- \
+  --host 127.0.0.1 --port 4747 \
+  --token "$CLIENT_TOKEN" --host-token "$HOST_TOKEN" \
+  --workspace ~/openwork-mcp-test --verbose
+
+# 3. In another terminal: list workspaces, publish the skill, hit MCP
+BASE=http://127.0.0.1:4747
+WS_ID=$(curl -s "$BASE/workspaces" -H "Authorization: Bearer $CLIENT_TOKEN" | jq -r '.items[0].id')
+
+curl -s -X POST "$BASE/workspace/$WS_ID/published-workflows" \
+  -H "x-openwork-host-token: $HOST_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"skillName":"echo","description":"Echo the input back verbatim"}' | jq
+# → { id, token: "pwt_…", … } — copy the token
+
+TOKEN=pwt_…
+curl -s -X POST "$BASE/published/$TOKEN/mcp" \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq
+```
+
+For the UI flow, run the web app against the same server:
+
+```bash
+VITE_OPENWORK_URL=http://127.0.0.1:4747 \
+VITE_OPENWORK_TOKEN="$CLIENT_TOKEN" \
+VITE_OPENWORK_HOST_TOKEN="$HOST_TOKEN" \
+pnpm --filter @openwork/app dev
+```
+
+Then **Settings → Skills → Publish** on the echo card → modal → submit →
+copy the URL from the success notice → confirm the new row appears in
+**Published workflows** → drop the URL into Claude Desktop / Cursor or
+hit it with curl as above → **Revoke** to invalidate the URL.
 
 ## Tests
 
@@ -144,10 +226,21 @@ two passes.
 
 ## Verification
 
-```
+```text
 pnpm --filter openwork-server typecheck     # clean
+pnpm --filter @openwork/app   typecheck     # clean
 bun test                                    # 132 pass, 0 fail
 ```
+
+Also confirmed against a running local server:
+
+- Server admin routes (`list / create / delete`) and MCP routes
+  (`initialize / tools/list / tools/call`) succeed against a live
+  workspace with a managed OpenCode (transcript:
+  `published-workflows-mcp.curl.txt`).
+- Manual UI walkthrough (publish → copy URL → list → revoke) executed
+  end-to-end against a `pnpm --filter @openwork/app dev` instance
+  pointed at the local server.
 
 ## Non-goals (follow-ups)
 
