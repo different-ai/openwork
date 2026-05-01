@@ -264,3 +264,110 @@ test("managed resource routes cover MCPs, plugins, skills, shares, export/import
     routerSendServer.stop(true);
   }
 });
+
+test("router send requires an explicit Slack peer target", async () => {
+  const { app, dependencies, root } = createTestApp("openwork-server-v2-slack-direct-send");
+  const workspaceRoot = path.join(root, "workspace-slack-send");
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+
+  const createResponse = await app.request("http://openwork.local/workspaces/local", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folderPath: workspaceRoot, name: "Slack Send", preset: "starter" }),
+  });
+  const workspaceId = (await createResponse.json()).data.id as string;
+
+  let proxyCalls = 0;
+  const observedPayloads: Record<string, unknown>[] = [];
+  const routerSendServer = Bun.serve({
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/send" && request.method === "POST") {
+        proxyCalls += 1;
+        const payload = await request.json() as Record<string, unknown>;
+        observedPayloads.push(payload);
+        return Response.json({
+          attempted: 1,
+          channel: payload.channel,
+          ok: true,
+          peerId: payload.peerId,
+          sent: 1,
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+    hostname: "127.0.0.1",
+    port: 0,
+  });
+
+  try {
+    dependencies.services.runtime.getRouterHealth = () => ({
+      baseUrl: `http://127.0.0.1:${routerSendServer.port}`,
+      binaryPath: null,
+      diagnostics: { combined: [], stderr: [], stdout: [], totalLines: 0, truncated: false },
+      enablement: { enabled: true, enabledBindingCount: 0, enabledIdentityCount: 0, forced: false, reason: "test" },
+      healthUrl: `http://127.0.0.1:${routerSendServer.port}`,
+      lastError: null,
+      lastExit: null,
+      lastReadyAt: null,
+      lastStartedAt: null,
+      manifest: null,
+      materialization: null,
+      pid: null,
+      running: true,
+      source: "development",
+      status: "running",
+      version: "test",
+    });
+    dependencies.services.runtime.applyRouterConfig = async () => dependencies.services.runtime.getRouterHealth();
+
+    const unsafeSlackSend = await app.request(`http://openwork.local/workspace/${workspaceId}/opencode-router/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "slack", directory: workspaceRoot, text: "hello" }),
+    });
+    const unsafeBody = await unsafeSlackSend.json();
+    expect(unsafeSlackSend.status).toBe(400);
+    expect(unsafeBody.error.code).toBe("invalid_request");
+    expect(unsafeBody.error.message).toContain("Slack sends require a peerId");
+    expect(proxyCalls).toBe(0);
+
+    const blankPeerSlackSend = await app.request(`http://openwork.local/workspace/${workspaceId}/opencode-router/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "slack", directory: workspaceRoot, peerId: "   ", text: "hello" }),
+    });
+    const blankPeerBody = await blankPeerSlackSend.json();
+    expect(blankPeerSlackSend.status).toBe(400);
+    expect(blankPeerBody.error.code).toBe("invalid_request");
+    expect(proxyCalls).toBe(0);
+
+    const telegramDirectorySend = await app.request(`http://openwork.local/workspace/${workspaceId}/opencode-router/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "telegram", directory: workspaceRoot, text: "hello" }),
+    });
+    const telegramBody = await telegramDirectorySend.json();
+    expect(telegramDirectorySend.status).toBe(200);
+    expect(telegramBody.sent).toBe(1);
+    expect(proxyCalls).toBe(1);
+    const telegramPayload = observedPayloads[0] ?? {};
+    expect(telegramPayload.channel).toBe("telegram");
+    expect("peerId" in telegramPayload).toBe(false);
+
+    const directSlackSend = await app.request(`http://openwork.local/workspace/${workspaceId}/opencode-router/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "slack", directory: workspaceRoot, peerId: "C123", text: "hello" }),
+    });
+    const directBody = await directSlackSend.json();
+    expect(directSlackSend.status).toBe(200);
+    expect(directBody.sent).toBe(1);
+    expect(proxyCalls).toBe(2);
+    const directPayload = observedPayloads[1] ?? {};
+    expect(directPayload.channel).toBe("slack");
+    expect(directPayload.peerId).toBe("C123");
+  } finally {
+    routerSendServer.stop(true);
+  }
+});

@@ -265,12 +265,20 @@ export function createRouterProductService(input: {
       peerId?: string;
       text: string;
     }) {
+      const peerId = normalizeString(inputValue.peerId);
+      if (inputValue.channel === "slack" && !peerId) {
+        throw new RouteError(
+          400,
+          "invalid_request",
+          "Slack sends require a peerId. Pick one channel or thread target to avoid sending to every bound conversation.",
+        );
+      }
       const payload = {
         ...(inputValue.autoBind ? { autoBind: true } : {}),
         channel: inputValue.channel,
         ...(normalizeString(inputValue.directory) ? { directory: normalizeString(inputValue.directory) } : {}),
         ...(normalizeString(inputValue.identityId) ? { identityId: normalizeString(inputValue.identityId) } : {}),
-        ...(normalizeString(inputValue.peerId) ? { peerId: normalizeString(inputValue.peerId) } : {}),
+        ...(peerId ? { peerId } : {}),
         text: inputValue.text,
       };
       return await proxyRouter<Record<string, unknown>>("/send", { body: payload, method: "POST" });

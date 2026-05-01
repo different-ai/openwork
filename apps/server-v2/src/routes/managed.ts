@@ -1,7 +1,8 @@
 import type { Context, Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { describeRoute } from "hono-openapi";
 import { getRequestContext, type AppBindings } from "../context/request-context.js";
-import { buildSuccessResponse, RouteError } from "../http.js";
+import { buildErrorResponse, buildSuccessResponse, RouteError } from "../http.js";
 import { jsonResponse, withCommonErrorResponses } from "../openapi.js";
 import {
   cloudSigninResponseSchema,
@@ -70,6 +71,27 @@ function addCompatibilityRoute(
   if (method === "PUT") app.put(path, handler);
   if (method === "PATCH") app.patch(path, handler);
   if (method === "DELETE") app.delete(path, handler);
+}
+
+async function sendRouterMessage(c: Context<AppBindings>) {
+  const requestContext = getRequestContext(c);
+  try {
+    const body = await parseJsonBody(routerSendWriteSchema, c.req.raw);
+    return c.json(await requestContext.services.router.sendMessage(body));
+  } catch (error) {
+    if (error instanceof RouteError) {
+      return c.json(
+        buildErrorResponse({
+          requestId: requestContext.requestId,
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        }),
+        error.status as ContentfulStatusCode,
+      );
+    }
+    throw error;
+  }
 }
 
 export function registerManagedRoutes(app: Hono<AppBindings>) {
@@ -745,7 +767,7 @@ export function registerManagedRoutes(app: Hono<AppBindings>) {
       const directory = body.directory?.trim() || workspace?.backend.local?.dataDir || "";
       return c.json(await requestContext.services.router.setBinding({ channel: body.channel, directory, identityId: body.identityId, peerId: body.peerId }));
     });
-    addCompatibilityRoute(app, "POST", `${basePath}/send`, async (c) => c.json(await getRequestContext(c).services.router.sendMessage(await parseJsonBody(routerSendWriteSchema, c.req.raw))));
+    addCompatibilityRoute(app, "POST", `${basePath}/send`, sendRouterMessage);
   }
 
   addCompatibilityRoute(app, "GET", "/workspace/:workspaceId/export", async (c) => {
