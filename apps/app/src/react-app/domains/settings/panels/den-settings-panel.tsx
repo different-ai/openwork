@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { currentLocale, t } from "../../../../i18n";
+import { currentLocale, pluralSuffix, t } from "../../../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
@@ -604,7 +604,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           setStatusMessage(
             tx("den.status_loaded_orgs", {
               count: response.orgs.length,
-              plural: response.orgs.length === 1 ? "" : "s",
+              plural: pluralSuffix(currentLocale(), response.orgs.length),
             }),
           );
         }
@@ -636,7 +636,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
             nextWorkers.length > 0
               ? tx("den.status_loaded_workers", {
                   count: nextWorkers.length,
-                  plural: nextWorkers.length === 1 ? "" : "s",
+                  plural: pluralSuffix(currentLocale(), nextWorkers.length),
                   name: activeOrg?.name ?? tr("den.active_org_title"),
                 })
               : tx("den.status_no_workers", {

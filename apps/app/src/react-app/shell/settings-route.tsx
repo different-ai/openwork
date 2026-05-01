@@ -16,7 +16,7 @@ import {
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
 import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspacePreset, WorkspaceSessionGroup } from "../../app/types";
 import { isSandboxWorkspace } from "../../app/utils";
-import { currentLocale, t, setLocale, type Language } from "../../i18n";
+import { currentLocale, pluralSuffix, t, setLocale, type Language } from "../../i18n";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/connections/store";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../domains/connections/openwork-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domains/connections/provider-auth/store";
@@ -918,7 +918,7 @@ export function SettingsRoute() {
   const providerSummary = providerConnectedIds.length > 0
     ? t("status.providers_connected", undefined, {
       count: providerConnectedIds.length,
-      plural: providerConnectedIds.length === 1 ? "" : "s",
+      plural: pluralSuffix(currentLocale(), providerConnectedIds.length),
     })
     : t("settings.no_providers_connected");
   const connectedProviders = providers

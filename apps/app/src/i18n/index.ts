@@ -37,6 +37,21 @@ export const LANGUAGE_OPTIONS = [
   { value: "ru" as Language, label: "Русский", nativeName: "Русский" },
 ] as const;
 
+const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
+
+/**
+ * Current translation strings use an English-style plural suffix placeholder.
+ * Some locales render the noun without a visible plural marker, so we keep
+ * that suffix empty for them.
+ */
+export const pluralSuffix = (locale: Language, count: number): string => {
+  if (PLURAL_SUFFIX_EMPTY_LANGUAGES.has(locale)) {
+    return "";
+  }
+
+  return count === 1 ? "" : "s";
+};
+
 /**
  * Translation maps
  */
