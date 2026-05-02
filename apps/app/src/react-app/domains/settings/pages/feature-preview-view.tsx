@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useId, useState } from "react";
-import { ArrowUpRight, Eye, EyeOff, Mic2, Trash2, Volume2 } from "lucide-react";
+import { ArrowUpRight, Eye, EyeOff, Mic2, Trash2 } from "lucide-react";
 
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { t } from "../../../../i18n";
@@ -396,11 +396,12 @@ export function FeaturePreviewView(props: FeaturePreviewViewProps) {
             </select>
           </label>
 
-          <div className="space-y-2 rounded-2xl bg-dls-surface/65 p-3">
+          <div className="space-y-3 rounded-2xl bg-dls-surface/65 p-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2 text-xs text-gray-10">
-                <Volume2 size={14} className="text-gray-9" />
-                <span>{micTestBusy ? "Speak now — testing microphone input…" : micTestStatus ?? "Run a quick test to confirm OpenWork can actually hear audio."}</span>
+              <div className="min-w-0 text-xs leading-relaxed text-gray-10">
+                {micTestBusy
+                  ? "Speak now — testing microphone…"
+                  : micTestStatus ?? "Run a quick test to confirm OpenWork can hear audio from the selected input."}
               </div>
               <Button
                 variant="secondary"
@@ -411,11 +412,24 @@ export function FeaturePreviewView(props: FeaturePreviewViewProps) {
                 {micTestBusy ? "Testing…" : "Test microphone"}
               </Button>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-gray-4/70">
-              <div
-                className="h-full rounded-full bg-[rgba(var(--dls-accent-rgb),0.75)] transition-[width] duration-75"
-                style={{ width: `${Math.round(micLevel * 100)}%` }}
-              />
+            <div className="flex items-center gap-2">
+              <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-3/80">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-75 ${
+                    micLevel > 0.5
+                      ? "bg-green-9/80"
+                      : micLevel > 0
+                        ? "bg-[rgba(var(--dls-accent-rgb),0.6)]"
+                        : "bg-gray-5/50"
+                  }`}
+                  style={{ width: `${Math.round(micLevel * 100)}%` }}
+                />
+              </div>
+              {micTestBusy ? (
+                <span className="shrink-0 text-[10px] tabular-nums text-dls-secondary">
+                  {Math.round(micLevel * 100)}%
+                </span>
+              ) : null}
             </div>
           </div>
 

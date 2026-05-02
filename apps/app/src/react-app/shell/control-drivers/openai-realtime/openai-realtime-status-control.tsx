@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
-import { Loader2, Mic2, Square } from "lucide-react";
+import { Loader2, Mic2, MicOff } from "lucide-react";
 
 import { useFeatureFlagsPreferences } from "../../../domains/settings/state/feature-flags-preferences";
 import { useOpenworkControl } from "../../control/control-provider";
@@ -23,31 +23,20 @@ export function OpenAIRealtimeStatusControl() {
   const connected = realtimeState.status === "connected";
   const busy = realtimeState.status === "connecting" || realtimeState.mic === "requesting" || connectAction?.busy || disconnectAction?.busy;
   const unavailable = connected ? disconnectAction?.disabled === true : connectAction?.disabled !== false;
-  const title = realtimeState.lastError || (connected ? "Stop Realtime control" : "Start Realtime control");
-  const transcript = realtimeState.lastTranscript?.trim() ?? "";
-  const outputText = realtimeState.lastText?.trim() ?? "";
+  const isListening = connected && realtimeState.mic === "on";
+
+  const title = realtimeState.lastError || (connected ? "Disconnect voice control" : "Connect voice control");
+
+  // Compact status text for the pill — keep short and readable
   const stateText = realtimeState.lastError
-    ? realtimeState.lastError
-    : transcript
-      ? `You: ${transcript}`
-      : outputText
-      ? outputText
-      : realtimeState.status === "connecting"
-        ? realtimeState.mic === "requesting"
-          ? `Requesting microphone${realtimeState.micPermission ? ` (${realtimeState.micPermission})` : ""}…`
-          : "Connecting Realtime…"
+    ? "Error"
+    : realtimeState.status === "connecting"
+      ? "Connecting…"
+      : isListening
+        ? "Listening"
         : connected
-          ? realtimeState.mic === "on"
-            ? `Mic live${realtimeState.micLabel ? ` · ${realtimeState.micLabel}` : ""}${realtimeState.micTrack ? ` (${realtimeState.micTrack})` : ""} — listening for commands`
-            : "Realtime connected"
-          : "Preview voice control";
-  const label = busy
-    ? "Control…"
-    : connected
-      ? "Control on"
-      : realtimeState.status === "error"
-        ? "Control error"
-        : "Control";
+          ? "Connected"
+          : "";
 
   const handleClick = async () => {
     if (busy || unavailable) return;
@@ -57,27 +46,29 @@ export function OpenAIRealtimeStatusControl() {
   };
 
   return (
-    <div className="hidden max-w-[360px] items-center gap-2 md:flex">
-      <div
-        className={`min-w-0 truncate rounded-full px-2.5 py-1 text-[11px] ${
-          realtimeState.lastError
-            ? "bg-red-3/45 text-red-11"
-            : connected || busy
-              ? "bg-[rgba(var(--dls-accent-rgb),0.09)] text-dls-accent"
-              : "bg-dls-hover/55 text-dls-secondary"
-        }`}
-        title={stateText}
-      >
-        {stateText}
-      </div>
+    <div className="hidden items-center gap-1 md:flex">
+      {stateText ? (
+        <span
+          className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
+            realtimeState.lastError
+              ? "text-red-10"
+              : connected || busy
+                ? "text-dls-accent"
+                : "text-dls-secondary"
+          }`}
+          title={realtimeState.lastError || title}
+        >
+          {stateText}
+        </span>
+      ) : null}
       <button
         type="button"
-        className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
+        className={`inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
           connected
-            ? "bg-[rgba(var(--dls-accent-rgb),0.13)] text-dls-accent hover:bg-[rgba(var(--dls-accent-rgb),0.18)]"
+            ? "text-dls-accent hover:bg-[rgba(var(--dls-accent-rgb),0.08)]"
             : realtimeState.status === "error"
-              ? "bg-red-3/50 text-red-10 hover:bg-red-4/70"
-              : "bg-dls-hover/70 text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+              ? "text-red-10 hover:bg-red-2/50"
+              : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
         }`}
         onClick={() => void handleClick()}
         disabled={busy || unavailable}
@@ -87,11 +78,10 @@ export function OpenAIRealtimeStatusControl() {
         {busy ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : connected ? (
-          <Square className="h-3.5 w-3.5" />
+          <MicOff className="h-3.5 w-3.5" />
         ) : (
           <Mic2 className="h-3.5 w-3.5" />
         )}
-        <span>{label}</span>
       </button>
     </div>
   );
