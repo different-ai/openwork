@@ -85,24 +85,26 @@ export type SessionSurfaceProps = {
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
 };
 
+function messageToReadableText(message: UIMessage) {
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+  const body = message.parts
+    .flatMap((part) => {
+      if (part.type === "text") return [part.text];
+      if (part.type === "reasoning") return [part.text];
+      if (part.type === "dynamic-tool") {
+        if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
+        if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
+        return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
+      }
+      return [];
+    })
+    .join("\n\n");
+  return `${header}\n${body}`.trim();
+}
+
 function transcriptToText(messages: UIMessage[]) {
   return messages
-    .map((message) => {
-      const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
-      const body = message.parts
-        .flatMap((part) => {
-          if (part.type === "text") return [part.text];
-          if (part.type === "reasoning") return [part.text];
-          if (part.type === "dynamic-tool") {
-            if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
-            if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
-            return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
-          }
-          return [];
-        })
-        .join("\n\n");
-      return `${header}\n${body}`.trim();
-    })
+    .map(messageToReadableText)
     .filter(Boolean)
     .join("\n\n---\n\n");
 }
@@ -743,6 +745,51 @@ export function SessionSurface(props: SessionSurfaceProps) {
     containerRef: scrollRef,
     contentRef,
   });
+
+  const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_top",
+    label: "Go to the top of the session",
+    description: "Scroll the visible session transcript to the first messages.",
+    sideEffect: "none",
+    execute: () => {
+      const container = scrollRef.current;
+      if (!container) return { ok: false, error: "Session transcript is not mounted" };
+      container.scrollTo({ top: 0, behavior: "smooth" });
+      return { ok: true, position: "top" };
+    },
+  }), []);
+  useControlAction(sessionScrollTopControlAction);
+
+  const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_bottom",
+    label: "Go to the bottom of the session",
+    description: "Scroll the visible session transcript to the newest messages and composer area.",
+    sideEffect: "none",
+    execute: () => {
+      sessionScroll.jumpToLatest("smooth");
+      return { ok: true, position: "bottom" };
+    },
+  }), [sessionScroll.jumpToLatest]);
+  useControlAction(sessionScrollBottomControlAction);
+
+  const sessionLatestMessageControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.latest_message",
+    label: "Read the latest session message",
+    description: "Return the latest visible message in the current session transcript.",
+    sideEffect: "none",
+    execute: () => {
+      const message = renderedMessages[renderedMessages.length - 1];
+      if (!message) return { ok: false, error: "No messages are visible in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        index: renderedMessages.length - 1,
+        role: message.role,
+        text: messageToReadableText(message),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionLatestMessageControlAction);
 
   return (
     <DevProfiler id="SessionSurface">

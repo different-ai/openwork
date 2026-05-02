@@ -1604,6 +1604,61 @@ export function SessionRoute() {
   }), [navigate]);
   useControlAction(openSessionControlAction);
 
+  const renameSessionControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.rename",
+    label: "Rename a session",
+    description: "Rename a session by ID. Use list_sessions first to match the title the user said.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    disabled: !opencodeClient,
+    execute: async (args) => {
+      const input = args && typeof args === "object" ? args as { sessionId?: unknown; title?: unknown } : {};
+      const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+      const title = typeof input.title === "string" ? input.title.trim() : "";
+      if (!sessionId) return { ok: false, error: "sessionId is required" };
+      if (!title) return { ok: false, error: "title is required" };
+      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
+
+      const targetWorkspace = workspaces.find((workspace) => (sessionsByWorkspaceId[workspace.id] ?? []).some((session) => (session as { id?: string }).id === sessionId));
+      await opencodeClient.session.update({
+        sessionID: sessionId,
+        title,
+        directory: targetWorkspace?.path || selectedWorkspaceRoot || undefined,
+      });
+      await refreshRouteState();
+      return { ok: true, sessionId, title };
+    },
+  }), [opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
+  useControlAction(renameSessionControlAction);
+
+  const deleteSessionControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.delete",
+    label: "Delete a session",
+    description: "Delete a session by ID. Destructive: only run after explicit user confirmation.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    requiresConfirmation: true,
+    disabled: !client,
+    execute: async (args) => {
+      const input = args && typeof args === "object" ? args as { sessionId?: unknown; confirmed?: unknown } : {};
+      const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+      const confirmed = input.confirmed === true;
+      if (!sessionId) return { ok: false, error: "sessionId is required" };
+      if (!confirmed) return { ok: false, error: "Deletion requires confirmed: true after explicit user confirmation" };
+      if (!client) return { ok: false, error: "OpenWork server is not connected" };
+
+      const targetWorkspace = workspaces.find((workspace) => (sessionsByWorkspaceId[workspace.id] ?? []).some((session) => (session as { id?: string }).id === sessionId));
+      if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
+      await client.deleteSession(targetWorkspace.id, sessionId);
+      if (selectedSessionId === sessionId) {
+        navigate("/session");
+      }
+      await refreshRouteState();
+      return { ok: true, sessionId, deleted: true };
+    },
+  }), [client, navigate, refreshRouteState, selectedSessionId, sessionsByWorkspaceId, workspaces]);
+  useControlAction(deleteSessionControlAction);
+
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "command_palette.open",
     label: "Open the command palette",

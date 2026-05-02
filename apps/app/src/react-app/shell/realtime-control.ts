@@ -233,6 +233,22 @@ async function handleToolCall(event: RemoteEvent) {
     output = sessionId
       ? await control.execute("session.open", { sessionId })
       : { ok: false, error: "open_session requires sessionId" };
+  } else if (event.name === "rename_session") {
+    const sessionId = typeof args.sessionId === "string" ? args.sessionId : "";
+    const title = typeof args.title === "string" ? args.title : "";
+    output = sessionId && title
+      ? await control.execute("session.rename", { sessionId, title })
+      : { ok: false, error: "rename_session requires sessionId and title" };
+  } else if (event.name === "delete_session") {
+    const sessionId = typeof args.sessionId === "string" ? args.sessionId : "";
+    output = sessionId
+      ? await control.execute("session.delete", { sessionId, confirmed: args.confirmed === true })
+      : { ok: false, error: "delete_session requires sessionId" };
+  } else if (event.name === "scroll_session") {
+    const position = args.position === "top" ? "top" : "bottom";
+    output = await control.execute(position === "top" ? "session.scroll_top" : "session.scroll_bottom");
+  } else if (event.name === "get_latest_message") {
+    output = await control.execute("session.latest_message");
   } else {
     output = { ok: false, error: `Unknown tool: ${event.name ?? "unknown"}` };
   }

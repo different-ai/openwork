@@ -59,6 +59,7 @@ const REMOTE_CONTROL_DEFAULT_INSTRUCTIONS = [
   "Use snapshot or list_actions before choosing an action unless the user named an obvious action.",
   "Narrate briefly before and after actions.",
   "Prefer set_input for typing text and execute_action for navigation or buttons.",
+  "Ask for explicit confirmation before destructive actions like deleting sessions.",
   "Do not invent action IDs. Only use IDs returned by list_actions or snapshot.",
 ].join(" ");
 
@@ -3171,6 +3172,73 @@ function remoteControlTools() {
         additionalProperties: false,
       },
     },
+    {
+      type: "function",
+      name: "rename_session",
+      description: "Rename a session by ID. Use list_sessions first to identify the exact session the user means.",
+      parameters: {
+        type: "object",
+        properties: {
+          sessionId: {
+            type: "string",
+            description: "The session ID returned by list_sessions.",
+          },
+          title: {
+            type: "string",
+            description: "The new session title.",
+          },
+        },
+        required: ["sessionId", "title"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "delete_session",
+      description: "Delete a session by ID. Destructive: only set confirmed true after the user explicitly confirms deletion.",
+      parameters: {
+        type: "object",
+        properties: {
+          sessionId: {
+            type: "string",
+            description: "The session ID returned by list_sessions.",
+          },
+          confirmed: {
+            type: "boolean",
+            description: "Must be true only after explicit user confirmation.",
+          },
+        },
+        required: ["sessionId", "confirmed"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "scroll_session",
+      description: "Scroll the current session transcript to the top or bottom.",
+      parameters: {
+        type: "object",
+        properties: {
+          position: {
+            type: "string",
+            enum: ["top", "bottom"],
+            description: "Where to scroll the current session transcript.",
+          },
+        },
+        required: ["position"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "get_latest_message",
+      description: "Read the latest visible message in the current session transcript.",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -3263,7 +3331,18 @@ async function createRemoteControlSession(input: { model: string; voice: string;
     expiresAt,
     model: input.model,
     voice: input.voice,
-    tools: ["snapshot", "list_actions", "execute_action", "set_input", "list_sessions", "open_session"],
+    tools: [
+      "snapshot",
+      "list_actions",
+      "execute_action",
+      "set_input",
+      "list_sessions",
+      "open_session",
+      "rename_session",
+      "delete_session",
+      "scroll_session",
+      "get_latest_message",
+    ],
   };
 }
 
