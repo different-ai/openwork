@@ -217,6 +217,20 @@ export type OpenworkBlueprintSessionsMaterializeResult = {
   openSessionId: string | null;
 };
 
+export type OpenworkRemoteSession = {
+  clientSecret: string;
+  expiresAt: number | null;
+  model: string;
+  voice: string;
+  tools: string[];
+};
+
+export type OpenworkRemoteSessionRequest = {
+  model?: string;
+  voice?: string;
+  instructions?: string;
+};
+
 export type OpenworkArtifactItem = {
   id: string;
   name?: string;
@@ -766,6 +780,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    createRemoteSession: (payload: OpenworkRemoteSessionRequest = {}) =>
+      requestJson<OpenworkRemoteSession>(baseUrl, "/remote/session", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.status,
+      }).catch((error) => {
+        if (error instanceof OpenworkServerError && error.status === 404) {
+          throw new OpenworkServerError(
+            404,
+            "remote_session_unavailable",
+            "Realtime control requires a newer OpenWork server. Restart OpenWork so the updated server binary is used, then try Control again.",
+            error.details,
+          );
+        }
+        throw error;
+      }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {

@@ -31,8 +31,12 @@ mac:
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   gatekeeperAssess: false
   notarize: false
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenWork uses the microphone only when you turn on Realtime remote control.
   extraResources:
     - from: resources/sidecars
       to: sidecars

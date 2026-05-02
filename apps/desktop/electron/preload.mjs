@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return ipcRenderer.invoke("openwork:shell:relaunch");
     },
   },
+  permissions: {
+    requestMicrophone() {
+      return ipcRenderer.invoke("openwork:permissions:microphone");
+    },
+  },
   migration: {
     readSnapshot() {
       return ipcRenderer.invoke("openwork:migration:read");

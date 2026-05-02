@@ -29,6 +29,7 @@ import { DebugView } from "../domains/settings/pages/debug-view";
 import { DenView } from "../domains/settings/pages/den-view";
 import { EnvironmentView } from "../domains/settings/pages/environment-view";
 import { ExtensionsView } from "../domains/settings/pages/extensions-view";
+import { FeaturePreviewView } from "../domains/settings/pages/feature-preview-view";
 import { McpView } from "../domains/settings/pages/mcp-view";
 import { RecoveryView } from "../domains/settings/pages/recovery-view";
 import { SkillsView } from "../domains/settings/pages/skills-view";
@@ -253,6 +254,7 @@ function parseSettingsPath(pathname: string): {
     case "advanced":
     case "appearance":
     case "environment":
+    case "feature-preview":
     case "updates":
     case "recovery":
     case "debug":
@@ -1318,6 +1320,22 @@ export function SettingsRoute() {
                 : null
             }
             runtimeKey={environmentRuntimeKey}
+          />
+        );
+      case "feature-preview":
+        return (
+          <FeaturePreviewView
+            client={openworkServerSnapshot.openworkServerClient}
+            realtimeControlEnabled={local.prefs.featureFlags?.realtimeControl === true}
+            onToggleRealtimeControl={() => {
+              local.setPrefs((previous) => ({
+                ...previous,
+                featureFlags: {
+                  ...previous.featureFlags,
+                  realtimeControl: !previous.featureFlags?.realtimeControl,
+                },
+              }));
+            }}
           />
         );
       case "debug":

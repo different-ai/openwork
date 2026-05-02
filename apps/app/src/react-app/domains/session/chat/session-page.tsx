@@ -25,7 +25,7 @@ import { RenameSessionModal } from "../modals/rename-session-modal";
 import { WorkspaceSessionList } from "../sidebar/workspace-session-list";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
-import { StatusBar, type StatusBarProps } from "./status-bar";
+import { StatusBar, RealtimeTranscriptPanel, type StatusBarProps } from "./status-bar";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   useWorkspaceShellLayout,
@@ -527,6 +527,8 @@ export function SessionPage(props: SessionPageProps) {
             showSettingsButton={props.statusBar?.showSettingsButton}
           />
         </main>
+
+        <RealtimeTranscriptPanel />
       </div>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}

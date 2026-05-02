@@ -175,6 +175,7 @@ export type SettingsTab =
   | "skills"
   | "extensions"
   | "environment"
+  | "feature-preview"
   | "advanced"
   | "appearance"
   | "updates"

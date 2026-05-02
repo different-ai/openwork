@@ -14,6 +14,9 @@ declare global {
         openExternal?: (url: string) => Promise<void>;
         relaunch?: () => Promise<void>;
       };
+      permissions?: {
+        requestMicrophone?: () => Promise<{ granted: boolean; status: string }>;
+      };
       migration?: {
         readSnapshot?: () => Promise<unknown>;
         ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;

@@ -32,6 +32,7 @@ export type LocalPreferences = {
   releaseChannel: ReleaseChannel;
   featureFlags: {
     microsandboxCreateSandbox: boolean;
+    realtimeControl: boolean;
   };
   /**
    * Set to true after the user completes the welcome/onboarding flow
@@ -60,7 +61,7 @@ const INITIAL_PREFS: LocalPreferences = {
   modelVariant: null,
   defaultModel: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: false },
+  featureFlags: { microsandboxCreateSandbox: false, realtimeControl: false },
   hasCompletedOnboarding: false,
 };
 

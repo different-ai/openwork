@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, systemPreferences } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -100,6 +100,33 @@ const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 function envFlagDisabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "0" || value === "false" || value === "off";
+}
+
+function isTrustedAppMediaUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) return false;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "file:") return true;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
+function installMediaPermissionHandler() {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (permission !== "media") {
+      callback(false);
+      return;
+    }
+    const mediaDetails = /** @type {{ mediaTypes?: string[]; requestingUrl?: string }} */ (details ?? {});
+    const mediaTypes = Array.isArray(mediaDetails.mediaTypes) ? mediaDetails.mediaTypes : [];
+    const requestsAudio = mediaTypes.length === 0 || mediaTypes.includes("audio");
+    const requestsVideo = mediaTypes.includes("video");
+    const trustedUrl = isTrustedAppMediaUrl(mediaDetails.requestingUrl) || isTrustedAppMediaUrl(webContents.getURL());
+    callback(Boolean(trustedUrl && requestsAudio && !requestsVideo));
+  });
 }
 
 async function installReactDevToolsForDev() {
@@ -1404,6 +1431,18 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.exit(0);
 });
 
+ipcMain.handle("openwork:permissions:microphone", async () => {
+  if (process.platform !== "darwin") return { granted: true, status: "granted" };
+  const before = systemPreferences.getMediaAccessStatus("microphone");
+  if (before === "granted") return { granted: true, status: before };
+  if (before === "denied" || before === "restricted") return { granted: false, status: before };
+  const granted = await systemPreferences.askForMediaAccess("microphone");
+  return {
+    granted,
+    status: systemPreferences.getMediaAccessStatus("microphone"),
+  };
+});
+
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
 
@@ -1433,6 +1472,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    installMediaPermissionHandler();
     await installReactDevToolsForDev();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 

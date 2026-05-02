@@ -200,6 +200,39 @@ These are all opencode primitives you can read the docs to find out exactly how 
 
 OpenWork is a client experience that consumes OpenWork server surfaces.
 
+### Provider-neutral app control surface
+
+OpenWork app control mode is owned by the UI runtime. The app exposes a
+provider-neutral action registry through `window.__openworkControl` so external
+controllers can inspect the current route, discover visible/safe actions, and
+request an action by ID without depending on DOM scraping or a specific model
+provider.
+
+Guidelines:
+
+- The app owns visible, screen-local state: which actions are available, which
+  element should be spotlighted, and how actions are choreographed so users can
+  see control happen.
+- Controllers such as OpenAI Realtime, MCP bridges, or test harnesses should
+  call the app control surface instead of reaching into app internals.
+- Provider/API secrets and privileged filesystem or server mutations remain
+  server-owned; the app control surface should route those through OpenWork
+  server APIs rather than adding provider-specific behavior to the UI.
+- `/remote/session` is the OpenWork server endpoint that brokers short-lived
+  remote-control Realtime sessions. It keeps provider API keys server-side and
+  returns only an ephemeral browser client secret.
+- Realtime control is a Feature Preview capability and is off by default. When
+  enabled, users start or stop it from the session status bar instead of a
+  floating overlay.
+- The OpenAI key used for the initial Realtime controller can come from the
+  server process environment or from the OpenWork local environment store via
+  Settings -> Feature Preview; the browser never receives the long-lived key.
+- Realtime remote control captures microphone audio in the app/browser only
+  after the user starts the mode. The first implementation sends audio input to
+  the Realtime session while keeping model output text/tool-call based.
+- Raw screenshot or coordinate-based control is a fallback for uninstrumented
+  surfaces, not the default architecture.
+
 OpenWork supports two product runtime modes for users:
 
 - desktop

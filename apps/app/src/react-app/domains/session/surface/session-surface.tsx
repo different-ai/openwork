@@ -23,6 +23,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "../../../shell/app-inspector";
+import { useControlAction, type OpenworkControlAction } from "../../../shell/control-mode";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
@@ -112,6 +113,17 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
   return "Ready";
 }
+
+function controlTextArgument(args: unknown, fallback: string) {
+  if (typeof args === "string") return args;
+  if (args && typeof args === "object" && "text" in args) {
+    const text = (args as { text?: unknown }).text;
+    if (typeof text === "string") return text;
+  }
+  return fallback;
+}
+
+const waitForControl = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   const queryClient = getReactQueryClient();
@@ -246,6 +258,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   attachmentsRef.current = attachments;
@@ -473,7 +486,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     // Intentionally allow sending while the assistant is still streaming.
@@ -499,9 +512,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setAwaitingAssistantBaseline(null);
       setSending(false);
     }
-  };
+  }, [attachments, buildDraft, draft, props.onDraftChange, props.onSendDraft, renderedMessages.length]);
 
-  const handleAbort = async () => {
+  const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
     try {
@@ -510,7 +523,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } catch (nextError) {
       setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
     }
-  };
+  }, [chatStreaming, opencodeClient, props.sessionId, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (liveStatus.type === "idle") {
@@ -598,6 +611,63 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!links.length) return;
     setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
+
+  const typeComposerText = useCallback(async (text: string) => {
+    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    setDraft("");
+    let next = "";
+    for (const char of text) {
+      next += char;
+      setDraft(next);
+      await waitForControl(char === "\n" ? 80 : 18);
+    }
+  }, []);
+
+  const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.set_text",
+    label: "Type into the composer",
+    description: "Replace the current session draft and type the supplied text visibly.",
+    sideEffect: "none",
+    requiresArgs: true,
+    previewArgs: { text: "Help me outline the next OpenWork task." },
+    targetRef: composerShellRef,
+    execute: async (args, helpers) => {
+      const text = controlTextArgument(args, "Help me outline the next OpenWork task.");
+      helpers.setNarration(`Typing ${text.length.toLocaleString()} characters into the composer…`);
+      await typeComposerText(text);
+      props.onDraftChange(buildDraft(text, attachments));
+      return { draftLength: text.length };
+    },
+  }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
+  useControlAction(composerSetTextControlAction);
+
+  const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.send",
+    label: "Send the composer prompt",
+    description: "Send the currently visible composer draft to the active session.",
+    sideEffect: "mutation",
+    disabled: (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleSend();
+      return true;
+    },
+  }), [attachments.length, draft, handleSend, model.transitionState]);
+  useControlAction(composerSendControlAction);
+
+  const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.stop",
+    label: "Stop the current run",
+    description: "Stop the current streaming session run.",
+    sideEffect: "mutation",
+    disabled: !chatStreaming,
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleAbort();
+      return true;
+    },
+  }), [chatStreaming, handleAbort]);
+  useControlAction(composerStopControlAction);
 
   const listSkills = async (): Promise<SkillCard[]> => {
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
@@ -794,7 +864,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+      <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <DevProfiler id="SessionComposer">
         <ReactSessionComposer
           draft={draft}
