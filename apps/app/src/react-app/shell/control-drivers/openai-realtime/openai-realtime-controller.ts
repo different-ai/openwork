@@ -1,5 +1,5 @@
-import type { OpenworkRemoteSession } from "../../app/lib/openwork-server";
-import type { OpenworkControlResult, OpenworkControlSnapshot } from "./control-mode";
+import type { OpenworkRemoteSession } from "../../../../app/lib/openwork-server";
+import type { OpenworkControlResult, OpenworkControlSnapshot } from "../../control/control-provider";
 
 type RemoteEvent = {
   type?: string;

@@ -11,7 +11,7 @@ import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
-import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control-mode";
+import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { WelcomeRoute } from "./welcome-route";

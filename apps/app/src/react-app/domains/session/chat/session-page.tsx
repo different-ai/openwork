@@ -25,7 +25,8 @@ import { RenameSessionModal } from "../modals/rename-session-modal";
 import { WorkspaceSessionList } from "../sidebar/workspace-session-list";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
-import { StatusBar, RealtimeTranscriptPanel, type StatusBarProps } from "./status-bar";
+import { StatusBar, type StatusBarProps } from "./status-bar";
+import { OpenAIRealtimeActivityPanel } from "../../../shell/control-drivers/openai-realtime/openai-realtime-activity-panel";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   useWorkspaceShellLayout,
@@ -528,7 +529,7 @@ export function SessionPage(props: SessionPageProps) {
           />
         </main>
 
-        <RealtimeTranscriptPanel />
+        <OpenAIRealtimeActivityPanel />
       </div>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}

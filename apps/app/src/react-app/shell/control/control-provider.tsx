@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useLocal } from "../kernel/local-provider";
+import { useLocal } from "../../kernel/local-provider";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
 

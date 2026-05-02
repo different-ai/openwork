@@ -85,9 +85,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "./app-inspector";
-import { useControlAction, type OpenworkControlAction } from "./control-mode";
-import { getRealtimeControlController } from "./realtime-control";
-import { readRealtimeControlMicPreference } from "../domains/settings/state/realtime-control-preferences";
+import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
@@ -96,6 +94,8 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
+import { useSessionControlActions } from "../domains/session/control/session-control-actions";
+import { useOpenAIRealtimeControlActions } from "./control-drivers/openai-realtime/use-openai-realtime-control-actions";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -1548,116 +1548,21 @@ export function SessionRoute() {
     return () => window.removeEventListener("keydown", handler);
   }, [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
 
-  const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.create_task",
-    label: "Create a new task",
-    description: "Create a new session in the selected workspace.",
-    sideEffect: "mutation",
-    disabled: !canCreateTask || !selectedWorkspaceId,
-    execute: async () => {
-      if (!selectedWorkspaceId) return false;
-      await handleCreateTaskInWorkspace(selectedWorkspaceId);
-      return true;
-    },
-  }), [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
-  useControlAction(createTaskControlAction);
-
-  const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.list_sessions",
-    label: "List available sessions",
-    description: "Return the list of sessions across workspaces so the user can ask to open one by name.",
-    sideEffect: "none",
-    execute: () => {
-      const out: { sessionId: string; title: string; workspace: string; updatedAt: number }[] = [];
-      for (const workspace of workspaces) {
-        const wsLabel = workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || "workspace";
-        const list = sessionsByWorkspaceId[workspace.id] ?? [];
-        for (const session of list) {
-          const sessionId = (session as { id?: string }).id?.trim() ?? "";
-          if (!sessionId) continue;
-          const title = getDisplaySessionTitle((session as { title?: string }).title ?? "");
-          const updatedAt = (session as { time?: { updated?: number; created?: number } }).time?.updated
-            ?? (session as { time?: { updated?: number; created?: number } }).time?.created ?? 0;
-          out.push({ sessionId, title, workspace: wsLabel, updatedAt });
-        }
-      }
-      out.sort((a, b) => b.updatedAt - a.updatedAt);
-      return out.slice(0, 30);
-    },
-  }), [workspaces, sessionsByWorkspaceId]);
-  useControlAction(listSessionsControlAction);
-
-  const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.open",
-    label: "Open a session by ID",
-    description: "Navigate to a specific session. Use list_sessions first to get the session ID.",
-    sideEffect: "navigation",
-    requiresArgs: true,
-    execute: (args) => {
-      const sessionId = typeof args === "object" && args && "sessionId" in args && typeof (args as { sessionId?: unknown }).sessionId === "string"
-        ? (args as { sessionId: string }).sessionId.trim()
-        : "";
-      if (!sessionId) return { ok: false, error: "sessionId is required" };
-      navigate(`/session/${sessionId}`);
-      return { ok: true, navigatedTo: sessionId };
-    },
-  }), [navigate]);
-  useControlAction(openSessionControlAction);
-
-  const renameSessionControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.rename",
-    label: "Rename a session",
-    description: "Rename a session by ID. Use list_sessions first to match the title the user said.",
-    sideEffect: "mutation",
-    requiresArgs: true,
-    disabled: !opencodeClient,
-    execute: async (args) => {
-      const input = args && typeof args === "object" ? args as { sessionId?: unknown; title?: unknown } : {};
-      const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-      const title = typeof input.title === "string" ? input.title.trim() : "";
-      if (!sessionId) return { ok: false, error: "sessionId is required" };
-      if (!title) return { ok: false, error: "title is required" };
-      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
-
-      const targetWorkspace = workspaces.find((workspace) => (sessionsByWorkspaceId[workspace.id] ?? []).some((session) => (session as { id?: string }).id === sessionId));
-      await opencodeClient.session.update({
-        sessionID: sessionId,
-        title,
-        directory: targetWorkspace?.path || selectedWorkspaceRoot || undefined,
-      });
-      await refreshRouteState();
-      return { ok: true, sessionId, title };
-    },
-  }), [opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
-  useControlAction(renameSessionControlAction);
-
-  const deleteSessionControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.delete",
-    label: "Delete a session",
-    description: "Delete a session by ID. Destructive: only run after explicit user confirmation.",
-    sideEffect: "mutation",
-    requiresArgs: true,
-    requiresConfirmation: true,
-    disabled: !client,
-    execute: async (args) => {
-      const input = args && typeof args === "object" ? args as { sessionId?: unknown; confirmed?: unknown } : {};
-      const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-      const confirmed = input.confirmed === true;
-      if (!sessionId) return { ok: false, error: "sessionId is required" };
-      if (!confirmed) return { ok: false, error: "Deletion requires confirmed: true after explicit user confirmation" };
-      if (!client) return { ok: false, error: "OpenWork server is not connected" };
-
-      const targetWorkspace = workspaces.find((workspace) => (sessionsByWorkspaceId[workspace.id] ?? []).some((session) => (session as { id?: string }).id === sessionId));
-      if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
-      await client.deleteSession(targetWorkspace.id, sessionId);
-      if (selectedSessionId === sessionId) {
-        navigate("/session");
-      }
-      await refreshRouteState();
-      return { ok: true, sessionId, deleted: true };
-    },
-  }), [client, navigate, refreshRouteState, selectedSessionId, sessionsByWorkspaceId, workspaces]);
-  useControlAction(deleteSessionControlAction);
+  useSessionControlActions({
+    workspaces,
+    sessionsByWorkspaceId,
+    selectedWorkspaceId,
+    selectedWorkspaceRoot,
+    selectedSessionId,
+    canCreateTask,
+    openworkClient: client,
+    opencodeClient,
+    navigateToSession: (sessionId) => navigate(`/session/${sessionId}`),
+    navigateToSessionRoot: () => navigate("/session"),
+    createTaskInWorkspace: handleCreateTaskInWorkspace,
+    openModelPicker: () => setModelPickerOpen(true),
+    refreshRouteState,
+  });
 
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "command_palette.open",
@@ -1668,68 +1573,8 @@ export function SessionRoute() {
   }), []);
   useControlAction(commandPaletteControlAction);
 
-  const modelPickerControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.model_picker.open",
-    label: "Open the model picker",
-    description: "Open the current session model picker.",
-    sideEffect: "none",
-    disabled: !selectedWorkspaceId,
-    execute: () => setModelPickerOpen(true),
-  }), [selectedWorkspaceId]);
-  useControlAction(modelPickerControlAction);
-
   const realtimeControlPreviewEnabled = local.prefs.featureFlags?.realtimeControl === true;
-
-  const remoteRealtimeConnectAction = useMemo<OpenworkControlAction>(() => ({
-    id: "remote.realtime.connect",
-    label: "Connect OpenAI Realtime microphone control",
-    description: "Start a browser Realtime session that listens to the microphone and can call OpenWork control actions.",
-    sideEffect: "external",
-    disabled: !realtimeControlPreviewEnabled || !client,
-    execute: async () => {
-      if (!realtimeControlPreviewEnabled) return { status: "error", lastError: "Realtime control is disabled in Feature Preview settings" };
-      if (!client) return { status: "error", lastError: "OpenWork server is not connected" };
-      const mic = readRealtimeControlMicPreference();
-      return getRealtimeControlController().connect({
-        createSession: () => client.createRemoteSession(),
-        audioInput: true,
-        audioDeviceId: mic.deviceId,
-        audioDeviceLabel: mic.label,
-      });
-    },
-  }), [client, realtimeControlPreviewEnabled]);
-  useControlAction(remoteRealtimeConnectAction);
-
-  const remoteRealtimeTextAction = useMemo<OpenworkControlAction>(() => ({
-    id: "remote.realtime.send_text",
-    label: "Send text to OpenAI Realtime remote control",
-    description: "Send a text message through the connected Realtime session.",
-    sideEffect: "external",
-    requiresArgs: true,
-    disabled: !realtimeControlPreviewEnabled,
-    previewArgs: { text: "List the available OpenWork actions." },
-    execute: (_args) => {
-      const text = typeof _args === "object" && _args && "text" in _args && typeof (_args as { text?: unknown }).text === "string"
-        ? (_args as { text: string }).text
-        : "List the available OpenWork actions.";
-      getRealtimeControlController().sendText(text);
-      return getRealtimeControlController().state();
-    },
-  }), [realtimeControlPreviewEnabled]);
-  useControlAction(remoteRealtimeTextAction);
-
-  const remoteRealtimeDisconnectAction = useMemo<OpenworkControlAction>(() => ({
-    id: "remote.realtime.disconnect",
-    label: "Disconnect OpenAI Realtime remote control",
-    description: "Close the browser Realtime session.",
-    sideEffect: "external",
-    disabled: !realtimeControlPreviewEnabled,
-    execute: () => {
-      getRealtimeControlController().disconnect();
-      return getRealtimeControlController().state();
-    },
-  }), [realtimeControlPreviewEnabled]);
-  useControlAction(remoteRealtimeDisconnectAction);
+  useOpenAIRealtimeControlActions({ enabled: realtimeControlPreviewEnabled, client });
 
   const paletteSessionOptions = useMemo<PaletteSessionOption[]>(() => {
     const out: PaletteSessionOption[] = [];

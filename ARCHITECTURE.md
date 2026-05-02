@@ -215,6 +215,10 @@ Guidelines:
   see control happen.
 - Controllers such as OpenAI Realtime, MCP bridges, or test harnesses should
   call the app control surface instead of reaching into app internals.
+- OpenAI Realtime is one replaceable control driver, not the owner of the
+  control architecture. The generic app-control registry and session actions
+  should remain useful if the voice driver is removed or replaced by tests,
+  scripts, MCP bridges, or other controllers.
 - Provider/API secrets and privileged filesystem or server mutations remain
   server-owned; the app control surface should route those through OpenWork
   server APIs rather than adding provider-specific behavior to the UI.

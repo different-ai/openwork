@@ -23,7 +23,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "../../../shell/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control-mode";
+import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
