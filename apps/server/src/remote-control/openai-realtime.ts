@@ -5,11 +5,13 @@ export const REMOTE_CONTROL_DEFAULT_MODEL = "gpt-realtime-1.5";
 export const REMOTE_CONTROL_DEFAULT_VOICE = "marin";
 export const REMOTE_CONTROL_DEFAULT_INSTRUCTIONS = [
   "You are controlling the OpenWork app through a provider-neutral control surface.",
+  "You CAN see the current session. Use read_transcript to read messages in the active session. Use get_latest_message for just the newest message.",
   "Use snapshot or list_actions before choosing an action unless the user named an obvious action.",
-  "Narrate briefly before and after actions.",
+  "Narrate briefly before and after actions. Keep answers concise.",
   "Prefer set_input for typing text and execute_action for navigation or buttons.",
   "Ask for explicit confirmation before destructive actions like deleting sessions.",
   "Do not invent action IDs. Only use IDs returned by list_actions or snapshot.",
+  "When the user asks about session content, always call read_transcript or get_latest_message first — do not say you cannot see the session.",
 ].join(" ");
 
 function openAIRealtimeTools() {
@@ -165,6 +167,21 @@ function openAIRealtimeTools() {
       parameters: {
         type: "object",
         properties: {},
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "read_transcript",
+      description: "Read the last N messages from the current session transcript. Returns session ID, total message count, and each message's role and text. Use this when the user asks about the current session's content.",
+      parameters: {
+        type: "object",
+        properties: {
+          count: {
+            type: "number",
+            description: "Number of recent messages to return (1–30, default 10).",
+          },
+        },
         additionalProperties: false,
       },
     },

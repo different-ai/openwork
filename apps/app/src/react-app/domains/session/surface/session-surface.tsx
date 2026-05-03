@@ -791,6 +791,33 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.sessionId, renderedMessages]);
   useControlAction(sessionLatestMessageControlAction);
 
+  const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.read_transcript",
+    label: "Read the current session transcript",
+    description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
+    sideEffect: "none",
+    execute: (args) => {
+      const count = typeof args === "object" && args !== null && "count" in args && typeof (args as { count?: unknown }).count === "number"
+        ? Math.min(Math.max(1, (args as { count: number }).count), 30)
+        : 10;
+      const total = renderedMessages.length;
+      const slice = renderedMessages.slice(-count);
+      if (!slice.length) return { ok: false, error: "No messages in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        messageCount: total,
+        returned: slice.length,
+        messages: slice.map((message, index) => ({
+          index: total - slice.length + index,
+          role: message.role,
+          text: messageToReadableText(message),
+        })),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionReadTranscriptControlAction);
+
   return (
     <DevProfiler id="SessionSurface">
     <div className="flex h-full min-h-0 flex-col">

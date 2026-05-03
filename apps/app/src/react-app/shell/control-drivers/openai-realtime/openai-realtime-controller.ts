@@ -207,7 +207,9 @@ async function handleToolCall(event: RemoteEvent) {
     ? `execute_action ${typeof args.actionId === "string" ? args.actionId : ""}`.trim()
     : event.name === "set_input"
       ? `set_input ${typeof args.actionId === "string" ? args.actionId : ""}`.trim()
-      : event.name ?? "unknown_tool";
+      : event.name === "read_transcript"
+        ? `read_transcript${typeof args.count === "number" ? ` (last ${args.count})` : ""}`.trim()
+        : event.name ?? "unknown_tool";
   const toolLogId = appendTranscriptLog({ role: "tool", text: `Calling ${toolLabel}…`, status: "pending" });
   let output: OpenworkControlSnapshot | OpenworkControlSnapshot["actions"] | OpenworkControlResult | { ok: false; error: string };
 
@@ -249,6 +251,9 @@ async function handleToolCall(event: RemoteEvent) {
     output = await control.execute(position === "top" ? "session.scroll_top" : "session.scroll_bottom");
   } else if (event.name === "get_latest_message") {
     output = await control.execute("session.latest_message");
+  } else if (event.name === "read_transcript") {
+    const count = typeof args.count === "number" ? args.count : 10;
+    output = await control.execute("session.read_transcript", { count });
   } else {
     output = { ok: false, error: `Unknown tool: ${event.name ?? "unknown"}` };
   }
