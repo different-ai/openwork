@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("__PILOT__", {
+  // ── Settings ──
+  settings: {
+    get: () => ipcRenderer.invoke("pilot:get-settings"),
+    save: (input) => ipcRenderer.invoke("pilot:save-settings", input),
+  },
+
+  // ── Realtime session secret ──
+  realtime: {
+    createSession: () => ipcRenderer.invoke("pilot:create-realtime-session"),
+  },
+
   // ── System control ──
   system: {
     runAppleScript: (script) => ipcRenderer.invoke("pilot:applescript", script),

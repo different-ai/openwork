@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +33,210 @@ if (process.platform === "darwin") {
 let tray = null;
 let panelWindow = null;
 let listening = false;
+
+const PILOT_DEFAULT_MODEL = "gpt-realtime-1.5";
+const PILOT_SETTINGS_FILE = "settings.json";
+const PILOT_REALTIME_INSTRUCTIONS = [
+  "You are Pilot, a macOS computer-control assistant running as a standalone menubar app.",
+  "You control the user's Mac through safe, explicit tools: listing apps, bringing apps forward, typing text, pressing key combos, reading/writing clipboard, and opening URLs.",
+  "Use snapshot or frontmost_app before acting unless the user named an obvious app/action.",
+  "Prefer app-specific activation before typing: activate_app or launch_app first, then type_text or press_key.",
+  "Keep spoken responses brief. Narrate what you are doing, then act.",
+  "Do not use destructive key combos like command+q, command+w, delete, or return-to-send unless the user explicitly asks or confirms.",
+  "When dictating into the frontmost app, type exactly what the user intends, not your own commentary.",
+].join(" ");
+
+function getSettingsPath() {
+  return path.join(app.getPath("userData"), PILOT_SETTINGS_FILE);
+}
+
+async function readPilotSettings() {
+  try {
+    const raw = await readFile(getSettingsPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      openAIKey: typeof parsed.openAIKey === "string" ? parsed.openAIKey : "",
+      model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model : PILOT_DEFAULT_MODEL,
+    };
+  } catch {
+    return { openAIKey: "", model: PILOT_DEFAULT_MODEL };
+  }
+}
+
+async function writePilotSettings(settings) {
+  await mkdir(path.dirname(getSettingsPath()), { recursive: true });
+  const current = await readPilotSettings();
+  const next = {
+    ...current,
+    ...(typeof settings.openAIKey === "string" ? { openAIKey: settings.openAIKey } : {}),
+    ...(typeof settings.model === "string" ? { model: settings.model } : {}),
+    model: settings.model?.trim() || current.model || PILOT_DEFAULT_MODEL,
+  };
+  await writeFile(getSettingsPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
+}
+
+function openAIRealtimeTools() {
+  return [
+    {
+      type: "function",
+      name: "snapshot",
+      description: "Read Pilot state: frontmost app, running apps, and listening state.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "list_apps",
+      description: "List currently running visible macOS apps.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "frontmost_app",
+      description: "Read the current frontmost macOS app.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "activate_app",
+      description: "Bring a running macOS app to the foreground by name.",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", description: "App name, e.g. Safari, Notes, OpenWork." } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "launch_app",
+      description: "Launch and activate a macOS app by name.",
+      parameters: {
+        type: "object",
+        properties: { name: { type: "string", description: "App name, e.g. Safari, Notes, OpenWork." } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "type_text",
+      description: "Type text into the frontmost app using macOS keystrokes. Does not press return.",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string", description: "Text to type exactly." } },
+        required: ["text"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "press_key",
+      description: "Press a key or key combo in the frontmost app, e.g. command+c, command+v, tab, escape.",
+      parameters: {
+        type: "object",
+        properties: { combo: { type: "string", description: "Key combo, e.g. command+c, command+shift+v, tab." } },
+        required: ["combo"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "clipboard_read",
+      description: "Read the macOS clipboard as text.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "clipboard_write",
+      description: "Write text to the macOS clipboard.",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string", description: "Text to copy to clipboard." } },
+        required: ["text"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "open_url",
+      description: "Open a URL in the default browser.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "Absolute URL to open." } },
+        required: ["url"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+async function createRealtimeSession() {
+  const settings = await readPilotSettings();
+  const apiKey = process.env.OPENAI_API_KEY?.trim() || settings.openAIKey?.trim();
+  if (!apiKey) {
+    throw new Error("Add an OpenAI API key in Pilot before starting realtime control.");
+  }
+
+  const model = settings.model || PILOT_DEFAULT_MODEL;
+  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session: {
+        type: "realtime",
+        model,
+        output_modalities: ["text"],
+        audio: {
+          input: {
+            transcription: { model: "gpt-4o-mini-transcribe" },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              silence_duration_ms: 250,
+              prefix_padding_ms: 300,
+              create_response: true,
+              interrupt_response: false,
+            },
+          },
+        },
+        instructions: PILOT_REALTIME_INSTRUCTIONS,
+        tool_choice: "auto",
+        tools: openAIRealtimeTools(),
+      },
+    }),
+  });
+
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) {
+    const message = typeof json?.error?.message === "string" ? json.error.message : response.statusText;
+    throw new Error(message || "Failed to create OpenAI realtime session");
+  }
+  const clientSecret =
+    typeof json?.client_secret?.value === "string"
+      ? json.client_secret.value
+      : typeof json?.value === "string"
+        ? json.value
+        : typeof json?.client_secret === "string"
+          ? json.client_secret
+          : "";
+  if (!clientSecret) throw new Error("OpenAI did not return a usable realtime client secret");
+  return {
+    clientSecret,
+    expiresAt: typeof json?.client_secret?.expires_at === "number" ? json.client_secret.expires_at : null,
+    model,
+    tools: openAIRealtimeTools().map((tool) => tool.name),
+  };
+}
 
 // ── Resolve UI assets ──
 function getUIPath() {
@@ -225,6 +430,51 @@ function runAppleScript(script) {
 
 // ── IPC handlers ──
 function registerIPC() {
+  // Settings: OpenAI API key and model. Stored locally in app userData.
+  ipcMain.handle("pilot:get-settings", async () => {
+    const settings = await readPilotSettings();
+    return {
+      ok: true,
+      settings: {
+        model: settings.model,
+        hasOpenAIKey: Boolean(settings.openAIKey?.trim() || process.env.OPENAI_API_KEY?.trim()),
+        openAIKeyPreview: settings.openAIKey
+          ? `${settings.openAIKey.slice(0, 7)}••••${settings.openAIKey.slice(-4)}`
+          : process.env.OPENAI_API_KEY?.trim()
+            ? "OPENAI_API_KEY env"
+            : "",
+      },
+    };
+  });
+
+  ipcMain.handle("pilot:save-settings", async (_event, input) => {
+    try {
+      const settings = await writePilotSettings({
+        openAIKey: typeof input?.openAIKey === "string" ? input.openAIKey.trim() : undefined,
+        model: typeof input?.model === "string" ? input.model.trim() : undefined,
+      });
+      return {
+        ok: true,
+        settings: {
+          model: settings.model,
+          hasOpenAIKey: Boolean(settings.openAIKey?.trim()),
+          openAIKeyPreview: settings.openAIKey ? `${settings.openAIKey.slice(0, 7)}••••${settings.openAIKey.slice(-4)}` : "",
+        },
+      };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Realtime: create ephemeral OpenAI client secret. Long-lived API key stays in main process.
+  ipcMain.handle("pilot:create-realtime-session", async () => {
+    try {
+      return { ok: true, session: await createRealtimeSession() };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // System: run AppleScript
   ipcMain.handle("pilot:applescript", async (_event, script) => {
     if (typeof script !== "string" || !script.trim()) {
@@ -303,13 +553,13 @@ function registerIPC() {
       const using = modifiers.length ? ` using {${modifiers.join(", ")}}` : "";
       // Handle special keys
       const special = {
-        return: "return", enter: "return", tab: "tab", escape: "escape",
-        space: "space", delete: "delete", backspace: "delete",
-        up: "up arrow", down: "down arrow", left: "left arrow", right: "right arrow",
+        return: 36, enter: 36, tab: 48, escape: 53,
+        space: 49, delete: 51, backspace: 51,
+        up: 126, down: 125, left: 123, right: 124,
       };
       const keyCode = special[key];
       const script = keyCode
-        ? `tell application "System Events" to key code (key code of "${keyCode}")${using}`
+        ? `tell application "System Events" to key code ${keyCode}${using}`
         : `tell application "System Events" to keystroke "${key}"${using}`;
       await runAppleScript(script);
       return { ok: true };

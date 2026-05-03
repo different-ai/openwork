@@ -9,9 +9,11 @@
     :root {
       --bg: rgba(20, 20, 25, 0.88);
       --surface: rgba(255, 255, 255, 0.06);
+      --surface-2: rgba(255, 255, 255, 0.09);
       --border: rgba(255, 255, 255, 0.08);
       --text: rgba(255, 255, 255, 0.92);
       --secondary: rgba(255, 255, 255, 0.5);
+      --muted: rgba(255, 255, 255, 0.32);
       --accent: #6b8aff;
       --green: #34d399;
       --red: #f87171;
@@ -28,9 +30,7 @@
       user-select: none;
       overflow: hidden;
     }
-    body {
-      -webkit-app-region: drag;
-    }
+    body { -webkit-app-region: drag; }
     #root {
       height: 100%;
       display: flex;
@@ -43,7 +43,6 @@
       -webkit-backdrop-filter: blur(40px) saturate(1.4);
     }
 
-    /* ── header ── */
     .header {
       display: flex;
       align-items: center;
@@ -51,37 +50,14 @@
       padding: 14px 16px 10px;
       -webkit-app-region: drag;
     }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .header h1 {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-    }
-    .status-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--secondary);
-      flex-shrink: 0;
-    }
+    .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .header h1 { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--secondary); flex-shrink: 0; }
     .status-dot.listening { background: var(--green); box-shadow: 0 0 6px var(--green); }
-    .status-dot.connecting { background: var(--amber); }
+    .status-dot.connecting { background: var(--amber); box-shadow: 0 0 6px rgba(251, 191, 36, 0.45); }
     .status-dot.error { background: var(--red); }
-    .status-text {
-      font-size: 11px;
-      color: var(--secondary);
-    }
-
-    /* ── controls ── */
-    .controls {
-      display: flex;
-      gap: 4px;
-      -webkit-app-region: no-drag;
-    }
+    .status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--secondary); }
+    .controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
     .controls button {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -94,12 +70,49 @@
       justify-content: center;
       cursor: pointer;
       font-size: 14px;
-      transition: background 0.15s, color 0.15s;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
     }
     .controls button:hover { background: rgba(255,255,255,0.1); color: var(--text); }
     .controls button.active { background: rgba(107,138,255,0.18); color: var(--accent); border-color: rgba(107,138,255,0.25); }
+    .controls button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-    /* ── transcript ── */
+    .settings {
+      display: none;
+      margin: 0 12px 8px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.035);
+      -webkit-app-region: no-drag;
+    }
+    .settings.open { display: block; }
+    .settings-title { font-size: 11px; font-weight: 600; margin-bottom: 7px; }
+    .settings-row { display: flex; gap: 6px; }
+    .settings input {
+      min-width: 0;
+      flex: 1;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.18);
+      color: var(--text);
+      outline: none;
+      padding: 0 9px;
+      font-size: 11px;
+      font-family: var(--font);
+    }
+    .settings button {
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid rgba(107,138,255,0.25);
+      background: rgba(107,138,255,0.14);
+      color: var(--text);
+      padding: 0 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .settings-hint { margin-top: 7px; font-size: 10px; line-height: 1.45; color: var(--secondary); }
+
     .transcript {
       flex: 1;
       min-height: 0;
@@ -110,49 +123,21 @@
     .transcript::-webkit-scrollbar { width: 4px; }
     .transcript::-webkit-scrollbar-track { background: transparent; }
     .transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-
-    .entry {
-      padding: 8px 10px;
-      border-radius: 10px;
-      margin-bottom: 4px;
-    }
+    .entry { padding: 8px 10px; border-radius: 10px; margin-bottom: 4px; }
     .entry.user { background: rgba(107,138,255,0.08); }
     .entry.assistant { background: var(--surface); }
     .entry.tool { background: rgba(255,255,255,0.03); }
     .entry.tool.error { background: rgba(248,113,113,0.08); }
     .entry.system { background: transparent; padding: 4px 10px; }
-
-    .entry-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 2px;
-    }
-    .entry-role {
-      font-size: 10px;
-      font-weight: 500;
-      color: var(--secondary);
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
+    .entry-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; gap: 8px; }
+    .entry-role { font-size: 10px; font-weight: 500; color: var(--secondary); display: flex; align-items: center; gap: 4px; min-width: 0; }
     .entry.user .entry-role { color: var(--accent); }
     .entry.tool.error .entry-role { color: var(--red); }
-    .entry-time {
-      font-size: 9px;
-      color: rgba(255,255,255,0.25);
-      font-variant-numeric: tabular-nums;
-    }
-    .entry-text {
-      font-size: 12px;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
+    .entry-time { font-size: 9px; color: rgba(255,255,255,0.25); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+    .entry-text { font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; user-select: text; }
     .entry.system .entry-text { font-size: 11px; color: var(--secondary); }
     .entry.tool.error .entry-text { color: var(--red); }
 
-    /* ── empty state ── */
     .empty {
       display: flex;
       flex-direction: column;
@@ -163,38 +148,23 @@
       text-align: center;
       flex: 1;
     }
-    .empty-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: var(--surface);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-    }
+    .empty-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--surface); display: flex; align-items: center; justify-content: center; font-size: 18px; }
     .empty h2 { font-size: 13px; font-weight: 500; }
-    .empty p { font-size: 11px; color: var(--secondary); line-height: 1.5; max-width: 200px; }
+    .empty p { font-size: 11px; color: var(--secondary); line-height: 1.5; max-width: 220px; }
 
-    /* ── bottom bar ── */
     .bottom-bar {
       padding: 8px 12px;
       border-top: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 10px;
       font-size: 10px;
       color: var(--secondary);
       -webkit-app-region: no-drag;
     }
-    .hotkey {
-      font-size: 10px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 1px 5px;
-      font-family: var(--font);
-    }
+    .hotkey { font-size: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: var(--font); }
+    #bottomStatus, #appCount { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -206,8 +176,18 @@
         <span class="status-text" id="statusText">Ready</span>
       </div>
       <div class="controls">
+        <button id="btnSettings" title="Pilot settings">⚙</button>
         <button id="btnListen" title="Toggle listening (⌘⇧L)">🎙</button>
       </div>
+    </div>
+
+    <div class="settings" id="settingsPanel">
+      <div class="settings-title">OpenAI Realtime</div>
+      <div class="settings-row">
+        <input id="apiKeyInput" type="password" placeholder="sk-…" autocomplete="off" />
+        <button id="btnSaveKey">Save</button>
+      </div>
+      <div class="settings-hint" id="settingsHint">Add an OpenAI API key. It stays in Pilot's local app data and only the main process uses it.</div>
     </div>
 
     <div class="transcript" id="transcript">
@@ -231,10 +211,24 @@
     const statusDot = document.getElementById("statusDot");
     const statusText = document.getElementById("statusText");
     const btnListen = document.getElementById("btnListen");
+    const btnSettings = document.getElementById("btnSettings");
+    const settingsPanel = document.getElementById("settingsPanel");
+    const apiKeyInput = document.getElementById("apiKeyInput");
+    const btnSaveKey = document.getElementById("btnSaveKey");
+    const settingsHint = document.getElementById("settingsHint");
     const bottomStatus = document.getElementById("bottomStatus");
+    const appCount = document.getElementById("appCount");
 
     let isListening = false;
+    let realtimeStatus = "idle";
+    let settings = { hasOpenAIKey: false, openAIKeyPreview: "", model: "gpt-realtime-1.5" };
     const entries = [];
+
+    let peer = null;
+    let dataChannel = null;
+    let localStream = null;
+    let remoteAudio = null;
+    let assistantBuffer = "";
 
     function relativeTime(ts) {
       const delta = Math.round((Date.now() - ts) / 1000);
@@ -244,17 +238,17 @@
       return `${Math.floor(delta / 3600)}h`;
     }
 
+    function escapeHtml(str) {
+      return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function renderTranscript() {
       if (!entries.length) {
         emptyState.style.display = "flex";
         return;
       }
       emptyState.style.display = "none";
-
-      // Clear rendered entries and re-render (simple for now)
-      const existing = transcript.querySelectorAll(".entry");
-      const rendered = existing.length;
-
+      const rendered = transcript.querySelectorAll(".entry").length;
       for (let i = rendered; i < entries.length; i++) {
         const e = entries[i];
         const div = document.createElement("div");
@@ -264,16 +258,14 @@
           : "system";
         div.className = `entry ${roleClass}`;
         div.dataset.id = e.id;
-
         const roleLabel = e.role === "user" ? "You"
           : e.role === "assistant" ? "Assistant"
           : e.role === "tool" ? "Tool"
           : "System";
-
         if (e.role !== "system") {
           div.innerHTML = `
             <div class="entry-header">
-              <span class="entry-role">${roleLabel}</span>
+              <span class="entry-role">${escapeHtml(roleLabel)}${e.label ? ` · ${escapeHtml(e.label)}` : ""}</span>
               <span class="entry-time">${relativeTime(e.ts)}</span>
             </div>
             <div class="entry-text">${escapeHtml(e.text)}</div>
@@ -283,65 +275,258 @@
         }
         transcript.appendChild(div);
       }
-
       transcript.scrollTop = transcript.scrollHeight;
     }
 
-    function escapeHtml(str) {
-      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
     function addEntry(role, text, opts = {}) {
-      const entry = {
-        id: `p-${entries.length}`,
-        role,
-        text,
-        ts: Date.now(),
-        error: opts.error || false,
-      };
+      const entry = { id: `p-${entries.length}`, role, text, ts: Date.now(), error: opts.error || false, label: opts.label || "" };
       entries.push(entry);
       renderTranscript();
       return entry;
     }
 
-    function setListeningState(value) {
-      isListening = value;
-      statusDot.className = `status-dot ${value ? "listening" : ""}`;
-      statusText.textContent = value ? "Listening" : "Ready";
-      btnListen.className = value ? "active" : "";
-      btnListen.title = value ? "Stop listening (⌘⇧L)" : "Start listening (⌘⇧L)";
+    function setStatus(next, detail = "") {
+      realtimeStatus = next;
+      const dot = next === "connected" ? "listening" : next === "connecting" ? "connecting" : next === "error" ? "error" : "";
+      statusDot.className = `status-dot ${dot}`;
+      statusText.textContent = detail || (next === "connected" ? "Listening" : next === "connecting" ? "Connecting…" : next === "error" ? "Error" : "Ready");
+      btnListen.className = next === "connected" || next === "connecting" ? "active" : "";
+      btnListen.textContent = next === "connecting" ? "…" : next === "connected" ? "⏹" : "🎙";
+      btnListen.title = next === "connected" ? "Stop listening (⌘⇧L)" : "Start listening (⌘⇧L)";
+      bottomStatus.textContent = next === "connected" ? "Realtime connected · speak naturally" : "⌘⇧; to toggle · ⌘⇧L to listen";
+    }
 
-      if (value) {
-        addEntry("system", "Listening for voice commands…");
+    function updateSettingsUI() {
+      btnListen.disabled = !settings.hasOpenAIKey;
+      settingsHint.textContent = settings.hasOpenAIKey
+        ? `Configured: ${settings.openAIKeyPreview || "OpenAI key"}. Pilot uses the key only to mint ephemeral Realtime sessions.`
+        : "Add an OpenAI API key. It stays in Pilot's local app data and only the main process uses it.";
+      if (!settings.hasOpenAIKey) settingsPanel.classList.add("open");
+    }
+
+    async function loadSettings() {
+      if (!pilot?.settings) return;
+      const response = await pilot.settings.get();
+      if (response?.ok) {
+        settings = response.settings;
+        updateSettingsUI();
       }
     }
 
-    // ── Button handlers ──
-    btnListen.addEventListener("click", async () => {
-      const next = !isListening;
-      setListeningState(next);
-      pilot?.setListening(next);
+    async function saveSettings() {
+      const key = apiKeyInput.value.trim();
+      if (!key) {
+        settingsHint.textContent = "Paste an OpenAI API key first.";
+        return;
+      }
+      const response = await pilot.settings.save({ openAIKey: key });
+      if (!response.ok) {
+        settingsHint.textContent = response.error || "Could not save settings.";
+        return;
+      }
+      settings = response.settings;
+      apiKeyInput.value = "";
+      updateSettingsUI();
+      addEntry("system", "OpenAI key saved locally.");
+    }
+
+    function waitForDataChannelOpen(channel) {
+      if (channel.readyState === "open") return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => cleanup("Realtime data channel did not open in time", reject), 10000);
+        const cleanup = (message, cb) => {
+          clearTimeout(timeout);
+          channel.removeEventListener("open", onOpen);
+          channel.removeEventListener("close", onClose);
+          channel.removeEventListener("error", onError);
+          cb(message instanceof Error ? message : new Error(message));
+        };
+        const onOpen = () => {
+          clearTimeout(timeout);
+          channel.removeEventListener("close", onClose);
+          channel.removeEventListener("error", onError);
+          resolve();
+        };
+        const onClose = () => cleanup("Realtime data channel closed before opening", reject);
+        const onError = () => cleanup("Realtime data channel failed", reject);
+        channel.addEventListener("open", onOpen);
+        channel.addEventListener("close", onClose);
+        channel.addEventListener("error", onError);
+      });
+    }
+
+    async function connectRealtime() {
+      if (!pilot) throw new Error("Pilot bridge unavailable");
+      if (!settings.hasOpenAIKey) throw new Error("OpenAI API key is not configured");
+      disconnectRealtime({ silent: true });
+      setStatus("connecting", "Requesting mic…");
+      addEntry("system", "Starting Realtime computer control…");
+
+      const mic = await pilot.permissions.requestMicrophone();
+      if (mic?.granted === false) throw new Error(`Microphone permission is ${mic.status || "not granted"}`);
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (!audioTrack) throw new Error("No microphone audio track was returned");
+      addEntry("system", `Microphone live: ${audioTrack.label || "System default"}`);
+
+      setStatus("connecting", "Creating session…");
+      const sessionResponse = await pilot.realtime.createSession();
+      if (!sessionResponse.ok) throw new Error(sessionResponse.error || "Realtime session failed");
+      const session = sessionResponse.session;
+
+      peer = new RTCPeerConnection();
+      peer.addTrack(audioTrack, localStream);
+      remoteAudio = document.createElement("audio");
+      remoteAudio.autoplay = true;
+      remoteAudio.style.display = "none";
+      document.body.appendChild(remoteAudio);
+      peer.ontrack = (event) => { remoteAudio.srcObject = event.streams[0] ?? null; };
+
+      dataChannel = peer.createDataChannel("oai-events");
+      dataChannel.addEventListener("message", (event) => void handleRealtimeMessage(String(event.data)));
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.clientSecret}`, "Content-Type": "application/sdp" },
+        body: offer.sdp,
+      });
+      if (!sdpResponse.ok) throw new Error(`OpenAI Realtime SDP failed: ${sdpResponse.status} ${await sdpResponse.text().catch(() => "")}`);
+      await peer.setRemoteDescription({ type: "answer", sdp: await sdpResponse.text() });
+      await waitForDataChannelOpen(dataChannel);
+      setStatus("connected", "Listening");
+      addEntry("system", `Realtime connected · tools: ${session.tools.join(", ")}`);
+    }
+
+    function disconnectRealtime(options = {}) {
+      try { localStream?.getTracks().forEach((track) => track.stop()); } catch {}
+      localStream = null;
+      try { dataChannel?.close(); } catch {}
+      dataChannel = null;
+      try { peer?.close(); } catch {}
+      peer = null;
+      try { remoteAudio?.remove(); } catch {}
+      remoteAudio = null;
+      assistantBuffer = "";
+      setStatus("idle", "Ready");
+      if (!options.silent) addEntry("system", "Realtime disconnected.");
+    }
+
+    async function handleRealtimeMessage(raw) {
+      let event;
+      try { event = JSON.parse(raw); } catch { return; }
+      if (event.type === "conversation.item.input_audio_transcription.completed" && typeof event.transcript === "string") {
+        addEntry("user", event.transcript);
+        return;
+      }
+      if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+        assistantBuffer += event.delta;
+        statusText.textContent = "Responding…";
+        return;
+      }
+      if (event.type === "response.done") {
+        if (assistantBuffer.trim()) addEntry("assistant", assistantBuffer.trim());
+        assistantBuffer = "";
+        if (realtimeStatus === "connected") statusText.textContent = "Listening";
+        return;
+      }
+      if (event.type === "response.function_call_arguments.done") {
+        await handleToolCall(event);
+        return;
+      }
+      if (event.type === "error") {
+        addEntry("system", JSON.stringify(event), { error: true });
+      }
+    }
+
+    function parseArguments(raw) {
+      if (!raw) return {};
+      try { return JSON.parse(raw); } catch { return {}; }
+    }
+
+    function safeJson(value) {
+      try { return JSON.stringify(value); } catch { return JSON.stringify({ ok: false, error: "Could not serialize result" }); }
+    }
+
+    async function executeSystemTool(name, args) {
+      if (name === "snapshot") {
+        const [frontmost, apps] = await Promise.all([pilot.system.frontmostApp(), pilot.system.listApps()]);
+        return { ok: true, listening: isListening, frontmostApp: frontmost.app || null, runningApps: apps.apps || [] };
+      }
+      if (name === "list_apps") return pilot.system.listApps();
+      if (name === "frontmost_app") return pilot.system.frontmostApp();
+      if (name === "activate_app") return pilot.system.activateApp(String(args.name || ""));
+      if (name === "launch_app") return pilot.system.launchApp(String(args.name || ""));
+      if (name === "type_text") return pilot.system.typeText(String(args.text || ""));
+      if (name === "press_key") return pilot.system.pressKey(String(args.combo || ""));
+      if (name === "clipboard_read") return pilot.system.clipboardRead();
+      if (name === "clipboard_write") return pilot.system.clipboardWrite(String(args.text || ""));
+      if (name === "open_url") return pilot.system.openUrl(String(args.url || ""));
+      return { ok: false, error: `Unknown tool: ${name || "unknown"}` };
+    }
+
+    async function handleToolCall(event) {
+      const args = parseArguments(event.arguments);
+      const toolLabel = event.name === "type_text"
+        ? "type_text"
+        : event.name === "activate_app" || event.name === "launch_app"
+          ? `${event.name} ${args.name || ""}`.trim()
+          : event.name || "unknown_tool";
+      addEntry("tool", `Calling ${toolLabel}…`, { label: event.name || "tool" });
+      const output = await executeSystemTool(event.name, args);
+      const failed = output && output.ok === false;
+      addEntry("tool", failed ? `Tool failed: ${toolLabel} — ${output.error || "unknown error"}` : `Tool complete: ${toolLabel}`, { error: failed, label: event.name || "tool" });
+
+      if (!event.call_id || !dataChannel || dataChannel.readyState !== "open") return;
+      dataChannel.send(JSON.stringify({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: event.call_id, output: safeJson(output) },
+      }));
+      dataChannel.send(JSON.stringify({ type: "response.create", response: { output_modalities: ["text"] } }));
+    }
+
+    async function setListeningState(value, options = {}) {
+      if (value === isListening && (value || realtimeStatus === "idle")) return;
+      isListening = value;
+      if (!options.fromMain) pilot?.setListening(value);
+      if (!value) {
+        disconnectRealtime();
+        return;
+      }
+      try {
+        await connectRealtime();
+      } catch (error) {
+        isListening = false;
+        pilot?.setListening(false);
+        setStatus("error", "Error");
+        addEntry("system", error instanceof Error ? error.message : String(error), { error: true });
+      }
+    }
+
+    btnListen.addEventListener("click", () => void setListeningState(!isListening));
+    btnSettings.addEventListener("click", () => settingsPanel.classList.toggle("open"));
+    btnSaveKey.addEventListener("click", () => void saveSettings());
+    apiKeyInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") void saveSettings();
     });
 
-    // Listen for main process toggle
     pilot?.onListeningChanged((value) => {
-      setListeningState(value);
+      void setListeningState(value, { fromMain: true });
     });
 
-    // Quick smoke: test system control on load
     (async () => {
       if (!pilot) {
         addEntry("system", "Running in browser — system controls unavailable.");
         return;
       }
+      await loadSettings();
       const result = await pilot.system.frontmostApp();
-      if (result.ok) {
-        addEntry("system", `Frontmost app: ${result.app}`);
-      }
+      if (result.ok) addEntry("system", `Frontmost app: ${result.app}`);
       const apps = await pilot.system.listApps();
-      if (apps.ok) {
-        document.getElementById("appCount").textContent = `${apps.apps.length} apps running`;
-      }
+      if (apps.ok) appCount.textContent = `${apps.apps.length} apps running`;
+      const currentListening = await pilot.getListening();
+      if (currentListening) void setListeningState(true, { fromMain: true });
     })();
   </script>
 </body>
