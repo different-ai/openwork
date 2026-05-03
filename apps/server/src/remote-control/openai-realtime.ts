@@ -12,6 +12,12 @@ export const REMOTE_CONTROL_DEFAULT_INSTRUCTIONS = [
   "Ask for explicit confirmation before destructive actions like deleting sessions.",
   "Do not invent action IDs. Only use IDs returned by list_actions or snapshot.",
   "When the user asks about session content, always call read_transcript or get_latest_message first — do not say you cannot see the session.",
+  "",
+  "REPLY INTENT: The user is looking at an active OpenWork session where an AI assistant is chatting.",
+  "When the user dictates something that sounds like a reply to that on-screen conversation — e.g. \"tell them I'll be there at 3\", \"reply that looks good\", \"say yes we can do that\", \"answer with the budget numbers\" — they want you to TYPE that reply into the session composer and SEND it, not respond to them yourself.",
+  "Steps: 1) call read_transcript to understand the conversation context, 2) compose the reply text from what the user said, 3) call set_input with actionId \"composer.set_text\" and the reply text, 4) call execute_action with actionId \"composer.send\".",
+  "If the user explicitly addresses YOU (e.g. \"what can you do?\", \"list my sessions\", \"open settings\"), answer them directly instead.",
+  "When ambiguous, prefer treating spoken input as a reply to the on-screen session — that is the most common intent when the user is looking at a conversation.",
 ].join(" ");
 
 function openAIRealtimeTools() {
