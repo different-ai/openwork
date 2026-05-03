@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pilot</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: rgba(20, 20, 25, 0.88);
+      --surface: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: rgba(255, 255, 255, 0.92);
+      --secondary: rgba(255, 255, 255, 0.5);
+      --accent: #6b8aff;
+      --green: #34d399;
+      --red: #f87171;
+      --amber: #fbbf24;
+      --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+    html, body {
+      height: 100%;
+      background: transparent;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      overflow: hidden;
+    }
+    body {
+      -webkit-app-region: drag;
+    }
+    #root {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      backdrop-filter: blur(40px) saturate(1.4);
+      -webkit-backdrop-filter: blur(40px) saturate(1.4);
+    }
+
+    /* ── header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      -webkit-app-region: drag;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--secondary);
+      flex-shrink: 0;
+    }
+    .status-dot.listening { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.connecting { background: var(--amber); }
+    .status-dot.error { background: var(--red); }
+    .status-text {
+      font-size: 11px;
+      color: var(--secondary);
+    }
+
+    /* ── controls ── */
+    .controls {
+      display: flex;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+    .controls button {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--secondary);
+      border-radius: 8px;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .controls button:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+    .controls button.active { background: rgba(107,138,255,0.18); color: var(--accent); border-color: rgba(107,138,255,0.25); }
+
+    /* ── transcript ── */
+    .transcript {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 4px 12px 12px;
+      -webkit-app-region: no-drag;
+    }
+    .transcript::-webkit-scrollbar { width: 4px; }
+    .transcript::-webkit-scrollbar-track { background: transparent; }
+    .transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+    .entry {
+      padding: 8px 10px;
+      border-radius: 10px;
+      margin-bottom: 4px;
+    }
+    .entry.user { background: rgba(107,138,255,0.08); }
+    .entry.assistant { background: var(--surface); }
+    .entry.tool { background: rgba(255,255,255,0.03); }
+    .entry.tool.error { background: rgba(248,113,113,0.08); }
+    .entry.system { background: transparent; padding: 4px 10px; }
+
+    .entry-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    .entry-role {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--secondary);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .entry.user .entry-role { color: var(--accent); }
+    .entry.tool.error .entry-role { color: var(--red); }
+    .entry-time {
+      font-size: 9px;
+      color: rgba(255,255,255,0.25);
+      font-variant-numeric: tabular-nums;
+    }
+    .entry-text {
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .entry.system .entry-text { font-size: 11px; color: var(--secondary); }
+    .entry.tool.error .entry-text { color: var(--red); }
+
+    /* ── empty state ── */
+    .empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 40px 20px;
+      text-align: center;
+      flex: 1;
+    }
+    .empty-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    .empty h2 { font-size: 13px; font-weight: 500; }
+    .empty p { font-size: 11px; color: var(--secondary); line-height: 1.5; max-width: 200px; }
+
+    /* ── bottom bar ── */
+    .bottom-bar {
+      padding: 8px 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--secondary);
+      -webkit-app-region: no-drag;
+    }
+    .hotkey {
+      font-size: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: var(--font);
+    }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="header">
+      <div class="header-left">
+        <div class="status-dot" id="statusDot"></div>
+        <h1>Pilot</h1>
+        <span class="status-text" id="statusText">Ready</span>
+      </div>
+      <div class="controls">
+        <button id="btnListen" title="Toggle listening (⌘⇧L)">🎙</button>
+      </div>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="empty" id="emptyState">
+        <div class="empty-icon">🎙</div>
+        <h2>Voice control for macOS</h2>
+        <p>Press <span class="hotkey">⌘⇧L</span> to start listening. Speak to control your Mac and connected apps.</p>
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <span id="bottomStatus">⌘⇧; to toggle · ⌘⇧L to listen</span>
+      <span id="appCount">No apps connected</span>
+    </div>
+  </div>
+
+  <script>
+    const pilot = window.__PILOT__;
+    const transcript = document.getElementById("transcript");
+    const emptyState = document.getElementById("emptyState");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const btnListen = document.getElementById("btnListen");
+    const bottomStatus = document.getElementById("bottomStatus");
+
+    let isListening = false;
+    const entries = [];
+
+    function relativeTime(ts) {
+      const delta = Math.round((Date.now() - ts) / 1000);
+      if (delta < 5) return "now";
+      if (delta < 60) return `${delta}s`;
+      if (delta < 3600) return `${Math.floor(delta / 60)}m`;
+      return `${Math.floor(delta / 3600)}h`;
+    }
+
+    function renderTranscript() {
+      if (!entries.length) {
+        emptyState.style.display = "flex";
+        return;
+      }
+      emptyState.style.display = "none";
+
+      // Clear rendered entries and re-render (simple for now)
+      const existing = transcript.querySelectorAll(".entry");
+      const rendered = existing.length;
+
+      for (let i = rendered; i < entries.length; i++) {
+        const e = entries[i];
+        const div = document.createElement("div");
+        const roleClass = e.role === "user" ? "user"
+          : e.role === "assistant" ? "assistant"
+          : e.role === "tool" ? (e.error ? "tool error" : "tool")
+          : "system";
+        div.className = `entry ${roleClass}`;
+        div.dataset.id = e.id;
+
+        const roleLabel = e.role === "user" ? "You"
+          : e.role === "assistant" ? "Assistant"
+          : e.role === "tool" ? "Tool"
+          : "System";
+
+        if (e.role !== "system") {
+          div.innerHTML = `
+            <div class="entry-header">
+              <span class="entry-role">${roleLabel}</span>
+              <span class="entry-time">${relativeTime(e.ts)}</span>
+            </div>
+            <div class="entry-text">${escapeHtml(e.text)}</div>
+          `;
+        } else {
+          div.innerHTML = `<div class="entry-text">${escapeHtml(e.text)}</div>`;
+        }
+        transcript.appendChild(div);
+      }
+
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function addEntry(role, text, opts = {}) {
+      const entry = {
+        id: `p-${entries.length}`,
+        role,
+        text,
+        ts: Date.now(),
+        error: opts.error || false,
+      };
+      entries.push(entry);
+      renderTranscript();
+      return entry;
+    }
+
+    function setListeningState(value) {
+      isListening = value;
+      statusDot.className = `status-dot ${value ? "listening" : ""}`;
+      statusText.textContent = value ? "Listening" : "Ready";
+      btnListen.className = value ? "active" : "";
+      btnListen.title = value ? "Stop listening (⌘⇧L)" : "Start listening (⌘⇧L)";
+
+      if (value) {
+        addEntry("system", "Listening for voice commands…");
+      }
+    }
+
+    // ── Button handlers ──
+    btnListen.addEventListener("click", async () => {
+      const next = !isListening;
+      setListeningState(next);
+      pilot?.setListening(next);
+    });
+
+    // Listen for main process toggle
+    pilot?.onListeningChanged((value) => {
+      setListeningState(value);
+    });
+
+    // Quick smoke: test system control on load
+    (async () => {
+      if (!pilot) {
+        addEntry("system", "Running in browser — system controls unavailable.");
+        return;
+      }
+      const result = await pilot.system.frontmostApp();
+      if (result.ok) {
+        addEntry("system", `Frontmost app: ${result.app}`);
+      }
+      const apps = await pilot.system.listApps();
+      if (apps.ok) {
+        document.getElementById("appCount").textContent = `${apps.apps.length} apps running`;
+      }
+    })();
+  </script>
+</body>
+</html>

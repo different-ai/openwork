@@ -1,0 +1,33 @@
+{
+  "name": "@openwork/pilot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "macOS computer control via voice — menubar app",
+  "author": {
+    "name": "OpenWork",
+    "email": "support@openworklabs.com"
+  },
+  "main": "electron/main.mjs",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm exec electron ./electron/main.mjs",
+    "build:ui": "vite build",
+    "package:dir": "pnpm run build:ui && pnpm exec electron-builder --config electron-builder.yml --dir",
+    "package": "pnpm run build:ui && pnpm exec electron-builder --config electron-builder.yml"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "lucide-react": "^0.468.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.4.1"
+  }
+}

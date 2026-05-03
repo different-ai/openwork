@@ -1,0 +1,28 @@
+appId: com.openwork.pilot
+productName: Pilot
+directories:
+  output: dist-electron
+files:
+  - electron/**/*
+  - package.json
+extraResources:
+  - from: dist
+    to: ui
+asar: true
+npmRebuild: false
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.utilities
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+  notarize: false
+  extendInfo:
+    NSMicrophoneUsageDescription: Pilot uses the microphone for voice control of your Mac.
+    NSAppleEventsUsageDescription: Pilot uses AppleScript to control applications on your Mac.
+    LSUIElement: true
+  target:
+    - dmg
+    - zip
+artifactName: pilot-${os}-${arch}-${version}.${ext}
