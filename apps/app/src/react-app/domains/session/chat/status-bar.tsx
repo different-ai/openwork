@@ -5,6 +5,7 @@ import { BookOpen, MessageCircle, Settings } from "lucide-react";
 import { t } from "../../../../i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { OpenAIRealtimeStatusControl } from "../../../shell/control-drivers/openai-realtime/openai-realtime-status-control";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 
 const DOCS_URL = "https://openworklabs.com/docs";
@@ -176,6 +177,7 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
+          <OpenAIRealtimeStatusControl />
           <button
             ref={docsButtonRef}
             type="button"

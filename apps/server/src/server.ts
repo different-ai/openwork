@@ -37,6 +37,12 @@ import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
 import {
+  createRemoteControlSession,
+  REMOTE_CONTROL_DEFAULT_INSTRUCTIONS,
+  REMOTE_CONTROL_DEFAULT_MODEL,
+  REMOTE_CONTROL_DEFAULT_VOICE,
+} from "./remote-control/openai-realtime.js";
+import {
   collectWorkspaceExportWarnings,
   stripSensitiveWorkspaceExportData,
   type WorkspaceExportSensitiveMode,
@@ -52,7 +58,6 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
-
 type LogLevel = "info" | "warn" | "error";
 
 type LogAttributes = Record<string, unknown>;
@@ -1262,6 +1267,14 @@ function createRoutes(
 
   addRoute(routes, "GET", "/capabilities", "client", async () => {
     return jsonResponse(buildCapabilities(config));
+  });
+
+  addRoute(routes, "POST", "/remote/session", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const model = normalizeOptionalString(body.model) || REMOTE_CONTROL_DEFAULT_MODEL;
+    const voice = normalizeOptionalString(body.voice) || REMOTE_CONTROL_DEFAULT_VOICE;
+    const instructions = normalizeOptionalString(body.instructions) || REMOTE_CONTROL_DEFAULT_INSTRUCTIONS;
+    return jsonResponse(await createRemoteControlSession({ model, voice, instructions }, env));
   });
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
@@ -3059,6 +3072,10 @@ function requireClientScope(ctx: RequestContext, required: TokenScope): void {
   if (scopeRank(scope) < scopeRank(required)) {
     throw new ApiError(403, "forbidden", "Insufficient token scope", { required, scope });
   }
+}
+
+function normalizeOptionalString(input: unknown): string | null {
+  return typeof input === "string" && input.trim() ? input.trim() : null;
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown>> {

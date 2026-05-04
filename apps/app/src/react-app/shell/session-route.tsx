@@ -95,6 +95,7 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
 import { useSessionControlActions } from "../domains/session/control/session-control-actions";
+import { useOpenAIRealtimeControlActions } from "./control-drivers/openai-realtime/use-openai-realtime-control-actions";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -1571,6 +1572,9 @@ export function SessionRoute() {
     execute: () => setCommandPaletteOpen(true),
   }), []);
   useControlAction(commandPaletteControlAction);
+
+  const realtimeControlPreviewEnabled = local.prefs.featureFlags?.realtimeControl === true;
+  useOpenAIRealtimeControlActions({ enabled: realtimeControlPreviewEnabled, client });
 
   const paletteSessionOptions = useMemo<PaletteSessionOption[]>(() => {
     const out: PaletteSessionOption[] = [];

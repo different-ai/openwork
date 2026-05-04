@@ -213,11 +213,27 @@ Guidelines:
 - The app owns visible, screen-local state: which actions are available, which
   element should be spotlighted, and how actions are choreographed so users can
   see control happen.
-- Controllers such as MCP bridges, test harnesses, or optional external drivers should
+- Controllers such as OpenAI Realtime, MCP bridges, or test harnesses should
   call the app control surface instead of reaching into app internals.
+- OpenAI Realtime is one replaceable control driver, not the owner of the
+  control architecture. The generic app-control registry and session actions
+  should remain useful if the voice driver is removed or replaced by tests,
+  scripts, MCP bridges, or other controllers.
 - Provider/API secrets and privileged filesystem or server mutations remain
   server-owned; the app control surface should route those through OpenWork
   server APIs rather than adding provider-specific behavior to the UI.
+- `/remote/session` is the OpenWork server endpoint that brokers short-lived
+  remote-control Realtime sessions. It keeps provider API keys server-side and
+  returns only an ephemeral browser client secret.
+- Realtime control is a Feature Preview capability and is off by default. When
+  enabled, users start or stop it from the session status bar instead of a
+  floating overlay.
+- The OpenAI key used for the initial Realtime controller can come from the
+  server process environment or from the OpenWork local environment store via
+  Settings -> Feature Preview; the browser never receives the long-lived key.
+- Realtime remote control captures microphone audio in the app/browser only
+  after the user starts the mode. The first implementation sends audio input to
+  the Realtime session while keeping model output text/tool-call based.
 - Raw screenshot or coordinate-based control is a fallback for uninstrumented
   surfaces, not the default architecture.
 

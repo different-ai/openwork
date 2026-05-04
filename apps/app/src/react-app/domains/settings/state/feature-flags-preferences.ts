@@ -7,6 +7,7 @@ export function useFeatureFlagsPreferences() {
 
   const microsandboxCreateSandboxEnabled =
     prefs.featureFlags?.microsandboxCreateSandbox === true;
+  const realtimeControlEnabled = prefs.featureFlags?.realtimeControl === true;
 
   const toggleMicrosandboxCreateSandbox = useCallback(() => {
     setPrefs((previous) => ({
@@ -18,8 +19,20 @@ export function useFeatureFlagsPreferences() {
     }));
   }, [setPrefs]);
 
+  const toggleRealtimeControl = useCallback(() => {
+    setPrefs((previous) => ({
+      ...previous,
+      featureFlags: {
+        ...previous.featureFlags,
+        realtimeControl: !previous.featureFlags?.realtimeControl,
+      },
+    }));
+  }, [setPrefs]);
+
   return {
     microsandboxCreateSandboxEnabled,
     toggleMicrosandboxCreateSandbox,
+    realtimeControlEnabled,
+    toggleRealtimeControl,
   };
 }

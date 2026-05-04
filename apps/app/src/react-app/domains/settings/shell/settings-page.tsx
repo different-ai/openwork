@@ -50,6 +50,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Puzzle;
     case "environment":
       return Terminal;
+    case "feature-preview":
+      return Sparkles;
     case "advanced":
       return Wrench;
     case "appearance":
@@ -75,6 +77,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_extensions");
     case "environment":
       return t("settings.tab_environment");
+    case "feature-preview":
+      return t("settings.tab_feature_preview");
     case "advanced":
       return t("settings.tab_advanced");
     case "appearance":
@@ -100,6 +104,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_extensions");
     case "environment":
       return t("settings.tab_description_environment");
+    case "feature-preview":
+      return t("settings.tab_description_feature_preview");
     case "advanced":
       return t("settings.tab_description_advanced");
     case "appearance":
@@ -120,7 +126,7 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["den", "appearance", "environment", "updates", "recovery"];
+  const tabs: SettingsTab[] = ["den", "feature-preview", "appearance", "environment", "updates", "recovery"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }
