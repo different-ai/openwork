@@ -247,9 +247,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                             </span>
                             {isSelected ? (
                               <span className="rounded-full bg-indigo-3/60 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-indigo-11">
-                                {t(
-                                  "share_skill_destination.selected_badge",
-                                )}
+                                {t("share_skill_destination.selected_badge")}
                               </span>
                             ) : null}
                           </div>
@@ -259,9 +257,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                           </div>
                           {isSelected ? (
                             <div className="mt-2 text-xs font-medium text-gray-11">
-                              {t(
-                                "share_skill_destination.selected_hint",
-                              )}
+                              {t("share_skill_destination.selected_hint")}
                             </div>
                           ) : null}
                         </div>
@@ -310,9 +306,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                           {t("share_skill_destination.create_worker")}
                         </div>
                         <div className="mt-1 text-sm text-gray-10">
-                          {t(
-                            "share_skill_destination.create_worker_hint",
-                          )}
+                          {t("share_skill_destination.create_worker_hint")}
                         </div>
                       </div>
                     </div>
@@ -337,9 +331,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                           {t("share_skill_destination.connect_remote")}
                         </div>
                         <div className="mt-1 text-sm text-gray-10">
-                          {t(
-                            "share_skill_destination.connect_remote_hint",
-                          )}
+                          {t("share_skill_destination.connect_remote_hint")}
                         </div>
                       </div>
                     </div>
