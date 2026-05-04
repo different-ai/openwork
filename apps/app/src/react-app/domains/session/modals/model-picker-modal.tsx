@@ -72,12 +72,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const optionRefs = useRef<HTMLDivElement[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const translate = useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, undefined, params),
-    [],
-  );
-
   const otherProviderLinks = useMemo(() => {
     const seen = new Set<string>();
     const items: { providerID: string; title: string; matchCount: number }[] =
@@ -457,10 +451,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               ].join(" ")}
             >
               <span className="truncate">
-                {translate("model_picker.connect_provider_hint")}
+                {t("model_picker.connect_provider_hint")}
               </span>
               <span className="ml-auto opacity-70">
-                {translate(
+                {t(
                   provider.matchCount === 1
                     ? "model_picker.model_count_one"
                     : "model_picker.model_count",
@@ -481,14 +475,14 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-gray-12">
-                {translate(
+                {t(
                   props.target === "default"
                     ? "model_picker.default_model_title"
                     : "model_picker.chat_model_title",
                 )}
               </h3>
               <p className="text-sm text-gray-11 mt-1">
-                {translate(
+                {t(
                   props.target === "default"
                     ? "model_picker.default_model_desc"
                     : "model_picker.chat_model_desc",
@@ -515,13 +509,13 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 type="text"
                 value={props.query}
                 onChange={(event) => props.setQuery(event.currentTarget.value)}
-                placeholder={translate("settings.search_models")}
+                placeholder={t("settings.search_models")}
                 className="w-full bg-dls-surface border border-dls-border rounded-xl py-2.5 pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-1 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] focus:border-dls-accent"
               />
             </div>
             {props.query.trim() ? (
               <div className="mt-2 text-xs text-dls-secondary">
-                {translate("settings.showing_models", {
+                {t("settings.showing_models", {
                   count: props.filteredOptions.length,
                   total: props.options.length,
                 })}
@@ -533,7 +527,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {recommendedOptions.length > 0 ? (
               <section className="space-y-2">
                 <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                  {translate("model_picker.recommended")}
+                  {t("model_picker.recommended")}
                 </div>
                 {recommendedOptions.map(({ opt, index }) =>
                   renderOption(opt, index),
@@ -544,7 +538,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {otherEnabledOptions.length > 0 ? (
               <section className="space-y-2">
                 <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                  {translate("model_picker.other_connected_models")}
+                  {t("model_picker.other_connected_models")}
                 </div>
                 {otherEnabledOptions.map(({ opt, index }) =>
                   renderOption(opt, index),
@@ -555,7 +549,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {otherOptions.length > 0 ? (
               <section className="space-y-2">
                 <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
-                  {translate("model_picker.more_providers")}
+                  {t("model_picker.more_providers")}
                 </div>
                 {otherOptions.map(renderProviderLink)}
               </section>
@@ -563,7 +557,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
             {renderedItems.length === 0 ? (
               <div className="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
-                {translate("model_picker.no_results")}
+                {t("model_picker.no_results")}
               </div>
             ) : null}
           </div>
@@ -574,7 +568,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               className="inline-flex items-center justify-center rounded-full border border-dls-border px-4 py-2 text-[13px] font-medium text-dls-text transition-colors hover:bg-[var(--dls-hover)]"
               onClick={() => props.onClose()}
             >
-              {translate("settings.done")}
+              {t("settings.done")}
             </button>
           </div>
         </div>

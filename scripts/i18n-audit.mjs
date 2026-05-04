@@ -3,7 +3,7 @@
  * i18n-audit.mjs — Find missing translations and improperly used translation keys.
  *
  * Usage:
- *   node scripts/i18n-audit.mjs              # full audit (default, excludes --hardcoded, --aliases, --prune, --sort)
+ *   node scripts/i18n-audit.mjs              # full audit (default, excludes --hardcoded, --prune, --sort)
  *   node scripts/i18n-audit.mjs --missing    # missing keys (in EN but not in locale)
  *   node scripts/i18n-audit.mjs --orphan     # orphan keys (in locale but not in EN)
  *   node scripts/i18n-audit.mjs --duplicates # duplicate keys in any locale
@@ -29,7 +29,7 @@ const LOCALES = ["ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
 const mode = process.argv[2] ?? "--all";
-const EXCLUDED_FROM_ALL = new Set(["--hardcoded", "--aliases"]);
+const EXCLUDED_FROM_ALL = new Set(["--hardcoded"]);
 const shouldRun = (...modes) => (mode === "--all" && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
 
 // ---------------------------------------------------------------------------

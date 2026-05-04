@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import type { Client } from "../../../app/types";
-import type { Language } from "../../../i18n";
 import type { McpDirectoryInfo } from "../../../app/constants";
 
 import { McpAuthModal } from "./mcp-auth-modal";
@@ -14,7 +13,6 @@ export type ConnectionsModalsState = {
 export type ConnectionsModalsProps = {
   client: Client | null;
   projectDir: string;
-  language: Language;
   reloadBlocked: boolean;
   activeSessions: Array<{ id: string; title: string }>;
   isRemoteWorkspace: boolean;
@@ -32,7 +30,6 @@ export default function ConnectionsModals(props: ConnectionsModalsProps) {
       client={props.client}
       entry={props.modalState.mcpAuthEntry}
       projectDir={props.projectDir}
-      language={props.language}
       reloadRequired={props.modalState.mcpAuthNeedsReload}
       reloadBlocked={props.reloadBlocked}
       activeSessions={props.activeSessions}

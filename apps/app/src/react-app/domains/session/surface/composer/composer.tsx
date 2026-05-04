@@ -5,7 +5,7 @@ import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, S
 import fuzzysort from "fuzzysort";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
-import { currentLocale, t, type Language } from "../../../../../i18n";
+import { t } from "../../../../../i18n";
 import { LexicalPromptEditor } from "./editor";
 import {
   ReactComposerNotice,
@@ -177,20 +177,20 @@ async function compressImageFile(file: File): Promise<File> {
   return new File([blob], `${stem}.jpg`, { type: "image/jpeg" });
 }
 
-function formatMcpStatusLabel(status: McpServerStatus | undefined, locale: Language) {
+function formatMcpStatusLabel(status: McpServerStatus | undefined) {
   switch (status) {
     case "connected":
-      return t("mcp.friendly_status_ready", locale);
+      return t("mcp.friendly_status_ready");
     case "needs_auth":
     case "needs_client_registration":
-      return t("mcp.friendly_status_needs_signin", locale);
+      return t("mcp.friendly_status_needs_signin");
     case "disabled":
-      return t("mcp.friendly_status_paused", locale);
+      return t("mcp.friendly_status_paused");
     case "disconnected":
-      return t("mcp.friendly_status_offline", locale);
+      return t("mcp.friendly_status_offline");
     case "failed":
     default:
-      return t("mcp.friendly_status_issue", locale);
+      return t("mcp.friendly_status_issue");
   }
 }
 
@@ -280,7 +280,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   // compositionstart/compositionend events below.
   const imeComposingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const locale = currentLocale();
   const draftRef = useRef(props.draft);
   useEffect(() => {
     draftRef.current = props.draft;
@@ -707,7 +706,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!inputFiles.length) return;
     if (!props.attachmentsEnabled) {
       props.onNotice({
-        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable", locale),
+        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"),
         tone: "warning",
       });
       return;
@@ -719,7 +718,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
     for (const original of inputFiles) {
       if (!isSupportedAttachmentType(original.type)) {
-        unsupported.push(original.name || t("composer.file_kind", locale));
+        unsupported.push(original.name || t("composer.file_kind"));
         continue;
       }
       const processed = original.type.startsWith("image/") ? await compressImageFile(original) : original;
@@ -735,8 +734,8 @@ export function ReactSessionComposer(props: ComposerProps) {
       props.onNotice({
         title:
           accepted.length === 1
-            ? t("composer.uploaded_single_file", locale, { name: accepted[0]?.name ?? t("composer.file_kind", locale) })
-            : t("composer.uploaded_multiple_files", locale, { count: accepted.length }),
+            ? t("composer.uploaded_single_file", { name: accepted[0]?.name ?? t("composer.file_kind") })
+            : t("composer.uploaded_multiple_files", { count: accepted.length }),
         tone: "success",
       });
     }
@@ -745,7 +744,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       props.onNotice({
         title:
           oversize.length === 1
-            ? t("composer.file_exceeds_limit", locale, { name: oversize[0] })
+            ? t("composer.file_exceeds_limit", { name: oversize[0] })
             : `${oversize.length} files exceed the 8MB limit.`,
         tone: "warning",
       });
@@ -755,8 +754,8 @@ export function ReactSessionComposer(props: ComposerProps) {
       props.onNotice({
         title:
           unsupported.length === 1
-            ? `${unsupported[0]} · ${t("composer.unsupported_attachment_type", locale)}`
-            : `${unsupported.length} ${t("composer.unsupported_attachment_type", locale).toLowerCase()}`,
+            ? `${unsupported[0]} · ${t("composer.unsupported_attachment_type")}`
+            : `${unsupported.length} ${t("composer.unsupported_attachment_type").toLowerCase()}`,
         tone: "warning",
       });
     }
@@ -807,7 +806,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         <div className="truncate text-xs font-semibold">/{command.name}</div>
                         {command.source && command.source !== "command" ? (
                           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/40 text-violet-11" : "bg-cyan-3/40 text-cyan-11"}`}>
-                            {command.source === "skill" ? t("composer.skill_source", locale) : t("composer.mcps_label", locale)}
+                            {command.source === "skill" ? t("composer.skill_source") : t("composer.mcps_label")}
                           </span>
                         ) : null}
                       </div>
@@ -818,7 +817,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : (
               <div className="px-3 py-2 text-xs text-gray-10">
-                {commandsLoading ? t("composer.loading_commands", locale) : t("composer.no_commands", locale)}
+                {commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
               </div>
             )}
           </div>
@@ -860,8 +859,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <div className="truncate text-xs font-semibold">@{item.label}</div>
                     <div className="truncate text-xs text-gray-10">
                       {item.kind === "agent"
-                        ? t("composer.agent_label", locale)
-                        : t("composer.file_kind", locale)}
+                        ? t("composer.agent_label")
+                        : t("composer.file_kind")}
                     </div>
                   </div>
                 </button>
@@ -910,7 +909,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   <div className="max-w-[160px] min-w-0">
                     <div className="truncate text-[12px] font-medium text-gray-11">{attachment.name}</div>
                     <div className="flex items-center gap-1.5 text-[11px] text-gray-10">
-                      <span>{isImageAttachment(attachment) ? t("composer.image_kind", locale) : t("composer.file_kind", locale)}</span>
+                      <span>{isImageAttachment(attachment) ? t("composer.image_kind") : t("composer.file_kind")}</span>
                       <span>·</span>
                       <span>{formatBytes(attachment.size)}</span>
                     </div>
@@ -919,7 +918,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     type="button"
                     className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
                     onClick={() => props.onRemoveAttachment(attachment.id)}
-                    title={t("action.remove", locale)}
+                    title={t("action.remove")}
                   >
                     <X size={12} />
                   </button>
@@ -939,7 +938,7 @@ export function ReactSessionComposer(props: ComposerProps) {
           {dropzoneActive ? (
             <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
               <div className="rounded-2xl border border-dls-border bg-dls-surface/95 px-5 py-4 text-center backdrop-blur-sm">
-                <div className="text-sm font-medium text-dls-text">{t("composer.attach_files", locale)}</div>
+                <div className="text-sm font-medium text-dls-text">{t("composer.attach_files")}</div>
                 <div className="mt-1 text-xs text-dls-secondary">Images and PDFs are supported.</div>
               </div>
             </div>
@@ -952,7 +951,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               mentions={props.mentions}
               pastedText={pastedTextTokens}
               disabled={props.disabled}
-              placeholder={t("composer.placeholder", locale)}
+              placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}
               onSubmit={props.onSend}
               onPasteText={props.onPasteText}
@@ -980,7 +979,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   event.preventDefault();
                   props.onUnsupportedFileLinks(uriList);
                   props.onNotice({
-                    title: t("composer.inserted_links_unsupported", locale),
+                    title: t("composer.inserted_links_unsupported"),
                     tone: "info",
                   });
                   return;
@@ -1007,11 +1006,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) {
                   const attachedFiles = props.attachments.map((attachment) => attachment.file);
                   props.onNotice({
-                    title: t("composer.remote_worker_paste_warning", locale),
+                    title: t("composer.remote_worker_paste_warning"),
                     tone: "warning",
                     actionLabel:
                       props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? t("composer.upload_to_shared_folder", locale)
+                        ? t("composer.upload_to_shared_folder")
                         : undefined,
                     onAction:
                       props.onUploadInboxFiles && attachedFiles.length > 0
@@ -1068,7 +1067,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     fileInput?.click();
                   }}
                   disabled={!props.attachmentsEnabled}
-                  title={props.attachmentsDisabledReason ?? t("composer.attach_files", locale)}
+                  title={props.attachmentsDisabledReason ?? t("composer.attach_files")}
                 >
                   <Paperclip size={16} />
                 </button>
@@ -1084,7 +1083,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     }}
                     aria-expanded={toolMenuOpen}
                     aria-haspopup="dialog"
-                    title={t("composer.tools_label", locale)}
+                    title={t("composer.tools_label")}
                   >
                     <Plug size={16} />
                   </button>
@@ -1093,9 +1092,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                       <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
                         <div className="border-r border-dls-border bg-gray-2/30 p-2">
                           {([
-                            ["commands", t("dashboard.commands", locale)],
-                            ["skills", t("dashboard.skills", locale)],
-                            ["mcps", t("composer.mcps_label", locale)],
+                            ["commands", t("dashboard.commands")],
+                            ["skills", t("dashboard.skills")],
+                            ["mcps", t("composer.mcps_label")],
                           ] as const).map(([section, label]) => (
                             <button
                               key={section}
@@ -1131,7 +1130,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               }}
                             >
                               <Settings size={12} />
-                              {t("composer.configure", locale)}
+                              {t("composer.configure")}
                             </button>
                           </div>
                           {toolMenuSection === "commands" ? (
@@ -1154,7 +1153,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {commandsLoading ? t("composer.loading_commands", locale) : t("composer.no_commands", locale)}
+                                {commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
                               </div>
                             )
                           ) : null}
@@ -1178,7 +1177,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {skillsLoading || commandsLoading ? t("composer.loading_commands", locale) : t("context_panel.no_skills", locale)}
+                                {skillsLoading || commandsLoading ? t("composer.loading_commands") : t("context_panel.no_skills")}
                               </div>
                             )
                           ) : null}
@@ -1192,7 +1191,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
                                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
-                                          {formatMcpStatusLabel(status, locale)}
+                                          {formatMcpStatusLabel(status)}
                                         </span>
                                       </div>
                                       <div className="truncate text-xs text-gray-10">{entry.config.type === "remote" ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP" : entry.config.command?.join(" ") ?? "Local MCP"}</div>
@@ -1202,7 +1201,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {mcpLoading ? t("composer.loading_commands", locale) : (mcpStatus ?? t("context_panel.no_mcp", locale))}
+                                {mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
                               </div>
                             )
                           ) : null}
@@ -1233,7 +1232,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             )
                           ) : toolMenuSection.startsWith("plugin:") ? (
                             <div className="px-3 py-2 text-xs text-gray-10">
-                              {pluginsLoading ? t("composer.loading_commands", locale) : "Plugin files are unavailable."}
+                              {pluginsLoading ? t("composer.loading_commands") : "Plugin files are unavailable."}
                             </div>
                           ) : null}
                         </div>
@@ -1255,10 +1254,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     type="button"
                     onClick={props.onStop}
                     className="inline-flex h-9 max-h-9 items-center gap-2 rounded-full bg-gray-12 px-4 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                    title={t("composer.stop", locale)}
+                    title={t("composer.stop")}
                   >
                     <Square size={12} fill="currentColor" />
-                    <span>{t("composer.stop", locale)}</span>
+                    <span>{t("composer.stop")}</span>
                   </button>
                 ) : (
                   <button
@@ -1270,10 +1269,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={t("composer.run_task", locale)}
+                    title={t("composer.run_task")}
                   >
                     <ArrowUp size={15} />
-                    <span>{t("composer.run_task", locale)}</span>
+                    <span>{t("composer.run_task")}</span>
                   </button>
                 )}
               </div>
@@ -1291,7 +1290,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 onClick={() => setAgentMenuOpen((value) => !value)}
                 disabled={props.busy}
                 aria-expanded={agentMenuOpen}
-                title={t("composer.agent_label", locale)}
+                title={t("composer.agent_label")}
               >
                 <span className="max-w-[140px] truncate">{props.agentLabel}</span>
                 <ChevronDown size={13} />
@@ -1299,7 +1298,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               {agentMenuOpen ? (
                 <div className="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                   <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                    {t("composer.agent_label", locale)}
+                    {t("composer.agent_label")}
                   </div>
                   <div
                     className="space-y-1 p-2 max-h-64 overflow-y-auto"
@@ -1318,7 +1317,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         setAgentMenuOpen(false);
                       }}
                     >
-                      <span>{t("composer.default_agent", locale)}</span>
+                      <span>{t("composer.default_agent")}</span>
                       {!props.selectedAgent ? <Check size={14} className="text-gray-10" /> : null}
                     </button>
                     {agents.map((agent, index) => {
@@ -1384,7 +1383,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                 {variantMenuOpen ? (
                   <div className="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                     <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                      {t("composer.behavior_label", locale)}
+                      {t("composer.behavior_label")}
                     </div>
                     <div className="space-y-1 p-2">
                       {props.modelBehaviorOptions.map((option) => {

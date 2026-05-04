@@ -5,7 +5,7 @@ import { Loader2, Plus, X } from "lucide-react";
 import { Button } from "../../../design-system/button";
 import { TextInput } from "../../../design-system/text-input";
 import type { McpDirectoryInfo } from "../../../../app/constants";
-import { t, type Language } from "../../../../i18n";
+import { t } from "../../../../i18n";
 
 export type AddMcpModalProps = {
   open: boolean;
@@ -13,12 +13,9 @@ export type AddMcpModalProps = {
   onAdd: (entry: McpDirectoryInfo) => void;
   busy: boolean;
   isRemoteWorkspace: boolean;
-  language: Language;
 };
 
 export function AddMcpModal(props: AddMcpModalProps) {
-  const tr = (key: string) => t(key, props.language);
-
   const [name, setName] = useState("");
   const [serverType, setServerType] = useState<"remote" | "local">("remote");
   const [url, setUrl] = useState("");
@@ -48,7 +45,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError(tr("mcp.name_required"));
+      setError(t("mcp.name_required"));
       return;
     }
 
@@ -57,7 +54,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
     if (serverType === "remote") {
       const trimmedUrl = url.trim();
       if (!trimmedUrl) {
-        setError(tr("mcp.url_or_command_required"));
+        setError(t("mcp.url_or_command_required"));
         setSubmitting(false);
         return;
       }
@@ -78,7 +75,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
     } else {
       const trimmedCommand = command.trim();
       if (!trimmedCommand) {
-        setError(tr("mcp.url_or_command_required"));
+        setError(t("mcp.url_or_command_required"));
         setSubmitting(false);
         return;
       }
@@ -116,10 +113,10 @@ export function AddMcpModal(props: AddMcpModalProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-6">
           <div>
             <h2 className="text-lg font-semibold text-gray-12">
-              {tr("mcp.add_modal_title")}
+              {t("mcp.add_modal_title")}
             </h2>
             <p className="text-sm text-gray-11">
-              {tr("mcp.add_modal_subtitle")}
+              {t("mcp.add_modal_subtitle")}
             </p>
           </div>
           <button
@@ -133,8 +130,8 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
         <div className="px-6 py-5 space-y-4">
           <TextInput
-            label={tr("mcp.server_name")}
-            placeholder={tr("mcp.server_name_placeholder")}
+            label={t("mcp.server_name")}
+            placeholder={t("mcp.server_name_placeholder")}
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
             autoFocus
@@ -142,7 +139,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
           <div>
             <div className="mb-1 text-xs font-medium text-dls-secondary">
-              {tr("mcp.server_type")}
+              {t("mcp.server_type")}
             </div>
             <div className="flex items-center gap-1.5">
               <button
@@ -154,7 +151,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
                 }`}
                 onClick={() => setServerType("remote")}
               >
-                {tr("mcp.type_remote")}
+                {t("mcp.type_remote")}
               </button>
               <button
                 type="button"
@@ -169,12 +166,12 @@ export function AddMcpModal(props: AddMcpModalProps) {
                   setServerType("local");
                 }}
               >
-                {tr("mcp.type_local_cmd")}
+                {t("mcp.type_local_cmd")}
               </button>
             </div>
             {props.isRemoteWorkspace ? (
               <div className="mt-2 text-[11px] text-dls-secondary">
-                {tr("mcp.remote_workspace_url_hint")}
+                {t("mcp.remote_workspace_url_hint")}
               </div>
             ) : null}
           </div>
@@ -182,14 +179,14 @@ export function AddMcpModal(props: AddMcpModalProps) {
           {serverType === "remote" ? (
             <div className="space-y-3">
               <TextInput
-                label={tr("mcp.server_url")}
-                placeholder={tr("mcp.server_url_placeholder")}
+                label={t("mcp.server_url")}
+                placeholder={t("mcp.server_url_placeholder")}
                 value={url}
                 onChange={(event) => setUrl(event.currentTarget.value)}
               />
               <div className="rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-3">
                 <div className="mb-2 text-xs font-medium text-dls-text">
-                  {tr("mcp.sign_in_section_label")}
+                  {t("mcp.sign_in_section_label")}
                 </div>
                 <label className="flex items-start gap-2 text-xs text-dls-secondary">
                   <input
@@ -202,10 +199,10 @@ export function AddMcpModal(props: AddMcpModalProps) {
                   />
                   <span>
                     <span className="block text-dls-text">
-                      {tr("mcp.oauth_optional_label")}
+                      {t("mcp.oauth_optional_label")}
                     </span>
                     <span className="mt-0.5 block text-dls-secondary">
-                      {tr("mcp.oauth_optional_hint")}
+                      {t("mcp.oauth_optional_hint")}
                     </span>
                   </span>
                 </label>
@@ -215,9 +212,9 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
           {serverType === "local" ? (
             <TextInput
-              label={tr("mcp.server_command")}
-              placeholder={tr("mcp.server_command_placeholder")}
-              hint={tr("mcp.server_command_hint")}
+              label={t("mcp.server_command")}
+              placeholder={t("mcp.server_command_placeholder")}
+              hint={t("mcp.server_command_hint")}
               value={command}
               onChange={(event) => setCommand(event.currentTarget.value)}
             />
@@ -236,7 +233,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
             onClick={handleClose}
             disabled={submitting}
           >
-            {tr("mcp.auth.cancel")}
+            {t("mcp.auth.cancel")}
           </Button>
           <Button
             variant="secondary"
@@ -248,7 +245,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
             ) : (
               <Plus size={16} />
             )}
-            {tr("mcp.add_server_button")}
+            {t("mcp.add_server_button")}
           </Button>
         </div>
       </div>

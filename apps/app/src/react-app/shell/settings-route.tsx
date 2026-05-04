@@ -1410,7 +1410,6 @@ export function SettingsRoute() {
       <ConnectionsModals
         client={activeClient}
         projectDir={selectedWorkspaceRoot}
-        language={currentLocale() as Language}
         reloadBlocked={activeReloadBlockingSessions.length > 0}
         activeSessions={activeReloadBlockingSessions}
         isRemoteWorkspace={selectedWorkspace?.workspaceType === "remote"}

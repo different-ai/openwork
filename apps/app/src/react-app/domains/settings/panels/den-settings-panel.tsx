@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { currentLocale, t } from "../../../../i18n";
+import { t } from "../../../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
@@ -154,22 +154,22 @@ function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
   }
 }
 
-function workerStatusMeta(status: string, tr: (key: string) => string) {
+function workerStatusMeta(status: string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
-      return { label: tr("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
+      return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
-      return { label: tr("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
     case "failed":
-      return { label: tr("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: tr("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : tr("dashboard.worker_status_unknown"),
+          : t("dashboard.worker_status_unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
@@ -204,13 +204,6 @@ function parseManualAuthInput(value: string) {
 }
 
 export function DenSettingsPanel(props: DenSettingsPanelProps) {
-  const tr = useCallback((key: string) => t(key, currentLocale()), []);
-  const tx = useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, currentLocale(), params),
-    [],
-  );
-
   const initial = useMemo(() => readDenSettings(), []);
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
 
@@ -267,14 +260,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrgId, orgs],
   );
   const isSignedIn = Boolean(user && authToken.trim());
-  const activeOrgName = activeOrg?.name || tr("den.no_org_selected");
+  const activeOrgName = activeOrg?.name || t("den.no_org_selected");
   const activeOrgOptions = useMemo(
     () =>
       orgs.map((org) => ({
         value: org.id,
-        label: `${org.name} ${org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}`,
+        label: `${org.name} ${org.role === "owner" ? t("den.org_owner_suffix") : t("den.org_member_suffix")}`,
       })),
-    [orgs, tr],
+    [orgs],
   );
 
   const syncCurrentDenSettings = useCallback(() => {
@@ -489,11 +482,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   ]);
 
   const summaryLabel = useMemo(() => {
-    if (authError) return tr("den.needs_attention");
-    if (sessionBusy) return tr("den.checking_session");
-    if (isSignedIn) return tr("dashboard.connected");
-    return tr("den.signed_out");
-  }, [authError, isSignedIn, sessionBusy, tr]);
+    if (authError) return t("den.needs_attention");
+    if (sessionBusy) return t("den.checking_session");
+    if (isSignedIn) return t("dashboard.connected");
+    return t("den.signed_out");
+  }, [authError, isSignedIn, sessionBusy]);
 
   const clearSessionState = useCallback(() => {
     setUser(null);
@@ -544,18 +537,18 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       props.openLink(buildDenAuthUrl(baseUrl, mode));
       setStatusMessage(
         mode === "sign-up"
-          ? tr("den.status_browser_signup")
-          : tr("den.status_browser_signin"),
+          ? t("den.status_browser_signup")
+          : t("den.status_browser_signin"),
       );
       setAuthError(null);
     },
-    [baseUrl, props, tr],
+    [baseUrl, props],
   );
 
   const applyBaseUrl = useCallback(() => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft);
     if (!normalized) {
-      setBaseUrlError(tr("den.error_base_url"));
+      setBaseUrlError(t("den.error_base_url"));
       return;
     }
 
@@ -568,8 +561,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(tr("den.status_base_url_updated"));
-  }, [baseUrl, baseUrlDraft, clearSignedInState, tr]);
+    clearSignedInState(t("den.status_base_url_updated"));
+  }, [baseUrl, baseUrlDraft, clearSignedInState]);
 
   const refreshOrgs = useCallback(
     async (quiet = false) => {
@@ -608,19 +601,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         }
         if (!quiet && response.orgs.length > 0) {
           setStatusMessage(
-            tx("den.status_loaded_orgs", {
+            t("den.status_loaded_orgs", {
               count: response.orgs.length,
               plural: response.orgs.length === 1 ? "" : "s",
             }),
           );
         }
       } catch (error) {
-        setOrgsError(error instanceof Error ? error.message : tr("den.error_load_orgs"));
+        setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
       } finally {
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, tr, tx],
+    [activeOrgId, authToken, baseUrl, client],
   );
 
   const refreshWorkers = useCallback(
@@ -640,23 +633,23 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         if (!quiet) {
           setStatusMessage(
             nextWorkers.length > 0
-              ? tx("den.status_loaded_workers", {
+              ? t("den.status_loaded_workers", {
                   count: nextWorkers.length,
                   plural: nextWorkers.length === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_workers", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_workers", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
           );
         }
       } catch (error) {
-        setWorkersError(error instanceof Error ? error.message : tr("den.error_load_workers"));
+        setWorkersError(error instanceof Error ? error.message : t("den.error_load_workers"));
       } finally {
         setWorkersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, client, tr, tx],
+    [activeOrg, activeOrgId, authToken, client],
   );
 
   const refreshSkillHubs = useCallback(
@@ -674,8 +667,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgSkillHubs().length;
           setStatusMessage(
             count > 0
-              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud skill hubs are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud skill hubs are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
           );
         }
       } catch (error) {
@@ -688,7 +681,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings, tr],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
   const refreshSkills = useCallback(
@@ -706,25 +699,25 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgSkills().length;
           setStatusMessage(
             count > 0
-              ? tx("den.status_loaded_skills", {
+              ? t("den.status_loaded_skills", {
                   count,
                   plural: count === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_skills", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_skills", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
           );
         }
       } catch (error) {
         if (!quiet) {
-          setSkillActionError(error instanceof Error ? error.message : tr("den.error_load_skills"));
+          setSkillActionError(error instanceof Error ? error.message : t("den.error_load_skills"));
         }
       } finally {
         setSkillsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings, tr, tx],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
   const refreshProviders = useCallback(
@@ -741,8 +734,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         if (!quiet) {
           setStatusMessage(
             items.length > 0
-              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud providers are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud providers are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
           );
         }
       } catch (error) {
@@ -755,7 +748,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setProvidersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props, syncCurrentDenSettings, tr],
+    [activeOrg, activeOrgId, authToken, props, syncCurrentDenSettings],
   );
 
   const refreshMarketplaces = useCallback(
@@ -773,8 +766,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgMarketplaces().length;
           setStatusMessage(
             count > 0
-              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No marketplaces are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No marketplaces are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
           );
         }
       } catch (error) {
@@ -785,7 +778,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setMarketplacesBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings, tr],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
   useEffect(() => {
@@ -806,7 +799,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       .then((nextUser) => {
         if (cancelled) return;
         setUser(nextUser);
-        setStatusMessage(tx("den.status_signed_in_as", { email: nextUser.email }));
+        setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
       })
       .catch((error) => {
         if (cancelled) return;
@@ -815,7 +808,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         } else {
           clearSessionState();
         }
-        setAuthError(error instanceof Error ? error.message : tr("den.error_no_session"));
+        setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
       })
       .finally(() => {
         if (!cancelled) setSessionBusy(false);
@@ -824,7 +817,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [authToken, baseUrl, clearSessionState, clearSignedInState, tr, tx]);
+  }, [authToken, baseUrl, clearSessionState, clearSignedInState]);
 
   useEffect(() => {
     if (!user) return;
@@ -877,34 +870,34 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSessionBusy(false);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? tx("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
-            : tr("den.status_cloud_signin_done"),
+            ? t("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
+            : t("den.status_cloud_signin_done"),
         );
       } else if (customEvent.detail?.status === "error") {
-        setAuthError(customEvent.detail.message?.trim() || tr("den.error_signin_failed"));
+        setAuthError(customEvent.detail.message?.trim() || t("den.error_signin_failed"));
       }
     };
 
     window.addEventListener(denSessionUpdatedEvent, handler as EventListener);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler as EventListener);
-  }, [clearSessionState, tr, tx]);
+  }, [clearSessionState]);
 
   const submitManualAuth = useCallback(async () => {
     const parsed = parseManualAuthInput(manualAuthInput);
     if (!parsed || authBusy) {
-      if (!parsed) setAuthError(tr("den.error_paste_valid_code"));
+      if (!parsed) setAuthError(t("den.error_paste_valid_code"));
       return;
     }
 
     const nextBaseUrl = parsed.baseUrl ?? baseUrl;
     setAuthBusy(true);
     setAuthError(null);
-    setStatusMessage(tr("den.signing_in"));
+    setStatusMessage(t("den.signing_in"));
 
     try {
       const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
-        throw new Error(tr("den.error_no_token"));
+        throw new Error(t("den.error_no_token"));
       }
 
       if (props.developerMode) {
@@ -932,12 +925,12 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     } catch (error) {
       dispatchDenSessionUpdated({
         status: "error",
-        message: error instanceof Error ? error.message : tr("den.error_signin_failed"),
+        message: error instanceof Error ? error.message : t("den.error_signin_failed"),
       });
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, baseUrl, manualAuthInput, props.developerMode, tr]);
+  }, [authBusy, baseUrl, manualAuthInput, props.developerMode]);
 
   const signOut = useCallback(async () => {
     if (authBusy) return;
@@ -953,14 +946,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       setAuthBusy(false);
     }
 
-    clearSignedInState(tr("den.status_signed_out"));
-  }, [authBusy, authToken, clearSignedInState, client, tr]);
+    clearSignedInState(t("den.status_signed_out"));
+  }, [authBusy, authToken, clearSignedInState, client]);
 
   const handleOpenWorker = useCallback(
     async (workerId: string, workerName: string) => {
       const orgId = activeOrgId.trim();
       if (!orgId) {
-        setWorkersError(tr("den.error_choose_org"));
+        setWorkersError(t("den.error_choose_org"));
         return;
       }
 
@@ -972,7 +965,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         const openworkUrl = tokens.openworkUrl?.trim() ?? "";
         const accessToken = tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
         if (!openworkUrl || !accessToken) {
-          throw new Error(tr("den.error_worker_not_ready"));
+          throw new Error(t("den.error_worker_not_ready"));
         }
 
         const ok = await props.connectRemoteWorkspace({
@@ -982,21 +975,21 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           displayName: workerName,
         });
         if (!ok) {
-          throw new Error(tx("den.error_open_worker", { name: workerName }));
+          throw new Error(t("den.error_open_worker", { name: workerName }));
         }
 
-        setStatusMessage(tx("den.status_opened_worker", { name: workerName }));
+        setStatusMessage(t("den.status_opened_worker", { name: workerName }));
       } catch (error) {
         setWorkersError(
           error instanceof Error
             ? error.message
-            : tx("den.error_open_worker_fallback", { name: workerName }),
+            : t("den.error_open_worker_fallback", { name: workerName }),
         );
       } finally {
         setOpeningWorkerId(null);
       }
     },
-    [activeOrgId, client, props, tr, tx],
+    [activeOrgId, client, props],
   );
 
   const handleActiveOrgChange = useCallback(
@@ -1014,9 +1007,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (nextId) {
         void ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
       }
-      setStatusMessage(tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }));
+      setStatusMessage(t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }));
     },
-    [authToken, baseUrl, orgs, tr, tx],
+    [authToken, baseUrl, orgs],
   );
 
   const handleImportSkillHub = useCallback(
@@ -1031,7 +1024,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.importCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
       } finally {
@@ -1039,7 +1032,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, skillHubActionId],
   );
 
   const handleRemoveSkillHub = useCallback(
@@ -1054,7 +1047,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkillHub(hubId);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
       } finally {
@@ -1062,7 +1055,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, skillHubActionId],
   );
 
   const handleSyncSkillHub = useCallback(
@@ -1077,7 +1070,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
       } finally {
@@ -1085,7 +1078,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, skillHubActionId],
   );
 
   const handleImportSkill = useCallback(
@@ -1100,17 +1093,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.installCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.import_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.import_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, skillActionId],
   );
 
   const handleRemoveSkill = useCallback(
@@ -1124,17 +1117,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkill(cloudSkillId);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.remove_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.remove_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, skillActionId],
   );
 
   const handleSyncSkill = useCallback(
@@ -1149,17 +1142,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.sync_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.sync_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, skillActionId],
   );
 
   const handleImportPlugin = useCallback(
@@ -1172,14 +1165,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.importCloudOrgPlugin(marketplaceId, plugin);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${result.message} ${t("den.reload_workspace")}`);
       } catch (error) {
         setPluginActionError(error instanceof Error ? error.message : `Failed to import ${plugin.name}.`);
       } finally {
         setPluginActionId(null);
       }
     },
-    [pluginActionId, props.extensions, tr],
+    [pluginActionId, props.extensions],
   );
 
   const handleImportProvider = useCallback(
@@ -1192,17 +1185,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         const message = await props.connectCloudProvider(cloudProviderId);
-        setStatusMessage(`${message || tx("den.imported_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${message || t("den.imported_provider", { name: providerName })} ${t("den.reload_workspace")}`);
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.import_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId],
   );
 
   const handleRemoveProvider = useCallback(
@@ -1215,17 +1208,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         const message = await props.removeCloudProvider(cloudProviderId);
-        setStatusMessage(`${message || tx("den.removed_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${message || t("den.removed_provider", { name: providerName })} ${t("den.reload_workspace")}`);
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.remove_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId],
   );
 
   const handleSyncProvider = useCallback(
@@ -1238,17 +1231,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         await props.connectCloudProvider(cloudProviderId);
-        setStatusMessage(`${tx("den.synced_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        setStatusMessage(`${t("den.synced_provider", { name: providerName })} ${t("den.reload_workspace")}`);
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.sync_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId],
   );
 
   return (
@@ -1258,14 +1251,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           <div className="space-y-2">
             <div className={headerBadgeClass}>
               <Cloud size={13} className="text-dls-secondary" />
-              {tr("den.cloud_section_title")}
+              {t("den.cloud_section_title")}
             </div>
             <div>
               <div className="text-sm font-medium text-dls-text">
-                {tr("den.cloud_section_desc")}
+                {t("den.cloud_section_desc")}
               </div>
               <div className="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
+                {t("den.cloud_sleep_hint")}
               </div>
             </div>
           </div>
@@ -1288,11 +1281,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         {props.developerMode ? (
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <TextInput
-              label={tr("den.cloud_control_plane_url_label")}
+              label={t("den.cloud_control_plane_url_label")}
               value={baseUrlDraft}
               onChange={(event) => setBaseUrlDraft(event.currentTarget.value)}
               placeholder={DEFAULT_DEN_BASE_URL}
-              hint={tr("den.cloud_control_plane_url_hint")}
+              hint={t("den.cloud_control_plane_url_hint")}
               disabled={authBusy || sessionBusy}
             />
             <div className="flex flex-wrap items-center gap-2">
@@ -1302,7 +1295,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={() => setBaseUrlDraft(baseUrl)}
                 disabled={authBusy || sessionBusy}
               >
-                {tr("den.cloud_control_plane_reset")}
+                {t("den.cloud_control_plane_reset")}
               </Button>
               <Button
                 variant="secondary"
@@ -1310,10 +1303,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 onClick={applyBaseUrl}
                 disabled={authBusy || sessionBusy}
               >
-                {tr("den.cloud_control_plane_save")}
+                {t("den.cloud_control_plane_save")}
               </Button>
               <Button variant="outline" className="h-9 px-3 text-xs" onClick={openControlPlane}>
-                {tr("den.cloud_control_plane_open")}
+                {t("den.cloud_control_plane_open")}
                 <ArrowUpRight size={13} />
               </Button>
             </div>
@@ -1330,15 +1323,15 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       {!isSignedIn ? (
         <div className={`${settingsPanelClass} space-y-4`}>
           <div className="space-y-2">
-            <div className="text-sm font-medium text-dls-text">{tr("den.signin_title")}</div>
+            <div className="text-sm font-medium text-dls-text">{t("den.signin_title")}</div>
             <div className="max-w-[54ch] text-sm text-dls-secondary">
-              {tr("den.cloud_sleep_hint")}
+              {t("den.cloud_sleep_hint")}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
-              {tr("den.signin_button")}
+              {t("den.signin_button")}
               <ArrowUpRight size={13} />
             </Button>
             <Button
@@ -1346,7 +1339,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               className="h-9 px-3 text-xs"
               onClick={() => openBrowserAuth("sign-up")}
             >
-              {tr("den.create_account")}
+              {t("den.create_account")}
               <ArrowUpRight size={13} />
             </Button>
             <Button
@@ -1358,19 +1351,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               }}
               disabled={authBusy || sessionBusy}
             >
-              {manualAuthOpen ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
+              {manualAuthOpen ? t("den.hide_signin_code") : t("den.paste_signin_code")}
             </Button>
           </div>
 
           {manualAuthOpen ? (
             <div className={`${settingsPanelSoftClass} space-y-3`}>
               <TextInput
-                label={tr("den.signin_link_label")}
+                label={t("den.signin_link_label")}
                 value={manualAuthInput}
                 onChange={(event) => setManualAuthInput(event.currentTarget.value)}
-                placeholder={tr("den.signin_link_placeholder")}
+                placeholder={t("den.signin_link_placeholder")}
                 disabled={authBusy || sessionBusy}
-                hint={tr("den.signin_link_hint")}
+                hint={t("den.signin_link_hint")}
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -1379,9 +1372,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   onClick={() => void submitManualAuth()}
                   disabled={authBusy || sessionBusy || !manualAuthInput.trim()}
                 >
-                  {authBusy ? tr("den.finishing") : tr("den.finish_signin")}
+                  {authBusy ? t("den.finishing") : t("den.finish_signin")}
                 </Button>
-                <div className="text-[11px] text-dls-secondary">{tr("den.signin_code_note")}</div>
+                <div className="text-[11px] text-dls-secondary">{t("den.signin_code_note")}</div>
               </div>
             </div>
           ) : null}
@@ -1389,15 +1382,15 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           {authError ? <div className={errorBannerClass}>{authError}</div> : null}
 
           <div className={`${settingsPanelSoftClass} text-sm text-gray-10`}>
-            {tr("den.auto_reconnect_hint")}
+            {t("den.auto_reconnect_hint")}
           </div>
         </div>
       ) : (
         <div className="space-y-6">
           <div className={`${settingsPanelClass} space-y-4`}>
             <div>
-              <div className="text-sm font-medium text-dls-text">{tr("den.cloud_account_title")}</div>
-              <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_account_hint")}</div>
+              <div className="text-sm font-medium text-dls-text">{t("den.cloud_account_title")}</div>
+              <div className="mt-1 text-xs text-dls-secondary">{t("den.cloud_account_hint")}</div>
             </div>
 
             <div className="flex flex-col gap-3">
@@ -1413,14 +1406,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={authBusy || sessionBusy}
                 >
                   <LogOut size={13} className="mr-1.5" />
-                  {authBusy ? tr("den.signing_out") : tr("den.sign_out")}
+                  {authBusy ? t("den.signing_out") : t("den.sign_out")}
                 </Button>
               </div>
 
               <div className="ow-soft-card-quiet flex flex-col gap-3 rounded-xl p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <div className="text-sm font-medium text-dls-text">{tr("den.active_org_title")}</div>
-                  <div className="truncate text-xs text-dls-secondary">{tr("den.active_org_hint")}</div>
+                  <div className="text-sm font-medium text-dls-text">{t("den.active_org_title")}</div>
+                  <div className="truncate text-xs text-dls-secondary">{t("den.active_org_hint")}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <div className="w-[260px] max-w-full">
@@ -1429,8 +1422,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       options={activeOrgOptions}
                       onChange={handleActiveOrgChange}
                       disabled={orgsBusy || orgs.length === 0}
-                      placeholder={tr("den.no_org_selected")}
-                      ariaLabel={tr("den.active_org_title")}
+                      placeholder={t("den.no_org_selected")}
+                      ariaLabel={t("den.active_org_title")}
                     />
                   </div>
                   <Button
@@ -1471,7 +1464,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={marketplacesBusy || !activeOrgId.trim()}
                 >
                   <RefreshCcw size={13} className={marketplacesBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1525,7 +1518,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                               <span className="truncate font-medium text-dls-text">{row.plugin.name}</span>
                               {row.status !== "available" ? (
                                 <span className={sectionPillClass}>
-                                  {row.status === "imported" ? tr("den.imported_badge") : tr("den.out_of_sync_badge")}
+                                  {row.status === "imported" ? t("den.imported_badge") : t("den.out_of_sync_badge")}
                                 </span>
                               ) : null}
                               {counts.length > 0 ? counts.map((label) => <span key={label} className={sectionPillClass}>{label}</span>) : null}
@@ -1545,7 +1538,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                             onClick={() => void handleImportPlugin(row.marketplaceId, row.plugin)}
                             disabled={pluginActionId !== null}
                           >
-                            {actionBusy ? tr("den.importing") : row.status === "available" ? "Import plugin" : "Sync plugin"}
+                            {actionBusy ? t("den.importing") : row.status === "available" ? "Import plugin" : "Sync plugin"}
                           </Button>
                         </div>
                       );
@@ -1566,9 +1559,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Package size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_skills_title")}
+                  {t("den.cloud_skills_title")}
                 </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_skills_hint")}</div>
+                <div className="mt-1 text-xs text-dls-secondary">{t("den.cloud_skills_hint")}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className={sectionPillClass}>
@@ -1582,7 +1575,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={skillsBusy || !activeOrgId.trim()}
                 >
                   <RefreshCcw size={13} className={skillsBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1593,7 +1586,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             {!skillsBusy && skillRows.length === 0 ? (
               <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_cloud_skills") : tr("den.choose_org_for_skills")}
+                {activeOrgId.trim() ? t("den.no_cloud_skills") : t("den.choose_org_for_skills")}
               </div>
             ) : null}
 
@@ -1603,10 +1596,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 const actionLabel = !actionBusy
                   ? null
                   : skillActionKind === "import"
-                    ? tr("den.importing")
+                    ? t("den.importing")
                     : skillActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
+                      ? t("den.syncing")
+                      : t("den.removing");
 
                 return (
                   <div
@@ -1617,32 +1610,32 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate font-medium text-dls-text">{row.title}</span>
                         {row.skill?.hubName ? (
-                          <span className={sectionPillClass}>{tx("skills.cloud_hub_label", { name: row.skill.hubName })}</span>
+                          <span className={sectionPillClass}>{t("skills.cloud_hub_label", { name: row.skill.hubName })}</span>
                         ) : null}
-                        {row.skill?.shared === "org" ? <span className={sectionPillClass}>{tr("skills.cloud_shared_org")}</span> : null}
-                        {row.skill?.shared === "public" ? <span className={sectionPillClass}>{tr("skills.cloud_shared_public")}</span> : null}
-                        {row.skill?.shared === null && !row.skill?.hubName ? <span className={sectionPillClass}>{tr("den.private_badge")}</span> : null}
+                        {row.skill?.shared === "org" ? <span className={sectionPillClass}>{t("skills.cloud_shared_org")}</span> : null}
+                        {row.skill?.shared === "public" ? <span className={sectionPillClass}>{t("skills.cloud_shared_public")}</span> : null}
+                        {row.skill?.shared === null && !row.skill?.hubName ? <span className={sectionPillClass}>{t("den.private_badge")}</span> : null}
                         {row.installedName ? (
-                          <span className={sectionPillClass}>{tx("den.installed_name_badge", { name: row.installedName })}</span>
+                          <span className={sectionPillClass}>{t("den.installed_name_badge", { name: row.installedName })}</span>
                         ) : null}
                         {row.status !== "available" ? (
                           <span className={sectionPillClass}>
                             {row.status === "installed"
-                              ? tr("den.imported_badge")
+                              ? t("den.imported_badge")
                               : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
+                                ? t("den.out_of_sync_badge")
+                                : t("den.removed_from_cloud_badge")}
                           </span>
                         ) : null}
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
                         {row.status === "available"
-                          ? tx("den.cloud_skill_detail", { title: row.title })
+                          ? t("den.cloud_skill_detail", { title: row.title })
                           : row.status === "installed"
-                            ? tx("den.cloud_skill_imported_detail", { name: row.installedName ?? row.title })
+                            ? t("den.cloud_skill_imported_detail", { name: row.installedName ?? row.title })
                             : row.status === "out_of_sync"
-                              ? tx("den.cloud_skill_sync_detail", { name: row.installedName ?? row.title })
-                              : tx("den.cloud_skill_removed_detail", { name: row.installedName ?? row.title })}
+                              ? t("den.cloud_skill_sync_detail", { name: row.installedName ?? row.title })
+                              : t("den.cloud_skill_removed_detail", { name: row.installedName ?? row.title })}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1653,7 +1646,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                           onClick={() => void handleSyncSkill(row.cloudSkillId, row.title)}
                           disabled={skillActionId !== null}
                         >
-                          {actionBusy && skillActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          {actionBusy && skillActionKind === "sync" ? t("den.syncing") : t("den.sync")}
                         </Button>
                       ) : null}
                       <Button
@@ -1667,7 +1660,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                         }}
                         disabled={skillActionId !== null}
                       >
-                        {actionBusy ? actionLabel : row.status === "available" ? tr("den.import_skill") : tr("den.uninstall")}
+                        {actionBusy ? actionLabel : row.status === "available" ? t("den.import_skill") : t("den.uninstall")}
                       </Button>
                     </div>
                   </div>
@@ -1681,9 +1674,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Server size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_workers_title")}
+                  {t("den.cloud_workers_title")}
                 </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_workers_hint")}</div>
+                <div className="mt-1 text-xs text-dls-secondary">{t("den.cloud_workers_hint")}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className={sectionPillClass}>
@@ -1697,7 +1690,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={workersBusy || !activeOrgId.trim()}
                 >
                   <RefreshCcw size={13} className={workersBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1706,13 +1699,13 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             {!workersBusy && workers.length === 0 ? (
               <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {tr("den.no_cloud_workers")}
+                {t("den.no_cloud_workers")}
               </div>
             ) : null}
 
             <div className="space-y-1">
               {workers.map((worker) => {
-                const status = workerStatusMeta(worker.status, tr);
+                const status = workerStatusMeta(worker.status);
                 return (
                   <div
                     key={worker.workerId}
@@ -1726,10 +1719,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                         >
                           {status.label}
                         </span>
-                        {worker.isMine ? <span className={sectionPillClass}>{tr("den.worker_mine_badge")}</span> : null}
+                        {worker.isMine ? <span className={sectionPillClass}>{t("den.worker_mine_badge")}</span> : null}
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        {worker.provider ? tx("den.worker_provider_label", { provider: worker.provider }) : tr("den.worker_secondary_cloud")}
+                        {worker.provider ? t("den.worker_provider_label", { provider: worker.provider }) : t("den.worker_secondary_cloud")}
                         {worker.instanceUrl ? <span> · {worker.instanceUrl}</span> : null}
                       </div>
                     </div>
@@ -1738,9 +1731,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       className="h-8 shrink-0 px-4 text-xs"
                       onClick={() => void handleOpenWorker(worker.workerId, worker.workerName)}
                       disabled={openingWorkerId !== null || !status.canOpen}
-                      title={!status.canOpen ? tr("den.worker_not_ready_title") : undefined}
+                      title={!status.canOpen ? t("den.worker_not_ready_title") : undefined}
                     >
-                      {openingWorkerId === worker.workerId ? tr("den.opening") : tr("den.open")}
+                      {openingWorkerId === worker.workerId ? t("den.opening") : t("den.open")}
                     </Button>
                   </div>
                 );
@@ -1753,9 +1746,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Boxes size={15} className="text-dls-secondary" />
-                  {tr("den.skill_hubs_title")}
+                  {t("den.skill_hubs_title")}
                 </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.skill_hubs_hint")}</div>
+                <div className="mt-1 text-xs text-dls-secondary">{t("den.skill_hubs_hint")}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className={sectionPillClass}>
@@ -1769,7 +1762,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={skillHubsBusy || !activeOrgId.trim()}
                 >
                   <RefreshCcw size={13} className={skillHubsBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1780,7 +1773,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             {!skillHubsBusy && skillHubRows.length === 0 ? (
               <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_skill_hubs") : tr("den.choose_org_for_skill_hubs")}
+                {activeOrgId.trim() ? t("den.no_skill_hubs") : t("den.choose_org_for_skill_hubs")}
               </div>
             ) : null}
 
@@ -1790,10 +1783,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 const actionLabel = !actionBusy
                   ? null
                   : skillHubActionKind === "import"
-                    ? tr("den.importing")
+                    ? t("den.importing")
                     : skillHubActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
+                      ? t("den.syncing")
+                      : t("den.removing");
 
                 return (
                   <div
@@ -1804,29 +1797,29 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate font-medium text-dls-text">{row.name}</span>
                         <span className={sectionPillClass}>
-                          {tx("den.skill_hub_skills_badge", { count: row.hub?.skills.length ?? row.importedSkillCount })}
+                          {t("den.skill_hub_skills_badge", { count: row.hub?.skills.length ?? row.importedSkillCount })}
                         </span>
                         {row.status !== "available" ? (
                           <span className={sectionPillClass}>
                             {row.status === "imported"
-                              ? tr("den.imported_badge")
+                              ? t("den.imported_badge")
                               : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
+                                ? t("den.out_of_sync_badge")
+                                : t("den.removed_from_cloud_badge")}
                           </span>
                         ) : null}
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
                         {row.status === "available"
-                          ? tx("den.skill_hub_detail", { count: row.liveSkillCount })
+                          ? t("den.skill_hub_detail", { count: row.liveSkillCount })
                           : row.status === "imported"
-                            ? tx("den.skill_hub_imported_detail", { count: row.importedSkillCount })
+                            ? t("den.skill_hub_imported_detail", { count: row.importedSkillCount })
                             : row.status === "out_of_sync"
-                              ? tx("den.skill_hub_sync_detail", {
+                              ? t("den.skill_hub_sync_detail", {
                                   liveCount: row.liveSkillCount,
                                   importedCount: row.importedSkillCount,
                                 })
-                              : tx("den.skill_hub_removed_detail", { importedCount: row.importedSkillCount })}
+                              : t("den.skill_hub_removed_detail", { importedCount: row.importedSkillCount })}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1837,7 +1830,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                           onClick={() => void handleSyncSkillHub(row.hubId)}
                           disabled={skillHubActionId !== null}
                         >
-                          {actionBusy && skillHubActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          {actionBusy && skillHubActionKind === "sync" ? t("den.syncing") : t("den.sync")}
                         </Button>
                       ) : null}
                       <Button
@@ -1852,10 +1845,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                         {actionBusy
                           ? actionLabel
                           : row.status === "available"
-                            ? tr("den.import_all")
+                            ? t("den.import_all")
                             : row.status === "removed_from_cloud"
-                              ? tr("den.uninstall")
-                              : tr("common.remove")}
+                              ? t("den.uninstall")
+                              : t("common.remove")}
                       </Button>
                     </div>
                   </div>
@@ -1869,9 +1862,9 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
                   <Brain size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_providers_title")}
+                  {t("den.cloud_providers_title")}
                 </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_providers_hint")}</div>
+                <div className="mt-1 text-xs text-dls-secondary">{t("den.cloud_providers_hint")}</div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className={sectionPillClass}>
@@ -1885,7 +1878,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                   disabled={providersBusy || !activeOrgId.trim()}
                 >
                   <RefreshCcw size={13} className={providersBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
+                  {t("den.refresh")}
                 </Button>
               </div>
             </div>
@@ -1894,7 +1887,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
             {!providersBusy && providerRows.length === 0 ? (
               <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_cloud_providers") : tr("den.choose_org_for_providers")}
+                {activeOrgId.trim() ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}
               </div>
             ) : null}
 
@@ -1904,10 +1897,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                 const actionLabel = !actionBusy
                   ? null
                   : providerActionKind === "import"
-                    ? tr("den.importing")
+                    ? t("den.importing")
                     : providerActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
+                      ? t("den.syncing")
+                      : t("den.removing");
 
                 return (
                   <div
@@ -1921,26 +1914,26 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                           <KeyRound size={12} />
                           {row.provider?.providerId ?? row.imported?.providerId}
                         </span>
-                        {row.provider?.hasApiKey ? <span className={sectionPillClass}>{tr("den.credentials_ready_badge")}</span> : null}
+                        {row.provider?.hasApiKey ? <span className={sectionPillClass}>{t("den.credentials_ready_badge")}</span> : null}
                         {row.status !== "available" ? (
                           <span className={sectionPillClass}>
                             {row.status === "imported"
-                              ? tr("den.imported_badge")
+                              ? t("den.imported_badge")
                               : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
+                                ? t("den.out_of_sync_badge")
+                                : t("den.removed_from_cloud_badge")}
                           </span>
                         ) : null}
                       </div>
                       <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
                         {row.status === "removed_from_cloud"
-                          ? tx("den.cloud_provider_removed_detail", { providerId: row.imported?.providerId ?? row.name })
+                          ? t("den.cloud_provider_removed_detail", { providerId: row.imported?.providerId ?? row.name })
                           : row.status === "out_of_sync"
-                            ? tx("den.cloud_provider_sync_detail", {
+                            ? t("den.cloud_provider_sync_detail", {
                                 count: row.provider?.models.length ?? 0,
                                 source: row.provider?.source === "custom" ? "custom" : "managed",
                               })
-                            : tx("den.cloud_provider_detail", {
+                            : t("den.cloud_provider_detail", {
                                 count: row.provider?.models.length ?? 0,
                                 source: row.provider?.source === "custom" ? "custom" : "managed",
                               })}
@@ -1954,7 +1947,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                           onClick={() => void handleSyncProvider(row.cloudProviderId, row.name)}
                           disabled={providerActionId !== null}
                         >
-                          {actionBusy && providerActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+                          {actionBusy && providerActionKind === "sync" ? t("den.syncing") : t("den.sync")}
                         </Button>
                       ) : null}
                       <Button
@@ -1971,10 +1964,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
                         {actionBusy
                           ? actionLabel
                           : row.status === "available"
-                            ? tr("den.import_provider")
+                            ? t("den.import_provider")
                             : row.status === "removed_from_cloud"
-                              ? tr("den.uninstall")
-                              : tr("common.remove")}
+                              ? t("den.uninstall")
+                              : t("common.remove")}
                       </Button>
                     </div>
                   </div>
