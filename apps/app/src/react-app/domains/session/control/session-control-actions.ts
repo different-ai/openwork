@@ -49,19 +49,48 @@ function findSessionWorkspace(
   ).some((session) => session.id === sessionId));
 }
 
+function objectArgs(args: unknown) {
+  return args && typeof args === "object" ? args as Record<string, unknown> : {};
+}
+
+function stringArg(args: unknown, name: string) {
+  const value = objectArgs(args)[name];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function booleanArg(args: unknown, name: string) {
+  return objectArgs(args)[name] === true;
+}
+
 export function useSessionControlActions(input: UseSessionControlActionsInput) {
+  const {
+    canCreateTask,
+    createTaskInWorkspace,
+    navigateToSession,
+    navigateToSessionRoot,
+    openModelPicker,
+    openworkClient,
+    opencodeClient,
+    refreshRouteState,
+    selectedSessionId,
+    selectedWorkspaceId,
+    selectedWorkspaceRoot,
+    sessionsByWorkspaceId,
+    workspaces,
+  } = input;
+
   const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.create_task",
     label: "Create a new task",
     description: "Create a new session in the selected workspace.",
     sideEffect: "mutation",
-    disabled: !input.canCreateTask || !input.selectedWorkspaceId,
+    disabled: !canCreateTask || !selectedWorkspaceId,
     execute: async () => {
-      if (!input.selectedWorkspaceId) return false;
-      await input.createTaskInWorkspace(input.selectedWorkspaceId);
+      if (!selectedWorkspaceId) return false;
+      await createTaskInWorkspace(selectedWorkspaceId);
       return true;
     },
-  }), [input]);
+  }), [canCreateTask, createTaskInWorkspace, selectedWorkspaceId]);
   useControlAction(createTaskControlAction);
 
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -71,8 +100,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     sideEffect: "none",
     execute: () => {
       const out: { sessionId: string; title: string; workspace: string; updatedAt: number }[] = [];
-      for (const workspace of input.workspaces) {
-        const list = input.sessionsByWorkspaceId[workspace.id] ?? [];
+      for (const workspace of workspaces) {
+        const list = sessionsByWorkspaceId[workspace.id] ?? [];
         for (const session of list) {
           const sessionId = session.id?.trim() ?? "";
           if (!sessionId) continue;
@@ -84,7 +113,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       out.sort((a, b) => b.updatedAt - a.updatedAt);
       return out.slice(0, 30);
     },
-  }), [input]);
+  }), [sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -93,15 +122,14 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     description: "Navigate to a specific session. Use list_sessions first to get the session ID.",
     sideEffect: "navigation",
     requiresArgs: true,
+    args: [{ name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." }],
     execute: (args) => {
-      const sessionId = typeof args === "object" && args && "sessionId" in args && typeof (args as { sessionId?: unknown }).sessionId === "string"
-        ? (args as { sessionId: string }).sessionId.trim()
-        : "";
+      const sessionId = stringArg(args, "sessionId");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
-      input.navigateToSession(sessionId);
+      navigateToSession(sessionId);
       return { ok: true, navigatedTo: sessionId };
     },
-  }), [input]);
+  }), [navigateToSession]);
   useControlAction(openSessionControlAction);
 
   const renameSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -110,25 +138,28 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     description: "Rename a session by ID. Use list_sessions first to match the title the user said.",
     sideEffect: "mutation",
     requiresArgs: true,
-    disabled: !input.opencodeClient,
+    args: [
+      { name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." },
+      { name: "title", type: "string", required: true, description: "New session title." },
+    ],
+    disabled: !opencodeClient,
     execute: async (args) => {
-      const payload = args && typeof args === "object" ? args as { sessionId?: unknown; title?: unknown } : {};
-      const sessionId = typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
-      const title = typeof payload.title === "string" ? payload.title.trim() : "";
+      const sessionId = stringArg(args, "sessionId");
+      const title = stringArg(args, "title");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
       if (!title) return { ok: false, error: "title is required" };
-      if (!input.opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
+      if (!opencodeClient) return { ok: false, error: "OpenCode client is not connected" };
 
-      const targetWorkspace = findSessionWorkspace(input.workspaces, input.sessionsByWorkspaceId, sessionId);
-      await input.opencodeClient.session.update({
+      const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
+      await opencodeClient.session.update({
         sessionID: sessionId,
         title,
-        directory: targetWorkspace?.path || input.selectedWorkspaceRoot || undefined,
+        directory: targetWorkspace?.path || selectedWorkspaceRoot || undefined,
       });
-      await input.refreshRouteState();
+      await refreshRouteState();
       return { ok: true, sessionId, title };
     },
-  }), [input]);
+  }), [opencodeClient, refreshRouteState, selectedWorkspaceRoot, sessionsByWorkspaceId, workspaces]);
   useControlAction(renameSessionControlAction);
 
   const deleteSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -138,25 +169,28 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     sideEffect: "mutation",
     requiresArgs: true,
     requiresConfirmation: true,
-    disabled: !input.openworkClient,
+    args: [
+      { name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." },
+      { name: "confirmed", type: "boolean", required: true, description: "Must be true after explicit user confirmation." },
+    ],
+    disabled: !openworkClient,
     execute: async (args) => {
-      const payload = args && typeof args === "object" ? args as { sessionId?: unknown; confirmed?: unknown } : {};
-      const sessionId = typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
-      const confirmed = payload.confirmed === true;
+      const sessionId = stringArg(args, "sessionId");
+      const confirmed = booleanArg(args, "confirmed");
       if (!sessionId) return { ok: false, error: "sessionId is required" };
       if (!confirmed) return { ok: false, error: "Deletion requires confirmed: true after explicit user confirmation" };
-      if (!input.openworkClient) return { ok: false, error: "OpenWork server is not connected" };
+      if (!openworkClient) return { ok: false, error: "OpenWork server is not connected" };
 
-      const targetWorkspace = findSessionWorkspace(input.workspaces, input.sessionsByWorkspaceId, sessionId);
+      const targetWorkspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
       if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
-      await input.openworkClient.deleteSession(targetWorkspace.id, sessionId);
-      if (input.selectedSessionId === sessionId) {
-        input.navigateToSessionRoot();
+      await openworkClient.deleteSession(targetWorkspace.id, sessionId);
+      if (selectedSessionId === sessionId) {
+        navigateToSessionRoot();
       }
-      await input.refreshRouteState();
+      await refreshRouteState();
       return { ok: true, sessionId, deleted: true };
     },
-  }), [input]);
+  }), [navigateToSessionRoot, openworkClient, refreshRouteState, selectedSessionId, sessionsByWorkspaceId, workspaces]);
   useControlAction(deleteSessionControlAction);
 
   const modelPickerControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -164,8 +198,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     label: "Open the model picker",
     description: "Open the current session model picker.",
     sideEffect: "none",
-    disabled: !input.selectedWorkspaceId,
-    execute: input.openModelPicker,
-  }), [input]);
+    disabled: !selectedWorkspaceId,
+    execute: openModelPicker,
+  }), [openModelPicker, selectedWorkspaceId]);
   useControlAction(modelPickerControlAction);
 }

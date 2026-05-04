@@ -43,6 +43,7 @@ import {
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
 
 type SessionError = {
   message: string;
@@ -116,13 +117,13 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
   return "Ready";
 }
 
-function controlTextArgument(args: unknown, fallback: string) {
+function controlTextArgument(args: unknown) {
   if (typeof args === "string") return args;
   if (args && typeof args === "object" && "text" in args) {
     const text = (args as { text?: unknown }).text;
     if (typeof text === "string") return text;
   }
-  return fallback;
+  return DEFAULT_COMPOSER_CONTROL_TEXT;
 }
 
 const waitForControl = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -616,13 +617,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const typeComposerText = useCallback(async (text: string) => {
     window.dispatchEvent(new Event("openwork:focusPrompt"));
-    setDraft("");
-    let next = "";
-    for (const char of text) {
-      next += char;
-      setDraft(next);
-      await waitForControl(char === "\n" ? 80 : 18);
-    }
+    setDraft(text);
+    await waitForControl(40);
   }, []);
 
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -631,10 +627,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     description: "Replace the current session draft and type the supplied text visibly.",
     sideEffect: "none",
     requiresArgs: true,
-    previewArgs: { text: "Help me outline the next OpenWork task." },
+    args: [{ name: "text", type: "string", required: true, description: "Prompt text to place in the composer." }],
+    previewArgs: { text: DEFAULT_COMPOSER_CONTROL_TEXT },
     targetRef: composerShellRef,
     execute: async (args, helpers) => {
-      const text = controlTextArgument(args, "Help me outline the next OpenWork task.");
+      const text = controlTextArgument(args);
       helpers.setNarration(`Typing ${text.length.toLocaleString()} characters into the composer…`);
       await typeComposerText(text);
       props.onDraftChange(buildDraft(text, attachments));
@@ -796,6 +793,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Read the current session transcript",
     description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
     sideEffect: "none",
+    args: [{ name: "count", type: "number", required: false, description: "Number of recent messages to return, from 1 to 30. Defaults to 10." }],
     execute: (args) => {
       const count = typeof args === "object" && args !== null && "count" in args && typeof (args as { count?: unknown }).count === "number"
         ? Math.min(Math.max(1, (args as { count: number }).count), 30)

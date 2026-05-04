@@ -1374,22 +1374,28 @@ function authorizedUiControlRequest(request) {
   return auth === `Bearer ${uiControlToken}`;
 }
 
-async function evaluateOpenworkControl(expression) {
+function jsonForJavaScript(value) {
+  return JSON.stringify(JSON.stringify(value ?? {}));
+}
+
+async function evaluateOpenworkControl(expression, options = {}) {
   const win = await createMainWindow();
-  win.show();
-  if (win.isMinimized()) win.restore();
-  win.focus();
+  if (options.focus === true) {
+    win.show();
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
   return win.webContents.executeJavaScript(expression, true);
 }
 
 async function runOpenworkControlCommand(command, args = {}) {
-  const serializedArgs = JSON.stringify(args ?? {}).replace(/</g, "\\u003c");
+  const argsJsonLiteral = jsonForJavaScript(args);
   if (command === "snapshot") {
     return evaluateOpenworkControl(`(async () => {
       const control = window.__openworkControl;
       if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
       control.setEnabled?.(true);
-      return { ok: true, snapshot: control.snapshot() };
+      return { ok: true, ...control.snapshot() };
     })()`);
   }
   if (command === "actions") {
@@ -1403,15 +1409,14 @@ async function runOpenworkControlCommand(command, args = {}) {
   if (command === "execute") {
     return evaluateOpenworkControl(`(async () => {
       const control = window.__openworkControl;
-      const input = ${serializedArgs};
+      const input = JSON.parse(${argsJsonLiteral});
       if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
       if (!input || typeof input.actionId !== "string" || !input.actionId.trim()) {
         return { ok: false, error: "Missing OpenWork actionId." };
       }
       control.setEnabled?.(true);
-      const result = await control.execute(input.actionId, input.args ?? {});
-      return { ok: true, result };
-    })()`);
+      return control.execute(input.actionId, input.args ?? {});
+    })()`, { focus: true });
   }
   return { ok: false, error: `Unknown OpenWork control command: ${command}` };
 }
@@ -1456,7 +1461,7 @@ async function startUiControlServer() {
   uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
   await writeFile(
     uiControlDiscoveryPath,
-    `${JSON.stringify({ version: 1, app: APP_NAME, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, app: APP_NAME, identifier: APP_IDENTIFIER, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
     "utf8",
   );
 }
@@ -1464,6 +1469,7 @@ async function startUiControlServer() {
 async function stopUiControlServer() {
   if (uiControlDiscoveryPath) {
     await rm(uiControlDiscoveryPath, { force: true }).catch(() => undefined);
+    uiControlDiscoveryPath = null;
   }
   if (!uiControlServer) return;
   await new Promise((resolve) => uiControlServer.close(() => resolve(undefined)));

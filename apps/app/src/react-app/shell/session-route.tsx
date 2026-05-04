@@ -1547,6 +1547,18 @@ export function SessionRoute() {
     return () => window.removeEventListener("keydown", handler);
   }, [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
 
+  const navigateToSessionForControl = useCallback((sessionId: string) => {
+    navigate(`/session/${sessionId}`);
+  }, [navigate]);
+
+  const navigateToSessionRootForControl = useCallback(() => {
+    navigate("/session");
+  }, [navigate]);
+
+  const openModelPickerForControl = useCallback(() => {
+    setModelPickerOpen(true);
+  }, []);
+
   useSessionControlActions({
     workspaces,
     sessionsByWorkspaceId,
@@ -1556,10 +1568,10 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
-    navigateToSession: (sessionId) => navigate(`/session/${sessionId}`),
-    navigateToSessionRoot: () => navigate("/session"),
+    navigateToSession: navigateToSessionForControl,
+    navigateToSessionRoot: navigateToSessionRootForControl,
     createTaskInWorkspace: handleCreateTaskInWorkspace,
-    openModelPicker: () => setModelPickerOpen(true),
+    openModelPicker: openModelPickerForControl,
     refreshRouteState,
   });
 

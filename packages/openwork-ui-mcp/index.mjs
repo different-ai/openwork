@@ -24,25 +24,49 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 // ── Bridge discovery ──
 
-const DISCOVERY_PATHS = [
-  join(homedir(), "Library", "Application Support", "com.differentai.openwork", "openwork-ui-control.json"),
-  join(homedir(), "Library", "Application Support", "com.differentai.openwork.dev", "openwork-ui-control.json"),
-];
+const DISCOVERY_FILE = "openwork-ui-control.json";
+const BRIDGE_CACHE_MS = 2_000;
+const BRIDGE_TIMEOUT_MS = 5_000;
+let cachedBridge = null;
+let cachedBridgeAt = 0;
+
+function userAppDataDir() {
+  if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
+  if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+}
+
+function discoveryPaths() {
+  return [
+    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
+    join(userAppDataDir(), "com.differentai.openwork", DISCOVERY_FILE),
+    join(userAppDataDir(), "com.differentai.openwork.dev", DISCOVERY_FILE),
+  ].filter(Boolean);
+}
+
+function clearBridgeCache() {
+  cachedBridge = null;
+  cachedBridgeAt = 0;
+}
 
 async function discoverBridge() {
-  for (const candidate of DISCOVERY_PATHS) {
+  if (cachedBridge && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
+
+  for (const candidate of discoveryPaths()) {
     try {
       const raw = await readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
       if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
-        return { baseUrl: parsed.baseUrl, token: parsed.token, path: candidate };
+        cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token, path: candidate };
+        cachedBridgeAt = Date.now();
+        return cachedBridge;
       }
     } catch {
       // Try next
@@ -64,6 +88,7 @@ async function bridgeRequest(path, options = {}) {
   try {
     const response = await fetch(url, {
       method: options.method || "GET",
+      signal: AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${bridge.token}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -72,13 +97,59 @@ async function bridgeRequest(path, options = {}) {
     });
     const text = await response.text();
     try {
-      return JSON.parse(text);
+      const parsed = JSON.parse(text);
+      if (!response.ok) clearBridgeCache();
+      return parsed;
     } catch {
+      if (!response.ok) clearBridgeCache();
       return { ok: false, error: text || `HTTP ${response.status}` };
     }
   } catch (error) {
+    clearBridgeCache();
     return { ok: false, error: `Bridge unreachable at ${url}: ${error.message}` };
   }
+}
+
+function formatArgs(action) {
+  const lines = [];
+  if (Array.isArray(action.args) && action.args.length > 0) {
+    lines.push("    Args:");
+    for (const arg of action.args) {
+      const required = arg.required ? "required" : "optional";
+      const type = arg.type || "unknown";
+      lines.push(`      - ${arg.name} (${type}, ${required})${arg.description ? `: ${arg.description}` : ""}`);
+    }
+  } else if (action.requiresArgs) {
+    lines.push("    Args: required; this action has not published detailed argument metadata yet.");
+  }
+  if (action.previewArgs !== undefined) {
+    lines.push(`    Example: ${JSON.stringify(action.previewArgs)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatActionLine(action) {
+  const disabled = action.disabled ? " [disabled]" : "";
+  const busy = action.busy ? " [busy]" : "";
+  const args = formatArgs(action);
+  return `${action.id}${disabled}${busy}\n    ${action.label || ""}${action.description ? ` — ${action.description}` : ""}${args ? `\n${args}` : ""}`;
+}
+
+function formatExecutionResult(actionId, result) {
+  const payload = result?.result ?? result;
+  if (payload === true || payload === undefined || payload === null) return `Executed ${actionId}.`;
+  if (typeof payload === "string") return payload;
+  if (typeof payload === "number" || typeof payload === "boolean") return `Result: ${payload}`;
+  if (typeof payload === "object") {
+    const lines = [`Executed ${actionId}.`];
+    for (const [key, value] of Object.entries(payload).slice(0, 12)) {
+      if (key === "ok" || key === "actionId") continue;
+      const rendered = typeof value === "object" ? JSON.stringify(value) : String(value);
+      lines.push(`${key}: ${rendered}`);
+    }
+    return lines.join("\n");
+  }
+  return `Executed ${actionId}.`;
 }
 
 // ── MCP Server ──
@@ -98,19 +169,20 @@ server.tool(
     if (!result.ok && result.error) {
       return { content: [{ type: "text", text: `Error: ${result.error}${result.hint ? `\n${result.hint}` : ""}` }], isError: true };
     }
+    const snapshot = result.snapshot ?? result;
     const lines = [];
-    if (result.route) lines.push(`Route: ${result.route}`);
-    if (result.status) lines.push(`Status: ${result.status}`);
-    if (result.narration) lines.push(`Narration: ${result.narration}`);
-    if (result.busyActionId) lines.push(`Busy: ${result.busyActionId}`);
-    if (Array.isArray(result.actions)) {
-      lines.push(`\nActions (${result.actions.length}):`);
-      for (const action of result.actions) {
-        const args = action.args?.length ? ` [${action.args.map((a) => a.name).join(", ")}]` : "";
+    if (snapshot.route) lines.push(`Route: ${snapshot.route}`);
+    if (snapshot.status) lines.push(`Status: ${snapshot.status}`);
+    if (snapshot.narration) lines.push(`Narration: ${snapshot.narration}`);
+    if (snapshot.busyActionId) lines.push(`Busy: ${snapshot.busyActionId}`);
+    if (Array.isArray(snapshot.actions)) {
+      lines.push(`\nActions (${snapshot.actions.length}):`);
+      for (const action of snapshot.actions) {
+        const args = Array.isArray(action.args) && action.args.length ? ` [${action.args.map((a) => a.name).join(", ")}]` : "";
         lines.push(`  ${action.id} — ${action.label || action.description || ""}${args}`);
       }
     }
-    return { content: [{ type: "text", text: lines.join("\n") || JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: "text", text: lines.join("\n") || "OpenWork is reachable, but it did not return visible UI state." }] };
   }
 );
 
@@ -127,10 +199,7 @@ server.tool(
     if (!Array.isArray(result.actions) || result.actions.length === 0) {
       return { content: [{ type: "text", text: "No actions available. Is OpenWork on the main screen?" }] };
     }
-    const text = result.actions.map((a) => {
-      const args = a.args?.length ? `\n    Args: ${a.args.map((p) => `${p.name}${p.required ? " (required)" : ""}: ${p.description || p.type || ""}`).join(", ")}` : "";
-      return `${a.id}\n    ${a.label || ""}${a.description ? ` — ${a.description}` : ""}${args}`;
-    }).join("\n\n");
+    const text = result.actions.map(formatActionLine).join("\n\n");
     return { content: [{ type: "text", text: `${result.actions.length} actions:\n\n${text}` }] };
   }
 );
@@ -151,7 +220,7 @@ server.tool(
     if (!result.ok && result.error) {
       return { content: [{ type: "text", text: `Error executing ${actionId}: ${result.error}` }], isError: true };
     }
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    return { content: [{ type: "text", text: formatExecutionResult(actionId, result) }] };
   }
 );
 
@@ -170,6 +239,7 @@ server.tool(
       const data = await response.json();
       return { content: [{ type: "text", text: `Connected to ${data.app || "OpenWork"}\nBridge: ${bridge.baseUrl}\nVersion: ${data.version ?? "?"}` }] };
     } catch (error) {
+      clearBridgeCache();
       return { content: [{ type: "text", text: `Bridge file found but not reachable: ${error.message}\nOpenWork may have quit. Relaunch it.` }], isError: true };
     }
   }
