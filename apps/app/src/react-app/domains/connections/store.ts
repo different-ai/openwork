@@ -222,108 +222,99 @@ export function createConnectionsStore(options: {
     return resolvedProjectDir;
   };
 
+  const listMcpFromOpenworkServer = async (projectDir: string) => {
+    const openworkSnapshot = getOpenworkSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId =
+      options.runtimeWorkspaceId()?.trim() ||
+      options.selectedWorkspaceId().trim() ||
+      ((await options.ensureRuntimeWorkspaceId?.()) ?? "")?.trim();
+    const canTryOpenworkServer =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient) &&
+      Boolean(openworkWorkspaceId) &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.read !== false;
+
+    recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-check", {
+      workspaceType: options.workspaceType(),
+      projectDir: projectDir || null,
+      openworkStatus: openworkSnapshot.openworkServerStatus,
+      hasOpenworkClient: Boolean(openworkClient),
+      openworkWorkspaceId: openworkWorkspaceId || null,
+      canReadMcp: openworkSnapshot.openworkServerCapabilities?.mcp?.read ?? null,
+      canTryOpenworkServer,
+    });
+
+    if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
+
+    const response = await openworkClient.listMcp(openworkWorkspaceId);
+    const next = response.items.map((entry) => ({
+      name: entry.name,
+      config: entry.config as McpServerEntry["config"],
+      source: entry.source,
+    }));
+
+    let nextStatuses: McpStatusMap = {};
+    const activeClient = options.client();
+    if (activeClient && projectDir) {
+      try {
+        const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+        nextStatuses = filterConfiguredStatuses(status as McpStatusMap, next);
+      } catch {
+        nextStatuses = {};
+      }
+    }
+
+    recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-result", {
+      count: next.length,
+      names: next.map((entry) => entry.name),
+      sources: next.map((entry) => entry.source ?? "unknown"),
+    });
+
+    return { next, nextStatuses };
+  };
+
   async function refreshMcpServers() {
     if (disposed) return;
 
     const projectDir = options.projectDir().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const isLocalWorkspace = !isRemoteWorkspace;
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.read;
 
-    if (isRemoteWorkspace) {
-      if (!canUseOpenworkServer) {
+    try {
+      setStateField("mcpStatus", null);
+      const serverResult = await listMcpFromOpenworkServer(projectDir);
+      if (serverResult) {
         mutateState((current) => ({
           ...current,
-          mcpStatus: "OpenWork server unavailable. MCP config is read-only.",
-          mcpServers: [],
-          mcpStatuses: {},
+          mcpServers: serverResult.next,
+          mcpLastUpdatedAt: Date.now(),
+          mcpStatuses: serverResult.nextStatuses,
+          mcpStatus: serverResult.next.length ? null : "No MCP servers configured yet.",
         }));
         return;
       }
-
-      try {
-        setStateField("mcpStatus", null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-          source: entry.source,
-        }));
-
-        let nextStatuses: McpStatusMap = {};
-        const activeClient = options.client();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            nextStatuses = filterConfiguredStatuses(status as McpStatusMap, next);
-          } catch {
-            nextStatuses = {};
-          }
-        }
-
-        mutateState((current) => ({
-          ...current,
-          mcpServers: next,
-          mcpLastUpdatedAt: Date.now(),
-          mcpStatuses: nextStatuses,
-          mcpStatus: next.length ? null : "No MCP servers configured yet.",
-        }));
-      } catch (error) {
+    } catch (error) {
+      recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      if (isRemoteWorkspace) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
           mcpStatuses: {},
-          mcpStatus:
-            error instanceof Error ? error.message : "Failed to load MCP servers",
+          mcpStatus: error instanceof Error ? error.message : "Failed to load MCP servers",
         }));
+        return;
       }
-      return;
     }
 
-    if (isLocalWorkspace && canUseOpenworkServer) {
-      try {
-        setStateField("mcpStatus", null);
-        const response = await openworkClient.listMcp(openworkWorkspaceId);
-        const next = response.items.map((entry) => ({
-          name: entry.name,
-          config: entry.config as McpServerEntry["config"],
-          source: entry.source,
-        }));
-
-        let nextStatuses: McpStatusMap = {};
-        const activeClient = options.client();
-        if (activeClient && projectDir) {
-          try {
-            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
-            nextStatuses = filterConfiguredStatuses(status as McpStatusMap, next);
-          } catch {
-            nextStatuses = {};
-          }
-        }
-
-        mutateState((current) => ({
-          ...current,
-          mcpServers: next,
-          mcpLastUpdatedAt: Date.now(),
-          mcpStatuses: nextStatuses,
-          mcpStatus: next.length ? null : "No MCP servers configured yet.",
-        }));
-      } catch (error) {
-        mutateState((current) => ({
-          ...current,
-          mcpServers: [],
-          mcpStatuses: {},
-          mcpStatus:
-            error instanceof Error ? error.message : "Failed to load MCP servers",
-        }));
-      }
+    if (isRemoteWorkspace) {
+      mutateState((current) => ({
+        ...current,
+        mcpStatus: "OpenWork server unavailable. MCP config is read-only.",
+        mcpServers: [],
+        mcpStatuses: {},
+      }));
       return;
     }
 
@@ -349,8 +340,37 @@ export function createConnectionsStore(options: {
 
     try {
       setStateField("mcpStatus", null);
-      const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content) {
+      recordPerfLog(options.developerMode(), "mcp.refresh", "desktop-project-fallback", {
+        projectDir,
+      });
+      const [globalConfig, projectConfig] = await Promise.all([
+        readOpencodeConfig("global", projectDir),
+        readOpencodeConfig("project", projectDir),
+      ]);
+      const globalServers = globalConfig.exists && globalConfig.content
+        ? parseMcpServersFromContent(globalConfig.content).map((entry) => ({
+          ...entry,
+          source: "config.global" as const,
+        }))
+        : [];
+      const projectServers = projectConfig.exists && projectConfig.content
+        ? parseMcpServersFromContent(projectConfig.content)
+        : [];
+      const projectNames = new Set(projectServers.map((entry) => entry.name));
+      const next = [
+        ...globalServers.filter((entry) => !projectNames.has(entry.name)),
+        ...projectServers,
+      ];
+
+      recordPerfLog(options.developerMode(), "mcp.refresh", "desktop-project-fallback-result", {
+        globalConfigPath: globalConfig.path,
+        projectConfigPath: projectConfig.path,
+        count: next.length,
+        names: next.map((entry) => entry.name),
+        sources: next.map((entry) => entry.source ?? "unknown"),
+      });
+
+      if (!globalConfig.exists && !projectConfig.exists) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -360,7 +380,6 @@ export function createConnectionsStore(options: {
         return;
       }
 
-      const next = parseMcpServersFromContent(config.content);
       let nextStatuses = state.mcpStatuses;
       const activeClient = options.client();
       if (activeClient) {
