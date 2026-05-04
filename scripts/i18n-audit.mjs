@@ -12,6 +12,7 @@
  *   node scripts/i18n-audit.mjs --dangling   # t() calls referencing keys not in en.ts
  *   node scripts/i18n-audit.mjs --aliases    # aliased t() calls (translate/tr instead of t)
  *   node scripts/i18n-audit.mjs --placeholders # placeholder integrity check
+ *   node scripts/i18n-audit.mjs --plurals    # each locale has bare key OR all CLDR plural forms it needs
  *   node scripts/i18n-audit.mjs --hardcoded  # hardcoded English strings in source files
  *   node scripts/i18n-audit.mjs --prune      # (destructive) remove unused keys from all locales
  *   node scripts/i18n-audit.mjs --sort       # (destructive) alphabetically sort keys in all locales
@@ -427,7 +428,81 @@ if (shouldRun("--placeholders")) {
   console.log();
 }
 
-// --- 10. Hardcoded English scan ---
+// --- 10. Plural completeness ---
+// For every key whose en value contains `{count}`, each locale must define
+// either the bare key (catch-all) or every plural form its language needs.
+// Most languages use `_one`+`_other`; `PLURAL_FORMS` lists the languages
+// that need more, verified against `Intl.PluralRules` (what `t()` uses at
+// runtime based on CLDR).
+const DEFAULT_PLURAL_FORM = ["one", "other"];
+const PLURAL_FORMS = {
+  ar: ["zero", "one", "two", "few", "many", "other"], // Arabic
+  be: ["one", "few", "many", "other"],                // Belarusian
+  bs: ["one", "few", "other"],                        // Bosnian
+  cs: ["one", "few", "many", "other"],                // Czech
+  cy: ["zero", "one", "two", "few", "many", "other"], // Welsh
+  ga: ["one", "two", "few", "many", "other"],         // Irish
+  gd: ["one", "two", "few", "other"],                 // Scottish Gaelic
+  gv: ["one", "two", "few", "many", "other"],         // Manx
+  he: ["one", "two", "other"],                        // Hebrew
+  hr: ["one", "few", "other"],                        // Croatian
+  iu: ["one", "two", "other"],                        // Inuktitut
+  kw: ["zero", "one", "two", "few", "many", "other"], // Cornish
+  lt: ["one", "few", "many", "other"],                // Lithuanian
+  lv: ["zero", "one", "other"],                       // Latvian
+  mt: ["one", "two", "few", "many", "other"],         // Maltese
+  pl: ["one", "few", "many", "other"],                // Polish
+  ro: ["one", "few", "other"],                        // Romanian
+  ru: ["one", "few", "many", "other"],                // Russian
+  sk: ["one", "few", "many", "other"],                // Slovak
+  sl: ["one", "two", "few", "other"],                 // Slovenian
+  sr: ["one", "few", "other"],                        // Serbian
+  uk: ["one", "few", "many", "other"],                // Ukrainian
+};
+
+if (shouldRun("--plurals")) {
+  console.log("=== Plural completeness ===");
+
+  const pluralBases = new Set();
+  for (const [key, value] of enKeyValues) {
+    if (typeof value === "string" && value.includes("{count}")) {
+      pluralBases.add(stripPluralSuffix(key));
+    }
+  }
+
+  for (const locale of ["en", ...LOCALES]) {
+    const file = join(LOCALES_DIR, `${locale}.ts`);
+    if (!existsSync(file)) continue;
+    const required = PLURAL_FORMS[locale] ?? DEFAULT_PLURAL_FORM;
+    const localeKeys = extractKeys(file);
+    const incomplete = [];
+
+    for (const base of pluralBases) {
+      if (localeKeys.has(base)) continue;
+      const missing = required.filter((cat) => !localeKeys.has(`${base}_${cat}`));
+      if (missing.length === required.length) continue; // locale has none of these — handled by --missing
+      if (missing.length > 0) incomplete.push({ base, missing });
+    }
+
+    if (incomplete.length === 0) {
+      console.log(`  ${locale}: ✓ all plural keys complete`);
+    } else {
+      console.log(`  ${locale}: ✗ ${incomplete.length} incomplete plural keys`);
+      exitCode = 1;
+      if (mode !== "--summary") {
+        for (const { base, missing } of incomplete) {
+          console.log(`    ${base}: missing ${missing.map((m) => `_${m}`).join(", ")}`);
+        }
+      }
+    }
+  }
+  if (pluralBases.size === 0) {
+    console.log("  (no plural-base keys found in en.ts)");
+  }
+  console.log();
+}
+
+// --- 11. Hardcoded English scan ---
 if (shouldRun("--hardcoded")) {
   console.log("=== Hardcoded English scan ===");
 
