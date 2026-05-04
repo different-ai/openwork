@@ -169,7 +169,10 @@ const isOrphan = (key) => {
   if (enKeys.has(key)) return false;
   if (enHasAnyPluralVariant(key)) return false;
   const base = stripPluralSuffix(key);
-  if (base !== key && enKeys.has(base)) return false;
+  if (base !== key) {
+    if (enKeys.has(base)) return false;
+    if (enHasAnyPluralVariant(base)) return false;
+  }
   return true;
 };
 
