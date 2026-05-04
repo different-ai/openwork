@@ -26,15 +26,15 @@ export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr
  */
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
-  { value: "ja" as Language, label: "日本語", nativeName: "日本語" },
-  { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
+  { value: "ja" as Language, label: "Japanese", nativeName: "日本語" },
+  { value: "zh" as Language, label: "Chinese (Simplified)", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
-  { value: "th" as Language, label: "ไทย", nativeName: "ไทย" },
+  { value: "th" as Language, label: "Thai", nativeName: "ไทย" },
   { value: "fr" as Language, label: "French", nativeName: "Français" },
-  { value: "ca" as Language, label: "Català", nativeName: "Català" },
-  { value: "es" as Language, label: "Español", nativeName: "Español" },
-  { value: "ru" as Language, label: "Русский", nativeName: "Русский" },
+  { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
+  { value: "es" as Language, label: "Spanish", nativeName: "Español" },
+  { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
 ] as const;
 
 const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
