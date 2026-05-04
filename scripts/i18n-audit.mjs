@@ -34,6 +34,10 @@ const PLURAL_SUFFIXES = ["zero", "one", "two", "few", "many", "other"];
 const PLURAL_SUFFIX_RE = /_(zero|one|two|few|many|other)$/;
 const stripPluralSuffix = (key) => key.replace(PLURAL_SUFFIX_RE, "");
 
+// Directory names skipped during the source scan. The "locales" dir is intentionally
+// skipped; otherwise translation keys will trivially match themselves.
+const SKIP_DIRS = ["locales", "node_modules", "target", "dist", "build", "out", "coverage"];
+
 const mode = process.argv[2] ?? "--all";
 const isCi = mode === "--ci";
 const isAll = mode === "--all" || isCi;
@@ -225,10 +229,11 @@ let unusedKeys = [];
 if (shouldRun("--unused", "--prune")) {
   console.log("=== Unused keys (in en.ts but never referenced in repo) ===");
 
-  // Search the ENTIRE repo (not just apps/app/src) for key references
-  const repoSourceFiles = collectSourceFiles(REPO_ROOT, (dir) =>
-    ["node_modules", ".git", "target", "dist", ".next", "locales"].some((x) => dir.includes(x)),
-  );
+  // Search the entire repo (not just apps/app/src) for key references.
+  const repoSourceFiles = collectSourceFiles(REPO_ROOT, (dir) => {
+    const name = basename(dir);
+    return name.startsWith(".") || SKIP_DIRS.includes(name);
+  });
   const allSource = repoSourceFiles.map((f) => readFileSync(f, "utf-8")).join("\n");
 
   // A plural-suffixed key (foo_one / foo_other) counts as "used" when the
