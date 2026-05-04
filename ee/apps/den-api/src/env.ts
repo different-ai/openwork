@@ -10,9 +10,15 @@ const EnvSchema = z.object({
   DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
+  DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CONNECTOR_APP_ID: z.string().optional(),
+  GITHUB_CONNECTOR_APP_CLIENT_ID: z.string().optional(),
+  GITHUB_CONNECTOR_APP_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CONNECTOR_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_CONNECTOR_APP_WEBHOOK_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
@@ -133,6 +139,9 @@ const betterAuthTrustedOrigins = splitCsv(parsed.DEN_BETTER_AUTH_TRUSTED_ORIGINS
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
 
+const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const port = Number(parsed.PORT ?? "8790")
+
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
 
@@ -152,11 +161,23 @@ export const env = {
   planetscale: planetscaleCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: normalizeOrigin(parsed.BETTER_AUTH_URL),
+  mcpResourceUrl: optionalString(parsed.DEN_MCP_RESOURCE_URL)
+    ? normalizeOrigin(parsed.DEN_MCP_RESOURCE_URL!)
+    : devMode
+      ? `http://127.0.0.1:${port}/mcp`
+      : undefined,
   betterAuthTrustedOrigins: betterAuthTrustedOrigins.length > 0 ? betterAuthTrustedOrigins : corsOrigins,
-  devMode: (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1",
+  devMode,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),
+  },
+  githubConnectorApp: {
+    appId: optionalString(parsed.GITHUB_CONNECTOR_APP_ID),
+    clientId: optionalString(parsed.GITHUB_CONNECTOR_APP_CLIENT_ID),
+    clientSecret: optionalString(parsed.GITHUB_CONNECTOR_APP_CLIENT_SECRET),
+    privateKey: optionalString(parsed.GITHUB_CONNECTOR_APP_PRIVATE_KEY),
+    webhookSecret: optionalString(parsed.GITHUB_CONNECTOR_APP_WEBHOOK_SECRET),
   },
   google: {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),
@@ -167,7 +188,7 @@ export const env = {
     transactionalIdDenVerifyEmail: optionalString(parsed.LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL),
     transactionalIdDenOrgInviteEmail: optionalString(parsed.LOOPS_TRANSACTIONAL_ID_DEN_ORG_INVITE_EMAIL),
   },
-  port: Number(parsed.PORT ?? "8790"),
+  port,
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   provisionerMode: parsed.PROVISIONER_MODE ?? "daytona",

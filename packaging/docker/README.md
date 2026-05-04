@@ -1,48 +1,5 @@
 # OpenWork Host (Docker)
 
-## Dev testability stack (recommended for testing)
-
-One command, no custom Dockerfile. Uses `node:22-bookworm-slim` off the shelf.
-
-From the repo root:
-
-```bash
-./packaging/docker/dev-up.sh
-```
-
-Then open the printed Web UI URL (ports are randomized so you can run multiple stacks).
-
-What it does:
-- Starts **headless** (OpenCode + OpenWork server) on port 8787
-- Starts **web UI** (Vite dev server) on port 5173
-- Auto-generates and shares auth tokens between services
-- Web waits for headless health check before starting
-- Builds Linux binaries inside the container (no host binary conflicts)
-- Uses an isolated OpenCode dev state by default so the stack does not read your personal host config/auth/data
-
-If you want to seed the container from your host OpenCode state for debugging, run with `OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1`. This imports host config/auth into the isolated dev state instead of mounting live host state directly.
-
-Useful commands:
-- Logs: `docker compose -p <project> -f packaging/docker/docker-compose.dev.yml logs`
-- Tear down: `docker compose -p <project> -f packaging/docker/docker-compose.dev.yml down`
-- Health check: `curl http://localhost:<openwork_port>/health`
-
-Optional env vars (via `.env` or `export`):
-- `OPENWORK_TOKEN` — fixed client token
-- `OPENWORK_HOST_TOKEN` — fixed host/admin token
-- `OPENWORK_WORKSPACE` — host path to mount as workspace
-- `OPENWORK_PORT` — host port to map to container :8787
-- `WEB_PORT` — host port to map to container :5173
-- `SHARE_PORT` — host port to map to the local share service :3000
-- `OPENWORK_PUBLIC_HOST` — host name/IP used in printed LAN/public URLs (defaults to your machine hostname)
-- `OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1` — import host OpenCode config/auth into the isolated dev state
-- `OPENWORK_OPENCODE_CONFIG_DIR` — override the host OpenCode config source used for that optional import
-- `OPENWORK_OPENCODE_DATA_DIR` — override the host OpenCode data source used for that optional import
-
-The dev stack also starts the local share service automatically and points the OpenWork app at it, so share-link flows publish to a local service instead of `https://share.openworklabs.com`.
-
----
-
 ## Den local stack (Docker)
 
 One command for the Den control plane, local MySQL, and the cloud web app.
@@ -67,6 +24,30 @@ What it does:
 - Points the web app's auth + API proxy routes at the local Den service
 - Prints randomized host URLs so multiple stacks can run side by side
 
+### Demo org seed
+
+After the Den DB is running, seed a full local demo org with users, teams, pending invites, and imported plugin data from `anthropics/knowledge-work-plugins`:
+
+```bash
+pnpm dev:den:seed-demo
+```
+
+The seed is local/dev-only, idempotent for the `acme-robotics-demo` org, and does not create workers or live integrations. It imports plugin marketplace rows, plugin rows, access grants, and config objects so plugin pages look populated without connecting external services.
+
+Default demo login:
+
+- Email: `alex@acme.test`
+- Password: `OpenWorkDemo123!`
+
+For the Docker stack with randomized MySQL ports, source the printed runtime env file first and pass `DEN_MYSQL_URL` as `DATABASE_URL`:
+
+```bash
+source tmp/.den-dev-env-<id>
+DATABASE_URL="$DEN_MYSQL_URL" pnpm dev:den:seed-demo
+```
+
+Set `DEN_DEMO_SEED_FETCH_GITHUB=0` to skip live GitHub source fetching and use built-in plugin fallbacks only.
+
 Useful commands:
 - Logs: `docker compose -p <project> -f packaging/docker/docker-compose.den-dev.yml logs`
 - Tear down: `docker compose -p <project> -f packaging/docker/docker-compose.den-dev.yml down`
@@ -78,6 +59,7 @@ Optional env vars (via `.env` or `export`):
 - `DEN_BETTER_AUTH_SECRET` — Better Auth secret (auto-generated if unset)
 - `DEN_PUBLIC_HOST` — host name/IP used for default auth URL + printed LAN/public URLs (defaults to your machine hostname)
 - `DEN_BETTER_AUTH_URL` — browser-facing auth base URL (defaults to `http://$DEN_PUBLIC_HOST:<DEN_WEB_PORT>`)
+- `DEN_MCP_RESOURCE_URL` — API-facing MCP resource URL (defaults to `http://localhost:<DEN_API_PORT>/mcp`)
 - `DEN_BETTER_AUTH_TRUSTED_ORIGINS` — trusted origins for Better Auth (defaults to `DEN_CORS_ORIGINS`)
 - `DEN_CORS_ORIGINS` — trusted origins for Express CORS (defaults include hostname, localhost, `127.0.0.1`, `0.0.0.0`, and detected LAN IPv4)
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)
@@ -90,13 +72,13 @@ If you are iterating on Den locally and do not need the full Dockerized web stac
 From the OpenWork repo root:
 
 ```bash
-pnpm dev:den-local
+pnpm dev:den
 ```
 
 Or from the OpenWork enterprise root:
 
 ```bash
-pnpm --dir _repos/openwork dev:den-local
+pnpm --dir _repos/openwork dev:den
 ```
 
 What it does:
@@ -106,6 +88,57 @@ What it does:
 - Reuses the existing local-dev wiring in `scripts/dev-web-local.sh`
 
 This is usually the fastest path for UI/auth/control-plane iteration because it avoids rebuilding the Docker web image on each boot.
+
+If you want to run the pieces in separate terminals, use the root package scripts:
+
+```bash
+pnpm dev:den:mysql
+pnpm dev:den:db-push
+pnpm dev:den:api
+pnpm dev:den:web
+```
+
+The split API/web flow defaults to Den API on `http://localhost:8790` and Den web on `http://localhost:3005`. Stop the local MySQL container with:
+
+```bash
+pnpm dev:den:mysql:down
+```
+
+---
+
+## Pre-baked Micro-Sandbox Image
+
+For micro-sandbox work, use the pre-baked image that compiles `openwork` and `openwork-server` from source and downloads the pinned `opencode` binary during `docker build`.
+
+Build it from the repo root:
+
+```bash
+./scripts/build-microsandbox-openwork-image.sh
+```
+
+Run it locally:
+
+```bash
+docker run --rm -p 8787:8787 \
+  -e OPENWORK_CONNECT_HOST=127.0.0.1 \
+  openwork-microsandbox:dev
+```
+
+Defaults:
+- `OPENWORK_TOKEN=microsandbox-token`
+- `OPENWORK_HOST_TOKEN=microsandbox-host-token`
+- `OPENWORK_APPROVAL_MODE=auto`
+
+Verification:
+- Health: `curl http://127.0.0.1:8787/health`
+- Authenticated API call: `curl -H "Authorization: Bearer microsandbox-token" http://127.0.0.1:8787/workspaces`
+- Docker health: `docker inspect --format '{{json .State.Health}}' <container>`
+
+Useful overrides:
+- `OPENWORK_TOKEN` — set your own client bearer token
+- `OPENWORK_HOST_TOKEN` — set your own host/admin token
+- `OPENWORK_CONNECT_HOST` — host name embedded in the printed connect URL
+- `DOCKER_PLATFORM` — optional platform passed to `docker build`
 
 ---
 

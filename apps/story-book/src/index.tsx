@@ -2,10 +2,11 @@
 import { render } from "solid-js/web";
 
 import "../../app/src/app/index.css";
+import { openDesktopUrl, relaunchDesktopApp } from "../../app/src/app/lib/desktop";
 import { ConnectionsProvider } from "../../app/src/app/connections/provider";
 import { PlatformProvider, type Platform } from "../../app/src/app/context/platform";
 import { bootstrapTheme } from "../../app/src/app/theme";
-import { isTauriRuntime } from "../../app/src/app/utils";
+import { isDesktopRuntime } from "../../app/src/app/utils";
 import { initLocale } from "../../app/src/i18n";
 import NewLayoutApp from "./new-layout";
 
@@ -19,20 +20,17 @@ if (!root) {
 }
 
 const platform: Platform = {
-  platform: isTauriRuntime() ? "desktop" : "web",
+  platform: isDesktopRuntime() ? "desktop" : "web",
   openLink(url: string) {
-    if (isTauriRuntime()) {
-      void import("@tauri-apps/plugin-opener")
-        .then(({ openUrl }) => openUrl(url))
-        .catch(() => undefined);
+    if (isDesktopRuntime()) {
+      void openDesktopUrl(url).catch(() => undefined);
       return;
     }
     window.open(url, "_blank");
   },
   restart: async () => {
-    if (isTauriRuntime()) {
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+    if (isDesktopRuntime()) {
+      await relaunchDesktopApp();
       return;
     }
     window.location.reload();

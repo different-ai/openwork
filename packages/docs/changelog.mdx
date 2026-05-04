@@ -1,6 +1,59 @@
 ---
 title: "Changelog"
 ---
+<Update label="April 20th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.212](https://github.com/different-ai/openwork/compare/v0.11.210...v0.11.212): Den desktop controls tighten and Cloud providers stay in sync
+
+  - Better org controls: Organization owners can now limit or block models, providers, and updates to specific releases.
+  - Auto-sync cloud providers into the active org workspace. The app should be able to update, remove, and reconcile disconnects more reliably.
+  - Improved admin flows in the cloud, with explicit names for LLM providers and a more robust active-org handling.
+
+</Update>
+
+<Update label="April 20th" tags={["🚀 New Features"]}>
+
+  ## [v0.11.210](https://github.com/different-ai/openwork/compare/v0.11.207...v0.11.210): Den enterprise org controls expand and microsandbox preview lands
+
+  - Added a microsandbox preview mode. Toggle in `Settings` > `Advanced` to enable it and test it out. That means no more docker as requirement to create fast, isolated workspaces.
+  - Openwork Organization owners can now define allowed email domains. Active-Org-Aware Desktop sign-in, and rename their org. 
+  - Better control for Org owners regarding who accepts invites and invite delivery failures.
+  - Quality of life: Added Spanish and Catalan localization, a shortcut to access the docs in the app and made the landing page easier to read for agents.
+
+</Update>
+
+<Update label="April 13th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.207](https://github.com/different-ai/openwork/compare/v0.11.206...v0.11.207): Windows downloads return and OpenWork speaks French
+
+  - Restored free public Windows desktop downloads across the landing and download flows so Windows users can download installers again without a paid checkout path.
+  - Added French localization for the OpenWork app so users can navigate core product surfaces in French.
+
+</Update>
+
+<Update label="April 7th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.11.205](https://github.com/different-ai/openwork/compare/v0.11.202...v0.11.205): OpenWork Cloud launches for teams
+
+  - OpenWork Cloud now has orgs, teams, shared skills and workers.
+  - Added custom LLM providers so everyone in the company can use the same org-approved LLMs in Openwork.
+  - As an org admin, you can control members, invitations, teams, and custom RBAC roles for your company.
+
+  <table>
+    <tr>
+      <td>
+        <img src="/images/cloud-dashboard-overview.png" alt="OpenWork Cloud dashboard overview" />
+        <p><em>OpenWork Cloud</em></p>
+      </td>
+      <td>
+        <img src="/images/cloud-skill-hub-access-and-skills.png" alt="Skill hub access and included skills in OpenWork Cloud" />
+        <p><em>Shared skills</em></p>
+      </td>
+    </tr>
+  </table>
+
+</Update>
+
 <Update label="April 4th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.11.202](https://github.com/different-ai/openwork/compare/v0.11.200...v0.11.202): Translations support for several languages
@@ -151,7 +204,7 @@ title: "Changelog"
   - Shared skills can now be imported into existing workers. 
   - ChatGPT Oath added to "New chat Session"
 
-    <img src="/images/chatgptOauth.png" alt="ChatGPT Oauth" />
+    <img src="/images/chatgpt-new-session-cta.png" alt="New session with Connect ChatGPT for free CTA" />
 
 </Update>
 

@@ -1,7 +1,7 @@
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import type { MessageWithParts } from "../../app/src/app/types";
-import type { WorkspaceInfo } from "../../app/src/app/lib/tauri";
+import type { WorkspaceInfo } from "../../app/src/app/lib/desktop";
 
 export type StoryScreen = "session" | "settings" | "components" | "onboarding";
 
@@ -39,7 +39,7 @@ export const storyWorkspaces: WorkspaceInfo[] = [
 export const sessionList = [
   { title: "Refresh den cloud worker states", meta: "6m ago", active: true },
   { title: "Polish mobile workspace connect flow", meta: "31m ago", active: false },
-  { title: "Audit scheduler screenshots", meta: "Yesterday", active: false },
+  { title: "Audit release screenshots", meta: "Yesterday", active: false },
   { title: "Tighten status copy in settings", meta: "Yesterday", active: false },
 ];
 
@@ -257,7 +257,7 @@ export const settingsCards = [
 export const onboardingChoices = [
   {
     title: "Create local workspace",
-    detail: "Spin up a local OpenWork folder with starter automations and project memory.",
+    detail: "Spin up a local OpenWork folder with reusable skills and project memory.",
   },
   {
     title: "Connect remote worker",

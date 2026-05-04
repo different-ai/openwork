@@ -11,7 +11,6 @@
 
 - `NEXT_PUBLIC_CAL_URL` - enterprise booking link
 - `NEXT_PUBLIC_DEN_CHECKOUT_URL` - Polar checkout URL for the Den preorder CTA
-- `NEXT_PUBLIC_WINDOWS_CHECKOUT_URL` - Polar checkout URL for the Windows support plan CTA
 - `LOOPS_API_KEY` - Loops API key for feedback/contact submissions
 - `LOOPS_TRANSACTIONAL_ID_APP_FEEDBACK` - Loops transactional template ID for app feedback emails
 - `LOOPS_INTERNAL_FEEDBACK_EMAIL` - optional override for the internal feedback recipient (defaults to `team@openworklabs.com`)

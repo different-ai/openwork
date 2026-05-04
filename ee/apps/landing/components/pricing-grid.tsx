@@ -1,10 +1,9 @@
 "use client";
 
-import { ArrowUpRight, Cloud, Download, Shield, CornerRightDown } from "lucide-react";
+import { ArrowUpRight, Cloud, Download, Shield } from "lucide-react";
 import { ResponsiveGrain } from "./responsive-grain";
 
 type PricingGridProps = {
-  windowsCheckoutUrl: string;
   callUrl: string;
   showHeader?: boolean;
 };
@@ -18,7 +17,7 @@ type PricingCard = {
   href: string;
   external?: boolean;
   features: Array<{ text: string; icon: typeof Download }>;
-  footer: string;
+  footer?: string;
   gradientColors: string[];
   gradientBack: string;
   gradientShape: "corners" | "wave" | "dots" | "truchet" | "ripple" | "blob" | "sphere";
@@ -47,7 +46,7 @@ function PricingCardView({ card }: { card: PricingCard }) {
         <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
           <div>
             <div className="flex justify-between items-start mb-6">
-              <h3 className="text-[17px] font-medium tracking-tight">{card.title}</h3>
+              <h2 className="text-[17px] font-medium tracking-tight">{card.title}</h2>
             </div>
 
             {card.isCustomPricing ? (
@@ -94,9 +93,11 @@ function PricingCardView({ card }: { card: PricingCard }) {
       </div>
 
       {/* ── Footer ── */}
-      <div className="mt-auto pt-8">
-        <div className="text-[14px] font-medium text-gray-800">{card.footer}</div>
-      </div>
+      {card.footer ? (
+        <div className="mt-auto pt-8">
+          <div className="text-[14px] font-medium text-gray-800">{card.footer}</div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -122,18 +123,18 @@ export function PricingGrid(props: PricingGridProps) {
     },
     {
       id: "cloud-workers",
-      title: "Cloud workers",
+      title: "Team starter",
       price: "$50",
-      priceSub: "per month · per worker",
-      ctaLabel: "Purchase worker",
+      priceSub: "per month",
+      ctaLabel: "Start team plan",
       href: "https://app.openworklabs.com/checkout",
       external: true,
       features: [
         { text: "5 seats included", icon: Cloud },
-        { text: "Hosted OpenWork worker", icon: Cloud },
-        { text: "$50 per additional worker", icon: Cloud },
+        { text: "API access", icon: Cloud },
+        { text: "Skill Hub Manager", icon: Cloud },
+        { text: "Bring your own LLM keys, distributed to your team", icon: Cloud },
       ],
-      footer: "Workers disabled by default",
       gradientColors: ["#2563EB", "#0284C7", "#0EA5E9", "#0F172A"],
       gradientBack: "#0C1220",
       gradientShape: "ripple",
@@ -148,7 +149,7 @@ export function PricingGrid(props: PricingGridProps) {
       href: props.callUrl,
       external: /^https?:\/\//.test(props.callUrl),
       features: [
-        { text: "Includes Windows support", icon: Shield },
+        { text: "Enterprise rollout support", icon: Shield },
         { text: "Deployment guidance", icon: Shield },
         { text: "Custom commercial terms", icon: Shield },
       ],

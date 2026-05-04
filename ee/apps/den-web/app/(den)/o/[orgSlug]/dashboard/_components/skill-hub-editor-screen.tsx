@@ -130,7 +130,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
 
             if (!nextSkillHubId) {
                 const { response, payload } = await requestJson(
-                    `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs`,
+                    `/v1/skill-hubs`,
                     {
                         method: "POST",
                         body: JSON.stringify({
@@ -172,7 +172,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
                     (skillHub.description ?? "") !== description.trim())
             ) {
                 const { response, payload } = await requestJson(
-                    `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(nextSkillHubId)}`,
+                    `/v1/skill-hubs/${encodeURIComponent(nextSkillHubId)}`,
                     {
                         method: "PATCH",
                         body: JSON.stringify({
@@ -209,7 +209,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             await Promise.all(
                 teamIdsToAdd.map(async (teamId) => {
                     const { response, payload } = await requestJson(
-                        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(nextSkillHubId)}/access`,
+                        `/v1/skill-hubs/${encodeURIComponent(nextSkillHubId)}/access`,
                         {
                             method: "POST",
                             body: JSON.stringify({ teamId }),
@@ -231,7 +231,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             await Promise.all(
                 teamAccessIdsToRemove.map(async (accessId) => {
                     const { response, payload } = await requestJson(
-                        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(nextSkillHubId)}/access/${encodeURIComponent(accessId)}`,
+                        `/v1/skill-hubs/${encodeURIComponent(nextSkillHubId)}/access/${encodeURIComponent(accessId)}`,
                         { method: "DELETE" },
                         12000,
                     );
@@ -250,7 +250,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             await Promise.all(
                 skillIdsToAdd.map(async (entry) => {
                     const { response, payload } = await requestJson(
-                        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(nextSkillHubId)}/skills`,
+                        `/v1/skill-hubs/${encodeURIComponent(nextSkillHubId)}/skills`,
                         {
                             method: "POST",
                             body: JSON.stringify({ skillId: entry }),
@@ -272,7 +272,7 @@ export function SkillHubEditorScreen({ skillHubId }: { skillHubId?: string }) {
             await Promise.all(
                 skillIdsToRemove.map(async (entry) => {
                     const { response, payload } = await requestJson(
-                        `/v1/orgs/${encodeURIComponent(orgId)}/skill-hubs/${encodeURIComponent(nextSkillHubId)}/skills/${encodeURIComponent(entry)}`,
+                        `/v1/skill-hubs/${encodeURIComponent(nextSkillHubId)}/skills/${encodeURIComponent(entry)}`,
                         { method: "DELETE" },
                         12000,
                     );

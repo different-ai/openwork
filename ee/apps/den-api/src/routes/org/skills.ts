@@ -24,7 +24,7 @@ import {
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
+import { idParamSchema, memberHasRole } from "./shared.js"
 
 const skillTextSchema = z.string().superRefine((value, ctx) => {
   if (!value.trim()) {
@@ -105,8 +105,8 @@ type MemberId = typeof MemberTable.$inferSelect.id
 type SkillRow = typeof SkillTable.$inferSelect
 type SkillHubRow = typeof SkillHubTable.$inferSelect
 
-const orgSkillHubParamsSchema = orgIdParamSchema.extend(idParamSchema("skillHubId", "skillHub").shape)
-const orgSkillParamsSchema = orgIdParamSchema.extend(idParamSchema("skillId", "skill").shape)
+const orgSkillHubParamsSchema = idParamSchema("skillHubId", "skillHub")
+const orgSkillParamsSchema = idParamSchema("skillId", "skill")
 const orgSkillHubSkillParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("skillId", "skill").shape)
 const orgSkillHubAccessParamsSchema = orgSkillHubParamsSchema.extend(idParamSchema("accessId", "skillHubMember").shape)
 
@@ -263,7 +263,7 @@ function canViewSkill(input: {
 
 export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/skills",
+    "/v1/skills",
     describeRoute({
       tags: ["Skills"],
       summary: "Create skill",
@@ -275,7 +275,6 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createSkillSchema),
     async (c) => {
@@ -314,7 +313,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.get(
-    "/v1/orgs/:orgId/skills",
+    "/v1/skills",
     describeRoute({
       tags: ["Skills"],
       summary: "List skills",
@@ -326,7 +325,6 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
@@ -360,7 +358,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/orgs/:orgId/skills/:skillId",
+    "/v1/skills/:skillId",
     describeRoute({
       tags: ["Skills"],
       summary: "Delete skill",
@@ -412,7 +410,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.patch(
-    "/v1/orgs/:orgId/skills/:skillId",
+    "/v1/skills/:skillId",
     describeRoute({
       tags: ["Skills"],
       summary: "Update skill",
@@ -486,7 +484,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/orgs/:orgId/skill-hubs",
+    "/v1/skill-hubs",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Create skill hub",
@@ -498,7 +496,6 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createSkillHubSchema),
     async (c) => {
@@ -542,7 +539,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.get(
-    "/v1/orgs/:orgId/skill-hubs",
+    "/v1/skill-hubs",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "List skill hubs",
@@ -554,7 +551,6 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
@@ -698,7 +694,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.patch(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId",
+    "/v1/skill-hubs/:skillHubId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Update skill hub",
@@ -767,7 +763,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId",
+    "/v1/skill-hubs/:skillHubId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Delete skill hub",
@@ -820,7 +816,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId/skills",
+    "/v1/skill-hubs/:skillHubId/skills",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Add skill to skill hub",
@@ -908,7 +904,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId/skills/:skillId",
+    "/v1/skill-hubs/:skillHubId/skills/:skillId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Remove skill from skill hub",
@@ -971,7 +967,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.post(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId/access",
+    "/v1/skill-hubs/:skillHubId/access",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Grant skill hub access",
@@ -1082,7 +1078,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
   )
 
   app.delete(
-    "/v1/orgs/:orgId/skill-hubs/:skillHubId/access/:accessId",
+    "/v1/skill-hubs/:skillHubId/access/:accessId",
     describeRoute({
       tags: ["Skill Hubs"],
       summary: "Revoke skill hub access",

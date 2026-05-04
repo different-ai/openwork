@@ -13,13 +13,13 @@
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
 #   SHARE_PORT            — host port to map to the share service :3000 (default: 3006)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
-#   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state (set by dev-up.sh)
-#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs (set by dev-up.sh)
+#   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state
+#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs
 #   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
-#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
-#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
-#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config (set by dev-up.sh)
-#   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data (set by dev-up.sh)
+#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override
+#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override
+#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config
+#   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
 
 x-shared: &shared
   image: node:22-bookworm-slim

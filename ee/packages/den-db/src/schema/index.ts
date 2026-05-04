@@ -1,6 +1,7 @@
 export * from "./auth"
 export * from "./org"
 export * from "./sharables/llm-providers"
+export * from "./sharables/plugin-arch"
 export * from "./sharables/skills"
 export * from "./teams"
 export * from "./workers"

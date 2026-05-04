@@ -40,6 +40,14 @@ function run(cmd, args, cwd) {
   }
 }
 
+function packageVersionExists(name) {
+  const res = spawnSync("npm", ["view", `${name}@${version}`, "version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+  return res.status === 0 && res.stdout.trim() === version
+}
+
 function writeJson(filepath, data) {
   writeFileSync(filepath, `${JSON.stringify(data, null, 2)}\n`, "utf8")
 }
@@ -134,6 +142,10 @@ for (const item of published) {
 
   const args = ["publish", "--access", "public"]
   if (tag) args.push("--tag", tag)
+  if (packageVersionExists(item.name)) {
+    console.log(`Skipping ${item.name}@${version}; already published`)
+    continue
+  }
   console.log(`Publishing ${item.name} from ${item.dir}`)
   run("npm", args, item.dir)
 }

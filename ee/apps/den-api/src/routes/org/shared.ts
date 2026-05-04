@@ -11,10 +11,6 @@ export type OrgRouteVariables =
   & Partial<OrganizationContextVariables>
   & Partial<MemberTeamsContext>
 
-export const orgIdParamSchema = z.object({
-  orgId: denTypeIdSchema("organization"),
-})
-
 export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName) {
   if (!typeName) {
     return z.object({
@@ -62,14 +58,6 @@ export function getInvitationOrigin() {
 
 export function buildInvitationLink(invitationId: string) {
   return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
-}
-
-export function parseTemplateJson(value: string) {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
 }
 
 export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {

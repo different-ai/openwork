@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion, useInView } from "framer-motion";
-import { ArrowUp, ChevronDown, Cloud, CreditCard, Download, HardDrive, Key, Monitor, Paperclip, PlugZap, Shield, Users } from "lucide-react";
+import { Download, Users } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
@@ -11,7 +11,6 @@ import {
   landingDemoFlows,
   landingDemoFlowTimes
 } from "./landing-demo-flows";
-import { PricingGrid } from "./pricing-grid";
 import { LandingSharePackageCard } from "./landing-share-package-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
@@ -21,7 +20,6 @@ type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
-  windowsCheckoutUrl: string;
   isMobileVisitor: boolean;
 };
 
@@ -30,37 +28,9 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
-const providerOptions = [
-  {
-    id: "subscription",
-    label: "Use your existing subscription",
-    icon: CreditCard,
-    description:
-      "Claude Pro/Max, ChatGPT Pro/Plus. Connect the accounts you already pay for. No extra AI costs.",
-    barProvider: "Anthropic · Claude Opus 4.6",
-  },
-  {
-    id: "byok",
-    label: "BYOK",
-    icon: Key,
-    description:
-      "Use 50+ LLMs, bring your own keys, connect your gateway. Switch between tasks.",
-    barProvider: "OpenRouter · GPT-5.4",
-  },
-  {
-    id: "local",
-    label: "Local models",
-    icon: HardDrive,
-    description:
-      "Run Ollama or any local model. Your data never leaves your machine. Full data residency compliance.",
-    barProvider: "Ollama · gpt-oss:20b",
-  },
-];
-
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
-  const [activeProvider, setActiveProvider] = useState(0);
   const enterpriseShowcaseRef = useRef<HTMLElement>(null);
   const showEnterpriseShowcase = useInView(enterpriseShowcaseRef, {
     once: true,
@@ -72,6 +42,7 @@ export function LandingHome(props: Props) {
     [activeDemoId]
   );
 
+  const callLinkProps = externalLinkProps(props.callHref);
   const primaryCtaHref = props.isMobileVisitor
     ? "https://app.openworklabs.com"
     : "/download";
@@ -108,14 +79,6 @@ export function LandingHome(props: Props) {
               own keys, and share your setups seamlessly with your team.
             </p>
 
-            <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] font-medium text-gray-500 md:text-[14px]">
-              <span>Solo free forever</span>
-              <span aria-hidden="true">•</span>
-              <span>Workers $50/month</span>
-              <span aria-hidden="true">•</span>
-              <span>Enterprise talk to us</span>
-            </div>
-
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <a
@@ -126,10 +89,11 @@ export function LandingHome(props: Props) {
                   {primaryCtaLabel} <Download size={18} />
                 </a>
                 <a
-                  href="/pricing"
+                  href={props.callHref}
                   className="secondary-button"
+                  {...callLinkProps}
                 >
-                  See pricing
+                  Contact sales
                 </a>
               </div>
 
@@ -246,141 +210,6 @@ export function LandingHome(props: Props) {
             </div>
           </section>
 
-          <section className="grid gap-6 md:grid-cols-3">
-            <div className="landing-shell flex flex-col rounded-xl p-6">
-              <div className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
-                <Monitor size={18} />
-                Desktop
-              </div>
-              <h2 className="mb-3 text-xl font-medium tracking-tight">Local AI worker</h2>
-              <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Start free on desktop forever with macOS and Linux downloads,
-                then automate email, Slack, and the work you do every day.
-              </p>
-              <div>
-                <a href="/download" className="secondary-button">Learn more</a>
-              </div>
-            </div>
-
-            <div className="landing-shell flex flex-col rounded-xl p-6">
-              <div className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
-                <Cloud size={18} />
-                Cloud
-              </div>
-              <h2 className="mb-3 text-xl font-medium tracking-tight">Hosted sandboxed workers</h2>
-              <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Workers are disabled by default. Purchase one for $50/month when
-                you need hosted runtime.
-              </p>
-              <div>
-                <a href="/den" className="secondary-button">Learn more</a>
-              </div>
-            </div>
-
-            <div className="landing-shell flex flex-col rounded-xl p-6">
-              <div className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
-                <Shield size={18} />
-                Enterprise
-              </div>
-              <h2 className="mb-3 text-xl font-medium tracking-tight">Safe workflow sharing</h2>
-              <p className="mb-6 flex-1 text-sm leading-relaxed text-gray-500">
-                Deploy on your infrastructure. Enterprise licensing includes
-                Windows support plus rollout guidance.
-              </p>
-              <div>
-                <a href="/enterprise" className="secondary-button">Learn more</a>
-              </div>
-            </div>
-          </section>
-
-          <section className="landing-shell rounded-[2.5rem] p-8 md:p-12">
-            <PricingGrid
-              windowsCheckoutUrl={props.windowsCheckoutUrl}
-              callUrl={props.callHref}
-              showHeader={true}
-            />
-          </section>
-
-          <section className="landing-shell-soft rounded-[2.5rem] p-8 md:p-12">
-            <div className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
-              <PlugZap size={18} />
-              LLM Provider
-            </div>
-            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
-              <div className="flex w-full max-w-4xl flex-col gap-4">
-                <div className="inline-flex w-full max-w-4xl gap-1 overflow-x-auto rounded-full border border-gray-200 bg-gray-50/50 p-1">
-                {providerOptions.map((opt, i) => {
-                  const isActive = i === activeProvider;
-                  const Icon = opt.icon;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setActiveProvider(i)}
-                      aria-pressed={isActive}
-                      className={`relative inline-flex min-w-max items-center gap-2 rounded-full px-5 py-2.5 text-[15px] font-medium transition-colors ${
-                        isActive
-                          ? "text-[#011627]"
-                          : "text-gray-500 hover:text-gray-800"
-                      }`}
-                    >
-                      {isActive ? (
-                        <motion.div
-                          layoutId="provider-active-pill"
-                          className="absolute inset-0 rounded-full border border-[rgba(0,0,0,0.06)] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.06),0_1px_2px_0_rgba(0,0,0,0.04)]"
-                          transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                        />
-                      ) : null}
-                      <span className="relative z-10 inline-flex items-center gap-2">
-                        <Icon size={15} />
-                        <span>{opt.label}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-                </div>
-              </div>
-
-              <div className="max-w-md text-left lg:text-right">
-                <p className="text-sm leading-relaxed text-gray-500 md:text-base">
-                  {providerOptions[activeProvider].description}
-                </p>
-              </div>
-            </div>
-
-            {/* Bottom: full-width app mockup */}
-            <div className="landing-shell-soft flex items-center justify-center rounded-xl p-4 md:p-6">
-              <div className="w-full max-w-lg">
-                {/* Composer mockup */}
-                <div className="rounded-[20px] border border-gray-200 bg-white p-4">
-                  {/* Placeholder text */}
-                  <div className="mb-8 text-[14px] text-gray-400">
-                    Describe your task...
-                  </div>
-                  {/* Bottom row: attach + run task */}
-                  <div className="flex items-center justify-between">
-                    <div className="rounded-md p-1.5 text-gray-400">
-                      <Paperclip size={16} />
-                    </div>
-                    <div className="inline-flex items-center gap-1.5 rounded-full bg-[#011627] px-4 py-2 text-[13px] font-medium text-white">
-                      <ArrowUp size={15} />
-                      <span>Run task</span>
-                    </div>
-                  </div>
-                </div>
-                {/* Model selector bar */}
-                <div className="mt-3 flex items-center px-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[14px] font-medium text-[#011627]">
-                      {providerOptions[activeProvider].barProvider}
-                    </span>
-                    <ChevronDown size={14} className="text-gray-400" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
           <section
             ref={enterpriseShowcaseRef}
             className="landing-shell rounded-[2.5rem] p-8 md:p-12"
@@ -465,7 +294,7 @@ export function LandingHome(props: Props) {
 
               <div
                 className="relative flex min-h-[400px] w-full items-center justify-center overflow-hidden rounded-3xl border border-gray-100 bg-cover bg-center p-6 lg:w-2/3 md:p-10"
-                style={{ backgroundImage: "url('/enterprise-showcase-bg.png')" }}
+                style={{ backgroundImage: "url('/enterprise-showcase-bg.jpg')" }}
               >
                 {showEnterpriseShowcase ? (
                   <div className="grid w-full [&>*]:col-start-1 [&>*]:row-start-1">

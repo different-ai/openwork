@@ -153,7 +153,7 @@ export function OrganizationScreen() {
     setCreateBusy(true);
     setCreateError(null);
     try {
-      const { response, payload } = await requestJson("/v1/orgs", {
+      const { response, payload } = await requestJson("/v1/org", {
         method: "POST",
         body: JSON.stringify({ name: trimmed }),
       });

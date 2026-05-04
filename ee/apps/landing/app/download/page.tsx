@@ -1,23 +1,52 @@
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
+import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
+import { baseOpenGraph } from "../../lib/seo";
+
+const downloadSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "OpenWork",
+  description:
+    "Open source Claude Cowork alternative. Desktop app for macOS, Windows, and Linux that lets teams use 50+ LLMs with their own provider keys.",
+  url: "https://openworklabs.com/download",
+  downloadUrl: "https://github.com/different-ai/openwork/releases/latest",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "macOS, Windows, Linux",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD"
+  },
+  publisher: {
+    "@type": "Organization",
+    name: "OpenWork",
+    url: "https://openworklabs.com"
+  }
+};
 
 export const metadata = {
-  title: "OpenWork - Download",
+  title: "Download OpenWork — macOS, Windows, Linux",
   description:
-    "Download OpenWork desktop for macOS and Linux, or purchase Windows support for binary access and updates.",
+    "Download OpenWork desktop for macOS, Windows, and Linux. Direct Electron build downloads are resolved from the latest GitHub release.",
+  alternates: {
+    canonical: "/download"
+  },
+  openGraph: {
+    ...baseOpenGraph,
+    url: "https://openworklabs.com/download"
+  }
 };
 
 export default async function Download() {
   const github = await getGithubData();
   const releaseLabel = github.releaseTag || "latest";
   const releaseUrl = github.releaseUrl;
-  const windowsCheckoutUrl =
-    process.env.NEXT_PUBLIC_WINDOWS_CHECKOUT_URL || "/pricing#windows-support";
-  const windowsCheckoutExternal = /^https?:\/\//.test(windowsCheckoutUrl);
 
   return (
     <div className="min-h-screen">
+      <StructuredData data={downloadSchema} />
       <SiteNav
         stars={github.stars}
         downloadHref={github.downloads.macos}
@@ -55,22 +84,22 @@ export default async function Download() {
               href="#macos"
               className="feature-card border-sky-100 bg-sky-50/60 transition hover:border-sky-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">macOS</h2>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">macOS</span>
               <p className="text-[14px] text-gray-700">Apple Silicon and Intel builds</p>
             </a>
             <a
               href="#windows"
               className="feature-card border-violet-100 bg-violet-50/50 transition hover:border-violet-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">Windows</h2>
-              <p className="text-[14px] text-gray-700">$99/year support plan with manual build delivery</p>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Windows</span>
+              <p className="text-[14px] text-gray-700">x64 NSIS installer</p>
             </a>
             <a
               href="#linux"
               className="feature-card border-emerald-100 bg-emerald-50/60 transition hover:border-emerald-200"
             >
-              <h2 className="mb-2 text-[16px] font-semibold text-gray-900">Linux</h2>
-              <p className="text-[14px] text-gray-700">AUR, .deb, and .rpm options</p>
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Linux</span>
+              <p className="text-[14px] text-gray-700">AppImage and tarball builds</p>
             </a>
           </div>
 
@@ -114,31 +143,16 @@ export default async function Download() {
           <section id="windows" className="py-6">
             <h2 className="mb-2 text-2xl font-bold md:text-3xl">Windows</h2>
             <p className="mb-6 text-[15px] text-gray-700">
-              Windows access is sold as an annual support plan. It includes one seat,
-              Windows binary access, and one year of updates.
+              OpenWork for Windows is available as an x64 Electron installer.
             </p>
-
-            <div className="feature-card max-w-2xl border-violet-100 bg-white/90 ring-1 ring-violet-100/70">
-              <h3 className="mb-2 text-[18px] font-semibold text-gray-900">
-                Windows support — $99/year
-              </h3>
-              <p className="mb-5 text-[14px] leading-7 text-gray-600">
-                Purchase through Polar and we will send your Windows build link after checkout.
-              </p>
-              <div className="flex flex-wrap gap-3">
-                <a
-                  href={windowsCheckoutUrl}
-                  className="doc-button"
-                  rel={windowsCheckoutExternal ? "noreferrer" : undefined}
-                  target={windowsCheckoutExternal ? "_blank" : undefined}
-                >
-                  Purchase Windows support
-                </a>
-                <a href="/pricing#windows-support" className="secondary-button">
-                  See pricing details
-                </a>
-              </div>
-            </div>
+            <a
+              href={github.installers.windows.x64}
+              className="doc-button"
+              rel="noreferrer"
+              target="_blank"
+            >
+              Download Windows x64 (.exe)
+            </a>
           </section>
 
           <hr />
@@ -146,78 +160,56 @@ export default async function Download() {
           <section id="linux" className="py-6">
             <h2 className="mb-2 text-2xl font-bold md:text-3xl">Linux</h2>
             <p className="mb-8 text-[15px] text-gray-700">
-              Install from AUR on Arch-based distributions, or download packages
-              directly for Ubuntu/Debian and Fedora/RHEL/openSUSE.
+              Download Electron builds directly for x64 and arm64 Linux systems.
             </p>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="feature-card border-emerald-100 bg-white/90 ring-1 ring-emerald-100/60">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Arch Linux (AUR)</h3>
-                <p className="mb-4 text-[14px] text-gray-600">
-                  Install and keep OpenWork updated via the Arch User Repository.
-                </p>
-                <pre className="mono overflow-x-auto rounded-lg bg-gray-950 px-4 py-3 text-[13px] text-gray-100">
-                  <code>yay -S openwork</code>
-                </pre>
-                <p className="mt-3 text-[13px] text-gray-600">
-                  Prefer paru? <span className="mono">paru -S openwork</span>
-                </p>
-                <a
-                  href={github.installers.linux.aur}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-flex text-[13px] font-semibold text-gray-700 underline decoration-gray-300 underline-offset-4 transition hover:text-black"
-                >
-                  View package on AUR
-                </a>
-              </div>
-
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="feature-card border-amber-100 bg-white/90 ring-1 ring-amber-100/60">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Ubuntu / Debian (.deb)</h3>
+                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">AppImage</h3>
                 <p className="mb-4 text-[14px] text-gray-600">
-                  Download the package for your architecture.
+                  Portable desktop builds for most Linux distributions.
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <a
-                    href={github.installers.linux.debX64}
+                    href={github.installers.linux.appImageX64}
                     target="_blank"
                     rel="noreferrer"
                     className="doc-button"
                   >
-                    x64 .deb
+                    x64 AppImage
                   </a>
                   <a
-                    href={github.installers.linux.debArm64}
+                    href={github.installers.linux.appImageArm64}
                     target="_blank"
                     rel="noreferrer"
                     className="doc-button"
                   >
-                    arm64 .deb
+                    arm64 AppImage
                   </a>
                 </div>
               </div>
 
               <div className="feature-card border-sky-100 bg-white/90 ring-1 ring-sky-100/60">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Fedora / RHEL / openSUSE (.rpm)</h3>
+                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Tarball</h3>
                 <p className="mb-4 text-[14px] text-gray-600">
-                  Download an RPM package for x64 or arm64 systems.
+                  Compressed Electron builds for manual installation.
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <a
-                    href={github.installers.linux.rpmX64}
+                    href={github.installers.linux.tarX64}
                     target="_blank"
                     rel="noreferrer"
                     className="doc-button"
                   >
-                    x64 .rpm
+                    x64 .tar.gz
                   </a>
                   <a
-                    href={github.installers.linux.rpmArm64}
+                    href={github.installers.linux.tarArm64}
                     target="_blank"
                     rel="noreferrer"
                     className="doc-button"
                   >
-                    arm64 .rpm
+                    arm64 .tar.gz
                   </a>
                 </div>
               </div>

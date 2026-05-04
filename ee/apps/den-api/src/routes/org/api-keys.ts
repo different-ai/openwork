@@ -12,7 +12,7 @@ import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizati
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, idParamSchema, orgIdParamSchema } from "./shared.js"
+import { ensureApiKeyManager, idParamSchema } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -92,12 +92,12 @@ const createOrganizationApiKeyResponseSchema = z.object({
   key: z.string().min(1),
 }).meta({ ref: "CreateOrganizationApiKeyResponse" })
 
-const apiKeyIdParamSchema = orgIdParamSchema.extend(idParamSchema("apiKeyId").shape)
+const apiKeyIdParamSchema = idParamSchema("apiKeyId")
 const hideApiKeyGenerationRoute = () => process.env.NODE_ENV === "production"
 
 export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
-    "/v1/orgs/:orgId/api-keys",
+    "/v1/api-keys",
     describeRoute({
       tags: ["API Keys"],
       summary: "List organization API keys",
@@ -147,7 +147,6 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     async (c) => {
       const access = ensureApiKeyManager(c)
@@ -162,7 +161,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.post(
-    "/v1/orgs/:orgId/api-keys",
+    "/v1/api-keys",
     describeRoute({
       tags: ["API Keys"],
       summary: "Create an organization API key",
@@ -213,7 +212,6 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createOrganizationApiKeySchema),
     async (c) => {
@@ -259,7 +257,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
   )
 
   app.delete(
-    "/v1/orgs/:orgId/api-keys/:apiKeyId",
+    "/v1/api-keys/:apiKeyId",
     describeRoute({
       tags: ["API Keys"],
       hide: true,

@@ -18,6 +18,7 @@ type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
 export type OrganizationMetadata = {
   limits: OrganizationLimits
+  allowedDesktopVersions?: string[]
 } & Record<string, unknown>
 
 type OrganizationMetadataInput = Record<string, unknown> | string | null | undefined
@@ -39,6 +40,38 @@ function normalizePositiveInteger(value: unknown, fallback: number) {
   }
 
   return fallback
+}
+
+function normalizeDesktopVersionString(value: unknown) {
+  if (typeof value !== "string") {
+    return null
+  }
+
+  const normalized = value.trim().replace(/^v/i, "")
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(normalized)
+    ? normalized
+    : null
+}
+
+function normalizeAllowedDesktopVersions(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null
+  }
+
+  const versions = [...new Set(value.map((entry) => normalizeDesktopVersionString(entry)).filter((entry): entry is string => Boolean(entry)))]
+  return versions
+}
+
+function sameStringArray(left: string[] | null, right: string[] | null) {
+  if (left === right) {
+    return true
+  }
+
+  if (!left || !right || left.length !== right.length) {
+    return false
+  }
+
+  return left.every((entry, index) => right[index] === entry)
 }
 
 function parseMetadata(input: OrganizationMetadataInput): Record<string, unknown> {
@@ -64,6 +97,7 @@ export function normalizeOrganizationMetadata(input: OrganizationMetadataInput):
 } {
   const parsed = parseMetadata(input)
   const rawLimits = isRecord(parsed.limits) ? parsed.limits : null
+  const allowedDesktopVersions = normalizeAllowedDesktopVersions(parsed.allowedDesktopVersions)
   const members = normalizePositiveInteger(rawLimits?.members, DEFAULT_ORGANIZATION_LIMITS.members)
   const workers = normalizePositiveInteger(rawLimits?.workers ?? rawLimits?.Workers, DEFAULT_ORGANIZATION_LIMITS.workers)
 
@@ -73,13 +107,23 @@ export function normalizeOrganizationMetadata(input: OrganizationMetadataInput):
       members,
       workers,
     },
+    ...(allowedDesktopVersions !== null ? { allowedDesktopVersions } : {}),
   } as OrganizationMetadata
+
+  if (allowedDesktopVersions === null) {
+    delete metadata.allowedDesktopVersions
+  }
+
+  const rawAllowedDesktopVersions = Array.isArray(parsed.allowedDesktopVersions)
+    ? parsed.allowedDesktopVersions.filter((entry): entry is string => typeof entry === "string")
+    : null
 
   const changed =
     !isRecord(parsed.limits) ||
     Object.keys(parsed).length === 0 ||
     rawLimits?.members !== members ||
-    (rawLimits?.workers ?? rawLimits?.Workers) !== workers
+    (rawLimits?.workers ?? rawLimits?.Workers) !== workers ||
+    !sameStringArray(rawAllowedDesktopVersions, allowedDesktopVersions)
 
   return { metadata, changed }
 }

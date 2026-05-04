@@ -1,6 +1,6 @@
 import type { WorkspaceDisplay } from "../types";
 import { parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 import type { BundleImportTarget, BundleV1 } from "./types";
 
 export function buildImportPayloadFromBundle(bundle: BundleV1): {
@@ -39,37 +39,7 @@ export function buildImportPayloadFromBundle(bundle: BundleV1): {
     };
   }
 
-  const workspace = bundle.workspace;
-  const payload: Record<string, unknown> = {
-    mode: {
-      opencode: "merge",
-      openwork: "merge",
-      skills: "merge",
-      commands: "merge",
-      files: "merge",
-    },
-  };
-
-  if (workspace.opencode && typeof workspace.opencode === "object") {
-    payload.opencode = workspace.opencode;
-  }
-  if (workspace.openwork && typeof workspace.openwork === "object") {
-    payload.openwork = workspace.openwork;
-  }
-  if (Array.isArray(workspace.skills) && workspace.skills.length > 0) {
-    payload.skills = workspace.skills;
-  }
-  if (Array.isArray(workspace.commands) && workspace.commands.length > 0) {
-    payload.commands = workspace.commands;
-  }
-  if (Array.isArray(workspace.files) && workspace.files.length > 0) {
-    payload.files = workspace.files;
-  }
-
-  return {
-    payload,
-    importedSkillsCount: Array.isArray(workspace.skills) ? workspace.skills.length : 0,
-  };
+  throw new Error(`Unsupported bundle type: ${(bundle as { type?: string }).type || "unknown"}`);
 }
 
 export function isBundleImportWorkspace(workspace: WorkspaceDisplay | WorkspaceInfo | null): boolean {

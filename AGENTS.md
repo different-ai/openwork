@@ -77,8 +77,8 @@ When the user asks to create a new feature, follow this exact procedure:
 1. Make sure you are up to date on all submodules and repos synced to the head of remotes.
 2. Create a worktree.
 3. Implement the feature.
-4. Start the OpenWork dev stack via Docker (from the OpenWork repo root): `packaging/docker/dev-up.sh`.
-5. Use Chrome MCP to fully test the feature: `.opencode/skills/openwork-docker-chrome-mcp/SKILL.md`.
+4. Start the narrowest supported product stack for the flow under test.
+5. Use Chrome MCP to fully test the feature with the relevant flow-specific skill.
 6. Take screenshots and put them in the repo.
 7. Refer to these screenshots in the PR (only if relevant in the UI).
 8. Always test the flow you just implemented.
@@ -117,7 +117,7 @@ Design principles for hot reload:
 
 | Layer                | Technology                |
 | -------------------- | ------------------------- |
-| Desktop/Mobile shell | Tauri 2.x                 |
+| Desktop/Mobile shell | Tauri 2.x with Electron migration path |
 | Frontend             | SolidJS + TailwindCSS     |
 | State                | Solid stores + IndexedDB  |
 | IPC                  | Tauri commands + events   |
@@ -140,7 +140,7 @@ For `apps/app/src/app/**`, use CUPID: small public surfaces, intention-revealing
 * Treat shared utilities as a last resort; promote only after multiple real consumers exist.
 * Cross-domain imports should go through a small public API, not another domain's internals.
 * Keep global shell code thin and use it for routing, top-level layout, runtime wiring, and shared reload/update surfaces only.
-* Domain map: shell, workspace, session, connections, automations, cloud, app-settings, and kernel.
+* Domain map: shell, workspace, session, connections, cloud, app-settings, and kernel.
 * When changing app architecture, moving ownership, or editing hot spots like `app.tsx`, `pages/dashboard.tsx`, `pages/session.tsx`, or `pages/settings.tsx`, consult the workspace-root skill at `../../.opencode/skills/cupid-app-architecture/SKILL.md` first.
 
 ## Dev Debugging

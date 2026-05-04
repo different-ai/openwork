@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import {
   BookOpen,
   Bot,
+  Cable,
   CreditCard,
   Cpu,
   FileText,
@@ -13,7 +14,9 @@ import {
   KeyRound,
   LogOut,
   MessageSquare,
-  Share2,
+  Puzzle,
+  SlidersHorizontal,
+  Store,
   Users,
 } from "lucide-react";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
@@ -24,13 +27,18 @@ import {
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getOrgAccessFlags,
+  getIntegrationsRoute,
   getMembersRoute,
   getOrgDashboardRoute,
-  getSharedSetupsRoute,
+  getOrgSettingsRoute,
+  getMarketplacesRoute,
+  getPluginsRoute,
   getSkillHubsRoute,
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { OPENWORK_DOCS_URL, buildDenFeedbackUrl } from "./shared-setup-data";
+import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
+
+const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -92,9 +100,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname === dashboardRoot) {
     return "Home";
   }
-  if (pathname.startsWith(getSharedSetupsRoute(orgSlug))) {
-    return "Team Templates";
-  }
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
   }
@@ -110,8 +115,20 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
   }
+  if (pathname.startsWith(getPluginsRoute(orgSlug))) {
+    return "Plugins";
+  }
+  if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
+    return "Marketplaces";
+  }
+  if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
+    return "Integrations";
+  }
   if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
     return "Billing";
+  }
+  if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
+    return "Org Settings";
   }
 
   return "Home";
@@ -148,26 +165,37 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       icon: Home,
     },
     {
-      href: activeOrg ? getSharedSetupsRoute(activeOrg.slug) : "#",
-      label: "Team Templates",
-      icon: Share2,
-    },
-    {
       href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
       label: "Shared Workspace",
       icon: Bot,
       badge: "Alpha",
     },
-      {
-        href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
-        label: "LLM Providers",
-        icon: Cpu,
-        badge: "New",
-      },
+    {
+      href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
+      label: "LLM Providers",
+      icon: Cpu,
+    },
     {
       href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
       label: "Skill Hubs",
       icon: BookOpen,
+    },
+    {
+      href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
+      label: "Integrations",
+      icon: Cable,
+      badge: "New",
+    },
+    {
+      href: activeOrg ? getMarketplacesRoute(activeOrg.slug) : "#",
+      label: "Marketplaces",
+      icon: Store,
+      badge: "New",
+    },
+    {
+      href: activeOrg ? getPluginsRoute(activeOrg.slug) : "#",
+      label: "Plugins",
+      icon: Puzzle,
       badge: "New",
     },
     {
@@ -186,6 +214,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getBillingRoute(activeOrg.slug) : "/checkout",
       label: "Billing",
       icon: CreditCard,
+    },
+    {
+      href: activeOrg ? getOrgSettingsRoute(activeOrg.slug) : "#",
+      label: "Org Settings",
+      icon: SlidersHorizontal,
     },
   ];
 

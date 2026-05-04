@@ -1,8 +1,10 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { desktopConfigSchema } from "@openwork/types/den/desktop-app-restrictions"
 import { z } from "zod"
-import { requireUserMiddleware, resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "../../middleware/index.js"
+import { requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const meResponseSchema = z.object({
@@ -19,7 +21,11 @@ const meOrganizationsResponseSchema = z.object({
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
 
-export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> }>(app: Hono<T>) {
+const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
+  ref: "CurrentUserDesktopConfigResponse",
+})
+
+export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.get(
     "/v1/me",
     describeRoute({
@@ -62,6 +68,32 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
     })
+    },
+  )
+
+  app.get(
+    "/v1/me/desktop-config",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Get current user's desktop config",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization.",
+      responses: {
+        200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
+        401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
+      },
+    }),
+    requireUserMiddleware,
+    resolveOrganizationContextMiddleware,
+    (c) => {
+      const organization = c.get("organizationContext").organization
+      const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
+
+      return c.json({
+        ...organization.desktopAppRestrictions,
+        ...(Array.isArray(metadata.allowedDesktopVersions)
+          ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
+          : {}),
+      })
     },
   )
 }

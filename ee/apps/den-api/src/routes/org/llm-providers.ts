@@ -23,7 +23,7 @@ import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-d
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { idParamSchema, memberHasRole, orgIdParamSchema } from "./shared.js"
+import { idParamSchema, memberHasRole } from "./shared.js"
 
 type JsonRecord = Record<string, unknown>
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
@@ -38,11 +38,11 @@ type RouteFailure = {
   message?: string
 }
 
-const providerCatalogParamsSchema = orgIdParamSchema.extend({
+const providerCatalogParamsSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
 })
 
-const orgLlmProviderParamsSchema = orgIdParamSchema.extend(idParamSchema("llmProviderId", "llmProvider").shape)
+const orgLlmProviderParamsSchema = idParamSchema("llmProviderId", "llmProvider")
 
 const customModelSchema = z.object({
   id: z.string().trim().min(1).max(255),
@@ -60,6 +60,7 @@ const customProviderSchema = z.object({
 }).passthrough()
 
 const llmProviderWriteSchema = z.object({
+  name: z.string().trim().min(1).max(255),
   source: z.enum(["models_dev", "custom"]),
   providerId: z.string().trim().min(1).max(255).optional(),
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
@@ -288,7 +289,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
     return {
       source: input.source,
       providerId: provider.id,
-      name: provider.name,
+      name: input.name,
       providerConfig: provider.config,
       models: models.map((model) => ({
         id: model.id,
@@ -320,7 +321,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
   return {
     source: input.source,
     providerId: customProvider.data.id,
-    name: customProvider.data.name,
+    name: input.name,
     providerConfig: providerConfig as JsonRecord,
     models: models.map((model) => ({
       id: model.id,
@@ -480,7 +481,7 @@ async function loadLlmProviders(input: {
 
 export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
   app.get(
-    "/v1/orgs/:orgId/llm-provider-catalog",
+    "/v1/llm-provider-catalog",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List LLM provider catalog",
@@ -493,7 +494,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     async (c) => {
       try {
@@ -509,7 +509,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/orgs/:orgId/llm-provider-catalog/:providerId",
+    "/v1/llm-provider-catalog/:providerId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Get LLM provider catalog entry",
@@ -556,7 +556,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/orgs/:orgId/llm-providers",
+    "/v1/llm-providers",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List organization LLM providers",
@@ -568,7 +568,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
@@ -592,7 +591,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.get(
-    "/v1/orgs/:orgId/llm-providers/:llmProviderId/connect",
+    "/v1/llm-providers/:llmProviderId/connect",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Get LLM provider connect payload",
@@ -669,7 +668,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.post(
-    "/v1/orgs/:orgId/llm-providers",
+    "/v1/llm-providers",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Create organization LLM provider",
@@ -682,7 +681,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(llmProviderWriteSchema),
     async (c) => {
@@ -781,7 +779,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.patch(
-    "/v1/orgs/:orgId/llm-providers/:llmProviderId",
+    "/v1/llm-providers/:llmProviderId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Update organization LLM provider",
@@ -917,7 +915,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.delete(
-    "/v1/orgs/:orgId/llm-providers/:llmProviderId",
+    "/v1/llm-providers/:llmProviderId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Delete organization LLM provider",
@@ -973,7 +971,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
   )
 
   app.delete(
-    "/v1/orgs/:orgId/llm-providers/:llmProviderId/access/:accessId",
+    "/v1/llm-providers/:llmProviderId/access/:accessId",
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Remove LLM provider access grant",

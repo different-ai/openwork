@@ -21,7 +21,6 @@ import type { OrgRouteVariables } from "./shared.js"
 import {
   ensureTeamManager,
   idParamSchema,
-  orgIdParamSchema,
 } from "./shared.js"
 
 const createTeamSchema = z.object({
@@ -45,7 +44,7 @@ const updateTeamSchema = z.object({
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 
-const orgTeamParamsSchema = orgIdParamSchema.extend(idParamSchema("teamId", "team").shape)
+const orgTeamParamsSchema = idParamSchema("teamId", "team")
 
 const teamResponseSchema = z.object({
   team: z.object({
@@ -85,7 +84,7 @@ async function ensureMembersBelongToOrganization(input: {
 
 export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
-    "/v1/orgs/:orgId/teams",
+    "/v1/teams",
     describeRoute({
       tags: ["Teams"],
       summary: "Create team",
@@ -99,7 +98,6 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     requireUserMiddleware,
-    paramValidator(orgIdParamSchema),
     resolveOrganizationContextMiddleware,
     jsonValidator(createTeamSchema),
     async (c) => {
@@ -174,7 +172,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.patch(
-    "/v1/orgs/:orgId/teams/:teamId",
+    "/v1/teams/:teamId",
     describeRoute({
       tags: ["Teams"],
       summary: "Update team",
@@ -278,7 +276,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
   )
 
   app.delete(
-    "/v1/orgs/:orgId/teams/:teamId",
+    "/v1/teams/:teamId",
     describeRoute({
       tags: ["Teams"],
       summary: "Delete team",

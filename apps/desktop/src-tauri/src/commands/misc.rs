@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use crate::engine::doctor::resolve_engine_path;
 use crate::engine::manager::EngineManager;
-use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::openwork_server::manager::OpenworkServerManager;
 use crate::orchestrator;
 use crate::orchestrator::manager::OrchestratorManager;
@@ -46,6 +45,8 @@ pub struct AppBuildInfo {
     pub git_sha: Option<String>,
     pub build_epoch: Option<String>,
     pub openwork_dev_mode: bool,
+    pub os: &'static str,
+    pub arch: &'static str,
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -179,7 +180,6 @@ fn stop_host_services(
     engine_manager: &State<EngineManager>,
     orchestrator_manager: &State<OrchestratorManager>,
     openwork_manager: &State<OpenworkServerManager>,
-    opencode_router_manager: &State<OpenCodeRouterManager>,
 ) {
     if let Ok(mut engine) = engine_manager.inner.lock() {
         EngineManager::stop_locked(&mut engine);
@@ -189,9 +189,6 @@ fn stop_host_services(
     }
     if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
         OpenworkServerManager::stop_locked(&mut openwork_state);
-    }
-    if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
-        OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
     }
 }
 
@@ -377,19 +374,13 @@ pub fn reset_openwork_state(
     engine_manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
-    opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<(), String> {
     let mode = mode.trim();
     if mode != "onboarding" && mode != "all" {
         return Err("mode must be 'onboarding' or 'all'".to_string());
     }
 
-    stop_host_services(
-        &engine_manager,
-        &orchestrator_manager,
-        &openwork_manager,
-        &opencode_router_manager,
-    );
+    stop_host_services(&engine_manager, &orchestrator_manager, &openwork_manager);
 
     let mut paths = vec![
         app.path()
@@ -433,6 +424,8 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
         git_sha,
         build_epoch,
         openwork_dev_mode: env_truthy("OPENWORK_DEV_MODE"),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
     }
 }
 
@@ -442,14 +435,8 @@ pub fn nuke_openwork_and_opencode_config_and_exit(
     engine_manager: State<EngineManager>,
     orchestrator_manager: State<OrchestratorManager>,
     openwork_manager: State<OpenworkServerManager>,
-    opencode_router_manager: State<OpenCodeRouterManager>,
 ) -> Result<(), String> {
-    stop_host_services(
-        &engine_manager,
-        &orchestrator_manager,
-        &openwork_manager,
-        &opencode_router_manager,
-    );
+    stop_host_services(&engine_manager, &orchestrator_manager, &openwork_manager);
 
     let dev_mode = env_truthy("OPENWORK_DEV_MODE");
     let mut paths = current_openwork_state_paths(&app)?;

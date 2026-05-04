@@ -1,17 +1,15 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
-import { createHash, randomInt } from "node:crypto";
+import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
-import { addMcp, listMcp, removeMcp } from "./mcp.js";
+import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
-import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -24,6 +22,7 @@ import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
+import { EnvService, EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import {
@@ -114,7 +113,7 @@ function logRequest(input: {
   response: Response;
   durationMs: number;
   authMode: AuthMode;
-  proxyService?: "opencode" | "opencode-router";
+  proxyService?: "opencode";
   proxyBaseUrl?: string;
   error?: string;
 }) {
@@ -142,36 +141,7 @@ function logRequest(input: {
   logger.log(level, message, attributes);
 }
 
-type AuthMode = "none" | "client" | "host";
-
-function normalizeOpenCodeRouterProxyPath(pathname: string): string {
-  const trimmed = pathname.trim();
-  if (!trimmed) return "/opencode-router";
-  if (trimmed === "/opencode-router/") return "/opencode-router";
-  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
-}
-
-function resolveOpenCodeRouterProxyPolicy(
-  method: string,
-  pathname: string,
-): { auth: AuthMode; requiredScope?: TokenScope } {
-  const normalized = normalizeOpenCodeRouterProxyPath(pathname);
-  const upper = method.trim().toUpperCase();
-
-  if (upper === "GET") {
-    if (normalized === "/opencode-router" || normalized === "/opencode-router/health") {
-      return { auth: "client" };
-    }
-    if (normalized === "/opencode-router/bindings") {
-      return { auth: "client", requiredScope: "collaborator" };
-    }
-    if (normalized === "/opencode-router/identities/telegram" || normalized === "/opencode-router/identities/slack") {
-      return { auth: "client", requiredScope: "collaborator" };
-    }
-  }
-
-  return { auth: "host" };
-}
+type AuthMode = "none" | "client" | "host" | "host-token";
 
 function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath: string } | null {
   if (!pathname.startsWith("/w/")) return null;
@@ -212,6 +182,10 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
   }
 }
 
+function isSessionCommandProxyRequest(method: string, proxyPath: string) {
+  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
+}
+
 interface Route {
   method: string;
   regex: RegExp;
@@ -235,13 +209,14 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
+  const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const restartReloadWatchers = () => {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
-  const routes = createRoutes(config, approvals, tokens, restartReloadWatchers);
+  const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -254,7 +229,7 @@ export function startServer(config: ServerConfig) {
       const url = new URL(request.url);
       const startedAt = Date.now();
       let authMode: AuthMode = "none";
-      let proxyService: "opencode" | "opencode-router" | undefined;
+      let proxyService: "opencode" | undefined;
       let proxyBaseUrl: string | undefined;
       let errorMessage: string | undefined;
 
@@ -289,34 +264,6 @@ export function startServer(config: ServerConfig) {
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
           const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
-          return finalize(response);
-        } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
-          errorMessage = apiError.message;
-          return finalize(jsonResponse(formatError(apiError), apiError.status));
-        }
-      }
-
-      if (mount && (mount.restPath === "/opencode-router" || mount.restPath.startsWith("/opencode-router/"))) {
-        const policy = resolveOpenCodeRouterProxyPolicy(request.method, mount.restPath);
-        authMode = policy.auth;
-        try {
-          if (authMode === "host") {
-            await requireHost(request, config, tokens);
-          } else {
-            const actor = await requireClient(request, config, tokens);
-            if (policy.requiredScope && scopeRank(actor.scope ?? "viewer") < scopeRank(policy.requiredScope)) {
-              throw new ApiError(403, "forbidden", "Insufficient token scope", {
-                required: policy.requiredScope,
-                scope: actor.scope,
-              });
-            }
-          }
-          proxyService = "opencode-router";
-          proxyBaseUrl = resolveOpenCodeRouterBaseUrl();
-          const response = await proxyOpenCodeRouterRequest({ request, url, proxyPath: mount.restPath });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -362,34 +309,6 @@ export function startServer(config: ServerConfig) {
         }
       }
 
-      if (url.pathname === "/opencode-router" || url.pathname.startsWith("/opencode-router/")) {
-        const policy = resolveOpenCodeRouterProxyPolicy(request.method, url.pathname);
-        authMode = policy.auth;
-        try {
-          if (authMode === "host") {
-            await requireHost(request, config, tokens);
-          } else {
-            const actor = await requireClient(request, config, tokens);
-            if (policy.requiredScope && scopeRank(actor.scope ?? "viewer") < scopeRank(policy.requiredScope)) {
-              throw new ApiError(403, "forbidden", "Insufficient token scope", {
-                required: policy.requiredScope,
-                scope: actor.scope,
-              });
-            }
-          }
-          proxyService = "opencode-router";
-          proxyBaseUrl = resolveOpenCodeRouterBaseUrl();
-          const response = await proxyOpenCodeRouterRequest({ request, url });
-          return finalize(response);
-        } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
-          errorMessage = apiError.message;
-          return finalize(jsonResponse(formatError(apiError), apiError.status));
-        }
-      }
-
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
         errorMessage = "not_found";
@@ -398,11 +317,14 @@ export function startServer(config: ServerConfig) {
 
       authMode = route.auth;
       try {
-        const actor = route.auth === "host"
-          ? await requireHost(request, config, tokens)
-          : route.auth === "client"
-            ? await requireClient(request, config, tokens)
-            : undefined;
+        const actor =
+          route.auth === "host-token"
+            ? requireHostToken(request, config)
+            : route.auth === "host"
+              ? await requireHost(request, config, tokens)
+              : route.auth === "client"
+                ? await requireClient(request, config, tokens)
+                : undefined;
         const response = await route.handler({
           request,
           url,
@@ -486,23 +408,30 @@ async function fetchOpencodeJson(
 
   const url = new URL(baseUrl);
   url.pathname = path.startsWith("/") ? path : `/${path}`;
+  const directory = resolveOpencodeDirectory(workspace);
   if (init.query instanceof URLSearchParams) {
-    url.search = init.query.toString();
+    const params = new URLSearchParams(init.query);
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
+    url.search = params.toString();
   } else if (init.query) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(init.query)) {
       if (value === undefined || value === null) continue;
       params.set(key, String(value));
     }
+    if (directory && !params.has("directory")) {
+      params.set("directory", directory);
+    }
     url.search = params.toString();
   } else {
-    url.search = "";
+    url.search = directory ? new URLSearchParams({ directory }).toString() : "";
   }
 
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
 
-  const directory = resolveOpencodeDirectory(workspace);
   if (directory) {
     headers.set("x-opencode-directory", directory);
   }
@@ -528,15 +457,6 @@ async function fetchOpencodeJson(
     });
   }
   return json;
-}
-
-function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: string) {
-  const target = new URL(baseUrl);
-  const trimmedPath = path.replace(/^\/opencode-router/, "");
-  const normalized = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
-  target.pathname = normalized === "/" ? "/" : normalized;
-  target.search = search;
-  return target.toString();
 }
 
 async function proxyOpencodeRequest(input: {
@@ -573,56 +493,43 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  if (isSessionCommandProxyRequest(method, proxyPath)) {
+    const bufferedBody = body ? await input.request.arrayBuffer() : undefined;
+    void fetch(targetUrl, {
+      method,
+      headers,
+      body: bufferedBody,
+    }).catch(() => {
+      // Command failures are surfaced through the OpenCode event stream.
+    });
+    return jsonResponse({ ok: true, accepted: true });
+  }
   const response = await fetch(targetUrl, {
     method,
     headers,
     body,
   });
 
-  return response;
+  return sanitizeProxyResponse(response);
 }
 
-function resolveOpenCodeRouterBaseUrl(): string {
-  const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
-  if (!port) {
-    throw new ApiError(404, "opencodeRouter_unconfigured", "OpenCodeRouter is not configured on this host");
-  }
-  return `http://127.0.0.1:${port}`;
-}
-
-async function proxyOpenCodeRouterRequest(input: {
-  request: Request;
-  url: URL;
-  proxyPath?: string;
-}) {
-  const baseUrl = resolveOpenCodeRouterBaseUrl();
-  const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpenCodeRouterProxyUrl(baseUrl, proxyPath, input.url.search);
-  const headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
-  headers.delete("origin");
-
-  const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
-  try {
-    const response = await fetch(targetUrl, {
-      method,
-      headers,
-      body,
-    });
-    return response;
-  } catch (error) {
-    const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
-    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
-      baseUrl,
-      port,
-      targetUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+/**
+ * Strip hop-by-hop and transport-level headers that Bun's native fetch keeps
+ * in the upstream response even after it has already decoded the body for us.
+ * Without this the browser sees `content-encoding: gzip` on a plain-text
+ * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
+ * code that reaches through /opencode/* (including session.create).
+ */
+function sanitizeProxyResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function jsonResponse(data: unknown, status = 200) {
@@ -630,16 +537,6 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-function opencodeRouterDebugEnabled(): boolean {
-  return ["1", "true", "yes"].includes((process.env.OPENWORK_DEBUG_OPENCODE_ROUTER ?? "").toLowerCase());
-}
-
-function logOpenCodeRouterDebug(message: string, details?: Record<string, unknown>) {
-  if (!opencodeRouterDebugEnabled()) return;
-  const payload = details ? ` ${JSON.stringify(details)}` : "";
-  console.log(`[opencodeRouter] ${message}${payload}`);
 }
 
 function withCors(response: Response, request: Request, config: ServerConfig) {
@@ -659,7 +556,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
     "Access-Control-Allow-Headers",
     "Authorization, Content-Type, X-OpenWork-Host-Token, X-OpenWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
-  headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }
@@ -677,6 +574,14 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   }
   const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
+}
+
+function requireHostToken(request: Request, config: ServerConfig): Actor {
+  const hostToken = request.headers.get("x-openwork-host-token");
+  if (hostToken && hostToken === config.hostToken) {
+    return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
+  }
+  throw new ApiError(401, "unauthorized", "Invalid host token");
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
@@ -709,7 +614,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   const maxBytes = resolveInboxMaxBytes();
   const toyUiEnabled = resolveToyUiEnabled();
   const browserProvider = resolveBrowserProvider();
-  const opencodeRouterConfigured = Boolean(parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT));
   const opencodeConfigured = config.workspaces.some((workspace) => Boolean(workspace.baseUrl?.trim()));
   return {
     schemaVersion,
@@ -733,7 +637,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
       opencode: opencodeConfigured,
-      opencodeRouter: opencodeRouterConfigured,
     },
     toolProviders: {
       browser: browserProvider,
@@ -789,6 +692,15 @@ function resolveToyUiEnabled(): boolean {
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
+// Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
+// /dev/log endpoint accepts JSON payloads and appends them to that file so an
+// operator can `tail -f` the file to see live browser activity. Returning null
+// disables the endpoint entirely.
+function resolveDevLogPath(): string | null {
+  const raw = (process.env.OPENWORK_DEV_LOG_FILE ?? "").trim();
+  return raw.length > 0 ? raw : null;
+}
+
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
   const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
   if (raw === "sandbox-headless") {
@@ -842,6 +754,13 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
     }
   }
   return parts.join("/");
+}
+
+export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
+  const lowered = relativePath.toLowerCase();
+  return [".md", ".mdx", ".markdown", ".json", ".jsonc", ".ts", ".js", ".mjs", ".cjs", ".txt"].some((ext) =>
+    lowered.endsWith(ext),
+  );
 }
 
 function resolveSafeChildPath(root: string, child: string): string {
@@ -1123,6 +1042,7 @@ function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
   tokens: TokenService,
+  env: EnvService,
   onWorkspacesChanged: () => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1171,6 +1091,53 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  // Dev log sink: append browser console + error events to a file that an
+  // operator (or an AI driver) can tail. Unauth on purpose because this is
+  // scoped to the dev host and needs to work before clients finish wiring
+  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
+  addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" }, 404);
+    }
+    let payload: unknown = null;
+    try {
+      payload = await ctx.request.json();
+    } catch {
+      return jsonResponse({ ok: false, reason: "invalid_json" }, 400);
+    }
+    const entries = Array.isArray(payload) ? payload : [payload];
+    try {
+      await mkdir(dirname(target), { recursive: true });
+      const lines = entries
+        .map((entry) => {
+          try {
+            const stamped = { at: new Date().toISOString(), ...(entry as Record<string, unknown>) };
+            return JSON.stringify(stamped);
+          } catch {
+            return JSON.stringify({ at: new Date().toISOString(), raw: String(entry) });
+          }
+        })
+        .join("\n");
+      await appendFile(target, `${lines}\n`, "utf8");
+    } catch (error) {
+      return jsonResponse({ ok: false, reason: error instanceof Error ? error.message : String(error) }, 500);
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "GET", "/dev/log", "none", async () => {
+    // Probe response: always 200 so the client's capability probe doesn't
+    // log a noisy "Failed to load resource: 404" in the browser console
+    // when the sink is simply disabled. Clients should key on `ok` + `reason`
+    // in the body, not on HTTP status.
+    const target = resolveDevLogPath();
+    if (!target) {
+      return jsonResponse({ ok: false, reason: "dev_log_disabled" });
+    }
+    return jsonResponse({ ok: true, path: target });
   });
 
   addRoute(routes, "GET", "/ui", "none", async () => {
@@ -1326,6 +1293,87 @@ function createRoutes(
     const ok = await tokens.revoke(ctx.params.id);
     if (!ok) {
       throw new ApiError(404, "token_not_found", "Token not found");
+    }
+    return jsonResponse({ ok: true });
+  });
+
+  function rethrowEnvStoreReadError(error: unknown): never {
+    if (error instanceof EnvStoreReadError) {
+      throw new ApiError(
+        409,
+        error.code,
+        "Environment variable store is invalid. Fix or remove the local env file before editing.",
+      );
+    }
+    throw error;
+  }
+
+  // User-level env vars (see apps/app/pr/environment-variables.md). All routes
+  // require the desktop host token (not owner bearer tokens) because values are
+  // returned raw; the React pane masks them only for display. Reload semantics
+  // are driven from the UI after a write; this surface is user-scoped, not
+  // workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host-token", async () => {
+    const items = await env.list().catch(rethrowEnvStoreReadError);
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/env/keys", "host-token", async () => {
+    const items = await env.list().catch(rethrowEnvStoreReadError);
+    return jsonResponse({ keys: items.map((item) => item.key) });
+  });
+
+  addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const rawEntries = Array.isArray(body.entries)
+      ? body.entries
+      : [{ key: body.key, value: body.value }];
+    const entries: Array<{ key: string; value: string }> = [];
+    for (const raw of rawEntries) {
+      if (!raw || typeof raw !== "object") {
+        throw new ApiError(400, "invalid_entry", "Each entry must be an object");
+      }
+      const candidate = raw as { key?: unknown; value?: unknown };
+      const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
+      const value = typeof candidate.value === "string" ? candidate.value : "";
+      if (!isValidEnvKey(key)) {
+        throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+      }
+      entries.push({ key, value });
+    }
+    if (entries.length === 0) {
+      throw new ApiError(400, "no_entries", "No entries provided");
+    }
+    try {
+      await env.upsertMany(entries);
+    } catch (error) {
+      if (error instanceof EnvStoreReadError) {
+        rethrowEnvStoreReadError(error);
+      }
+      if (error instanceof InvalidEnvKeyError) {
+        throw new ApiError(
+          400,
+          error.code,
+          error.code === "reserved_env_key"
+            ? "Environment variable name is reserved for OpenWork internals"
+            : "Invalid environment variable name",
+        );
+      }
+      throw error;
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "DELETE", "/env/:key", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const key = ctx.params.key;
+    if (!isValidEnvKey(key)) {
+      throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+    }
+    const removed = await env.delete(key).catch(rethrowEnvStoreReadError);
+    if (!removed) {
+      throw new ApiError(404, "env_not_found", "Environment variable not found");
     }
     return jsonResponse({ ok: true });
   });
@@ -1668,828 +1716,6 @@ function createRoutes(
     }
 
     return jsonResponse({ updatedAt: Date.now() });
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/opencode-router/health", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    await resolveWorkspace(config, ctx.params.id);
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/health", { timeoutMs: 2_000 });
-
-    if (apply.applied && apply.body && typeof apply.body === "object") {
-      return jsonResponse(apply.body, apply.status ?? 200);
-    }
-
-    if (apply.applied) {
-      throw new ApiError(502, "opencodeRouter_invalid_health", "OpenCodeRouter returned an invalid health response");
-    }
-
-    throw new ApiError(apply.status ?? 503, "opencodeRouter_unreachable", apply.error ?? "OpenCodeRouter health unavailable");
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/telegram-token", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const token = typeof body.token === "string" ? body.token.trim() : "";
-    logOpenCodeRouterDebug("telegram-token:request", {
-      workspaceId: workspace.id,
-      actor: ctx.actor?.type ?? "unknown",
-      hasToken: Boolean(token),
-    });
-    if (!token) {
-      throw new ApiError(400, "token_required", "Telegram token is required");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.telegram.set-token",
-      summary: "Set Telegram bot token",
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    await persistOpenCodeRouterTelegramIdentity({ id: identityId, token, enabled: true, directory: workspace.path });
-
-    const apply = await tryPostOpenCodeRouterHealth(
-      "/identities/telegram",
-      { id: identityId, token, enabled: true, directory: workspace.path },
-      { timeoutMs: 3_000 },
-    );
-
-    const result: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      applied: apply.applied,
-      telegram: { configured: true, enabled: true },
-    };
-
-    const bot = await fetchTelegramBotInfo(token);
-    if (bot) {
-      (result.telegram as Record<string, unknown>).bot = bot;
-    }
-
-    // Reflect opencodeRouter apply status when available.
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.telegram && typeof record.telegram === "object") {
-        const telegram = record.telegram as Record<string, unknown>;
-        if (typeof telegram.applied === "boolean") {
-          (result.telegram as Record<string, unknown>).applied = telegram.applied;
-          result.applied = telegram.applied;
-        }
-        if (typeof telegram.starting === "boolean") {
-          (result.telegram as Record<string, unknown>).starting = telegram.starting;
-        }
-        if (typeof telegram.error === "string" && telegram.error.trim()) {
-          (result.telegram as Record<string, unknown>).error = telegram.error;
-          result.applyError = telegram.error;
-        }
-      }
-    }
-
-    if (!apply.applied) {
-      result.applyError = (typeof result.applyError === "string" && result.applyError.trim())
-        ? result.applyError
-        : apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") result.applyStatus = apply.status;
-    }
-    logOpenCodeRouterDebug("telegram-token:updated", {
-      workspaceId: workspace.id,
-      applied: typeof result.applied === "boolean" ? result.applied : null,
-      applyError: typeof result.applyError === "string" ? result.applyError : null,
-    });
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.telegram.set-token",
-      target: "opencodeRouter.telegram",
-      summary: "Updated Telegram bot token",
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/opencode-router/telegram", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    await resolveWorkspace(config, ctx.params.id);
-    const info = await readOpenCodeRouterTelegramInfo();
-    return jsonResponse({ ok: true, ...info });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/telegram-enabled", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const enabled = body.enabled === true || body.enabled === "true";
-    const clearToken = body.clearToken === true || body.clearToken === "true";
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.telegram.set-enabled",
-      summary: enabled ? "Enable Telegram" : "Disable Telegram",
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    await persistOpenCodeRouterTelegramEnabled(enabled, { clearToken: !enabled && clearToken });
-
-    // OpenCodeRouter no longer exposes a channel-wide enable/disable endpoint.
-    // Persisting the flag gates all identities on next start.
-    const response: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      enabled,
-      applied: false,
-      applyError: "Restart opencodeRouter to apply",
-    };
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.telegram.set-enabled",
-      target: "opencodeRouter.telegram",
-      summary: enabled ? "Enabled Telegram" : "Disabled Telegram",
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(response);
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/slack-tokens", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
-    const appToken = typeof body.appToken === "string" ? body.appToken.trim() : "";
-    logOpenCodeRouterDebug("slack-tokens:request", {
-      workspaceId: workspace.id,
-      actor: ctx.actor?.type ?? "unknown",
-      hasBotToken: Boolean(botToken),
-      hasAppToken: Boolean(appToken),
-    });
-    if (!botToken || !appToken) {
-      throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.slack.set-tokens",
-      summary: "Set Slack bot tokens",
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    const identityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled: true, directory: workspace.path });
-
-    const apply = await tryPostOpenCodeRouterHealth(
-      "/identities/slack",
-      { id: identityId, botToken, appToken, enabled: true, directory: workspace.path },
-      { timeoutMs: 3_000 },
-    );
-
-    const result: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      applied: apply.applied,
-      slack: { configured: true, enabled: true },
-    };
-
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.slack && typeof record.slack === "object") {
-        const slack = record.slack as Record<string, unknown>;
-        if (typeof slack.applied === "boolean") {
-          (result.slack as Record<string, unknown>).applied = slack.applied;
-          result.applied = slack.applied;
-        }
-        if (typeof slack.starting === "boolean") {
-          (result.slack as Record<string, unknown>).starting = slack.starting;
-        }
-        if (typeof slack.error === "string" && slack.error.trim()) {
-          (result.slack as Record<string, unknown>).error = slack.error;
-          result.applyError = slack.error;
-        }
-      }
-    }
-
-    if (!apply.applied) {
-      result.applyError = (typeof result.applyError === "string" && result.applyError.trim())
-        ? result.applyError
-        : apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") result.applyStatus = apply.status;
-    }
-    logOpenCodeRouterDebug("slack-tokens:updated", {
-      workspaceId: workspace.id,
-      applied: typeof result.applied === "boolean" ? result.applied : null,
-      applyError: typeof result.applyError === "string" ? result.applyError : null,
-    });
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.slack.set-tokens",
-      target: "opencodeRouter.slack",
-      summary: "Updated Slack bot tokens",
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/opencode-router/identities/telegram", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/telegram", { timeoutMs: 2_000 });
-
-    if (apply.applied && apply.body && typeof apply.body === "object") {
-      const payload = apply.body as Record<string, unknown>;
-      const rawItems = (payload as any).items;
-      if (Array.isArray(rawItems)) {
-        const items = rawItems
-          .filter(
-            (entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)),
-          )
-          .map((entry) => {
-            const id = normalizeOpenCodeRouterIdentityId(entry.id);
-            const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
-            const running = entry.running === true || entry.running === "true";
-            const access = normalizeTelegramAccessMode(
-              entry.access,
-              entry.pairingRequired === true || entry.pairingRequired === "true" ? "private" : "public",
-            );
-            return { id, enabled, running, access, pairingRequired: access === "private" };
-          })
-          .filter((item) => item.id === workspaceIdentityId);
-        return jsonResponse({ ...payload, items });
-      }
-      return jsonResponse(payload);
-    }
-
-    const current = await readOpenCodeRouterConfigFile(resolveOpenCodeRouterConfigPath());
-    const channels = ensurePlainObject(current.channels);
-    const telegram = ensurePlainObject(channels.telegram);
-    const botsRaw = (telegram as any).bots;
-    const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-    const items = bots
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
-      .map((entry) => {
-        const id = normalizeOpenCodeRouterIdentityId(entry.id);
-        const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
-        const { access } = resolveTelegramAccessFromRecord(entry);
-        return { id, enabled, running: false, access, pairingRequired: access === "private" };
-      })
-      .filter((item) => item.id === workspaceIdentityId);
-    return jsonResponse({ ok: true, items });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/identities/telegram", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const token = typeof body.token === "string" ? body.token.trim() : "";
-    const enabled = body.enabled === undefined ? true : body.enabled === true || body.enabled === "true";
-    const access = normalizeTelegramAccessMode(body.access, "public");
-    const pairingCodeInput = typeof body.pairingCode === "string" ? body.pairingCode : "";
-    const normalizedPairingCodeInput = normalizeTelegramPairingCode(pairingCodeInput);
-    if (
-      access === "private" &&
-      pairingCodeInput.trim() &&
-      (normalizedPairingCodeInput.length < 6 || normalizedPairingCodeInput.length > 24)
-    ) {
-      throw new ApiError(
-        400,
-        "invalid_pairing_code",
-        "Pairing code must be 6-24 letters or numbers",
-      );
-    }
-    const pairingCode =
-      access === "private"
-        ? (normalizedPairingCodeInput || normalizeTelegramPairingCode(generateTelegramPairingCode()))
-        : "";
-    const pairingCodeHash = access === "private" ? hashTelegramPairingCode(pairingCode) : "";
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const requestedId = typeof body.id === "string" ? normalizeOpenCodeRouterIdentityId(body.id) : "";
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = workspaceIdentityId;
-    if (identityId === "env") {
-      throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
-    }
-    if (!token) {
-      throw new ApiError(400, "token_required", "Telegram token is required");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.telegram.identity.upsert",
-      summary: `Upsert Telegram identity (${identityId})`,
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    await persistOpenCodeRouterTelegramIdentity({
-      id: identityId,
-      token,
-      enabled,
-      directory: workspace.path,
-      access,
-      ...(access === "private" ? { pairingCodeHash } : {}),
-    });
-
-    const apply = await tryPostOpenCodeRouterHealth(
-      "/identities/telegram",
-      {
-        id: identityId,
-        token,
-        enabled,
-        directory: workspace.path,
-        access,
-        ...(access === "private" ? { pairingCodeHash } : {}),
-      },
-      { timeoutMs: 3_000 },
-    );
-
-    const response: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      applied: apply.applied,
-      telegram: {
-        id: identityId,
-        enabled,
-        access,
-        pairingRequired: access === "private",
-        ...(access === "private" ? { pairingCode } : {}),
-      },
-    };
-
-    const bot = await fetchTelegramBotInfo(token);
-    if (bot) {
-      (response.telegram as Record<string, unknown>).bot = bot;
-    }
-
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.telegram && typeof record.telegram === "object") {
-        response.telegram = {
-          ...(response.telegram as Record<string, unknown>),
-          ...(record.telegram as Record<string, unknown>),
-          access,
-          pairingRequired: access === "private",
-          ...(access === "private" ? { pairingCode } : {}),
-        };
-      }
-    }
-
-    if (!apply.applied) {
-      response.applyError = apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") response.applyStatus = apply.status;
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.telegram.identity.upsert",
-      target: "opencodeRouter.telegram",
-      summary: `Upserted Telegram identity (${identityId})`,
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(response);
-  });
-
-  addRoute(routes, "DELETE", "/workspace/:id/opencode-router/identities/telegram/:identityId", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const requestedId = normalizeOpenCodeRouterIdentityId(ctx.params.identityId);
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = workspaceIdentityId;
-    if (identityId === "env") {
-      throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.telegram.identity.delete",
-      summary: `Delete Telegram identity (${identityId})`,
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    const deleted = await deleteOpenCodeRouterTelegramIdentity(identityId);
-    const apply = await tryFetchOpenCodeRouterHealth(
-      "DELETE",
-      `/identities/telegram/${encodeURIComponent(identityId)}`,
-      { timeoutMs: 3_000 },
-    );
-
-    const response: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      deleted,
-      applied: apply.applied,
-      telegram: { id: identityId, deleted },
-    };
-
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.telegram && typeof record.telegram === "object") {
-        response.telegram = record.telegram;
-      }
-    }
-
-    if (!apply.applied) {
-      response.applyError = apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") response.applyStatus = apply.status;
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.telegram.identity.delete",
-      target: "opencodeRouter.telegram",
-      summary: `Deleted Telegram identity (${identityId})`,
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(response);
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/opencode-router/identities/slack", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", "/identities/slack", { timeoutMs: 2_000 });
-
-    if (apply.applied && apply.body && typeof apply.body === "object") {
-      const payload = apply.body as Record<string, unknown>;
-      const rawItems = (payload as any).items;
-      if (Array.isArray(rawItems)) {
-        const items = rawItems
-          .filter(
-            (entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)),
-          )
-          .map((entry) => {
-            const id = normalizeOpenCodeRouterIdentityId(entry.id);
-            const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
-            const running = entry.running === true || entry.running === "true";
-            return { id, enabled, running };
-          })
-          .filter((item) => item.id === workspaceIdentityId);
-        return jsonResponse({ ...payload, items });
-      }
-      return jsonResponse(payload);
-    }
-
-    const current = await readOpenCodeRouterConfigFile(resolveOpenCodeRouterConfigPath());
-    const channels = ensurePlainObject(current.channels);
-    const slack = ensurePlainObject(channels.slack);
-    const appsRaw = (slack as any).apps;
-    const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
-    const items = apps
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object" && !Array.isArray(entry)))
-      .map((entry) => {
-        const id = normalizeOpenCodeRouterIdentityId(entry.id);
-        const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
-        return { id, enabled, running: false };
-      })
-      .filter((item) => item.id === workspaceIdentityId);
-    return jsonResponse({ ok: true, items });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/identities/slack", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
-    const appToken = typeof body.appToken === "string" ? body.appToken.trim() : "";
-    const enabled = body.enabled === undefined ? true : body.enabled === true || body.enabled === "true";
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const requestedId = typeof body.id === "string" ? normalizeOpenCodeRouterIdentityId(body.id) : "";
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = workspaceIdentityId;
-    if (identityId === "env") {
-      throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
-    }
-    if (!botToken || !appToken) {
-      throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.slack.identity.upsert",
-      summary: `Upsert Slack identity (${identityId})`,
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    await persistOpenCodeRouterSlackIdentity({ id: identityId, botToken, appToken, enabled, directory: workspace.path });
-
-    const apply = await tryPostOpenCodeRouterHealth(
-      "/identities/slack",
-      { id: identityId, botToken, appToken, enabled, directory: workspace.path },
-      { timeoutMs: 3_000 },
-    );
-
-    const response: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      applied: apply.applied,
-      slack: { id: identityId, enabled },
-    };
-
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.slack && typeof record.slack === "object") {
-        response.slack = record.slack;
-      }
-    }
-
-    if (!apply.applied) {
-      response.applyError = apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") response.applyStatus = apply.status;
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.slack.identity.upsert",
-      target: "opencodeRouter.slack",
-      summary: `Upserted Slack identity (${identityId})`,
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(response);
-  });
-
-  addRoute(routes, "DELETE", "/workspace/:id/opencode-router/identities/slack/:identityId", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const requestedId = normalizeOpenCodeRouterIdentityId(ctx.params.identityId);
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = workspaceIdentityId;
-    if (identityId === "env") {
-      throw new ApiError(400, "invalid_identity", "Identity id 'env' is reserved");
-    }
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "opencodeRouter.slack.identity.delete",
-      summary: `Delete Slack identity (${identityId})`,
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    const deleted = await deleteOpenCodeRouterSlackIdentity(identityId);
-    const apply = await tryFetchOpenCodeRouterHealth(
-      "DELETE",
-      `/identities/slack/${encodeURIComponent(identityId)}`,
-      { timeoutMs: 3_000 },
-    );
-
-    const response: Record<string, unknown> = {
-      ok: true,
-      persisted: true,
-      deleted,
-      applied: apply.applied,
-      slack: { id: identityId, deleted },
-    };
-
-    if (apply.body && typeof apply.body === "object") {
-      const record = apply.body as Record<string, unknown>;
-      if (record.slack && typeof record.slack === "object") {
-        response.slack = record.slack;
-      }
-    }
-
-    if (!apply.applied) {
-      response.applyError = apply.error ?? "OpenCodeRouter did not apply the update";
-      if (typeof apply.status === "number") response.applyStatus = apply.status;
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.slack.identity.delete",
-      target: "opencodeRouter.slack",
-      summary: `Deleted Slack identity (${identityId})`,
-      timestamp: Date.now(),
-    });
-
-    return jsonResponse(response);
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/opencode-router/bindings", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-
-    const search = new URLSearchParams();
-    const channel = (ctx.url.searchParams.get("channel") ?? "").trim();
-    const identityIdParam = (ctx.url.searchParams.get("identityId") ?? "").trim();
-    const requestedId = identityIdParam ? normalizeOpenCodeRouterIdentityId(identityIdParam) : "";
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    if (channel) search.set("channel", channel);
-    search.set("identityId", workspaceIdentityId);
-    const suffix = search.toString();
-    const pathname = suffix ? `/bindings?${suffix}` : "/bindings";
-
-    const apply = await tryFetchOpenCodeRouterHealth("GET", pathname, { timeoutMs: 2_000 });
-    if (apply.applied && apply.body && typeof apply.body === "object") {
-      return jsonResponse(apply.body);
-    }
-    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host");
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/bindings", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const body = await readJsonBody(ctx.request);
-    const channel = typeof body.channel === "string" ? body.channel.trim().toLowerCase() : "";
-    const identityIdParam = typeof body.identityId === "string" ? body.identityId.trim() : "";
-    const requestedId = identityIdParam ? normalizeOpenCodeRouterIdentityId(identityIdParam) : "";
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = workspaceIdentityId;
-    const peerId = typeof body.peerId === "string" ? body.peerId.trim() : "";
-    const directory = typeof body.directory === "string" ? body.directory.trim() : "";
-
-    if (channel !== "telegram" && channel !== "slack") {
-      throw new ApiError(400, "invalid_channel", "channel must be 'telegram' or 'slack'");
-    }
-    if (!peerId) {
-      throw new ApiError(400, "peer_required", "peerId is required");
-    }
-
-    const action = directory ? "opencodeRouter.binding.set" : "opencodeRouter.binding.clear";
-    const summary = directory
-      ? `Bind ${channel}/${identityId}:${peerId} -> ${directory}`
-      : `Clear binding for ${channel}/${identityId}:${peerId}`;
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action,
-      summary,
-      paths: [resolveOpenCodeRouterConfigPath()],
-    });
-
-    const payload: Record<string, unknown> = {
-      channel,
-      identityId,
-      peerId,
-      ...(directory ? { directory } : {}),
-    };
-    const apply = await tryPostOpenCodeRouterHealth("/bindings", payload, { timeoutMs: 3_000 });
-    if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not apply binding update");
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action,
-      target: "opencodeRouter.binding",
-      summary,
-      timestamp: Date.now(),
-    });
-
-    if (apply.body && typeof apply.body === "object") {
-      return jsonResponse(apply.body);
-    }
-    return jsonResponse({ ok: true });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/opencode-router/send", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
-    const body = await readJsonBody(ctx.request);
-    const channel = typeof body.channel === "string" ? body.channel.trim().toLowerCase() : "";
-    const text = typeof body.text === "string" ? body.text : "";
-    const peerId = typeof body.peerId === "string" ? body.peerId.trim() : "";
-    const autoBind = body.autoBind === true || body.autoBind === "true";
-    const directoryInput = typeof body.directory === "string" ? body.directory.trim() : "";
-    const directory = directoryInput || workspace.path;
-
-    const identityIdParam = typeof body.identityId === "string" ? body.identityId.trim() : "";
-    const requestedId = identityIdParam ? normalizeOpenCodeRouterIdentityId(identityIdParam) : "";
-    if (requestedId && requestedId !== workspaceIdentityId) {
-      throw new ApiError(
-        400,
-        "identity_mismatch",
-        `Identity id is scoped to this workspace (${workspace.id}).`,
-        { expected: workspaceIdentityId, received: requestedId },
-      );
-    }
-    const identityId = requestedId || undefined;
-
-    if (channel !== "telegram" && channel !== "slack") {
-      throw new ApiError(400, "invalid_channel", "channel must be 'telegram' or 'slack'");
-    }
-    if (!directory.trim() && !peerId) {
-      throw new ApiError(400, "directory_required", "directory is required when peerId is not provided");
-    }
-    if (!text.trim()) {
-      throw new ApiError(400, "text_required", "text is required");
-    }
-
-    const apply = await tryPostOpenCodeRouterHealth(
-      "/send",
-      {
-        channel,
-        ...(identityId ? { identityId } : {}),
-        ...(directory.trim() ? { directory } : {}),
-        ...(peerId ? { peerId } : {}),
-        ...(autoBind ? { autoBind: true } : {}),
-        text,
-      },
-      { timeoutMs: 5_000 },
-    );
-
-    if (!apply.applied) {
-      throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter did not send the message");
-    }
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "opencodeRouter.send",
-      target: `opencodeRouter.${channel}`,
-      summary: `Sent outbound ${channel} message${identityId ? ` for ${identityId}` : ""}${peerId ? ` to ${peerId}` : ""}`,
-      timestamp: Date.now(),
-    });
-
-    if (apply.body && typeof apply.body === "object") {
-      return jsonResponse(apply.body);
-    }
-    return jsonResponse({
-      ok: true,
-      channel,
-      identityId,
-      directory,
-      attempted: 0,
-      sent: 0,
-    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
@@ -2999,10 +2225,8 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = (ctx.url.searchParams.get("path") ?? "").trim();
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     const absPath = resolveSafeChildPath(workspace.path, relativePath);
@@ -3031,10 +2255,8 @@ function createRoutes(
 
     const requestedPath = String(body.path ?? "");
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     if (typeof body.content !== "string") {
@@ -3393,6 +2615,49 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  // Toggle `enabled` on a workspace MCP. Strict body validation — `Boolean(body.enabled)`
+  // would silently disable on `{}` or coerce `"false"` to true.
+  addRoute(routes, "POST", "/workspace/:id/mcp/:name/enabled", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = ctx.params.name ?? "";
+    const body = await readJsonBody(ctx.request);
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+    }
+    const enabled = body.enabled;
+    const action = enabled ? "mcp.enable" : "mcp.disable";
+    const summary = `${enabled ? "Enable" : "Disable"} MCP ${name}`;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action,
+      summary,
+      paths: [opencodeConfigPath(workspace.path)],
+    });
+    const updated = await setMcpEnabled(workspace.path, name, enabled);
+    if (!updated) {
+      throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action,
+      target: "opencode.json",
+      summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
+      timestamp: Date.now(),
+    });
+    // ReloadTrigger.action only allows added/removed/updated, so toggle => "updated".
+    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+      type: "mcp",
+      name,
+      action: "updated",
+    });
+    const items = await listMcp(workspace.path);
+    return jsonResponse({ items });
+  });
+
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name/auth", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -3526,37 +2791,6 @@ function createRoutes(
       path: join(workspace.path, ".opencode", "commands", `${sanitizeCommandName(name)}.md`),
     });
     return jsonResponse({ ok: true });
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/scheduler/jobs", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listScheduledJobs(workspace.path);
-    return jsonResponse({ items });
-  });
-
-  addRoute(routes, "DELETE", "/workspace/:id/scheduler/jobs/:name", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const name = ctx.params.name ?? "";
-    const { job, jobFile, systemPaths } = await resolveScheduledJob(name, workspace.path);
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "scheduler.delete",
-      summary: `Delete scheduled job ${job.name}`,
-      paths: [jobFile, ...systemPaths],
-    });
-    await deleteScheduledJob(job, jobFile);
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "scheduler.delete",
-      target: jobFile,
-      summary: `Deleted scheduled job ${job.name}`,
-      timestamp: Date.now(),
-    });
-    return jsonResponse({ job });
   });
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
@@ -3836,12 +3070,6 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   }
 }
 
-function parseInteger(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function parseOptionalPositiveInteger(value: string | null, name: string): number | undefined {
   if (value === null) return undefined;
   const parsed = Number.parseInt(value, 10);
@@ -3868,24 +3096,6 @@ function parseOptionalBoolean(value: string | null, name: string): boolean | und
   throw new ApiError(400, "invalid_query", `${name} must be a boolean`);
 }
 
-function expandHome(value: string): string {
-  if (value.startsWith("~/")) {
-    return join(homedir(), value.slice(2));
-  }
-  return value;
-}
-
-function resolveOpenCodeRouterConfigPath(): string {
-  const override = process.env.OPENCODE_ROUTER_CONFIG_PATH?.trim();
-  if (override) return expandHome(override);
-  const dataDir = process.env.OPENCODE_ROUTER_DATA_DIR?.trim() || join(homedir(), ".openwork", "opencode-router");
-  return join(expandHome(dataDir), "opencode-router.json");
-}
-
-function resolveOpenCodeRouterHealthPort(): number {
-  return parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT) ?? 3005;
-}
-
 function parseJsonResponse(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -3895,20 +3105,6 @@ function parseJsonResponse(text: string): unknown {
     return trimmed;
   }
 }
-
-type OpenCodeRouterConfigFile = Record<string, unknown> & {
-  version?: number;
-  channels?: Record<string, unknown> & {
-    telegram?: Record<string, unknown>;
-    slack?: Record<string, unknown>;
-  };
-};
-
-type TelegramBotInfo = {
-  id: number;
-  username?: string;
-  name?: string;
-};
 
 function ensurePlainObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -4002,714 +3198,6 @@ function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoo
   return opencodeConfigPath(workspaceRoot);
 }
 
-function normalizeOpenCodeRouterIdentityId(value: unknown): string {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (!trimmed) return "default";
-  const safe = trimmed.replace(/[^a-zA-Z0-9_.-]+/g, "-");
-  const cleaned = safe.replace(/^-+|-+$/g, "").slice(0, 48);
-  return cleaned || "default";
-}
-
-type TelegramAccessMode = "public" | "private";
-
-const TELEGRAM_PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
-const TELEGRAM_PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-function normalizeTelegramAccessMode(value: unknown, fallback: TelegramAccessMode = "public"): TelegramAccessMode {
-  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (raw === "private") return "private";
-  if (raw === "public") return "public";
-  return fallback;
-}
-
-function normalizeTelegramPairingCode(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function normalizeTelegramPairingCodeHash(value: unknown): string {
-  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!TELEGRAM_PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
-  return raw;
-}
-
-function hashTelegramPairingCode(value: string): string {
-  return createHash("sha256").update(normalizeTelegramPairingCode(value)).digest("hex");
-}
-
-function generateTelegramPairingCode(): string {
-  let code = "";
-  for (let index = 0; index < 8; index += 1) {
-    code += TELEGRAM_PAIRING_CODE_ALPHABET[randomInt(0, TELEGRAM_PAIRING_CODE_ALPHABET.length)] ?? "";
-  }
-  if (code.length !== 8) {
-    throw new ApiError(500, "pairing_code_generation_failed", "Failed to generate Telegram pairing code");
-  }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
-}
-
-function resolveTelegramAccessFromRecord(record: Record<string, unknown>): {
-  access: TelegramAccessMode;
-  pairingCodeHash: string;
-} {
-  const pairingCodeHash = normalizeTelegramPairingCodeHash(record.pairingCodeHash);
-  const access = normalizeTelegramAccessMode(record.access, pairingCodeHash ? "private" : "public");
-  return {
-    access,
-    pairingCodeHash: access === "private" ? pairingCodeHash : "",
-  };
-}
-
-async function readOpenCodeRouterConfigFile(configPath: string): Promise<OpenCodeRouterConfigFile> {
-  if (!(await exists(configPath))) {
-    return { version: 1 };
-  }
-
-  let raw = "";
-  try {
-    raw = await readFile(configPath, "utf8");
-  } catch (error) {
-    throw new ApiError(500, "opencodeRouter_config_read_failed", "Failed to read opencode-router.json", {
-      path: configPath,
-      error: String(error),
-    });
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return ensurePlainObject(parsed) as OpenCodeRouterConfigFile;
-  } catch (error) {
-    throw new ApiError(422, "invalid_json", "Failed to parse opencode-router.json", {
-      path: configPath,
-      error: String(error),
-    });
-  }
-}
-
-async function writeOpenCodeRouterConfigFile(configPath: string, config: OpenCodeRouterConfigFile): Promise<void> {
-  await ensureDir(dirname(configPath));
-  const next: OpenCodeRouterConfigFile = {
-    ...config,
-    version: typeof config.version === "number" && Number.isFinite(config.version) ? config.version : 1,
-  };
-  const tmpPath = `${configPath}.tmp.${shortId()}`;
-  try {
-    await writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(tmpPath, configPath);
-  } finally {
-    // Best-effort cleanup if rename failed.
-    try {
-      await rm(tmpPath);
-    } catch {
-      // ignore
-    }
-  }
-}
-
-async function persistOpenCodeRouterTelegramToken(token: string): Promise<void> {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const telegram = ensurePlainObject(channels.telegram);
-
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-  const nextBots: Array<Record<string, unknown>> = [];
-  let found = false;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
-    if (id !== "default") {
-      nextBots.push(record);
-      continue;
-    }
-    found = true;
-    nextBots.push({ id: "default", token, enabled: true });
-  }
-  if (!found) nextBots.push({ id: "default", token, enabled: true });
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      telegram: {
-        ...telegram,
-        // New format (multi-identity)
-        bots: nextBots,
-        // Legacy (single-identity)
-        token,
-        enabled: true,
-      },
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-}
-
-async function persistOpenCodeRouterTelegramIdentity(identity: {
-  id: string;
-  token: string;
-  enabled: boolean;
-  directory?: string;
-  access?: TelegramAccessMode;
-  pairingCodeHash?: string;
-}): Promise<void> {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const telegram = ensurePlainObject(channels.telegram);
-
-  const id = normalizeOpenCodeRouterIdentityId(identity.id);
-  const token = identity.token.trim();
-  const directory = typeof identity.directory === "string" ? identity.directory.trim() : "";
-  const requestedAccess = identity.access ? normalizeTelegramAccessMode(identity.access, "public") : undefined;
-  const requestedPairingCodeHash = normalizeTelegramPairingCodeHash(identity.pairingCodeHash);
-  if (!token) {
-    throw new ApiError(400, "token_required", "Telegram token is required");
-  }
-
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-  const nextBots: Array<Record<string, unknown>> = [];
-  let found = false;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const entryId = normalizeOpenCodeRouterIdentityId(record.id);
-    if (entryId !== id) {
-      nextBots.push(record);
-      continue;
-    }
-    found = true;
-    const prevDir = typeof record.directory === "string" ? record.directory.trim() : "";
-    const nextDir = directory || prevDir;
-    const existingAccessState = resolveTelegramAccessFromRecord(record);
-    const access = requestedAccess ?? existingAccessState.access;
-    const pairingCodeHash = access === "private"
-      ? (requestedPairingCodeHash || existingAccessState.pairingCodeHash)
-      : "";
-    if (access === "private" && !pairingCodeHash) {
-      throw new ApiError(400, "pairing_code_required", "Telegram private access requires a pairing code hash");
-    }
-    nextBots.push({
-      id,
-      token,
-      enabled: identity.enabled,
-      ...(nextDir ? { directory: nextDir } : {}),
-      access,
-      ...(access === "private" ? { pairingCodeHash } : {}),
-    });
-  }
-  if (!found) {
-    const access = requestedAccess ?? "public";
-    const pairingCodeHash = access === "private" ? requestedPairingCodeHash : "";
-    if (access === "private" && !pairingCodeHash) {
-      throw new ApiError(400, "pairing_code_required", "Telegram private access requires a pairing code hash");
-    }
-    nextBots.push({
-      id,
-      token,
-      enabled: identity.enabled,
-      ...(directory ? { directory } : {}),
-      access,
-      ...(access === "private" ? { pairingCodeHash } : {}),
-    });
-  }
-
-  const nextTelegram: Record<string, unknown> = {
-    ...telegram,
-    enabled: true,
-    bots: nextBots,
-  };
-  if (id === "default") {
-    // Legacy fallback.
-    nextTelegram.token = token;
-  }
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      telegram: nextTelegram,
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-}
-
-async function deleteOpenCodeRouterTelegramIdentity(idRaw: string): Promise<boolean> {
-  const id = normalizeOpenCodeRouterIdentityId(idRaw);
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const telegram = ensurePlainObject(channels.telegram);
-
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-  const nextBots: Array<Record<string, unknown>> = [];
-  let deleted = false;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const entryId = normalizeOpenCodeRouterIdentityId(record.id);
-    if (entryId === id) {
-      deleted = true;
-      continue;
-    }
-    nextBots.push(record);
-  }
-
-  const nextTelegram: Record<string, unknown> = {
-    ...telegram,
-    bots: nextBots,
-  };
-  if (id === "default") {
-    delete (nextTelegram as any).token;
-  }
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      telegram: nextTelegram,
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-  return deleted;
-}
-
-async function persistOpenCodeRouterTelegramEnabled(enabled: boolean, options?: { clearToken?: boolean }) {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const telegram = ensurePlainObject(channels.telegram);
-
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-  const nextBots: Array<Record<string, unknown>> = [];
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
-    if (!id) {
-      nextBots.push(record);
-      continue;
-    }
-    // Leave per-bot enabled as-is; global channel enabled gates all identities.
-    if (!enabled && options?.clearToken && id === "default") {
-      const nextRecord = { ...record };
-      delete (nextRecord as any).token;
-      nextBots.push(nextRecord);
-      continue;
-    }
-    nextBots.push(record);
-  }
-
-  const nextTelegram: Record<string, unknown> = {
-    ...telegram,
-    enabled,
-    ...(bots.length ? { bots: nextBots } : {}),
-  };
-  if (!enabled && options?.clearToken) {
-    delete nextTelegram.token;
-  }
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      telegram: nextTelegram,
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-}
-
-async function fetchTelegramBotInfo(token: string): Promise<TelegramBotInfo | null> {
-  const trimmed = token.trim();
-  if (!trimmed) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3_000);
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${trimmed}/getMe`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    const json = (await response.json().catch(() => null)) as any;
-    if (!response.ok || !json?.ok || !json?.result) return null;
-    const result = json.result as Record<string, unknown>;
-    const id = typeof result.id === "number" ? result.id : null;
-    if (id == null) return null;
-    const username = typeof result.username === "string" ? result.username : undefined;
-    const name = typeof result.first_name === "string" ? result.first_name : undefined;
-    return { id, username, name };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function readOpenCodeRouterTelegramInfo(): Promise<{
-  configured: boolean;
-  enabled: boolean;
-  bot: TelegramBotInfo | null;
-}> {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const telegram = ensurePlainObject(channels.telegram);
-
-  const channelEnabled = telegram.enabled === undefined ? true : telegram.enabled === true || telegram.enabled === "true";
-
-  const botsRaw = (telegram as any).bots;
-  const bots = Array.isArray(botsRaw) ? (botsRaw as unknown[]) : [];
-  let token = "";
-  let identityEnabled = true;
-  for (const entry of bots) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
-    if (id !== "default") continue;
-    token = typeof record.token === "string" ? record.token.trim() : "";
-    identityEnabled = record.enabled === undefined ? true : record.enabled === true || record.enabled === "true";
-    break;
-  }
-  if (!token) {
-    // Legacy fallback.
-    token = typeof telegram.token === "string" ? telegram.token.trim() : "";
-  }
-
-  const configured = Boolean(token);
-  const bot = configured ? await fetchTelegramBotInfo(token) : null;
-  const enabled = configured ? channelEnabled && identityEnabled : false;
-  return { configured, enabled, bot };
-}
-
-async function persistOpenCodeRouterSlackTokens(botToken: string, appToken: string): Promise<void> {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const slack = ensurePlainObject(channels.slack);
-
-  const appsRaw = (slack as any).apps;
-  const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
-  const nextApps: Array<Record<string, unknown>> = [];
-  let found = false;
-  for (const entry of apps) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
-    if (id !== "default") {
-      nextApps.push(record);
-      continue;
-    }
-    found = true;
-    nextApps.push({ id: "default", botToken, appToken, enabled: true });
-  }
-  if (!found) nextApps.push({ id: "default", botToken, appToken, enabled: true });
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      slack: {
-        ...slack,
-        // New format (multi-identity)
-        apps: nextApps,
-        // Legacy (single-identity)
-        botToken,
-        appToken,
-        enabled: true,
-      },
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-}
-
-async function persistOpenCodeRouterSlackIdentity(identity: {
-  id: string;
-  botToken: string;
-  appToken: string;
-  enabled: boolean;
-  directory?: string;
-}): Promise<void> {
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const slack = ensurePlainObject(channels.slack);
-
-  const id = normalizeOpenCodeRouterIdentityId(identity.id);
-  const botToken = identity.botToken.trim();
-  const appToken = identity.appToken.trim();
-  const directory = typeof identity.directory === "string" ? identity.directory.trim() : "";
-  if (!botToken || !appToken) {
-    throw new ApiError(400, "token_required", "Slack botToken and appToken are required");
-  }
-
-  const appsRaw = (slack as any).apps;
-  const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
-  const nextApps: Array<Record<string, unknown>> = [];
-  let found = false;
-  for (const entry of apps) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const entryId = normalizeOpenCodeRouterIdentityId(record.id);
-    if (entryId !== id) {
-      nextApps.push(record);
-      continue;
-    }
-    found = true;
-    const prevDir = typeof record.directory === "string" ? record.directory.trim() : "";
-    const nextDir = directory || prevDir;
-    nextApps.push({ id, botToken, appToken, enabled: identity.enabled, ...(nextDir ? { directory: nextDir } : {}) });
-  }
-  if (!found) {
-    nextApps.push({ id, botToken, appToken, enabled: identity.enabled, ...(directory ? { directory } : {}) });
-  }
-
-  const nextSlack: Record<string, unknown> = {
-    ...slack,
-    enabled: true,
-    apps: nextApps,
-  };
-  if (id === "default") {
-    // Legacy fallback.
-    nextSlack.botToken = botToken;
-    nextSlack.appToken = appToken;
-  }
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      slack: nextSlack,
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-}
-
-async function deleteOpenCodeRouterSlackIdentity(idRaw: string): Promise<boolean> {
-  const id = normalizeOpenCodeRouterIdentityId(idRaw);
-  const configPath = resolveOpenCodeRouterConfigPath();
-  const current = await readOpenCodeRouterConfigFile(configPath);
-  const channels = ensurePlainObject(current.channels);
-  const slack = ensurePlainObject(channels.slack);
-
-  const appsRaw = (slack as any).apps;
-  const apps = Array.isArray(appsRaw) ? (appsRaw as unknown[]) : [];
-  const nextApps: Array<Record<string, unknown>> = [];
-  let deleted = false;
-  for (const entry of apps) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const entryId = normalizeOpenCodeRouterIdentityId(record.id);
-    if (entryId === id) {
-      deleted = true;
-      continue;
-    }
-    nextApps.push(record);
-  }
-
-  const nextSlack: Record<string, unknown> = {
-    ...slack,
-    apps: nextApps,
-  };
-  if (id === "default") {
-    delete (nextSlack as any).botToken;
-    delete (nextSlack as any).appToken;
-  }
-
-  const next: OpenCodeRouterConfigFile = {
-    ...current,
-    channels: {
-      ...channels,
-      slack: nextSlack,
-    },
-  };
-  await writeOpenCodeRouterConfigFile(configPath, next);
-  return deleted;
-}
-
-type OpenCodeRouterApplyAttempt = {
-  applied: boolean;
-  baseUrl: string;
-  status?: number;
-  error?: string;
-  body?: unknown;
-};
-
-function buildOpenCodeRouterHealthUrl(pathname: string): { baseUrl: string; url: string } {
-  const baseUrl = resolveOpenCodeRouterBaseUrl();
-  const url = new URL(pathname, `${baseUrl}/`);
-  return { baseUrl, url: url.toString() };
-}
-
-async function tryPostOpenCodeRouterHealth(
-  pathname: string,
-  payload: unknown,
-  options: { timeoutMs: number },
-): Promise<OpenCodeRouterApplyAttempt> {
-  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    const text = await response.text();
-    const parsed = parseJsonResponse(text);
-
-    if (response.ok) {
-      return {
-        applied: true,
-        baseUrl,
-        status: response.status,
-        body: parsed,
-      };
-    }
-
-    const detail =
-      typeof parsed === "object" && parsed && "error" in parsed
-        ? String((parsed as Record<string, unknown>).error)
-        : response.statusText || "OpenCodeRouter request failed";
-    return {
-      applied: false,
-      baseUrl,
-      status: response.status,
-      error: detail,
-      body: parsed,
-    };
-  } catch (error) {
-    clearTimeout(timer);
-    const message =
-      error instanceof Error && error.name === "AbortError"
-        ? `Timeout after ${options.timeoutMs}ms`
-        : String(error);
-    return {
-      applied: false,
-      baseUrl,
-      error: message,
-    };
-  }
-}
-
-async function tryFetchOpenCodeRouterHealth(
-  method: "GET" | "DELETE",
-  pathname: string,
-  options: { timeoutMs: number },
-): Promise<OpenCodeRouterApplyAttempt> {
-  const { baseUrl, url } = buildOpenCodeRouterHealthUrl(pathname);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    const text = await response.text();
-    const parsed = parseJsonResponse(text);
-
-    if (response.ok) {
-      return {
-        applied: true,
-        baseUrl,
-        status: response.status,
-        body: parsed,
-      };
-    }
-
-    const detail =
-      typeof parsed === "object" && parsed && "error" in parsed
-        ? String((parsed as Record<string, unknown>).error)
-        : response.statusText || "OpenCodeRouter request failed";
-    return {
-      applied: false,
-      baseUrl,
-      status: response.status,
-      error: detail,
-      body: parsed,
-    };
-  } catch (error) {
-    clearTimeout(timer);
-    const message =
-      error instanceof Error && error.name === "AbortError"
-        ? `Timeout after ${options.timeoutMs}ms`
-        : String(error);
-    return {
-      applied: false,
-      baseUrl,
-      error: message,
-    };
-  }
-}
-
-async function updateOpenCodeRouterTelegramToken(
-  token: string,
-): Promise<Record<string, unknown>> {
-  // Always persist first so the token is saved even if opencodeRouter is offline.
-  await persistOpenCodeRouterTelegramToken(token);
-
-  const apply = await tryPostOpenCodeRouterHealth(
-    "/config/telegram-token",
-    { token },
-    { timeoutMs: 3_000 },
-  );
-
-  const response: Record<string, unknown> = {
-    ok: true,
-    persisted: true,
-    applied: apply.applied,
-    telegram: { configured: true, enabled: true },
-  };
-
-  const bot = await fetchTelegramBotInfo(token);
-  if (bot) {
-    (response.telegram as Record<string, unknown>).bot = bot;
-  }
-
-  // Prefer opencodeRouter's response payload when available.
-  if (apply.body && typeof apply.body === "object") {
-    const record = apply.body as Record<string, unknown>;
-    if (record.telegram && typeof record.telegram === "object") {
-      response.telegram = record.telegram;
-    }
-  }
-
-  // If opencodeRouter reports apply status, reflect it at the top-level.
-  let telegramStarting = false;
-  if (response.telegram && typeof response.telegram === "object") {
-    const telegram = response.telegram as Record<string, unknown>;
-    if (typeof telegram.applied === "boolean") {
-      response.applied = telegram.applied;
-    }
-    if (typeof telegram.starting === "boolean") {
-      telegramStarting = telegram.starting;
-    }
-    if (!response.applyError && typeof telegram.error === "string" && telegram.error.trim()) {
-      response.applyError = telegram.error;
-    }
-  }
-
-  if (!apply.applied) {
-    response.applyError = (typeof response.applyError === "string" && response.applyError.trim())
-      ? response.applyError
-      : apply.error ?? "OpenCodeRouter did not apply the update";
-    if (typeof apply.status === "number") response.applyStatus = apply.status;
-  } else if (response.applied === false && !telegramStarting && !response.applyError) {
-    response.applyError = "OpenCodeRouter did not apply the update";
-  }
-
-  return response;
-}
-
 function getRuntimeControlConfig(): { baseUrl: string; token: string } | null {
   const baseUrl = process.env.OPENWORK_CONTROL_BASE_URL?.trim() ?? "";
   const token = process.env.OPENWORK_CONTROL_TOKEN?.trim() ?? "";
@@ -4736,58 +3224,6 @@ async function fetchRuntimeControl(path: string, init?: { method?: string; body?
     throw new ApiError(response.status, "runtime_upgrade_failed", "Worker runtime control request failed", json);
   }
   return json;
-}
-
-async function updateOpenCodeRouterSlackTokens(
-  botToken: string,
-  appToken: string,
-): Promise<Record<string, unknown>> {
-  await persistOpenCodeRouterSlackTokens(botToken, appToken);
-
-  const apply = await tryPostOpenCodeRouterHealth(
-    "/config/slack-tokens",
-    { botToken, appToken },
-    { timeoutMs: 3_000 },
-  );
-
-  const response: Record<string, unknown> = {
-    ok: true,
-    persisted: true,
-    applied: apply.applied,
-    slack: { configured: true, enabled: true },
-  };
-
-  if (apply.body && typeof apply.body === "object") {
-    const record = apply.body as Record<string, unknown>;
-    if (record.slack && typeof record.slack === "object") {
-      response.slack = record.slack;
-    }
-  }
-
-  let slackStarting = false;
-  if (response.slack && typeof response.slack === "object") {
-    const slack = response.slack as Record<string, unknown>;
-    if (typeof slack.applied === "boolean") {
-      response.applied = slack.applied;
-    }
-    if (typeof slack.starting === "boolean") {
-      slackStarting = slack.starting;
-    }
-    if (!response.applyError && typeof slack.error === "string" && slack.error.trim()) {
-      response.applyError = slack.error;
-    }
-  }
-
-  if (!apply.applied) {
-    response.applyError = (typeof response.applyError === "string" && response.applyError.trim())
-      ? response.applyError
-      : apply.error ?? "OpenCodeRouter did not apply the update";
-    if (typeof apply.status === "number") response.applyStatus = apply.status;
-  } else if (response.applied === false && !slackStarting && !response.applyError) {
-    response.applyError = "OpenCodeRouter did not apply the update";
-  }
-
-  return response;
 }
 
 async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {

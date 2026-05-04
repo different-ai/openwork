@@ -15,6 +15,7 @@ import { startHealthServer, type HealthSnapshot } from "./health.js";
 import { type InboundMessagePart, type MessageDeliveryResult, type OutboundMessagePart, normalizeOutboundParts, summarizeInboundPartsForPrompt, summarizeInboundPartsForReporter, textFromInboundParts } from "./media.js";
 import { MediaStore } from "./media-store.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
+import { isWithinWorkspaceRootPath, normalizeScopedDirectoryPath } from "./path-scope.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createSlackAdapter } from "./slack.js";
 import { createTelegramAdapter, isTelegramPeerId } from "./telegram.js";
@@ -442,25 +443,17 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   const formatPeer = (_channel: ChannelName, peerId: string) => peerId;
 
-  const normalizeDirectory = (input: string) => {
-    const trimmed = input.trim();
-    if (!trimmed) return "";
-    const unified = trimmed.replace(/\\/g, "/");
-    const withoutTrailing = unified.replace(/\/+$/, "");
-    const normalized = withoutTrailing || "/";
-    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-  };
+  const normalizeDirectory = (input: string) =>
+    normalizeScopedDirectoryPath(input, process.platform);
 
   const workspaceRootNormalized = normalizeDirectory(workspaceRoot);
 
   const isWithinWorkspaceRoot = (candidate: string) => {
-    const resolved = resolve(candidate || workspaceRoot);
-    const relativePath = relative(workspaceRoot, resolved);
-    if (!relativePath) return true;
-    if (relativePath === ".") return true;
-    if (relativePath.startsWith("..") || isAbsolute(relativePath)) return false;
-    const boundary = workspaceRoot.endsWith(sep) ? workspaceRoot : `${workspaceRoot}${sep}`;
-    return resolved === workspaceRoot || resolved.startsWith(boundary);
+    return isWithinWorkspaceRootPath({
+      workspaceRoot,
+      candidate,
+      platform: process.platform,
+    });
   };
 
   const resolveScopedDirectory = (input: string): { ok: true; directory: string } | { ok: false; error: string } => {

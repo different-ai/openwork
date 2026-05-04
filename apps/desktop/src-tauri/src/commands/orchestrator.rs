@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -12,14 +11,11 @@ use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri::Emitter;
-use tauri::State;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
-use crate::orchestrator::manager::OrchestratorManager;
-use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
-use crate::types::{ExecResult, OrchestratorStatus, OrchestratorWorkspace};
+use crate::types::ExecResult;
 
 const SANDBOX_PROGRESS_EVENT: &str = "openwork://sandbox-create-progress";
 
@@ -638,121 +634,6 @@ fn docker_container_state(container_name: &str) -> Result<Option<String>, String
     ))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OrchestratorWorkspaceResponse {
-    pub workspace: OrchestratorWorkspace,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OrchestratorDisposeResponse {
-    pub disposed: bool,
-}
-
-fn resolve_data_dir(manager: &OrchestratorManager) -> String {
-    manager
-        .inner
-        .lock()
-        .ok()
-        .and_then(|state| state.data_dir.clone())
-        .unwrap_or_else(resolve_orchestrator_data_dir)
-}
-
-fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
-    let data_dir = resolve_data_dir(manager);
-    let status = resolve_orchestrator_status(&data_dir, None);
-    status
-        .daemon
-        .map(|daemon| daemon.base_url)
-        .ok_or_else(|| "orchestrator daemon is not running".to_string())
-}
-
-#[tauri::command]
-pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorStatus {
-    let data_dir = resolve_data_dir(&manager);
-    let last_error = manager
-        .inner
-        .lock()
-        .ok()
-        .and_then(|state| state.last_stderr.clone());
-    resolve_orchestrator_status(&data_dir, last_error)
-}
-
-#[tauri::command]
-pub fn orchestrator_workspace_activate(
-    manager: State<OrchestratorManager>,
-    workspace_path: String,
-    name: Option<String>,
-) -> Result<OrchestratorWorkspace, String> {
-    let base_url = resolve_base_url(&manager)?;
-    let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    let payload = json!({
-        "path": workspace_path,
-        "name": name,
-    });
-
-    let add_response = ureq::post(&add_url)
-        .set("Content-Type", "application/json")
-        .send_json(payload)
-        .map_err(|e| format!("Failed to add workspace: {e}"))?;
-    let added: OrchestratorWorkspaceResponse = add_response
-        .into_json()
-        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
-
-    let id = added.workspace.id.clone();
-    let activate_url = format!(
-        "{}/workspaces/{}/activate",
-        base_url.trim_end_matches('/'),
-        id
-    );
-    ureq::post(&activate_url)
-        .set("Content-Type", "application/json")
-        .send_string("")
-        .map_err(|e| format!("Failed to activate workspace: {e}"))?;
-
-    let path_url = format!("{}/workspaces/{}/path", base_url.trim_end_matches('/'), id);
-    let _ = ureq::get(&path_url).call();
-
-    Ok(added.workspace)
-}
-
-#[tauri::command]
-pub fn orchestrator_instance_dispose(
-    manager: State<OrchestratorManager>,
-    workspace_path: String,
-) -> Result<bool, String> {
-    let base_url = resolve_base_url(&manager)?;
-    let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
-    let payload = json!({
-        "path": workspace_path,
-    });
-
-    let add_response = ureq::post(&add_url)
-        .set("Content-Type", "application/json")
-        .send_json(payload)
-        .map_err(|e| format!("Failed to ensure workspace: {e}"))?;
-    let added: OrchestratorWorkspaceResponse = add_response
-        .into_json()
-        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
-
-    let id = added.workspace.id;
-    let dispose_url = format!(
-        "{}/instances/{}/dispose",
-        base_url.trim_end_matches('/'),
-        id
-    );
-    let response = ureq::post(&dispose_url)
-        .set("Content-Type", "application/json")
-        .send_string("")
-        .map_err(|e| format!("Failed to dispose instance: {e}"))?;
-    let result: OrchestratorDisposeResponse = response
-        .into_json()
-        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
-
-    Ok(result.disposed)
-}
-
 fn format_sandbox_start_timeout_error(
     elapsed_ms: u64,
     openwork_url: &str,
@@ -802,6 +683,7 @@ pub fn orchestrator_start_detached(
     app: AppHandle,
     workspace_path: String,
     sandbox_backend: Option<String>,
+    sandbox_image_ref: Option<String>,
     run_id: Option<String>,
     openwork_token: Option<String>,
     openwork_host_token: Option<String>,
@@ -816,7 +698,15 @@ pub fn orchestrator_start_detached(
         .unwrap_or_else(|| "none".to_string())
         .trim()
         .to_lowercase();
-    let wants_docker_sandbox = sandbox_backend == "docker";
+    if sandbox_backend != "none" && sandbox_backend != "docker" && sandbox_backend != "microsandbox"
+    {
+        return Err("sandboxBackend must be one of: none, docker, microsandbox".to_string());
+    }
+    let wants_docker_sandbox = sandbox_backend == "docker" || sandbox_backend == "microsandbox";
+    let wants_microsandbox = sandbox_backend == "microsandbox";
+    let sandbox_image_ref = sandbox_image_ref
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let sandbox_run_id = run_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -830,7 +720,13 @@ pub fn orchestrator_start_detached(
         "[sandbox-create][at={start_ts}][runId={}][stage=entry] workspacePath={} sandboxBackend={} container={}",
         sandbox_run_id,
         workspace_path,
-        if wants_docker_sandbox { "docker" } else { "none" },
+        if wants_microsandbox {
+            "microsandbox"
+        } else if wants_docker_sandbox {
+            "docker"
+        } else {
+            "none"
+        },
         sandbox_container_name.as_deref().unwrap_or("<none>")
     );
 
@@ -854,7 +750,14 @@ pub fn orchestrator_start_detached(
             "workspacePath": workspace_path,
             "openworkUrl": openwork_url,
             "port": port,
-            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+            "sandboxBackend": if wants_microsandbox {
+                "microsandbox"
+            } else if wants_docker_sandbox {
+                "docker"
+            } else {
+                "none"
+            },
+            "sandboxImageRef": sandbox_image_ref.clone(),
             "containerName": sandbox_container_name,
         }),
     );
@@ -894,8 +797,6 @@ pub fn orchestrator_start_detached(
             workspace_path.clone(),
             "--approval".to_string(),
             "auto".to_string(),
-            "--opencode-router".to_string(),
-            "true".to_string(),
             "--detach".to_string(),
             "--openwork-port".to_string(),
             port.to_string(),
@@ -906,6 +807,10 @@ pub fn orchestrator_start_detached(
         if wants_docker_sandbox {
             args.push("--sandbox".to_string());
             args.push("docker".to_string());
+            if let Some(image_ref) = sandbox_image_ref.as_deref() {
+                args.push("--sandbox-image".to_string());
+                args.push(image_ref.to_string());
+            }
         }
 
         // Convert to &str for the shell command builder.
@@ -930,8 +835,11 @@ pub fn orchestrator_start_detached(
             }),
         );
 
+        let mut command = command.args(str_args);
+        for (key, value) in crate::env_file::load_user_env_file() {
+            command = command.env(key, value);
+        }
         if let Err(err) = command
-            .args(str_args)
             .env("OPENWORK_TOKEN", token.clone())
             .env("OPENWORK_HOST_TOKEN", host_token.clone())
             .spawn()
@@ -1116,7 +1024,11 @@ pub fn orchestrator_start_detached(
         host_token,
         port,
         sandbox_backend: if wants_docker_sandbox {
-            Some("docker".to_string())
+            Some(if wants_microsandbox {
+                "microsandbox".to_string()
+            } else {
+                "docker".to_string()
+            })
         } else {
             None
         },
@@ -1413,6 +1325,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
             app,
             workspace_path.clone(),
             Some("docker".to_string()),
+            None,
             Some(run_id.clone()),
             None,
             None,

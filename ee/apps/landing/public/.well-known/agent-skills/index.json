@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agentskills.io/schemas/v0.2.0/index.json",
+  "skills": [
+    {
+      "name": "workspace-guide",
+      "type": "skill",
+      "description": "Workspace guide to introduce OpenWork and onboard new users.",
+      "url": "https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md",
+      "sha256": "3ac4a29e608decea652bed0aa0280b43d628f84cef6485bcb76de7cbfc655a69"
+    }
+  ]
+}

@@ -19,10 +19,10 @@ import {
   writeFile,
   realpath,
 } from "node:fs/promises";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
-import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
+import { homedir, hostname, networkInterfaces, platform, tmpdir } from "node:os";
 import {
   basename,
   delimiter,
@@ -1541,12 +1541,26 @@ function resolveBinCommand(bin: string): {
 }
 
 async function readVersionManifest(): Promise<VersionManifest | null> {
+  const binDir = dirname(process.execPath);
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const envManifestPath = process.env.OPENWORK_VERSION_MANIFEST?.trim();
+  const envSidecarDir = process.env.OPENWORK_BUNDLED_SIDECAR_DIR?.trim();
   const candidates = [
-    dirname(process.execPath),
-    dirname(fileURLToPath(import.meta.url)),
+    ...(envManifestPath
+      ? [
+          {
+            manifestPath: envManifestPath,
+            dir: envSidecarDir || dirname(envManifestPath),
+          },
+        ]
+      : []),
+    { manifestPath: join(binDir, "versions.json"), dir: binDir },
+    // macOS treats files in Contents/MacOS as executable code, so the manifest
+    // is bundled as a resource while sidecar binaries remain next to execPath.
+    { manifestPath: join(binDir, "..", "Resources", "versions.json"), dir: binDir },
+    { manifestPath: join(moduleDir, "versions.json"), dir: moduleDir },
   ];
-  for (const dir of candidates) {
-    const manifestPath = join(dir, "versions.json");
+  for (const { manifestPath, dir } of candidates) {
     if (await fileExists(manifestPath)) {
       try {
         const payload = await readFile(manifestPath, "utf8");
@@ -1673,21 +1687,67 @@ function resolveExtraPathEntries(): string[] {
   return entries;
 }
 
+// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
+// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+function resolveUserEnvFilePath(): string {
+  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return resolve(override);
+  if (platform() === "win32") {
+    const appData = (process.env.APPDATA ?? "").trim();
+    const root = appData || join(homedir(), "AppData", "Roaming");
+    return join(root, "openwork", "env.json");
+  }
+  return join(homedir(), ".config", "openwork", "env.json");
+}
+
+const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+
+// Synchronous, best-effort, never throws. Absent or malformed files return {}.
+// Reads on every spawn so UI edits are picked up on the next child start.
+function loadUserEnvFile(): Record<string, string> {
+  try {
+    const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
+    const parsed = JSON.parse(raw) as { variables?: unknown };
+    if (!Array.isArray(parsed.variables)) return {};
+    const out: Record<string, string> = {};
+    for (const entry of parsed.variables) {
+      if (!entry || typeof entry !== "object") continue;
+      const { key, value } = entry as { key?: unknown; value?: unknown };
+      if (typeof key !== "string" || typeof value !== "string") continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function buildSpawnEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const base = env ?? process.env;
+  // User env is layered first so existing process.env / caller overrides
+  // always win. This is what makes Linux GUI launches work: the shell env
+  // is empty for ANTHROPIC_API_KEY, the user file supplies it, but anything
+  // the shell or spawn-site already set (OPENWORK_TOKEN, etc.) is untouched.
+  const merged: NodeJS.ProcessEnv = { ...loadUserEnvFile() };
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined) merged[key] = value;
+  }
   const pathKey =
-    Object.prototype.hasOwnProperty.call(base, "PATH") ||
-    !Object.prototype.hasOwnProperty.call(base, "Path")
+    Object.prototype.hasOwnProperty.call(merged, "PATH") ||
+    !Object.prototype.hasOwnProperty.call(merged, "Path")
       ? "PATH"
       : "Path";
-  const currentPath = pathKey === "PATH" ? base.PATH : base.Path;
+  const currentPath = pathKey === "PATH" ? merged.PATH : merged.Path;
   const entries = [
     ...resolveExtraPathEntries(),
     ...splitPathEntries(currentPath),
   ];
   const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
-  if (!deduped.length) return { ...base };
-  return { ...base, [pathKey]: deduped.join(delimiter) };
+  if (!deduped.length) return merged;
+  return { ...merged, [pathKey]: deduped.join(delimiter) };
 }
 
 function resolveSidecarTarget(): SidecarTarget | null {
@@ -1805,6 +1865,21 @@ function addEnvPassThroughArgs(args: string[], names: string[]) {
   for (const name of names) {
     args.push("--env", name);
   }
+}
+
+const SANDBOX_INTERNAL_ENV_NAMES = [
+  "OPENWORK_TOKEN",
+  "OPENWORK_HOST_TOKEN",
+  "OPENCODE_SERVER_USERNAME",
+  "OPENCODE_SERVER_PASSWORD",
+  "OPENWORK_OPENCODE_USERNAME",
+  "OPENWORK_OPENCODE_PASSWORD",
+] as const;
+
+function sandboxEnvPassThroughNames(userEnv: Record<string, string>): string[] {
+  return [...SANDBOX_INTERNAL_ENV_NAMES, ...Object.keys(userEnv).sort()].filter(
+    (name, index, names) => names.indexOf(name) === index,
+  );
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
@@ -3501,6 +3576,19 @@ async function waitForOpencodeHealthy(
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
+
+    try {
+      // Some environments have a broken OpenCode /health probe even while the
+      // core API surface is already usable. Accept a successful path lookup as
+      // readiness so session APIs can come up in those runtimes.
+      unwrap(await client.path.get());
+      return { healthy: true, degraded: true, reason: lastError ?? undefined };
+    } catch (error) {
+      if (!lastError) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(lastError ?? "Timed out waiting for OpenCode health");
@@ -4395,14 +4483,8 @@ async function startDockerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     const suffix = mount.readonly ? ":ro" : "";
@@ -4427,6 +4509,7 @@ async function startDockerSandbox(options: {
   const child = spawnProcess(options.dockerCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,
@@ -4583,14 +4666,8 @@ async function startAppleContainerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     if (mount.readonly) {
@@ -4613,6 +4690,7 @@ async function startAppleContainerSandbox(options: {
   const child = spawnProcess("container", args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,

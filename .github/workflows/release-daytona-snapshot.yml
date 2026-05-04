@@ -93,7 +93,7 @@ jobs:
           echo "snapshot_region=$snapshot_region" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve.outputs.release_tag }}

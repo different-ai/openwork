@@ -48,6 +48,7 @@ const selectAsset = (
     matches.find((asset) => asset.name?.toLowerCase().includes("adhoc")) ||
     matches.find((asset) => asset.name?.toLowerCase().includes("universal")) ||
     matches.find((asset) => asset.name?.toLowerCase().includes("aarch64")) ||
+    matches.find((asset) => asset.name?.toLowerCase().includes("arm64")) ||
     matches[0]
   );
 };
@@ -72,7 +73,7 @@ export const getGithubData = async () => {
   const [repo, releases] = await Promise.all([
     fetchJson<Repo>("https://api.github.com/repos/different-ai/openwork"),
     fetchJson<Release[]>(
-      "https://api.github.com/repos/different-ai/openwork/releases?per_page=10"
+      "https://api.github.com/repos/different-ai/openwork/releases?per_page=50"
     )
   ]);
 
@@ -82,6 +83,22 @@ export const getGithubData = async () => {
       : "—";
 
   const releaseList = Array.isArray(releases) ? releases : [];
+  const hasDownloadAsset = (release: Release) => {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.some((asset) => asset?.browser_download_url);
+  };
+  const isElectronDesktopAsset = (name: string) =>
+    name.startsWith("openwork-mac-") ||
+    name.startsWith("openwork-win-") ||
+    name.startsWith("openwork-linux-");
+
+  const hasWindowsDesktopAsset = (release: Release) => {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.some((asset) => {
+      const name = String(asset?.name || "").toLowerCase();
+      return name.startsWith("openwork-win-x64-") && name.endsWith(".exe");
+    });
+  };
 
   const isStableDesktopRelease = (release: Release) => {
     if (!release || release.draft || release.prerelease) return false;
@@ -90,30 +107,35 @@ export const getGithubData = async () => {
     const assets = Array.isArray(release.assets) ? release.assets : [];
     return assets.some((asset) => {
       const name = String(asset?.name || "").toLowerCase();
-      return name.startsWith("openwork-desktop-");
+      return isElectronDesktopAsset(name);
     });
   };
 
   const pick =
     releaseList.find((release) => isStableDesktopRelease(release)) ||
-    releaseList.find((release) => {
-      if (!release || release.draft) return false;
-      const assets = Array.isArray(release.assets) ? release.assets : [];
-      return assets.some((asset) => asset?.browser_download_url);
-    });
+    releaseList.find((release) => !release?.draft && hasDownloadAsset(release));
+
+  const windowsPick =
+    releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release)) ||
+    releaseList.find((release) => !release?.draft && hasWindowsDesktopAsset(release));
 
   const assets = Array.isArray(pick?.assets) ? pick.assets : [];
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;
-  const dmg = selectAsset(assets, [".dmg"]);
-  const appImage = selectAsset(assets, [".appimage"], ["linux"]);
+  const windowsAssets = Array.isArray(windowsPick?.assets) ? windowsPick.assets : assets;
+  const windowsReleaseUrl = windowsPick?.html_url || releaseUrl;
+  const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
+  const exe = selectAsset(windowsAssets, [".exe"], ["openwork-win-"]);
+  const macosApple = selectAsset(assets, [".dmg"], ["mac-arm64"]);
+  const macosIntel = selectAsset(assets, [".dmg"], ["mac-x64"]);
+  const windowsX64 =
+    selectAsset(windowsAssets, [".exe"], ["win-x64"]) || exe;
 
-  const macosApple = selectAsset(assets, [".dmg"], ["darwin-aarch64"]);
-  const macosIntel = selectAsset(assets, [".dmg"], ["darwin-x64"]);
-
-  const linuxDebX64 = selectAsset(assets, [".deb"], ["linux-amd64", "linux-x64"]);
-  const linuxDebArm64 = selectAsset(assets, [".deb"], ["linux-arm64", "linux-aarch64"]);
-  const linuxRpmX64 = selectAsset(assets, [".rpm"], ["linux-x86_64", "linux-amd64"]);
-  const linuxRpmArm64 = selectAsset(assets, [".rpm"], ["linux-aarch64", "linux-arm64"]);
+  const linuxAppImageX64 =
+    selectAsset(assets, [".appimage"], ["linux-x86_64"]) ||
+    selectAsset(assets, [".appimage"], ["linux-x64"]);
+  const linuxAppImageArm64 = selectAsset(assets, [".appimage"], ["linux-arm64"]);
+  const linuxTarX64 = selectAsset(assets, [".tar.gz"], ["linux-x64"]);
+  const linuxTarArm64 = selectAsset(assets, [".tar.gz"], ["linux-arm64"]);
 
   return {
     stars,
@@ -121,10 +143,10 @@ export const getGithubData = async () => {
     releaseTag: pick?.tag_name || "",
     downloads: {
       macos: dmg?.browser_download_url || FALLBACK_RELEASE,
+      windows: exe?.browser_download_url || FALLBACK_RELEASE,
       linux:
-        appImage?.browser_download_url ||
-        linuxDebX64?.browser_download_url ||
-        linuxRpmX64?.browser_download_url ||
+        linuxAppImageX64?.browser_download_url ||
+        linuxTarX64?.browser_download_url ||
         FALLBACK_RELEASE
     },
     installers: {
@@ -132,13 +154,14 @@ export const getGithubData = async () => {
         appleSilicon: macosApple?.browser_download_url || dmg?.browser_download_url || releaseUrl,
         intel: macosIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl
       },
+      windows: {
+        x64: windowsX64?.browser_download_url || windowsReleaseUrl
+      },
       linux: {
-        aur: "https://aur.archlinux.org/packages/openwork",
-        debX64: linuxDebX64?.browser_download_url || releaseUrl,
-        debArm64: linuxDebArm64?.browser_download_url || releaseUrl,
-        rpmX64: linuxRpmX64?.browser_download_url || releaseUrl,
-        rpmArm64: linuxRpmArm64?.browser_download_url || releaseUrl,
-        appImage: appImage?.browser_download_url || releaseUrl
+        appImageX64: linuxAppImageX64?.browser_download_url || releaseUrl,
+        appImageArm64: linuxAppImageArm64?.browser_download_url || releaseUrl,
+        tarX64: linuxTarX64?.browser_download_url || releaseUrl,
+        tarArm64: linuxTarArm64?.browser_download_url || releaseUrl
       }
     }
   };

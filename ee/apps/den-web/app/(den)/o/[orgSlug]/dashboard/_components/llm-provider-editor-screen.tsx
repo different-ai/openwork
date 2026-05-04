@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Circle, Cpu, Search } from "lucide-react";
+import {
+    ArrowLeft,
+    CodeXml,
+    Cpu,
+    Search,
+    User,
+    Users,
+} from "lucide-react";
 import { DenButton } from "../../../../_components/ui/button";
 import { DenCombobox } from "../../../../_components/ui/combobox";
 import { DenInput } from "../../../../_components/ui/input";
@@ -34,7 +41,7 @@ import {
 
 const SOURCE_TABS = [
     { value: "models_dev" as const, label: "Catalog provider", icon: Cpu },
-    { value: "custom" as const, label: "Custom provider", icon: Cpu },
+    { value: "custom" as const, label: "Custom provider", icon: CodeXml },
 ];
 
 function getLockMemberId(
@@ -62,6 +69,8 @@ export function LlmProviderEditorScreen({
         [llmProviderId, llmProviders],
     );
     const [source, setSource] = useState<DenLlmProviderSource>("models_dev");
+    const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
+    const [accessQuery, setAccessQuery] = useState("");
     const [catalogProviders, setCatalogProviders] = useState<
         DenModelsDevProviderSummary[]
     >([]);
@@ -72,6 +81,7 @@ export function LlmProviderEditorScreen({
         useState<DenModelsDevProviderDetail | null>(null);
     const [detailBusy, setDetailBusy] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
+    const [providerName, setProviderName] = useState("");
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [modelQuery, setModelQuery] = useState("");
     const [customConfigText, setCustomConfigText] = useState(
@@ -122,6 +132,7 @@ export function LlmProviderEditorScreen({
         if (provider) {
             setSource(provider.source);
             setSelectedProviderId(provider.providerId);
+            setProviderName(provider.name);
             setSelectedModelIds(provider.models.map((entry) => entry.id));
             setSelectedMemberIds(
                 provider.access.members.map((entry) => entry.orgMembershipId),
@@ -140,6 +151,7 @@ export function LlmProviderEditorScreen({
 
         setSource("models_dev");
         setSelectedProviderId("");
+        setProviderName("");
         setSelectedModelIds([]);
         setSelectedMemberIds(
             orgContext?.currentMember.id ? [orgContext.currentMember.id] : [],
@@ -209,6 +221,32 @@ export function LlmProviderEditorScreen({
         );
     }, [catalogDetail?.models, modelQuery]);
 
+    const filteredTeams = useMemo(() => {
+        const teams = orgContext?.teams ?? [];
+        const normalizedQuery = accessQuery.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return teams;
+        }
+
+        return teams.filter((team) =>
+            team.name.toLowerCase().includes(normalizedQuery),
+        );
+    }, [accessQuery, orgContext?.teams]);
+
+    const filteredMembers = useMemo(() => {
+        const members = orgContext?.members ?? [];
+        const normalizedQuery = accessQuery.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return members;
+        }
+
+        return members.filter(
+            (member) =>
+                member.user.name.toLowerCase().includes(normalizedQuery) ||
+                member.user.email.toLowerCase().includes(normalizedQuery),
+        );
+    }, [accessQuery, orgContext?.members]);
+
     const catalogProviderOptions = useMemo(
         () =>
             catalogProviders.map((catalogProvider) => ({
@@ -223,6 +261,11 @@ export function LlmProviderEditorScreen({
     async function saveProvider() {
         if (!orgId) {
             setSaveError("Organization not found.");
+            return;
+        }
+
+        if (!providerName.trim()) {
+            setSaveError("Give this provider a name.");
             return;
         }
 
@@ -246,6 +289,7 @@ export function LlmProviderEditorScreen({
         setSaveError(null);
         try {
             const body: Record<string, unknown> = {
+                name: providerName.trim(),
                 source,
                 memberIds: [...new Set(selectedMemberIds)],
                 teamIds: [...new Set(selectedTeamIds)],
@@ -263,8 +307,8 @@ export function LlmProviderEditorScreen({
             }
 
             const path = provider
-                ? `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers/${encodeURIComponent(provider.id)}`
-                : `/v1/orgs/${encodeURIComponent(orgId)}/llm-providers`;
+                ? `/v1/llm-providers/${encodeURIComponent(provider.id)}`
+                : `/v1/llm-providers`;
             const method = provider ? "PATCH" : "POST";
 
             const { response, payload } = await requestJson(
@@ -361,7 +405,7 @@ export function LlmProviderEditorScreen({
                     <div>
                         <h1 className="text-[34px] font-semibold tracking-[-0.07em] text-gray-950">
                             {provider
-                                ? provider.name
+                                ? (providerName.trim() || provider.name)
                                 : "Add a new LLM provider"}
                         </h1>
                         <p className="mt-3 max-w-[720px] text-[16px] leading-8 text-gray-500">
@@ -399,6 +443,24 @@ export function LlmProviderEditorScreen({
                     {saveError}
                 </div>
             ) : null}
+
+            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
+                <label className="grid gap-3">
+                    <span className="text-[14px] font-medium text-gray-700">
+                        Name
+                    </span>
+                    <DenInput
+                        value={providerName}
+                        onChange={(event) => setProviderName(event.target.value)}
+                        placeholder="Give this key a name"
+                        autoComplete="off"
+                    />
+                </label>
+                <p className="mt-3 text-[13px] text-gray-500">
+                    Pick a clear label so teammates know which key or provider
+                    setup they are using.
+                </p>
+            </section>
 
             <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                 <h2 className="mb-6 text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
@@ -451,38 +513,58 @@ export function LlmProviderEditorScreen({
 
                         {catalogDetail ? (
                             <div className="rounded-[28px] bg-gray-50 p-6">
-                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                <div className="grid gap-4 md:grid-cols-2">
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             NPM package
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerNpm ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerNpm ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             API base
                                         </p>
-                                        <p className="mt-2 break-all text-[15px] font-medium text-gray-900">
-                                            {providerApiBase ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerApiBase ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             Env keys
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerEnv.join(", ") ||
-                                                "None listed"}
-                                        </p>
+                                        {providerEnv.length > 0 ? (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                {providerEnv.map((envName) => (
+                                                    <span
+                                                        key={envName}
+                                                        className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
+                                                    >
+                                                        {envName}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="mt-2">
+                                                <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                    None listed
+                                                </span>
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
-                                        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+                                        <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             Docs
                                         </p>
-                                        <p className="mt-2 text-[15px] font-medium text-gray-900">
-                                            {providerDoc ?? "Not set"}
+                                        <p className="mt-2">
+                                            <span className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                {providerDoc ?? "Not set"}
+                                            </span>
                                         </p>
                                     </div>
                                 </div>
@@ -545,7 +627,7 @@ export function LlmProviderEditorScreen({
 
             {source === "models_dev" ? (
                 <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                    <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
                         <div>
                             <div className="flex flex-wrap items-center gap-3">
                                 <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
@@ -566,21 +648,22 @@ export function LlmProviderEditorScreen({
                             </p>
                         </div>
 
-                        <DenInput
-                            type="search"
-                            icon={Search}
-                            value={modelQuery}
-                            onChange={(event) =>
-                                setModelQuery(event.target.value)
-                            }
-                            placeholder="Search models..."
-                            className="lg:w-[360px]"
-                        />
+                        <div className="mt-6">
+                            <DenInput
+                                type="search"
+                                icon={Search}
+                                value={modelQuery}
+                                onChange={(event) =>
+                                    setModelQuery(event.target.value)
+                                }
+                                placeholder="Search models..."
+                            />
+                        </div>
                     </div>
 
                     {catalogDetail ? (
                         filteredModels.length ? (
-                            <div>
+                            <div className="mt-4">
                                 <div className="overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
                                     {filteredModels.map((model) => {
                                         const selected =
@@ -614,7 +697,7 @@ export function LlmProviderEditorScreen({
                                 </div>
                             </div>
                         ) : (
-                            <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
                                 No models match{" "}
                                 <span className="font-medium text-gray-700">
                                     &quot;{modelQuery}&quot;
@@ -623,118 +706,164 @@ export function LlmProviderEditorScreen({
                             </div>
                         )
                     ) : (
-                        <div className="rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
                             Select a provider to browse its models.
                         </div>
                     )}
                 </section>
             ) : null}
 
-            <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                    People access
-                </h2>
-
-                <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {orgContext?.members.map((member) => {
-                        const selected = selectedMemberIds.includes(member.id);
-                        const locked = lockedMemberId === member.id;
-                        return (
-                            <button
-                                key={member.id}
-                                type="button"
-                                disabled={locked}
-                                onClick={() =>
-                                    setSelectedMemberIds((current) =>
-                                        current.includes(member.id)
-                                            ? current.filter(
-                                                  (entry) =>
-                                                      entry !== member.id,
-                                              )
-                                            : [...current, member.id],
-                                    )
-                                }
-                                className={`flex min-h-[88px] items-center gap-4 rounded-[24px] border px-5 py-4 text-left transition ${selected ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"} ${locked ? "cursor-default" : "cursor-pointer"}`}
-                            >
-                                {selected ? (
-                                    <CheckCircle2 className="h-7 w-7 shrink-0" />
-                                ) : (
-                                    <Circle className="h-7 w-7 shrink-0 text-gray-300" />
-                                )}
-                                <div>
-                                    <p className="text-[16px] font-medium tracking-[-0.03em]">
-                                        {member.user.name}
-                                    </p>
-                                    <p
-                                        className={`mt-1 text-[13px] ${selected ? "text-white/70" : "text-gray-400"}`}
-                                    >
-                                        {member.user.email}
-                                    </p>
-                                    {locked ? (
-                                        <p
-                                            className={`mt-1 text-[12px] ${selected ? "text-white/60" : "text-gray-400"}`}
-                                        >
-                                            Creator access is locked
-                                        </p>
-                                    ) : null}
-                                </div>
-                            </button>
-                        );
-                    }) ?? null}
-                </div>
-            </section>
-
             <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
-                <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
-                    Team access
-                </h2>
+                <div>
+                    <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
+                        Configure access
+                    </h2>
+                    <p className="mt-2 text-[15px] text-gray-500">
+                        Select which teams and people can use this provider.
+                    </p>
+                </div>
 
-                {orgContext?.teams.length ? (
-                    <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {orgContext.teams.map((team) => {
-                            const selected = selectedTeamIds.includes(team.id);
-                            return (
-                                <button
-                                    key={team.id}
-                                    type="button"
-                                    onClick={() =>
-                                        setSelectedTeamIds((current) =>
-                                            current.includes(team.id)
-                                                ? current.filter(
-                                                      (entry) =>
-                                                          entry !== team.id,
-                                                  )
-                                                : [...current, team.id],
-                                        )
-                                    }
-                                    className={`flex min-h-[88px] items-center gap-4 rounded-[24px] border px-5 py-4 text-left transition ${selected ? "border-[#0f172a] bg-[#0f172a] text-white" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"}`}
-                                >
-                                    {selected ? (
-                                        <CheckCircle2 className="h-7 w-7 shrink-0" />
-                                    ) : (
-                                        <Circle className="h-7 w-7 shrink-0 text-gray-300" />
-                                    )}
-                                    <div>
-                                        <p className="text-[16px] font-medium tracking-[-0.03em]">
-                                            {team.name}
-                                        </p>
-                                        <p
-                                            className={`mt-1 text-[13px] ${selected ? "text-white/70" : "text-gray-400"}`}
-                                        >
-                                            {team.memberIds.length}{" "}
-                                            {team.memberIds.length === 1
-                                                ? "member"
-                                                : "members"}
-                                        </p>
-                                    </div>
-                                </button>
-                            );
-                        })}
-                    </div>
+                <div className="mt-8 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setAccessTab("teams");
+                            setAccessQuery("");
+                        }}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                    >
+                        <Users className="h-4 w-4" />
+                        {`Teams (${selectedTeamIds.length})`}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setAccessTab("people");
+                            setAccessQuery("");
+                        }}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                    >
+                        <User className="h-4 w-4" />
+                        {`People (${selectedMemberIds.length})`}
+                    </button>
+                </div>
+
+                <div className="mt-6">
+                    <DenInput
+                        type="search"
+                        icon={Search}
+                        value={accessQuery}
+                        onChange={(event) => setAccessQuery(event.target.value)}
+                        placeholder={
+                            accessTab === "teams"
+                                ? "Search teams..."
+                                : "Search people..."
+                        }
+                    />
+                </div>
+
+                {accessTab === "teams" ? (
+                    orgContext?.teams.length ? (
+                        filteredTeams.length ? (
+                            <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                                {filteredTeams.map((team) => {
+                                    const selected = selectedTeamIds.includes(team.id);
+                                    return (
+                                        <DenSelectableRow
+                                            key={team.id}
+                                            selected={selected}
+                                            leading={
+                                                <Users className="h-4 w-4 text-gray-400" />
+                                            }
+                                            title={team.name}
+                                            description={`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}
+                                            onClick={() =>
+                                                setSelectedTeamIds((current) =>
+                                                    current.includes(team.id)
+                                                        ? current.filter(
+                                                              (entry) =>
+                                                                  entry !== team.id,
+                                                          )
+                                                        : [...current, team.id],
+                                                )
+                                            }
+                                        />
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                                No teams match{" "}
+                                <span className="font-medium text-gray-700">
+                                    &quot;{accessQuery}&quot;
+                                </span>
+                                .
+                            </div>
+                        )
+                    ) : (
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            Create teams from the Members page before assigning team
+                            access.
+                        </div>
+                    )
+                ) : orgContext?.members.length ? (
+                    filteredMembers.length ? (
+                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
+                            {filteredMembers.map((member) => {
+                                const selected = selectedMemberIds.includes(
+                                    member.id,
+                                );
+                                const locked = lockedMemberId === member.id;
+                                return (
+                                    <DenSelectableRow
+                                        key={member.id}
+                                        disabled={locked}
+                                        selected={selected}
+                                        leading={
+                                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0f172a] text-[11px] font-semibold uppercase text-white">
+                                                {member.user.name
+                                                    .split(" ")
+                                                    .map((part) => part[0])
+                                                    .join("")
+                                                    .slice(0, 2)}
+                                            </div>
+                                        }
+                                        descriptionBelow
+                                        title={member.user.name}
+                                        description={member.user.email}
+                                        aside={
+                                            locked ? (
+                                                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">
+                                                    Locked
+                                                </span>
+                                            ) : undefined
+                                        }
+                                        onClick={() =>
+                                            setSelectedMemberIds((current) =>
+                                                current.includes(member.id)
+                                                    ? current.filter(
+                                                          (entry) =>
+                                                              entry !== member.id,
+                                                      )
+                                                    : [...current, member.id],
+                                            )
+                                        }
+                                    />
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                            No people match{" "}
+                            <span className="font-medium text-gray-700">
+                                &quot;{accessQuery}&quot;
+                            </span>
+                            .
+                        </div>
+                    )
                 ) : (
-                    <div className="mt-8 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                        Create teams from the Members page before assigning team
-                        access.
+                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
+                        No people are available to assign yet.
                     </div>
                 )}
             </section>

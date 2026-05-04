@@ -1,0 +1,97 @@
+---
+title: "Connecting Slack to your workspace"
+description: "Learn how to connect Slack with your workspace"
+---
+
+In order to connect `slack` with your openwork `workspace`, you will need the following:
+
+1. Valid slack admin permissions to add an app
+2. Create a simple slack app
+3. Connect said slack app with your workspace
+
+This is one of the most relevant and meaningful applications of Openwork, and we use it daily ourselves.
+
+> **Disclaimer:** We recommend setting the slackbot with a remote workspace instead of in your local machine to ensure there's `hardware isolation` between the remote workspace the ai can access and your local machine.
+
+For team-owned Slack or other long-running connectors, you can host the runtime in an OpenWork Cloud [shared workspace](/cloud/run-in-the-cloud/shared-workspace) instead of keeping it on a laptop or self-managed server.
+
+## Having the right slack permissions
+
+You should either be a slack `owner`, `admin` or have the right level of approval to be able to add an app into slack.
+
+## Creating a slack app
+
+Go to [Create new app](https://api.slack.com/apps?new_app=1) in Slack. What you need to obtain are the `xoxb` (bot) and `xapp` (Websocket) tokens to paste into Openwork. For more guidelines, questions and instructions regarding slack, please follow [own slack's own documentation.](https://docs.slack.dev/tools/bolt-python/building-an-app)
+
+1. Create the App Manifest: Go to `api.slack.com/apps` → `Create New App` → `From a manifest` → pick your workspace.
+2. Install to Workspace & Grab Tokens After creating the app:
+
+- Install App — `sidebar` → `Install App` → `Install to Workspace` → authorize.
+- Copy the Bot token (`xoxb-...`) — shown right on the "Install App" page after authorization.
+
+3. Generate an App-Level Token (for Socket Mode)
+
+- Sidebar → `Basic Information` → scroll to `App-Level Tokens`.
+- Click Generate Token and Scopes → add scope `connections:write` → name it anything → Generate.
+- This gives you the `xapp-` token that we use to open the websocket connection.
+
+> Note: We're sharing a `template manifest` at the end of this tutorial for you to use directly
+
+## Connecting the slackbot with the workspace
+
+Now, once you have both of these tokens, you can directly paste them into the app.
+
+<Frame>
+  ![Slack messaging settings with bot and app token fields](/images/slack-connect-tokens.png)
+
+  Paste you `xorb-` and `xapp-` tokens into `Settings` \> `messaging`
+</Frame>
+
+## Send test message
+
+Test the bot by sending a message. It should respond instantly indicating that a new session has been initiatied and then send the actual response afterwards. For now, you will have to use `@slack-bot-name` every time you want to talk to it.
+
+<Frame>
+  ![Slack thread showing the bot reply to a test message](/images/slack-test-message-thread.png)
+</Frame>
+
+## Template Manifest Example
+
+Feel free to use this as a template (or modify it accordingly according to your own use-case)
+
+```yaml
+display_information:
+  name: MyBot
+  description: Your description
+  background_color: "#000000"
+features:
+  bot_user:
+    display_name: your-display-name
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - assistant:write
+      - app_mentions:read
+      - channels:read
+      - channels:history
+      - chat:write
+      - files:read
+      - files:write
+      - im:history
+      - links:read
+      - links:write
+      - lists:read
+      - lists:write
+  pkce_enabled: false
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+```

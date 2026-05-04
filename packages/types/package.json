@@ -1,0 +1,31 @@
+{
+  "name": "@openwork/types",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./den/desktop-app-restrictions": {
+      "types": "./src/den/desktop-app-restrictions.ts",
+      "development": "./src/den/desktop-app-restrictions.ts",
+      "default": "./src/den/desktop-app-restrictions.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}

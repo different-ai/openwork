@@ -1,5 +1,6 @@
 .turbo/
 node_modules/
+apps/desktop/dist-electron/
 packages/*/node_modules/
 apps/*/node_modules/
 ee/apps/*/node_modules/
@@ -21,15 +22,22 @@ packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/sidecars/
+apps/desktop/resources/sidecars/
 
 # Env
 .env
 .env.*
 !.env.example
+# The migration-release fragment is committed only on the tagged
+# migration-release commit and removed by 03-post-migration-cleanup.mjs.
+# Allow git to see it so `cut-migration-release` can commit it.
+!.env.migration-release
 
 # Bun build artifacts
 *.bun-build
 apps/server/cli
+apps/server-v2/openapi/openapi.json
+packages/openwork-server-sdk/generated/
 
 # pnpm store (created by Docker volume mounts)
 .pnpm-store/

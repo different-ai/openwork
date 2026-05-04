@@ -9,9 +9,10 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
+import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { DEFAULT_ORGANIZATION_LIMITS, serializeOrganizationMetadata } from "./organization-limits.js"
+import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -20,6 +21,7 @@ type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberRow = typeof MemberTable.$inferSelect
 type MemberId = MemberRow["id"]
 type InvitationRow = typeof InvitationTable.$inferSelect
+export type AllowedEmailDomains = string[] | null
 
 export type InvitationStatus = "pending" | "accepted" | "canceled" | "expired"
 
@@ -36,6 +38,7 @@ export type InvitationPreview = {
     id: OrgId
     name: string
     slug: string
+    allowedEmailDomains: AllowedEmailDomains
   }
 }
 
@@ -58,6 +61,8 @@ export type OrganizationContext = {
     name: string
     slug: string
     logo: string | null
+    allowedEmailDomains: AllowedEmailDomains
+    desktopAppRestrictions: DesktopAppRestrictions
     metadata: string | null
     createdAt: Date
     updatedAt: Date
@@ -154,6 +159,75 @@ function buildPersonalOrgName(input: {
   return `${normalized}${suffix}`
 }
 
+function normalizeEmailDomainValue(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/^@+/, "")
+  if (!normalized) {
+    return null
+  }
+
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(normalized)) {
+    return null
+  }
+
+  return normalized
+}
+
+export function normalizeAllowedEmailDomains(input: readonly string[] | null | undefined): {
+  domains: AllowedEmailDomains
+  invalidDomains: string[]
+} {
+  if (!input || input.length === 0) {
+    return {
+      domains: null,
+      invalidDomains: [],
+    }
+  }
+
+  const normalized = new Set<string>()
+  const invalidDomains: string[] = []
+
+  for (const value of input) {
+    const nextDomain = normalizeEmailDomainValue(value)
+    if (!nextDomain) {
+      invalidDomains.push(value)
+      continue
+    }
+    normalized.add(nextDomain)
+  }
+
+  return {
+    domains: normalized.size > 0 ? [...normalized].sort() : null,
+    invalidDomains,
+  }
+}
+
+function getEmailDomain(email: string) {
+  const normalized = email.trim().toLowerCase()
+  const atIndex = normalized.lastIndexOf("@")
+  if (atIndex === -1 || atIndex + 1 >= normalized.length) {
+    return null
+  }
+  return normalized.slice(atIndex + 1)
+}
+
+export function isEmailAllowedForOrganization(allowedEmailDomains: readonly string[] | null | undefined, email: string) {
+  if (!allowedEmailDomains || allowedEmailDomains.length === 0) {
+    return true
+  }
+
+  const emailDomain = getEmailDomain(email)
+  if (!emailDomain) {
+    return false
+  }
+
+  return allowedEmailDomains.includes(emailDomain)
+}
+
+function normalizeStoredAllowedEmailDomains(value: unknown): AllowedEmailDomains {
+  const values = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null
+  return normalizeAllowedEmailDomains(values).domains
+}
+
 export function parsePermissionRecord(value: string | null) {
   if (!value) {
     return {}
@@ -176,6 +250,23 @@ export function parsePermissionRecord(value: string | null) {
 
 export function serializePermissionRecord(value: Record<string, string[]>) {
   return JSON.stringify(value)
+}
+
+export class OrganizationEmailDomainRestrictionError extends Error {
+  readonly emailDomain: string | null
+  readonly allowedEmailDomains: string[]
+
+  constructor(email: string, allowedEmailDomains: string[]) {
+    const emailDomain = getEmailDomain(email)
+    super(
+      allowedEmailDomains.length === 1
+        ? `This workspace only allows ${allowedEmailDomains[0]} email addresses.`
+        : `This workspace only allows email addresses from these domains: ${allowedEmailDomains.join(", ")}.`,
+    )
+    this.name = "OrganizationEmailDomainRestrictionError"
+    this.emailDomain = emailDomain
+    this.allowedEmailDomains = allowedEmailDomains
+  }
 }
 
 function clonePermissionRecord(value: Record<string, readonly string[]>) {
@@ -355,6 +446,17 @@ export async function acceptInvitationForUser(input: {
     return null
   }
 
+  const organizationRows = await db
+    .select({ allowedEmailDomains: OrganizationTable.allowedEmailDomains })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, invitation.organizationId))
+    .limit(1)
+
+  const allowedEmailDomains = normalizeStoredAllowedEmailDomains(organizationRows[0]?.allowedEmailDomains)
+  if (!isEmailAllowedForOrganization(allowedEmailDomains, input.email)) {
+    throw new OrganizationEmailDomainRestrictionError(input.email, allowedEmailDomains ?? [])
+  }
+
   const member = await acceptInvitation(invitation, input.userId)
   return {
     invitation,
@@ -384,6 +486,7 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
         id: OrganizationTable.id,
         name: OrganizationTable.name,
         slug: OrganizationTable.slug,
+        allowedEmailDomains: OrganizationTable.allowedEmailDomains,
       },
     })
     .from(InvitationTable)
@@ -401,7 +504,10 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
       ...row.invitation,
       status: getInvitationStatus(row.invitation),
     },
-    organization: row.organization,
+    organization: {
+      ...row.organization,
+      allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+    },
   }
 }
 
@@ -490,6 +596,81 @@ export async function createOrganizationForUser(input: {
   })
 }
 
+export async function updateOrganizationName(input: {
+  organizationId: OrgId
+  name: string
+}) {
+  return updateOrganizationSettings({
+    organizationId: input.organizationId,
+    name: input.name,
+  })
+}
+
+export async function updateOrganizationSettings(input: {
+  organizationId: OrgId
+  name?: string
+  allowedEmailDomains?: readonly string[] | null
+  desktopAppRestrictions?: DesktopAppRestrictions
+  allowedDesktopVersions?: readonly string[] | null
+}) {
+  const nextName = typeof input.name === "string" ? input.name.trim() : null
+  if (typeof input.name === "string" && !nextName) {
+    return null
+  }
+
+  const updates: Partial<typeof OrganizationTable.$inferInsert> = {}
+  if (nextName) {
+    updates.name = nextName
+  }
+  if (input.allowedEmailDomains !== undefined) {
+    updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
+  }
+  if (input.desktopAppRestrictions !== undefined) {
+    updates.desktopAppRestrictions = normalizeDesktopAppRestrictions(input.desktopAppRestrictions)
+  }
+  if (input.allowedDesktopVersions !== undefined) {
+    const rows = await db
+      .select({ metadata: OrganizationTable.metadata })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, input.organizationId))
+      .limit(1)
+
+    const existingOrganization = rows[0]
+    if (!existingOrganization) {
+      return null
+    }
+
+    const nextMetadata = {
+      ...normalizeOrganizationMetadata(existingOrganization.metadata).metadata,
+    } as Record<string, unknown>
+
+    if (input.allowedDesktopVersions === null) {
+      delete nextMetadata.allowedDesktopVersions
+    } else {
+      nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
+    }
+
+    updates.metadata = normalizeOrganizationMetadata(nextMetadata).metadata
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return null
+  }
+
+  await db
+    .update(OrganizationTable)
+    .set(updates)
+    .where(eq(OrganizationTable.id, input.organizationId))
+
+  const rows = await db
+    .select()
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, input.organizationId))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
 export async function seedDefaultOrganizationRoles(orgId: OrgId) {
   await ensureDefaultDynamicRoles(orgId)
 }
@@ -511,6 +692,8 @@ export async function listUserOrgs(userId: UserId) {
         name: OrganizationTable.name,
         slug: OrganizationTable.slug,
         logo: OrganizationTable.logo,
+        allowedEmailDomains: OrganizationTable.allowedEmailDomains,
+        desktopAppRestrictions: OrganizationTable.desktopAppRestrictions,
         metadata: OrganizationTable.metadata,
         createdAt: OrganizationTable.createdAt,
         updatedAt: OrganizationTable.updatedAt,
@@ -523,10 +706,12 @@ export async function listUserOrgs(userId: UserId) {
 
   return memberships.map((row) => ({
     id: row.organization.id,
-    name: row.organization.name,
-    slug: row.organization.slug,
-    logo: row.organization.logo,
-    metadata: serializeOrganizationMetadata(row.organization.metadata),
+      name: row.organization.name,
+      slug: row.organization.slug,
+      logo: row.organization.logo,
+      allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+      desktopAppRestrictions: normalizeDesktopAppRestrictions(row.organization.desktopAppRestrictions),
+      metadata: serializeOrganizationMetadata(row.organization.metadata),
     role: row.role,
     orgMemberId: row.membershipId,
     membershipId: row.membershipId,
@@ -638,14 +823,16 @@ export async function getOrganizationContextForUser(input: {
   const builtInDynamicRoleNames = new Set(Object.keys(denDefaultDynamicOrganizationRoles))
 
   return {
-    organization: {
-      id: organization.id,
-      name: organization.name,
-      slug: organization.slug,
-      logo: organization.logo,
-      metadata: serializeOrganizationMetadata(organization.metadata),
-      createdAt: organization.createdAt,
-      updatedAt: organization.updatedAt,
+      organization: {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        logo: organization.logo,
+        allowedEmailDomains: normalizeStoredAllowedEmailDomains(organization.allowedEmailDomains),
+        desktopAppRestrictions: normalizeDesktopAppRestrictions(organization.desktopAppRestrictions),
+        metadata: serializeOrganizationMetadata(organization.metadata),
+        createdAt: organization.createdAt,
+        updatedAt: organization.updatedAt,
     },
     currentMember: {
       id: currentMember.id,
