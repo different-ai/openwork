@@ -237,6 +237,21 @@ Guidelines:
 - Raw screenshot or coordinate-based control is a fallback for uninstrumented
   surfaces, not the default architecture.
 
+### MCP UI Control profile
+
+OpenWork should standardize external app control through MCP where possible. The
+app-local `window.__openworkControl` registry remains the source of current UI
+affordances, but public integrations should expose those affordances as MCP
+tools that follow `docs/mcp-ui-control-profile.md`:
+
+- `ui.snapshot` for current semantic app state
+- `ui.list_actions` for currently available action metadata and input schemas
+- `ui.execute_action` for running one semantic action by ID
+
+Standalone control clients such as HandsFree should be MCP clients first: they
+can connect to any configured MCP server and call generic MCP tools. OpenWork's
+local UI bridge is an implementation detail behind the OpenWork MCP surface.
+
 OpenWork supports two product runtime modes for users:
 
 - desktop
