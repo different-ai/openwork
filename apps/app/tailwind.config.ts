@@ -11,6 +11,9 @@ safelist: [
       ...radixColors,
       dls: {
         surface: "var(--dls-surface)",
+        background: "var(--dls-background)",
+        canvas: "var(--dls-canvas)",
+        "surface-muted": "var(--dls-surface-muted)",
         sidebar: "var(--dls-sidebar)",
         border: "var(--dls-border)",
         accent: "var(--dls-accent)",

@@ -1,28 +1,29 @@
 /** @jsxImportSource react */
-import type { ComponentProps, PointerEventHandler, ReactNode } from "react";
+import type * as React from "react";
 import { X } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
 import { SettingsPage, getSettingsTabLabel } from "./settings-page";
 import { WorkspaceSessionList } from "../../session/sidebar/workspace-session-list";
 
-type SettingsPageChromeProps = Omit<ComponentProps<typeof SettingsPage>, "children">;
+type SettingsPageChromeProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
 export type SettingsShellProps = SettingsPageChromeProps & {
   selectedWorkspaceName: string;
   headerStatus?: string;
   busyHint?: string | null;
-  workspaceSessionListProps: ComponentProps<typeof WorkspaceSessionList>;
+  workspaceSessionListProps: React.ComponentProps<typeof WorkspaceSessionList>;
   onClose: () => void;
-  sidebarTopSlot?: ReactNode;
-  headerLeadingSlot?: ReactNode;
+  sidebarTopSlot?: React.ReactNode;
+  headerLeadingSlot?: React.ReactNode;
   sidebarWidth?: number;
-  onSidebarResizeStart?: PointerEventHandler<HTMLDivElement>;
-  children: ReactNode;
+  onSidebarResizeStart?: React.PointerEventHandler<HTMLDivElement>;
+  children: React.ReactNode;
   error?: string | null;
-  errorSlot?: ReactNode;
-  modalSlot?: ReactNode;
-  footer?: ReactNode;
+  errorSlot?: React.ReactNode;
+  modalSlot?: React.ReactNode;
+  footer?: React.ReactNode;
 };
 
 export function SettingsShell(props: SettingsShellProps) {
@@ -49,46 +50,45 @@ export function SettingsShell(props: SettingsShellProps) {
           ) : null}
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-          <div className="flex-1 overflow-y-auto">
-            <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-dls-border bg-dls-surface px-4 md:px-6">
-              <div className="flex min-w-0 items-center gap-3">
-                {props.headerLeadingSlot}
-                <h1 className="truncate text-[15px] font-semibold text-dls-text">{title}</h1>
-                <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                  {props.selectedWorkspaceName}
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface">
+          <header className="shrink-0 flex h-12 items-center justify-between border-b border-dls-border bg-dls-surface px-4 md:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              {props.headerLeadingSlot}
+              <h1 className="truncate text-[15px] font-semibold text-dls-text">{title}</h1>
+              <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
+                {props.selectedWorkspaceName}
+              </span>
+              {props.developerMode && props.headerStatus ? (
+                <span className="hidden text-[12px] text-dls-secondary lg:inline">
+                  {props.headerStatus}
                 </span>
-                {props.developerMode && props.headerStatus ? (
-                  <span className="hidden text-[12px] text-dls-secondary lg:inline">
-                    {props.headerStatus}
-                  </span>
-                ) : null}
-                {props.busyHint ? (
-                  <span className="hidden text-[12px] text-dls-secondary lg:inline">
-                    {props.busyHint}
-                  </span>
-                ) : null}
-              </div>
-              <div className="flex items-center text-gray-10">
-                <button
-                  type="button"
-                  className="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-                  onClick={props.onClose}
-                  title={t("dashboard.close_settings")}
-                  aria-label={t("dashboard.close_settings")}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </header>
-
-            <div className="w-full space-y-10 p-6 md:p-10">
-              <SettingsPage {...props}>{props.children}</SettingsPage>
+              ) : null}
+              {props.busyHint ? (
+                <span className="hidden text-[12px] text-dls-secondary lg:inline">
+                  {props.busyHint}
+                </span>
+              ) : null}
             </div>
+            <div className="flex items-center text-gray-10">
+              <Button
+                variant="ghost"
+                type="button"
+                className="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+                onClick={props.onClose}
+                title={t("dashboard.close_settings")}
+                aria-label={t("dashboard.close_settings")}
+              >
+                <X size={18} />
+              </Button>
+            </div>
+          </header>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <SettingsPage {...props}>{props.children}</SettingsPage>
 
             {props.error ? (
               <div className="mx-auto max-w-5xl px-6 pb-24 md:px-10 md:pb-10">
-                <div className="space-y-3 rounded-2xl border border-red-7/20 bg-red-1/40 px-5 py-4 text-sm text-red-12">
+                <div className="flex flex-col gap-y-3 rounded-2xl border border-red-7/20 bg-red-1/40 px-5 py-4 text-sm text-red-12">
                   <div>{props.error}</div>
                   {props.errorSlot}
                 </div>
