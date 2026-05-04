@@ -329,14 +329,15 @@ if (shouldRun("--aliases")) {
   const aliasSourceFiles = collectSourceFiles(APP_SRC, (dir) => dir.includes("locales"));
   const aliasPattern = /\b(?:translate|tr)\s*\(/g;
   const aliasDefPattern = /(?:const|function)\s+(?:translate|tr)\s*[=(]/;
+  const aliasSkipPattern = /translate\s*\(\s*[-\d]|translate\s*\(\s*0|props\.translate|:\s*\(key:\s*string\)|`translate\(/;
   const hits = [];
 
   for (const file of aliasSourceFiles) {
     const content = readFileSync(file, "utf-8");
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      // Skip alias definitions themselves
       if (aliasDefPattern.test(lines[i])) continue;
+      if (aliasSkipPattern.test(lines[i])) continue;
       if (aliasPattern.test(lines[i])) {
         hits.push({ file: file.replace(REPO_ROOT + "/", ""), line: i + 1, text: lines[i].trim() });
       }
