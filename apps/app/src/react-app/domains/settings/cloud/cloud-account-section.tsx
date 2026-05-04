@@ -16,7 +16,7 @@ import {
   SettingsNotice,
   SettingsSectionHeaderDescription,
 } from "../settings-section";
-import { useTranslate } from "@/hooks/use-translate";
+import { t } from "@/i18n";
 
 export interface CloudAccountSectionProps {
   activeOrgId: string;
@@ -43,10 +43,9 @@ export function CloudAccountSection({
   onRefreshOrgs,
   onSignOut,
 }: CloudAccountSectionProps) {
-  const { tr } = useTranslate();
   const activeOrgOptions = orgs.map((org) => ({
     value: org.id,
-    label: `${org.name} ${org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}`,
+    label: `${org.name} ${org.role === "owner" ? t("den.org_owner_suffix") : t("den.org_member_suffix")}`,
   }));
   const handleActiveOrgChange = (orgId: string | null) => {
     if (orgId === null) {
@@ -59,8 +58,8 @@ export function CloudAccountSection({
   return (
     <section className="flex flex-col gap-y-8">
       <div>
-        <div className="text-sm font-medium text-dls-text">{tr("den.cloud_account_title")}</div>
-        <SettingsSectionHeaderDescription>{tr("den.cloud_account_hint")}</SettingsSectionHeaderDescription>
+        <div className="text-sm font-medium text-dls-text">{t("den.cloud_account_title")}</div>
+        <SettingsSectionHeaderDescription>{t("den.cloud_account_hint")}</SettingsSectionHeaderDescription>
       </div>
 
       <div className="flex flex-col gap-8">
@@ -79,14 +78,14 @@ export function CloudAccountSection({
             disabled={[authBusy, sessionBusy].some(Boolean)}
           >
             <LogOut className="size-4" />
-            {authBusy ? tr("den.signing_out") : tr("den.sign_out")}
+            {authBusy ? t("den.signing_out") : t("den.sign_out")}
           </Button>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex flex-col gap-y-1">
-            <div className="text-sm font-medium text-dls-text">{tr("den.active_org_title")}</div>
-            <div className=" text-xs text-muted-foreground">{tr("den.active_org_hint")}</div>
+            <div className="text-sm font-medium text-dls-text">{t("den.active_org_title")}</div>
+            <div className=" text-xs text-muted-foreground">{t("den.active_org_hint")}</div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="w-[260px] max-w-full">
@@ -98,9 +97,9 @@ export function CloudAccountSection({
               >
                 <SelectTrigger
                   className="w-full"
-                  aria-label={tr("den.active_org_title")}
+                  aria-label={t("den.active_org_title")}
                 >
-                  <SelectValue placeholder={tr("den.no_org_selected")} />
+                  <SelectValue placeholder={t("den.no_org_selected")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
@@ -118,7 +117,7 @@ export function CloudAccountSection({
               disabled={orgsBusy}
               onRefresh={onRefreshOrgs}
             >
-              {tr("den.refresh")}
+              {t("den.refresh")}
             </RefreshButton>
           </div>
         </div>

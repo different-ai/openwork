@@ -61,7 +61,7 @@ import {
   SettingsStatusBadge,
 } from "../settings-section";
 import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { useTranslate } from "@/hooks/use-translate";
+import { t } from "@/i18n";
 
 type AsyncResult = { ok: boolean; message: string };
 
@@ -154,7 +154,6 @@ function DenSignedOutPanel({
   onSubmitManualAuth,
   sessionBusy,
 }: DenSignedOutPanelProps) {
-  const { tr } = useTranslate();
   const [manualAuthOpen, setManualAuthOpen] = React.useState(false);
   const [manualAuthInput, setManualAuthInput] = React.useState("");
   const controlsDisabled = [authBusy, sessionBusy].some(Boolean);
@@ -170,9 +169,9 @@ function DenSignedOutPanel({
     <SettingsSection>
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{tr("den.signin_title")}</SettingsSectionHeaderTitle>
+          <SettingsSectionHeaderTitle>{t("den.signin_title")}</SettingsSectionHeaderTitle>
           <SettingsSectionHeaderDescription className="max-w-[54ch]">
-            {tr("den.cloud_sleep_hint")}
+            {t("den.cloud_sleep_hint")}
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
       </SettingsSectionHeader>
@@ -180,11 +179,11 @@ function DenSignedOutPanel({
       <div className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => onOpenBrowserAuth("sign-in")}>
-            {tr("den.signin_button")}
+            {t("den.signin_button")}
             <ArrowUpRight size={13} />
           </Button>
           <Button variant="outline" onClick={() => onOpenBrowserAuth("sign-up")}>
-            {tr("den.create_account")}
+            {t("den.create_account")}
             <ArrowUpRight size={13} />
           </Button>
         </div>
@@ -201,27 +200,27 @@ function DenSignedOutPanel({
           <CollapsibleTrigger
             render={<Button variant="ghost" size="sm" className="w-fit self-start" disabled={controlsDisabled} />}
           >
-            {manualAuthOpen ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
+            {manualAuthOpen ? t("den.hide_signin_code") : t("den.paste_signin_code")}
           </CollapsibleTrigger>
           <CollapsibleContent>
             <SettingsInset className="flex flex-col gap-y-3">
               <Field data-disabled={controlsDisabled}>
-                <FieldLabel htmlFor="den-signin-link">{tr("den.signin_link_label")}</FieldLabel>
+                <FieldLabel htmlFor="den-signin-link">{t("den.signin_link_label")}</FieldLabel>
                 <Input
                   id="den-signin-link"
                   value={manualAuthInput}
                   onChange={(event) => setManualAuthInput(event.currentTarget.value)}
-                  placeholder={tr("den.signin_link_placeholder")}
+                  placeholder={t("den.signin_link_placeholder")}
                   disabled={controlsDisabled}
                 />
-                <FieldDescription className="text-xs">{tr("den.signin_link_hint")}</FieldDescription>
+                <FieldDescription className="text-xs">{t("den.signin_link_hint")}</FieldDescription>
               </Field>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => void submitManualAuth()}
                   disabled={[controlsDisabled, !manualAuthInput.trim()].some(Boolean)}
                 >
-                  {authBusy ? tr("den.finishing") : tr("den.finish_signin")}
+                  {authBusy ? t("den.finishing") : t("den.finish_signin")}
                 </Button>
               </div>
             </SettingsInset>
@@ -232,14 +231,13 @@ function DenSignedOutPanel({
       {authError ? <SettingsNotice tone="error">{authError}</SettingsNotice> : null}
 
       <SettingsInset className="text-sm text-gray-10">
-        {tr("den.auto_reconnect_hint")}
+        {t("den.auto_reconnect_hint")}
       </SettingsInset>
     </SettingsSection>
   );
 }
 
 export function DenSettingsPanel(props: DenSettingsPanelProps) {
-  const { tr, tx } = useTranslate();
   const { showToast } = useStatusToasts();
 
   const initial = React.useMemo(() => readDenSettings(), []);
@@ -273,7 +271,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     () => orgs.find((org) => org.id === activeOrgId) ?? null,
     [activeOrgId, orgs],
   );
-  const activeOrgName = activeOrg?.name || tr("den.no_org_selected");
+  const activeOrgName = activeOrg?.name || t("den.no_org_selected");
 
   // Workers
   const [workersBusy, setWorkersBusy] = React.useState(false);
@@ -521,11 +519,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   ]);
 
   const summaryLabel = React.useMemo(() => {
-    if (authError) return tr("den.needs_attention");
-    if (sessionBusy) return tr("den.checking_session");
-    if (isSignedIn) return tr("dashboard.connected");
-    return tr("den.signed_out");
-  }, [authError, isSignedIn, sessionBusy, tr]);
+    if (authError) return t("den.needs_attention");
+    if (sessionBusy) return t("den.checking_session");
+    if (isSignedIn) return t("dashboard.connected");
+    return t("den.signed_out");
+  }, [authError, isSignedIn, sessionBusy]);
 
   // Shared reset helpers
   const clearSessionState = React.useCallback(() => {
@@ -580,18 +578,18 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       props.openLink(buildDenAuthUrl(baseUrl, mode));
       setStatusMessage(
         mode === "sign-up"
-          ? tr("den.status_browser_signup")
-          : tr("den.status_browser_signin"),
+          ? t("den.status_browser_signup")
+          : t("den.status_browser_signin"),
       );
       setAuthError(null);
     },
-    [baseUrl, props, tr],
+    [baseUrl, props],
   );
 
   const applyBaseUrl = React.useCallback(() => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft);
     if (!normalized) {
-      setBaseUrlError(tr("den.error_base_url"));
+      setBaseUrlError(t("den.error_base_url"));
       return;
     }
 
@@ -604,8 +602,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(tr("den.status_base_url_updated"));
-  }, [baseUrl, baseUrlDraft, clearSignedInState, tr]);
+    clearSignedInState(t("den.status_base_url_updated"));
+  }, [baseUrl, baseUrlDraft, clearSignedInState]);
 
   // Auth session query candidate: user, sessionBusy, authError
   React.useEffect(() => {
@@ -626,7 +624,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       .then((nextUser) => {
         if (cancelled) return;
         setUser(nextUser);
-        setStatusMessage(tx("den.status_signed_in_as", { email: nextUser.email }));
+        setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
       })
       .catch((error) => {
         if (cancelled) return;
@@ -635,7 +633,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         } else {
           clearSessionState();
         }
-        setAuthError(error instanceof Error ? error.message : tr("den.error_no_session"));
+        setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
       })
       .finally(() => {
         if (!cancelled) setSessionBusy(false);
@@ -644,7 +642,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [authToken, baseUrl, clearSessionState, clearSignedInState, tr, tx]);
+  }, [authToken, baseUrl, clearSessionState, clearSignedInState]);
 
   // Organizations query candidate: orgs, orgsBusy, orgsError
   const refreshOrgs = React.useCallback(
@@ -684,19 +682,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         }
         if (!quiet && response.orgs.length > 0) {
           showToast({
-            title: tx("den.status_loaded_orgs", {
+            title: t("den.status_loaded_orgs", {
               count: response.orgs.length,
             }),
             tone: "info",
           });
         }
       } catch (error) {
-        setOrgsError(error instanceof Error ? error.message : tr("den.error_load_orgs"));
+        setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
       } finally {
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, showToast, tr, tx],
+    [activeOrgId, authToken, baseUrl, client, showToast],
   );
 
   React.useEffect(() => {
@@ -722,23 +720,23 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         if (!quiet) {
           showToast({
             title: nextWorkers.length > 0
-              ? tx("den.status_loaded_workers", {
+              ? t("den.status_loaded_workers", {
                   count: nextWorkers.length,
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_workers", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_workers", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
             tone: "info",
           });
         }
       } catch (error) {
-        setWorkersError(error instanceof Error ? error.message : tr("den.error_load_workers"));
+        setWorkersError(error instanceof Error ? error.message : t("den.error_load_workers"));
       } finally {
         setWorkersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, client, showToast, tr, tx],
+    [activeOrg, activeOrgId, authToken, client, showToast],
   );
 
   React.useEffect(() => {
@@ -762,8 +760,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgSkillHubs().length;
           showToast({
             title: count > 0
-              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud skill hubs are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud skill hubs are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
             tone: "info",
           });
         }
@@ -777,7 +775,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings, tr],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
   React.useEffect(() => {
@@ -801,25 +799,25 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgSkills().length;
           showToast({
             title: count > 0
-              ? tx("den.status_loaded_skills", {
+              ? t("den.status_loaded_skills", {
                   count,
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_skills", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_skills", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
             tone: "info",
           });
         }
       } catch (error) {
         if (!quiet) {
-          setSkillActionError(error instanceof Error ? error.message : tr("den.error_load_skills"));
+          setSkillActionError(error instanceof Error ? error.message : t("den.error_load_skills"));
         }
       } finally {
         setSkillsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings, tr, tx],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
   React.useEffect(() => {
@@ -842,8 +840,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           const count = props.extensions.cloudOrgMarketplaces().length;
           showToast({
             title: count > 0
-              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No marketplaces are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No marketplaces are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
             tone: "info",
           });
         }
@@ -855,7 +853,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setMarketplacesBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, showToast, tr],
+    [activeOrg, activeOrgId, authToken, props.extensions, showToast],
   );
 
   React.useEffect(() => {
@@ -878,8 +876,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         if (!quiet) {
           showToast({
             title: items.length > 0
-              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud providers are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
+              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud providers are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
             tone: "info",
           });
         }
@@ -893,7 +891,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setProvidersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props, syncCurrentDenSettings, tr],
+    [activeOrg, activeOrgId, authToken, props, syncCurrentDenSettings],
   );
 
   React.useEffect(() => {
@@ -923,35 +921,35 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSessionBusy(false);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? tx("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
-            : tr("den.status_cloud_signin_done"),
+            ? t("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
+            : t("den.status_cloud_signin_done"),
         );
       } else if (customEvent.detail?.status === "error") {
-        setAuthError(customEvent.detail.message?.trim() || tr("den.error_signin_failed"));
+        setAuthError(customEvent.detail.message?.trim() || t("den.error_signin_failed"));
       }
     };
 
     window.addEventListener(denSessionUpdatedEvent, handler as EventListener);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler as EventListener);
-  }, [clearSessionState, tr, tx]);
+  }, [clearSessionState]);
 
   // Auth mutations: manual sign-in and sign-out
   const submitManualAuth = React.useCallback(async (input: string) => {
     const parsed = parseManualAuthInput(input);
     if (!parsed || authBusy) {
-      if (!parsed) setAuthError(tr("den.error_paste_valid_code"));
+      if (!parsed) setAuthError(t("den.error_paste_valid_code"));
       return false;
     }
 
     const nextBaseUrl = parsed.baseUrl ?? baseUrl;
     setAuthBusy(true);
     setAuthError(null);
-    setStatusMessage(tr("den.signing_in"));
+    setStatusMessage(t("den.signing_in"));
 
     try {
       const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
-        throw new Error(tr("den.error_no_token"));
+        throw new Error(t("den.error_no_token"));
       }
 
       if (props.developerMode) {
@@ -978,13 +976,13 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     } catch (error) {
       dispatchDenSessionUpdated({
         status: "error",
-        message: error instanceof Error ? error.message : tr("den.error_signin_failed"),
+        message: error instanceof Error ? error.message : t("den.error_signin_failed"),
       });
       return false;
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, baseUrl, props.developerMode, tr]);
+  }, [authBusy, baseUrl, props.developerMode]);
 
   const signOut = React.useCallback(async () => {
     if (authBusy) return;
@@ -1000,8 +998,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       setAuthBusy(false);
     }
 
-    clearSignedInState(tr("den.status_signed_out"));
-  }, [authBusy, authToken, clearSignedInState, client, tr]);
+    clearSignedInState(t("den.status_signed_out"));
+  }, [authBusy, authToken, clearSignedInState, client]);
 
   // Organization mutation: active org switch
   const handleActiveOrgChange = React.useCallback(
@@ -1022,11 +1020,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         }).catch(() => null);
       }
       showToast({
-        title: tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }),
+        title: t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
         tone: "success",
       });
     },
-    [authToken, baseUrl, orgs, showToast, tr, tx],
+    [authToken, baseUrl, orgs, showToast],
   );
 
   // Worker mutation: open remote workspace
@@ -1034,7 +1032,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     async (workerId: string, workerName: string) => {
       const orgId = activeOrgId.trim();
       if (!orgId) {
-        setWorkersError(tr("den.error_choose_org"));
+        setWorkersError(t("den.error_choose_org"));
         return;
       }
 
@@ -1046,7 +1044,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         const openworkUrl = tokens.openworkUrl?.trim() ?? "";
         const accessToken = tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
         if (!openworkUrl || !accessToken) {
-          throw new Error(tr("den.error_worker_not_ready"));
+          throw new Error(t("den.error_worker_not_ready"));
         }
 
         const ok = await props.connectRemoteWorkspace({
@@ -1056,24 +1054,24 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           displayName: workerName,
         });
         if (!ok) {
-          throw new Error(tx("den.error_open_worker", { name: workerName }));
+          throw new Error(t("den.error_open_worker", { name: workerName }));
         }
 
         showToast({
-          title: tx("den.status_opened_worker", { name: workerName }),
+          title: t("den.status_opened_worker", { name: workerName }),
           tone: "success",
         });
       } catch (error) {
         setWorkersError(
           error instanceof Error
             ? error.message
-            : tx("den.error_open_worker_fallback", { name: workerName }),
+            : t("den.error_open_worker_fallback", { name: workerName }),
         );
       } finally {
         setOpeningWorkerId(null);
       }
     },
-    [activeOrgId, client, props, showToast, tr, tx],
+    [activeOrgId, client, props, showToast],
   );
 
   // Skill hub mutations
@@ -1089,7 +1087,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.importCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
       } finally {
@@ -1097,7 +1095,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, showToast, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
   const handleRemoveSkillHub = React.useCallback(
@@ -1112,7 +1110,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkillHub(hubId);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
       } finally {
@@ -1120,7 +1118,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, showToast, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
   const handleSyncSkillHub = React.useCallback(
@@ -1135,7 +1133,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
       } finally {
@@ -1143,7 +1141,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, showToast, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
   // Skill mutations
@@ -1159,17 +1157,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.installCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.import_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.import_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, showToast, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
   const handleRemoveSkill = React.useCallback(
@@ -1183,17 +1181,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkill(cloudSkillId);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.remove_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.remove_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, showToast, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
   const handleSyncSkill = React.useCallback(
@@ -1208,17 +1206,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.sync_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.sync_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, showToast, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
   // Marketplace plugin mutations
@@ -1232,14 +1230,14 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.importCloudOrgPlugin(marketplaceId, plugin);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${tr("den.reload_workspace")}`, tone: "success" });
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setPluginActionError(error instanceof Error ? error.message : `Failed to import ${plugin.name}.`);
       } finally {
         setPluginActionId(null);
       }
     },
-    [pluginActionId, props.extensions, showToast, tr],
+    [pluginActionId, props.extensions, showToast],
   );
 
   // Provider mutations
@@ -1254,19 +1252,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const message = await props.connectCloudProvider(cloudProviderId);
         showToast({
-          title: `${message || tx("den.imported_provider", { name: providerName })} ${tr("den.reload_workspace")}`,
+          title: `${message || t("den.imported_provider", { name: providerName })} ${t("den.reload_workspace")}`,
           tone: "success",
         });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.import_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, showToast, tr, tx],
+    [props, providerActionId, showToast],
   );
 
   const handleRemoveProvider = React.useCallback(
@@ -1280,19 +1278,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const message = await props.removeCloudProvider(cloudProviderId);
         showToast({
-          title: `${message || tx("den.removed_provider", { name: providerName })} ${tr("den.reload_workspace")}`,
+          title: `${message || t("den.removed_provider", { name: providerName })} ${t("den.reload_workspace")}`,
           tone: "success",
         });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.remove_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, showToast, tr, tx],
+    [props, providerActionId, showToast],
   );
 
   const handleSyncProvider = React.useCallback(
@@ -1306,19 +1304,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         await props.connectCloudProvider(cloudProviderId);
         showToast({
-          title: `${tx("den.synced_provider", { name: providerName })} ${tr("den.reload_workspace")}`,
+          title: `${t("den.synced_provider", { name: providerName })} ${t("den.reload_workspace")}`,
           tone: "success",
         });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.sync_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, showToast, tr, tx],
+    [props, providerActionId, showToast],
   );
 
   return (
@@ -1328,17 +1326,17 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       <SettingsSection>
         <SettingsSectionHeader>
           <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>{tr("den.cloud_section_title")}
+            <SettingsSectionHeaderTitle>{t("den.cloud_section_title")}
 
             <SettingsStatusBadge tone={summaryTone} label={summaryLabel} />
 
             </SettingsSectionHeaderTitle>
             <SettingsSectionHeaderDescription className="">
-              {tr(isSignedIn ? "den.cloud_signed_in_desc" : "den.cloud_section_desc")}
+              {t(isSignedIn ? "den.cloud_signed_in_desc" : "den.cloud_section_desc")}
             </SettingsSectionHeaderDescription>
             {!isSignedIn ? (
               <SettingsSectionHeaderDescription className="text-xs">
-                {tr("den.cloud_sleep_hint")}
+                {t("den.cloud_sleep_hint")}
               </SettingsSectionHeaderDescription>
             ) : null}
           </SettingsSectionHeaderContent>

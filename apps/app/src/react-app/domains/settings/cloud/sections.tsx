@@ -36,7 +36,7 @@ import {
   SettingsListItemTitle,
   SettingsListSearchInput,
 } from "../settings-list";
-import { useTranslate } from "@/hooks/use-translate";
+import { t } from "@/i18n";
 
 type ResourceActionKind = "import" | "remove" | "sync";
 
@@ -121,23 +121,23 @@ function workerStatusValue(status: string) {
   return status.trim().toLowerCase() || "unknown";
 }
 
-function workerStatusMeta(status: string, tr: (key: string) => string) {
+function workerStatusMeta(status: string) {
   const normalized = workerStatusValue(status);
 
   switch (normalized) {
     case "healthy":
-      return { label: tr("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
+      return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
-      return { label: tr("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
     case "failed":
-      return { label: tr("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
     case "stopped":
-      return { label: tr("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
+      return { label: t("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
     default:
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : tr("dashboard.worker_status_unknown"),
+          : t("dashboard.worker_status_unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
@@ -177,43 +177,42 @@ function CloudSkillListItem({
   onRemoveSkill,
   onSyncSkill,
 }: CloudSkillListItemProps) {
-  const { tr, tx } = useTranslate();
   const actionBusy = actionId === row.cloudSkillId;
   const actionLabel = !actionBusy
     ? null
     : actionKind === "import"
-      ? tr("den.importing")
+      ? t("den.importing")
       : actionKind === "sync"
-        ? tr("den.syncing")
-        : tr("den.removing");
+        ? t("den.syncing")
+        : t("den.removing");
 
   return (
     <SettingsListItem>
       <SettingsListItemContent>
         <SettingsListTitle>
           <SettingsListItemTitle>{row.title}</SettingsListItemTitle>
-          {row.skill?.hubName ? <SettingsPill>{tx("skills.cloud_hub_label", { name: row.skill.hubName })}</SettingsPill> : null}
-          {row.skill?.shared === "public" ? <SettingsPill>{tr("skills.cloud_shared_public")}</SettingsPill> : null}
-          {row.skill?.shared === null && !row.skill?.hubName ? <SettingsPill>{tr("den.private_badge")}</SettingsPill> : null}
-          {row.installedName ? <SettingsPill>{tx("den.installed_name_badge", { name: row.installedName })}</SettingsPill> : null}
+          {row.skill?.hubName ? <SettingsPill>{t("skills.cloud_hub_label", { name: row.skill.hubName })}</SettingsPill> : null}
+          {row.skill?.shared === "public" ? <SettingsPill>{t("skills.cloud_shared_public")}</SettingsPill> : null}
+          {row.skill?.shared === null && !row.skill?.hubName ? <SettingsPill>{t("den.private_badge")}</SettingsPill> : null}
+          {row.installedName ? <SettingsPill>{t("den.installed_name_badge", { name: row.installedName })}</SettingsPill> : null}
           {row.status !== "available" ? (
             <SettingsPill className={statusBadgeVariants({ tone: resourceStatusTone(row.status) })}>
               {row.status === "installed"
-                ? tr("den.imported_badge")
+                ? t("den.imported_badge")
                 : row.status === "out_of_sync"
-                  ? tr("den.out_of_sync_badge")
-                  : tr("den.removed_from_cloud_badge")}
+                  ? t("den.out_of_sync_badge")
+                  : t("den.removed_from_cloud_badge")}
             </SettingsPill>
           ) : null}
         </SettingsListTitle>
         <SettingsListItemDescription>
           {row.status === "available"
-            ? tx("den.cloud_skill_detail", { title: row.title })
+            ? t("den.cloud_skill_detail", { title: row.title })
             : row.status === "installed"
-              ? tx("den.cloud_skill_imported_detail", { name: row.installedName ?? row.title })
+              ? t("den.cloud_skill_imported_detail", { name: row.installedName ?? row.title })
               : row.status === "out_of_sync"
-                ? tx("den.cloud_skill_sync_detail", { name: row.installedName ?? row.title })
-                : tx("den.cloud_skill_removed_detail", { name: row.installedName ?? row.title })}
+                ? t("den.cloud_skill_sync_detail", { name: row.installedName ?? row.title })
+                : t("den.cloud_skill_removed_detail", { name: row.installedName ?? row.title })}
         </SettingsListItemDescription>
       </SettingsListItemContent>
       <SettingsListItemActions>
@@ -224,7 +223,7 @@ function CloudSkillListItem({
             onClick={() => void onSyncSkill(row.cloudSkillId, row.title)}
             disabled={actionId !== null}
           >
-            {actionBusy && actionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+            {actionBusy && actionKind === "sync" ? t("den.syncing") : t("den.sync")}
           </Button>
         ) : null}
         {row.status === "available" && row.skill ? (
@@ -234,7 +233,7 @@ function CloudSkillListItem({
             onClick={() => void onImportSkill(row.cloudSkillId, row.title)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : tr("den.import_skill")}
+            {actionBusy ? actionLabel : t("den.import_skill")}
           </Button>
         ) : null}
         {row.status !== "available" ? (
@@ -244,7 +243,7 @@ function CloudSkillListItem({
             onClick={() => void onRemoveSkill(row.cloudSkillId, row.title)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : tr("den.uninstall")}
+            {actionBusy ? actionLabel : t("den.uninstall")}
           </Button>
         ) : null}
       </SettingsListItemActions>
@@ -263,7 +262,6 @@ function MarketplacePluginListItem({
   row,
   onImportPlugin,
 }: MarketplacePluginListItemProps) {
-  const { tr } = useTranslate();
   const actionBusy = actionId === row.plugin.id;
   const counts = Object.entries(row.plugin.componentCounts)
     .filter(([, count]) => count > 0)
@@ -276,7 +274,7 @@ function MarketplacePluginListItem({
           <SettingsListItemTitle>{row.plugin.name}</SettingsListItemTitle>
           {row.status !== "available" ? (
             <SettingsPill className={statusBadgeVariants({ tone: resourceStatusTone(row.status) })}>
-              {row.status === "imported" ? tr("den.imported_badge") : tr("den.out_of_sync_badge")}
+              {row.status === "imported" ? t("den.imported_badge") : t("den.out_of_sync_badge")}
             </SettingsPill>
           ) : null}
           {counts.map((label) => (
@@ -298,7 +296,7 @@ function MarketplacePluginListItem({
         onClick={() => void onImportPlugin(row.marketplaceId, row.plugin)}
         disabled={actionId !== null}
       >
-        {actionBusy ? tr("den.importing") : row.status === "available" ? tr("den.import_provider") : tr("den.sync")}
+        {actionBusy ? t("den.importing") : row.status === "available" ? t("den.import_provider") : t("den.sync")}
       </Button>
     </SettingsListItem>
   );
@@ -311,8 +309,7 @@ interface CloudWorkerListItemProps {
 }
 
 function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWorkerListItemProps) {
-  const { tr, tx } = useTranslate();
-  const status = workerStatusMeta(worker.status, tr);
+  const status = workerStatusMeta(worker.status);
 
   return (
     <SettingsListItem>
@@ -325,8 +322,8 @@ function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWor
         </SettingsListTitle>
         <SettingsListItemDescription>
           {[
-            worker.isMine ? tr("den.worker_mine_badge") : null,
-            worker.provider ? tx("den.worker_provider_label", { provider: worker.provider }) : tr("den.worker_secondary_cloud"),
+            worker.isMine ? t("den.worker_mine_badge") : null,
+            worker.provider ? t("den.worker_provider_label", { provider: worker.provider }) : t("den.worker_secondary_cloud"),
             worker.instanceUrl,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
@@ -336,9 +333,9 @@ function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWor
         size="sm"
         onClick={() => void onOpenWorker(worker.workerId, worker.workerName)}
         disabled={[openingWorkerId !== null, !status.canOpen].some(Boolean)}
-        title={!status.canOpen ? tr("den.worker_not_ready_title") : undefined}
+        title={!status.canOpen ? t("den.worker_not_ready_title") : undefined}
       >
-        {openingWorkerId === worker.workerId ? tr("den.opening") : tr("den.open")}
+        {openingWorkerId === worker.workerId ? t("den.opening") : t("den.open")}
       </Button>
     </SettingsListItem>
   );
@@ -354,15 +351,14 @@ interface SkillHubListItemProps {
 }
 
 function SkillHubListItem({ actionId, actionKind, row, onImport, onRemove, onSync }: SkillHubListItemProps) {
-  const { tr, tx } = useTranslate();
   const actionBusy = actionId === row.hubId;
   const actionLabel = !actionBusy
     ? null
     : actionKind === "import"
-      ? tr("den.importing")
+      ? t("den.importing")
       : actionKind === "sync"
-        ? tr("den.syncing")
-        : tr("den.removing");
+        ? t("den.syncing")
+        : t("den.removing");
 
   return (
     <SettingsListItem>
@@ -370,31 +366,31 @@ function SkillHubListItem({ actionId, actionKind, row, onImport, onRemove, onSyn
         <SettingsListTitle>
           <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
           <SettingsPill>
-            {tx("den.skill_hub_skills_badge", {
+            {t("den.skill_hub_skills_badge", {
               count: row.hub?.skills.length ?? row.importedSkillCount,
             })}
           </SettingsPill>
           {row.status !== "available" ? (
             <SettingsPill className={statusBadgeVariants({ tone: resourceStatusTone(row.status) })}>
               {row.status === "imported"
-                ? tr("den.imported_badge")
+                ? t("den.imported_badge")
                 : row.status === "out_of_sync"
-                  ? tr("den.out_of_sync_badge")
-                  : tr("den.removed_from_cloud_badge")}
+                  ? t("den.out_of_sync_badge")
+                  : t("den.removed_from_cloud_badge")}
             </SettingsPill>
           ) : null}
         </SettingsListTitle>
         <SettingsListItemDescription>
           {row.status === "available"
-            ? tx("den.skill_hub_detail", { count: row.liveSkillCount })
+            ? t("den.skill_hub_detail", { count: row.liveSkillCount })
             : row.status === "imported"
-              ? tx("den.skill_hub_imported_detail", { count: row.importedSkillCount })
+              ? t("den.skill_hub_imported_detail", { count: row.importedSkillCount })
               : row.status === "out_of_sync"
-                ? tx("den.skill_hub_sync_detail", {
+                ? t("den.skill_hub_sync_detail", {
                     liveCount: row.liveSkillCount,
                     importedCount: row.importedSkillCount,
                   })
-                : tx("den.skill_hub_removed_detail", { importedCount: row.importedSkillCount })}
+                : t("den.skill_hub_removed_detail", { importedCount: row.importedSkillCount })}
         </SettingsListItemDescription>
       </SettingsListItemContent>
       <SettingsListItemActions>
@@ -405,7 +401,7 @@ function SkillHubListItem({ actionId, actionKind, row, onImport, onRemove, onSyn
             onClick={() => void onSync(row.hubId)}
             disabled={actionId !== null}
           >
-            {actionBusy && actionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+            {actionBusy && actionKind === "sync" ? t("den.syncing") : t("den.sync")}
           </Button>
         ) : null}
         {row.status === "available" && row.hub ? (
@@ -415,7 +411,7 @@ function SkillHubListItem({ actionId, actionKind, row, onImport, onRemove, onSyn
             onClick={() => void onImport(row.hubId)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : tr("den.import_all")}
+            {actionBusy ? actionLabel : t("den.import_all")}
           </Button>
         ) : null}
         {row.status !== "available" ? (
@@ -425,7 +421,7 @@ function SkillHubListItem({ actionId, actionKind, row, onImport, onRemove, onSyn
             onClick={() => void onRemove(row.hubId)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : row.status === "removed_from_cloud" ? tr("den.uninstall") : tr("common.remove")}
+            {actionBusy ? actionLabel : row.status === "removed_from_cloud" ? t("den.uninstall") : t("common.remove")}
           </Button>
         ) : null}
       </SettingsListItemActions>
@@ -443,15 +439,14 @@ interface CloudProviderListItemProps {
 }
 
 function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, onSync }: CloudProviderListItemProps) {
-  const { tr, tx } = useTranslate();
   const actionBusy = actionId === row.cloudProviderId;
   const actionLabel = !actionBusy
     ? null
     : actionKind === "import"
-      ? tr("den.importing")
+      ? t("den.importing")
       : actionKind === "sync"
-        ? tr("den.syncing")
-        : tr("den.removing");
+        ? t("den.syncing")
+        : t("den.removing");
 
   return (
     <SettingsListItem>
@@ -461,27 +456,27 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
           {row.status !== "available" ? (
             <SettingsPill className={statusBadgeVariants({ tone: resourceStatusTone(row.status) })}>
               {row.status === "imported"
-                ? tr("den.imported_badge")
+                ? t("den.imported_badge")
                 : row.status === "out_of_sync"
-                  ? tr("den.out_of_sync_badge")
-                  : tr("den.removed_from_cloud_badge")}
+                  ? t("den.out_of_sync_badge")
+                  : t("den.removed_from_cloud_badge")}
             </SettingsPill>
           ) : null}
         </SettingsListTitle>
         <SettingsListItemDescription>
           {[
             row.provider?.providerId ?? row.imported?.providerId,
-            row.provider?.hasApiKey ? tr("den.credentials_ready_badge") : null,
+            row.provider?.hasApiKey ? t("den.credentials_ready_badge") : null,
             row.status === "removed_from_cloud"
-              ? tx("den.cloud_provider_removed_detail", {
+              ? t("den.cloud_provider_removed_detail", {
                   providerId: row.imported?.providerId ?? row.name,
                 })
               : row.status === "out_of_sync"
-                ? tx("den.cloud_provider_sync_detail", {
+                ? t("den.cloud_provider_sync_detail", {
                     count: row.provider?.models.length ?? 0,
                     source: row.provider?.source === "custom" ? "custom" : "managed",
                   })
-                : tx("den.cloud_provider_detail", {
+                : t("den.cloud_provider_detail", {
                     count: row.provider?.models.length ?? 0,
                     source: row.provider?.source === "custom" ? "custom" : "managed",
                   }),
@@ -496,7 +491,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
             onClick={() => void onSync(row.cloudProviderId, row.name)}
             disabled={actionId !== null}
           >
-            {actionBusy && actionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
+            {actionBusy && actionKind === "sync" ? t("den.syncing") : t("den.sync")}
           </Button>
         ) : null}
         {row.status === "available" && row.provider ? (
@@ -506,7 +501,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
             onClick={() => void onImport(row.cloudProviderId, row.name)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : tr("den.import_provider")}
+            {actionBusy ? actionLabel : t("den.import_provider")}
           </Button>
         ) : null}
         {row.status !== "available" ? (
@@ -516,7 +511,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
             onClick={() => void onRemove(row.cloudProviderId, row.name)}
             disabled={actionId !== null}
           >
-            {actionBusy ? actionLabel : row.status === "removed_from_cloud" ? tr("den.uninstall") : tr("common.remove")}
+            {actionBusy ? actionLabel : row.status === "removed_from_cloud" ? t("den.uninstall") : t("common.remove")}
           </Button>
         ) : null}
       </SettingsListItemActions>
@@ -552,14 +547,13 @@ export function CloudSkillsSection({
   onRemoveSkill,
   onSyncSkill,
 }: CloudSkillsSectionProps) {
-  const { tr } = useTranslate();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: skillSearchKeys, query: searchQuery });
   const skillGroups = [
     { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: tr("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "installed", label: tr("skills.cloud_status_installed"), rows: visibleRows.filter((row) => row.status === "installed") },
-    { value: "removed_from_cloud", label: tr("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
+    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
+    { value: "installed", label: t("skills.cloud_status_installed"), rows: visibleRows.filter((row) => row.status === "installed") },
+    { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
   ].filter((group) => group.rows.length > 0);
 
   return (
@@ -567,9 +561,9 @@ export function CloudSkillsSection({
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>
-            {tr("den.cloud_skills_title")}
+            {t("den.cloud_skills_title")}
           </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{tr("den.cloud_skills_hint")}</SettingsSectionHeaderDescription>
+          <SettingsSectionHeaderDescription>{t("den.cloud_skills_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
           <RefreshButton
@@ -577,7 +571,7 @@ export function CloudSkillsSection({
             disabled={[busy, !hasActiveOrg].some(Boolean)}
             onRefresh={onRefresh}
           >
-            {tr("den.refresh")}
+            {t("den.refresh")}
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
@@ -588,7 +582,7 @@ export function CloudSkillsSection({
 
       {!busy && rows.length === 0 ? (
         <SettingsListEmptyState>
-          {hasActiveOrg ? tr("den.no_cloud_skills") : tr("den.choose_org_for_skills")}
+          {hasActiveOrg ? t("den.no_cloud_skills") : t("den.choose_org_for_skills")}
         </SettingsListEmptyState>
       ) : null}
 
@@ -669,7 +663,6 @@ export function MarketplacePluginsSection({
   onRefresh,
   onSelectMarketplace,
 }: MarketplacePluginsSectionProps) {
-  const { tr } = useTranslate();
   const [searchQuery, setSearchQuery] = React.useState("");
   const selectedMarketplace =
     marketplaces.find((entry) => entry.marketplace.id === activeMarketplaceId) ?? marketplaces[0] ?? null;
@@ -677,8 +670,8 @@ export function MarketplacePluginsSection({
   const visibleRows = useSearch({ items: selectedRows, keys: pluginSearchKeys, query: searchQuery });
   const pluginGroups = [
     { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: tr("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "imported", label: tr("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
+    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
+    { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
   ].filter((group) => group.rows.length > 0);
 
   return (
@@ -698,7 +691,7 @@ export function MarketplacePluginsSection({
             disabled={[busy, !hasActiveOrg].some(Boolean)}
             onRefresh={onRefresh}
           >
-            {tr("den.refresh")}
+            {t("den.refresh")}
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
@@ -803,7 +796,6 @@ export function CloudWorkersSection({
   onOpenWorker,
   onRefreshWorkers,
 }: CloudWorkersSectionProps) {
-  const { tr } = useTranslate();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleWorkers = useSearch({ items: workers, keys: workerSearchKeys, query: searchQuery });
   const workerGroups: { value: string; label: string; rows: CloudWorker[] }[] = [];
@@ -815,7 +807,7 @@ export function CloudWorkersSection({
     if (group) {
       group.rows.push(worker);
     } else {
-      workerGroups.push({ value, label: workerStatusMeta(worker.status, tr).label, rows: [worker] });
+      workerGroups.push({ value, label: workerStatusMeta(worker.status).label, rows: [worker] });
     }
   }
 
@@ -826,9 +818,9 @@ export function CloudWorkersSection({
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>
-            {tr("den.cloud_workers_title")}
+            {t("den.cloud_workers_title")}
           </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{tr("den.cloud_workers_hint")}</SettingsSectionHeaderDescription>
+          <SettingsSectionHeaderDescription>{t("den.cloud_workers_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
           <RefreshButton
@@ -836,7 +828,7 @@ export function CloudWorkersSection({
             disabled={refreshDisabled}
             onRefresh={onRefreshWorkers}
           >
-            {tr("den.refresh")}
+            {t("den.refresh")}
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
@@ -844,7 +836,7 @@ export function CloudWorkersSection({
       {workersError ? <SettingsNotice tone="error">{workersError}</SettingsNotice> : null}
 
       {!workersBusy && workers.length === 0 ? (
-        <SettingsListEmptyState>{tr("den.no_cloud_workers")}</SettingsListEmptyState>
+        <SettingsListEmptyState>{t("den.no_cloud_workers")}</SettingsListEmptyState>
       ) : null}
 
       {workers.length > 0 ? (
@@ -921,14 +913,13 @@ export function SkillHubsSection({
   onRemove,
   onSync,
 }: SkillHubsSectionProps) {
-  const { tr } = useTranslate();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const skillHubGroups = [
     { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: tr("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "imported", label: tr("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
-    { value: "removed_from_cloud", label: tr("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
+    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
+    { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
+    { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
   ].filter((group) => group.rows.length > 0);
 
   return (
@@ -936,9 +927,9 @@ export function SkillHubsSection({
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>
-            {tr("den.skill_hubs_title")}
+            {t("den.skill_hubs_title")}
           </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{tr("den.skill_hubs_hint")}</SettingsSectionHeaderDescription>
+          <SettingsSectionHeaderDescription>{t("den.skill_hubs_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
           <RefreshButton
@@ -946,7 +937,7 @@ export function SkillHubsSection({
             disabled={[busy, !hasActiveOrg].some(Boolean)}
             onRefresh={onRefresh}
           >
-            {tr("den.refresh")}
+            {t("den.refresh")}
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
@@ -957,7 +948,7 @@ export function SkillHubsSection({
 
       {!busy && rows.length === 0 ? (
         <SettingsListEmptyState>
-          {hasActiveOrg ? tr("den.no_skill_hubs") : tr("den.choose_org_for_skill_hubs")}
+          {hasActiveOrg ? t("den.no_skill_hubs") : t("den.choose_org_for_skill_hubs")}
         </SettingsListEmptyState>
       ) : null}
 
@@ -1036,14 +1027,13 @@ export function CloudProvidersSection({
   onRemove,
   onSync,
 }: CloudProvidersSectionProps) {
-  const { tr } = useTranslate();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const providerGroups = [
     { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: tr("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "imported", label: tr("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
-    { value: "removed_from_cloud", label: tr("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
+    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
+    { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
+    { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
   ].filter((group) => group.rows.length > 0);
 
   return (
@@ -1051,9 +1041,9 @@ export function CloudProvidersSection({
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>
-            {tr("den.cloud_providers_title")}
+            {t("den.cloud_providers_title")}
           </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{tr("den.cloud_providers_hint")}</SettingsSectionHeaderDescription>
+          <SettingsSectionHeaderDescription>{t("den.cloud_providers_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
           <RefreshButton
@@ -1061,7 +1051,7 @@ export function CloudProvidersSection({
             disabled={[busy, !hasActiveOrg].some(Boolean)}
             onRefresh={onRefresh}
           >
-            {tr("den.refresh")}
+            {t("den.refresh")}
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
@@ -1070,7 +1060,7 @@ export function CloudProvidersSection({
 
       {!busy && rows.length === 0 ? (
         <SettingsListEmptyState>
-          {hasActiveOrg ? tr("den.no_cloud_providers") : tr("den.choose_org_for_providers")}
+          {hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}
         </SettingsListEmptyState>
       ) : null}
 
