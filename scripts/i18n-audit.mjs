@@ -380,7 +380,11 @@ if (shouldRun("--placeholders")) {
       if (!localeValue) continue;
 
       const localePh = findPlaceholders(localeValue);
+      // {count} is optional in `_zero` / `_one` variants — the translator
+      // can write "No messages" or "1 message" instead of "{count} message".
+      const countOptional = /_(zero|one)$/.test(key);
       for (const ph of enPh) {
+        if (countOptional && ph === "{count}") continue;
         if (!localePh.includes(ph)) {
           console.log(`  ✗ ${locale}/${key}: missing placeholder ${ph}`);
           problems++;
