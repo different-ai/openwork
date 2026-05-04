@@ -59,8 +59,6 @@ import {
 import {
   openworkServerInfo,
   openworkServerRestart,
-  opencodeRouterInfo,
-  opencodeRouterRestart,
   engineStart,
   pickDirectory,
   resolveWorkspaceListSelectedId,
@@ -1235,14 +1233,11 @@ export function SettingsRoute() {
 
   const handleRestartMessagingWorker = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
-    const workspacePath = selectedWorkspaceRoot.trim();
-    if (!workspacePath) return false;
 
     try {
-      const info = await opencodeRouterInfo().catch(() => null);
-      await opencodeRouterRestart({
-        workspacePath,
-        opencodeUrl: info?.opencodeUrl ?? undefined,
+      await openworkServerRestart({
+        remoteAccessEnabled:
+          readOpenworkServerSettings().remoteAccessEnabled === true,
       });
       await openworkServerStore.reconnectOpenworkServer();
       await refreshRouteState();
@@ -1250,7 +1245,7 @@ export function SettingsRoute() {
     } catch {
       return false;
     }
-  }, [openworkServerStore, refreshRouteState, selectedWorkspaceRoot]);
+  }, [openworkServerStore, refreshRouteState]);
 
   const messagingViewProps = useMessagingViewProps({
     busy,
