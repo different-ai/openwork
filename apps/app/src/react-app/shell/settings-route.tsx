@@ -916,10 +916,7 @@ export function SettingsRoute() {
     ? "bg-green-7/10 text-green-11 border-green-7/20"
     : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   const providerSummary = providerConnectedIds.length > 0
-    ? t("status.providers_connected", undefined, {
-      count: providerConnectedIds.length,
-      plural: providerConnectedIds.length === 1 ? "" : "s",
-    })
+    ? t("status.providers_connected", { count: providerConnectedIds.length })
     : t("settings.no_providers_connected");
   const connectedProviders = providers
     .filter((provider) => providerConnectedIds.includes(provider.id))

@@ -29,6 +29,10 @@ const APP_SRC = join(REPO_ROOT, "apps/app/src");
 const LOCALES = ["ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
+const PLURAL_SUFFIXES = ["zero", "one", "two", "few", "many", "other"];
+const PLURAL_SUFFIX_RE = /_(zero|one|two|few|many|other)$/;
+const stripPluralSuffix = (key) => key.replace(PLURAL_SUFFIX_RE, "");
+
 const mode = process.argv[2] ?? "--all";
 const isCi = mode === "--ci";
 const isAll = mode === "--all" || isCi;
@@ -157,11 +161,24 @@ if (shouldRun("--missing")) {
 // --- 3. Orphan keys ---
 if (shouldRun("--orphan")) {
   console.log("=== Orphan keys (in locale but not in en.ts) ===");
+  // Locales without plurals (e.g. Chinese, Japanese) use the bare key while en defines
+  // suffixed variants. Treat the bare key as valid if en has any plural
+  // variant of it. The reverse — locale has a suffix that en doesn't — is
+  // also fine since the runtime falls back to en's bare or other-suffix key.
+  const enHasAnyPluralVariant = (key) =>
+    PLURAL_SUFFIXES.some((suffix) => enKeys.has(`${key}_${suffix}`));
+  const isOrphan = (key) => {
+    if (enKeys.has(key)) return false;
+    if (enHasAnyPluralVariant(key)) return false;
+    const base = stripPluralSuffix(key);
+    if (base !== key && enKeys.has(base)) return false;
+    return true;
+  };
   for (const locale of LOCALES) {
     const file = join(LOCALES_DIR, `${locale}.ts`);
     if (!existsSync(file)) continue;
     const localeKeys = extractKeys(file);
-    const orphans = [...localeKeys].filter((k) => !enKeys.has(k));
+    const orphans = [...localeKeys].filter(isOrphan);
 
     if (orphans.length === 0) {
       console.log(`  ${locale}: ✓ no orphans`);
@@ -206,7 +223,15 @@ if (shouldRun("--unused", "--prune")) {
   );
   const allSource = repoSourceFiles.map((f) => readFileSync(f, "utf-8")).join("\n");
 
-  const unused = [...enKeys].filter((key) => !allSource.includes(key));
+  // A plural-suffixed key (foo_one / foo_other) counts as "used" when the
+  // base key (foo) is referenced — `t(key, { count })` resolves the suffix at
+  // runtime so the source never names the suffixed variant directly.
+  const unused = [...enKeys].filter((key) => {
+    if (allSource.includes(key)) return false;
+    const base = stripPluralSuffix(key);
+    if (base !== key && allSource.includes(base)) return false;
+    return true;
+  });
 
   if (unused.length === 0) {
     console.log("  ✓ all keys referenced in source");
@@ -272,6 +297,14 @@ if (shouldRun("--dangling")) {
   // Match t("key.name"), t("key.name", ...), translate("key.name"), tr("key.name")
   const keyRefPattern = /\b(?:t|translate|tr)\(\s*"([a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*?)"/g;
 
+  // A `t("foo")` call resolves if `foo` exists OR any plural variant
+  // (`foo_one`, `foo_other`, etc.) exists — the runtime picks a variant
+  // based on params.count.
+  const keyResolves = (key) => {
+    if (enKeys.has(key)) return true;
+    return PLURAL_SUFFIXES.some((suffix) => enKeys.has(`${key}_${suffix}`));
+  };
+
   const dangling = [];
   for (const file of sourceFiles) {
     const content = readFileSync(file, "utf-8");
@@ -279,7 +312,7 @@ if (shouldRun("--dangling")) {
     for (let i = 0; i < lines.length; i++) {
       for (const match of lines[i].matchAll(keyRefPattern)) {
         const key = match[1];
-        if (!enKeys.has(key)) {
+        if (!keyResolves(key)) {
           dangling.push({ key, file: file.replace(REPO_ROOT + "/", ""), line: i + 1 });
         }
       }
@@ -383,7 +416,7 @@ if (shouldRun("--placeholders")) {
         if (!localePh.includes(ph)) {
           console.log(`  ✗ ${locale}/${key}: missing placeholder ${ph}`);
           problems++;
-          if (!(isCi && ph === "{plural}")) exitCode = 1;
+          exitCode = 1;
         }
       }
     }
@@ -493,5 +526,4 @@ if (mode === "--sort") {
 
 // --- Done ---
 console.log("=== Done ===");
-console.log("Run with --missing, --orphan, --duplicates, --unused, --dangling, --placeholders, --hardcoded, --prune, or --sort for a single check.");
 process.exit(exitCode);

@@ -454,12 +454,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 {t("model_picker.connect_provider_hint")}
               </span>
               <span className="ml-auto opacity-70">
-                {t(
-                  provider.matchCount === 1
-                    ? "model_picker.model_count_one"
-                    : "model_picker.model_count",
-                  { count: provider.matchCount },
-                )}
+                {t("model_picker.model_count", { count: provider.matchCount })}
               </span>
             </div>
           </div>

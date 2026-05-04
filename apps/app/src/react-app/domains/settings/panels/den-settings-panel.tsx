@@ -686,7 +686,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           showToast({
             title: tx("den.status_loaded_orgs", {
               count: response.orgs.length,
-              plural: response.orgs.length === 1 ? "" : "s",
             }),
             tone: "info",
           });
@@ -725,7 +724,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
             title: nextWorkers.length > 0
               ? tx("den.status_loaded_workers", {
                   count: nextWorkers.length,
-                  plural: nextWorkers.length === 1 ? "" : "s",
                   name: activeOrg?.name ?? tr("den.active_org_title"),
                 })
               : tx("den.status_no_workers", {
@@ -805,7 +803,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
             title: count > 0
               ? tx("den.status_loaded_skills", {
                   count,
-                  plural: count === 1 ? "" : "s",
                   name: activeOrg?.name ?? tr("den.active_org_title"),
                 })
               : tx("den.status_no_skills", {
