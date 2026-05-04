@@ -1,11 +1,10 @@
 import * as React from "react";
-import { currentLocale, t } from "@/i18n";
+import { t } from "@/i18n";
 
 export function useTranslate() {
-  const tr = React.useCallback((key: string) => t(key, currentLocale()), []);
+  const tr = React.useCallback((key: string) => t(key), []);
   const tx = React.useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, currentLocale(), params),
+    (key: string, params?: Record<string, string | number>) => t(key, params),
     [],
   );
 
