@@ -213,10 +213,8 @@ if (shouldRun("--unused", "--prune")) {
       for (const [prefix, count] of groupByPrefix(unused).slice(0, 15)) {
         console.log(`    ${String(count).padStart(4)}  ${prefix}.*`);
       }
-      if (mode === "--unused") {
-        console.log();
-        for (const key of unused) console.log(`    ${key}`);
-      }
+      console.log();
+      for (const key of unused) console.log(`    ${key}`);
     }
   }
 
