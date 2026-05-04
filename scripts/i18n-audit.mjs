@@ -4,6 +4,7 @@
  *
  * Usage:
  *   node scripts/i18n-audit.mjs              # full audit (default, excludes --hardcoded, --prune, --sort)
+ *   node scripts/i18n-audit.mjs --ci         # same as default but does not fail on missing non-en keys
  *   node scripts/i18n-audit.mjs --missing    # missing keys (in EN but not in locale)
  *   node scripts/i18n-audit.mjs --orphan     # orphan keys (in locale but not in EN)
  *   node scripts/i18n-audit.mjs --duplicates # duplicate keys in any locale
@@ -29,8 +30,10 @@ const LOCALES = ["ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
 const EN_FILE = join(LOCALES_DIR, "en.ts");
 
 const mode = process.argv[2] ?? "--all";
+const isCi = mode === "--ci";
+const isAll = mode === "--all" || isCi;
 const EXCLUDED_FROM_ALL = new Set(["--hardcoded"]);
-const shouldRun = (...modes) => (mode === "--all" && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
+const shouldRun = (...modes) => (isAll && !modes.some((m) => EXCLUDED_FROM_ALL.has(m))) || modes.includes(mode);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -138,7 +141,7 @@ if (shouldRun("--missing")) {
       console.log(`  ${locale}: ✓ no missing`);
     } else {
       console.log(`  ${locale}: ✗ ${missing.length} missing`);
-      exitCode = 1;
+      if (!isCi) exitCode = 1;
       if (mode !== "--summary") {
         for (const [prefix, count] of groupByPrefix(missing).slice(0, 15)) {
           console.log(`    ${String(count).padStart(4)}  ${prefix}.*`);
@@ -215,6 +218,10 @@ if (shouldRun("--unused", "--prune")) {
       }
       console.log();
       for (const key of unused) console.log(`    ${key}`);
+    }
+    if (mode !== "--prune") {
+      console.log();
+      console.log("  (auto-fix with --prune option)");
     }
   }
 
@@ -376,7 +383,7 @@ if (shouldRun("--placeholders")) {
         if (!localePh.includes(ph)) {
           console.log(`  ✗ ${locale}/${key}: missing placeholder ${ph}`);
           problems++;
-          exitCode = 1;
+          if (!(isCi && ph === "{plural}")) exitCode = 1;
         }
       }
     }
