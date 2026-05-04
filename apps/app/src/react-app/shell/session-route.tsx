@@ -85,6 +85,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "./app-inspector";
+import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
@@ -93,6 +94,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
+import { useSessionControlActions } from "../domains/session/control/session-control-actions";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -1544,6 +1546,31 @@ export function SessionRoute() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
+
+  useSessionControlActions({
+    workspaces,
+    sessionsByWorkspaceId,
+    selectedWorkspaceId,
+    selectedWorkspaceRoot,
+    selectedSessionId,
+    canCreateTask,
+    openworkClient: client,
+    opencodeClient,
+    navigateToSession: (sessionId) => navigate(`/session/${sessionId}`),
+    navigateToSessionRoot: () => navigate("/session"),
+    createTaskInWorkspace: handleCreateTaskInWorkspace,
+    openModelPicker: () => setModelPickerOpen(true),
+    refreshRouteState,
+  });
+
+  const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "command_palette.open",
+    label: "Open the command palette",
+    description: "Open the in-app command palette so the next choice is visible.",
+    sideEffect: "none",
+    execute: () => setCommandPaletteOpen(true),
+  }), []);
+  useControlAction(commandPaletteControlAction);
 
   const paletteSessionOptions = useMemo<PaletteSessionOption[]>(() => {
     const out: PaletteSessionOption[] = [];

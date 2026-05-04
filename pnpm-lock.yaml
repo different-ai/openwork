@@ -753,6 +753,15 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/openwork-ui-mcp:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   packages/types:
     dependencies:
       zod:
@@ -6439,8 +6448,8 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
-  msw@2.14.2:
-    resolution: {integrity: sha512-D2bTe0tpuf9nw4DA39wFaqUD/hRPKj0DKpo2lAqu+A47Ifg4+h0hbfn6QxVOsiUY2uhgEN6TTpGSHDsc+ysYNg==}
+  msw@2.14.3:
+    resolution: {integrity: sha512-kk8G5cocVlJ4wsKMGZegn2H6XLOEKjbA+nSJE2354e/SRp4mDicCHUYnMXpymzVcVDCs+GUAsmNqSn+yHv4T2A==}
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
@@ -8814,7 +8823,7 @@ snapshots:
 
   '@babel/generator@7.28.6':
     dependencies:
-      '@babel/parser': 7.28.6
+      '@babel/parser': 7.29.2
       '@babel/types': 7.28.6
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
@@ -9071,7 +9080,7 @@ snapshots:
       '@babel/code-frame': 7.28.6
       '@babel/generator': 7.28.6
       '@babel/helper-globals': 7.28.0
-      '@babel/parser': 7.28.6
+      '@babel/parser': 7.29.2
       '@babel/template': 7.28.6
       '@babel/types': 7.28.6
       debug: 4.4.3
@@ -10981,13 +10990,13 @@ snapshots:
 
   '@slack/logger@4.0.0':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   '@slack/socket-mode@2.0.5':
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/web-api': 7.13.0
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
       '@types/ws': 8.18.1
       eventemitter3: 5.0.4
       ws: 8.19.0
@@ -11002,7 +11011,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/types': 2.19.0
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
       '@types/retry': 0.12.0
       axios: 1.13.6
       eventemitter3: 5.0.4
@@ -11622,7 +11631,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
       '@types/responselike': 1.0.3
 
   '@types/d3-array@3.2.2': {}
@@ -11754,7 +11763,7 @@ snapshots:
 
   '@types/fs-extra@9.0.13':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   '@types/geojson@7946.0.16': {}
 
@@ -11768,7 +11777,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   '@types/luxon@3.7.1': {}
 
@@ -11800,8 +11809,8 @@ snapshots:
 
   '@types/plist@3.0.5':
     dependencies:
-      '@types/node': 20.12.12
-      xmlbuilder: 11.0.1
+      '@types/node': 25.6.0
+      xmlbuilder: 15.1.1
     optional: true
 
   '@types/prop-types@15.7.15': {}
@@ -11825,7 +11834,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   '@types/retry@0.12.0': {}
 
@@ -11849,11 +11858,11 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
     optional: true
 
   '@ungap/structured-clone@1.3.0': {}
@@ -12272,7 +12281,7 @@ snapshots:
 
   browserslist@4.28.1:
     dependencies:
-      baseline-browser-mapping: 2.10.11
+      baseline-browser-mapping: 2.9.14
       caniuse-lite: 1.0.30001764
       electron-to-chromium: 1.5.267
       node-releases: 2.0.27
@@ -12333,7 +12342,7 @@ snapshots:
 
   bun-types@1.3.6:
     dependencies:
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
 
   bun-webgpu-darwin-arm64@0.1.4:
     optional: true
@@ -14838,7 +14847,7 @@ snapshots:
 
   ms@2.1.3: {}
 
-  msw@2.14.2(@types/node@25.6.0)(typescript@5.9.3):
+  msw@2.14.3(@types/node@25.6.0)(typescript@5.9.3):
     dependencies:
       '@inquirer/confirm': 6.0.12(@types/node@25.6.0)
       '@mswjs/interceptors': 0.41.8
@@ -15427,7 +15436,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 20.12.12
+      '@types/node': 25.6.0
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -15864,7 +15873,7 @@ snapshots:
       fuzzysort: 3.1.0
       https-proxy-agent: 7.0.6
       kleur: 4.1.5
-      msw: 2.14.2(@types/node@25.6.0)(typescript@5.9.3)
+      msw: 2.14.3(@types/node@25.6.0)(typescript@5.9.3)
       node-fetch: 3.3.2
       open: 11.0.0
       ora: 8.2.0

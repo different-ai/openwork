@@ -11,6 +11,7 @@ import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
+import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { WelcomeRoute } from "./welcome-route";
@@ -92,54 +93,57 @@ export function AppRoot() {
   return (
     <>
       <DevProfiler id="AppRoot">
-        <DenSigninGate>
-          <Routes>
-            <Route
-              path="/signin"
-              element={
-                <DevProfiler id="SigninRoute">
-                  <ForcedSigninPage developerMode={false} />
-                </DevProfiler>
-              }
-            />
-            <Route
-              path="/welcome"
-              element={
-                <DevProfiler id="WelcomeRoute">
-                  <WelcomeRoute />
-                </DevProfiler>
-              }
-            />
-            <Route
-              path="/session"
-              element={
-                <DevProfiler id="SessionRoute">
-                  <SessionRoute />
-                </DevProfiler>
-              }
-            />
-            <Route
-              path="/session/:sessionId"
-              element={
-                <DevProfiler id="SessionRoute">
-                  <SessionRoute />
-                </DevProfiler>
-              }
-            />
-            <Route
-              path="/settings/*"
-              element={
-                <DevProfiler id="SettingsRoute">
-                  <SettingsRoute />
-                </DevProfiler>
-              }
-            />
-            {/* Default + fallback: land on the session view. Users open
-                settings deliberately via the sidebar or command palette. */}
-            <Route path="/" element={<Navigate to="/session" replace />} />
-            <Route path="*" element={<Navigate to="/session" replace />} />
-          </Routes>
-        </DenSigninGate>
+        <OpenworkControlProvider>
+          <OpenworkRouteControlActions />
+          <DenSigninGate>
+            <Routes>
+              <Route
+                path="/signin"
+                element={
+                  <DevProfiler id="SigninRoute">
+                    <ForcedSigninPage developerMode={false} />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/welcome"
+                element={
+                  <DevProfiler id="WelcomeRoute">
+                    <WelcomeRoute />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/session"
+                element={
+                  <DevProfiler id="SessionRoute">
+                    <SessionRoute />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/session/:sessionId"
+                element={
+                  <DevProfiler id="SessionRoute">
+                    <SessionRoute />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/settings/*"
+                element={
+                  <DevProfiler id="SettingsRoute">
+                    <SettingsRoute />
+                  </DevProfiler>
+                }
+              />
+              {/* Default + fallback: land on the session view. Users open
+                  settings deliberately via the sidebar or command palette. */}
+              <Route path="/" element={<Navigate to="/session" replace />} />
+              <Route path="*" element={<Navigate to="/session" replace />} />
+            </Routes>
+          </DenSigninGate>
+        </OpenworkControlProvider>
         <LoadingOverlay />
       </DevProfiler>
       {/*

@@ -200,6 +200,42 @@ These are all opencode primitives you can read the docs to find out exactly how 
 
 OpenWork is a client experience that consumes OpenWork server surfaces.
 
+### Provider-neutral app control surface
+
+OpenWork app control mode is owned by the UI runtime. The app exposes a
+provider-neutral action registry through `window.__openworkControl` so external
+controllers can inspect the current route, discover visible/safe actions, and
+request an action by ID without depending on DOM scraping or a specific model
+provider.
+
+Guidelines:
+
+- The app owns visible, screen-local state: which actions are available, which
+  element should be spotlighted, and how actions are choreographed so users can
+  see control happen.
+- Controllers such as MCP bridges, test harnesses, or optional external drivers should
+  call the app control surface instead of reaching into app internals.
+- Provider/API secrets and privileged filesystem or server mutations remain
+  server-owned; the app control surface should route those through OpenWork
+  server APIs rather than adding provider-specific behavior to the UI.
+- Raw screenshot or coordinate-based control is a fallback for uninstrumented
+  surfaces, not the default architecture.
+
+### MCP UI Control profile
+
+OpenWork should standardize external app control through MCP where possible. The
+app-local `window.__openworkControl` registry remains the source of current UI
+affordances, but public integrations should expose those affordances as MCP
+tools that follow `docs/mcp-ui-control-profile.md`:
+
+- `ui.snapshot` for current semantic app state
+- `ui.list_actions` for currently available action metadata and input schemas
+- `ui.execute_action` for running one semantic action by ID
+
+Standalone control clients such as HandsFree should be MCP clients first: they
+can connect to any configured MCP server and call generic MCP tools. OpenWork's
+local UI bridge is an implementation detail behind the OpenWork MCP surface.
+
 OpenWork supports two product runtime modes for users:
 
 - desktop
