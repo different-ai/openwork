@@ -9,6 +9,15 @@
     "openwork-ui-mcp": "./index.mjs"
   },
   "files": ["index.mjs"],
+  "scripts": {
+    "check": "node --check index.mjs",
+    "test": "node --check index.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/openwork-ui-mcp"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.76"

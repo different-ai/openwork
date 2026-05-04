@@ -34,6 +34,20 @@ That's it. HandsFree can now list your sessions, read transcripts, type into the
 - `ui_execute_action` — run an action by ID, e.g. `session.create_task`, `composer.set_text`, `composer.send`.
 - `ui_status` — check if OpenWork is running and the bridge is reachable.
 
+## Install
+
+```bash
+npm install -g openwork-ui-mcp
+```
+
+Or run without installing:
+
+```bash
+npx openwork-ui-mcp
+```
+
+> The package is [`openwork-ui-mcp` on npm](https://www.npmjs.com/package/openwork-ui-mcp).
+
 ## Add to OpenCode
 
 Add the MCP server to your workspace or global `opencode.json`:
