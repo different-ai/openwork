@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import * as React from "react";
 
 import { applyEdits, modify } from "jsonc-parser";
 
@@ -1004,7 +1004,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         cloudOrgSkills: catalog,
-        cloudOrgSkillsStatus: catalog.length ? null : translate("skills.cloud_org_empty"),
+        cloudOrgSkillsStatus: null,
         cloudOrgSkillsContextKey: loadKey,
       }));
       cloudOrgSkillsLoaded = true;
@@ -1064,7 +1064,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         cloudOrgSkillHubs: hubs,
-        cloudOrgSkillHubsStatus: hubs.length ? null : "No organization skill hubs are available yet.",
+        cloudOrgSkillHubsStatus: null,
       }));
       cloudOrgSkillHubsLoaded = true;
       cloudOrgSkillHubsLoadKey = loadKey;
@@ -1126,7 +1126,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         cloudOrgMarketplaces: resolved,
-        cloudOrgMarketplacesStatus: resolved.length ? null : "No organization marketplaces are available yet.",
+        cloudOrgMarketplacesStatus: null,
       }));
       cloudOrgMarketplacesLoaded = true;
       cloudOrgMarketplacesLoadKey = loadKey;
@@ -2482,5 +2482,5 @@ export function createExtensionsStore(options: {
 }
 
 export function useExtensionsStoreSnapshot(store: ExtensionsStore) {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
