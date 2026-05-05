@@ -50,8 +50,8 @@ importers:
         specifier: ^0.35.0
         version: 0.35.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(yjs@13.6.30)
       '@opencode-ai/sdk':
-        specifier: ^1.4.9
-        version: 1.4.9
+        specifier: ^1.14.38
+        version: 1.14.38
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -190,8 +190,8 @@ importers:
   apps/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.4.9
-        version: 1.4.9
+        specifier: ^1.14.38
+        version: 1.14.38
       '@slack/socket-mode':
         specifier: ^2.0.5
         version: 2.0.5
@@ -224,8 +224,8 @@ importers:
   apps/orchestrator:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.4.9
-        version: 1.4.9
+        specifier: ^1.14.38
+        version: 1.14.38
       '@opentui/core':
         specifier: 0.1.77
         version: 0.1.77(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -298,8 +298,8 @@ importers:
   apps/server-v2:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: 1.4.9
-        version: 1.4.9
+        specifier: 1.14.38
+        version: 1.14.38
       hono:
         specifier: 4.12.12
         version: 4.12.12
@@ -390,8 +390,8 @@ importers:
         specifier: ^6.38.0
         version: 6.39.14
       '@opencode-ai/sdk':
-        specifier: ^1.4.9
-        version: 1.4.9
+        specifier: ^1.14.38
+        version: 1.14.38
       '@radix-ui/colors':
         specifier: ^3.0.0
         version: 3.0.0
@@ -2623,8 +2623,8 @@ packages:
   '@open-draft/until@2.1.0':
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
 
-  '@opencode-ai/sdk@1.4.9':
-    resolution: {integrity: sha512-S8WQLuBFu2WwvSc1wupsV4qskniBA+JN1VaZZs52BPWwiN2zQFTD5/6dMh6oiYOMDtPjKsTFZ6qLFxDvVPNggQ==}
+  '@opencode-ai/sdk@1.14.38':
+    resolution: {integrity: sha512-0BNDR/xQHF4k17ocSVtwk3GM5jHAym0lOnuT25K3Z7XZoHxwQG1zVe+jhJrK459oZH3gUKp2FrCk6G6OB/Fn6A==}
 
   '@opentelemetry/api-logs@0.207.0':
     resolution: {integrity: sha512-lAb0jQRVyleQQGiuuvCOTDVspc14nx6XJjP4FspJ1sNARo3Regq4ZZbrc3rN4b1TYSuUCvgH+UXUPug4SLOqEQ==}
@@ -10550,7 +10550,7 @@ snapshots:
 
   '@open-draft/until@2.1.0': {}
 
-  '@opencode-ai/sdk@1.4.9':
+  '@opencode-ai/sdk@1.14.38':
     dependencies:
       cross-spawn: 7.0.6
 

@@ -44,7 +44,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.4.9",
+    "@opencode-ai/sdk": "^1.14.38",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
     "opencode-router": "0.13.3",

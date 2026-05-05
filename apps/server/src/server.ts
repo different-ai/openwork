@@ -50,8 +50,10 @@ import {
   type WorkspaceExportSensitiveMode,
 } from "./workspace-export-safety.js";
 import pkg from "../package.json" with { type: "json" };
+import constants from "../../../constants.json" with { type: "json" };
 
 const SERVER_VERSION = pkg.version;
+const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
 const FILE_SESSION_DEFAULT_TTL_MS = 15 * 60 * 1000;
 const FILE_SESSION_MIN_TTL_MS = 30 * 1000;
@@ -626,6 +628,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
+    opencodeVersion: OPENCODE_VERSION,
     skills: { read: true, write: writeEnabled, source: "openwork" },
     hub: {
       skills: {
@@ -1094,11 +1097,11 @@ function createRoutes(
   };
 
   addRoute(routes, "GET", "/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({ ok: true, version: SERVER_VERSION, opencodeVersion: OPENCODE_VERSION, uptimeMs: Date.now() - config.startedAt });
   });
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => {
-    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+    return jsonResponse({ ok: true, version: SERVER_VERSION, opencodeVersion: OPENCODE_VERSION, uptimeMs: Date.now() - config.startedAt });
   });
 
   // Dev log sink: append browser console + error events to a file that an
@@ -1188,6 +1191,7 @@ function createRoutes(
     return jsonResponse({
       ok: true,
       version: SERVER_VERSION,
+      opencodeVersion: OPENCODE_VERSION,
       uptimeMs: Date.now() - config.startedAt,
       readOnly: config.readOnly,
       approval: config.approval,
@@ -1222,6 +1226,7 @@ function createRoutes(
     return jsonResponse({
       ok: true,
       version: SERVER_VERSION,
+      opencodeVersion: OPENCODE_VERSION,
       uptimeMs: Date.now() - config.startedAt,
       readOnly: config.readOnly,
       approval: config.approval,
