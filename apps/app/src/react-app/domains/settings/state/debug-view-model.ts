@@ -157,12 +157,12 @@ function describeEngine(info: EngineInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
-      t("settings.debug_runtime", undefined, { runtime: info?.runtime ?? "—" }),
-      t("settings.diag_opencode_binary", undefined, { binary: formatOpencodeBinary(info) }),
-      t("settings.debug_pid", undefined, { pid: info?.pid ? String(info.pid) : "—" }),
-      t("settings.debug_hostname", undefined, { hostname: info?.hostname ?? "—" }),
-      t("settings.debug_port", undefined, { port: info?.port ? String(info.port) : "—" }),
+      t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
+      t("settings.debug_runtime", { runtime: info?.runtime ?? "—" }),
+      t("settings.diag_opencode_binary", { binary: formatOpencodeBinary(info) }),
+      t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
+      t("settings.debug_hostname", { hostname: info?.hostname ?? "—" }),
+      t("settings.debug_port", { port: info?.port ? String(info.port) : "—" }),
     ],
     stdout: info?.lastStdout ?? null,
     stderr: info?.lastStderr ?? null,
@@ -193,13 +193,13 @@ function describeOpenworkServer(info: OpenworkServerInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
-      t("settings.diag_opencode_binary", undefined, { binary: formatManagedOpencodeBinary(info) }),
-      t("settings.debug_connect_url", undefined, { url: info?.connectUrl ?? "—" }),
-      t("settings.debug_lan_url", undefined, { url: info?.lanUrl ?? "—" }),
-      t("settings.debug_mdns_url", undefined, { url: info?.mdnsUrl ?? "—" }),
-      t("settings.debug_pid", undefined, { pid: info?.pid ? String(info.pid) : "—" }),
-      t("settings.debug_remote_access", undefined, {
+      t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
+      t("settings.diag_opencode_binary", { binary: formatManagedOpencodeBinary(info) }),
+      t("settings.debug_connect_url", { url: info?.connectUrl ?? "—" }),
+      t("settings.debug_lan_url", { url: info?.lanUrl ?? "—" }),
+      t("settings.debug_mdns_url", { url: info?.mdnsUrl ?? "—" }),
+      t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
+      t("settings.debug_remote_access", {
         value: info?.remoteAccessEnabled ? t("settings.on") : t("settings.off"),
       }),
     ],
@@ -214,9 +214,9 @@ function describeOpencodeConnect(engine: EngineInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: engine?.baseUrl ?? "—" }),
-      t("settings.debug_project_dir", undefined, { path: engine?.projectDir ?? "—" }),
-      t("settings.debug_runtime", undefined, { runtime: engine?.runtime ?? "—" }),
+      t("settings.debug_base_url", { url: engine?.baseUrl ?? "—" }),
+      t("settings.debug_project_dir", { path: engine?.projectDir ?? "—" }),
+      t("settings.debug_runtime", { runtime: engine?.runtime ?? "—" }),
     ],
     metricsLines: [] as string[],
     error: null as string | null,
@@ -785,14 +785,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       await bootFullEngineStack();
       setOpencodeServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", undefined, { service: "OpenCode" }),
+        message: t("settings.restart_succeeded_template", { service: "OpenCode" }),
       });
       pushDeveloperLog("Restarted OpenCode via engine_start");
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setOpencodeServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", undefined, { service: "OpenCode" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "OpenCode" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
@@ -811,7 +811,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       });
       setOpenworkServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", undefined, { service: "OpenWork server" }),
+        message: t("settings.restart_succeeded_template", { service: "OpenWork server" }),
       });
       pushDeveloperLog("Restarted openwork-server");
       await openworkServerStore.reconnectOpenworkServer();
@@ -819,7 +819,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setOpenworkServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", undefined, { service: "OpenWork server" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "OpenWork server" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
@@ -851,7 +851,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpencodeLogStatus(t("settings.copied_service_logs", undefined, { service: "OpenCode" }));
+      setOpencodeLogStatus(t("settings.copied_service_logs", { service: "OpenCode" }));
     } catch (error) {
       setOpencodeLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -884,7 +884,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpenworkLogStatus(t("settings.copied_service_logs", undefined, { service: "OpenWork server" }));
+      setOpenworkLogStatus(t("settings.copied_service_logs", { service: "OpenWork server" }));
     } catch (error) {
       setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }

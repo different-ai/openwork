@@ -339,13 +339,13 @@ export function DebugView(props: DebugViewProps) {
           </div>
         </div>
         <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-          <div>{t("settings.debug_desktop_app", undefined, { version: props.runtimeSummary.appVersionLabel })}</div>
-          <div>{t("settings.debug_commit", undefined, { commit: props.runtimeSummary.appCommitLabel })}</div>
+          <div>{t("settings.debug_desktop_app", { version: props.runtimeSummary.appVersionLabel })}</div>
+          <div>{t("settings.debug_commit", { commit: props.runtimeSummary.appCommitLabel })}</div>
           <div>
-            {t("settings.debug_opencode_version", undefined, { version: props.runtimeSummary.opencodeVersionLabel })}
+            {t("settings.debug_opencode_version", { version: props.runtimeSummary.opencodeVersionLabel })}
           </div>
           <div>
-            {t("settings.debug_openwork_server_version", undefined, {
+            {t("settings.debug_openwork_server_version", {
               version: props.runtimeSummary.openworkServerVersionLabel,
             })}
           </div>
@@ -450,41 +450,41 @@ export function DebugView(props: DebugViewProps) {
 
         {props.openworkServerDiagnostics ? (
           <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-            <div>{t("settings.diag_started", undefined, { time: formatUptime(props.openworkServerDiagnostics.uptimeMs) })}</div>
+            <div>{t("settings.diag_started", { time: formatUptime(props.openworkServerDiagnostics.uptimeMs) })}</div>
             <div>
-              {t("settings.diag_read_only", undefined, {
+              {t("settings.diag_read_only", {
                 value: props.openworkServerDiagnostics.readOnly ? "true" : "false",
               })}
             </div>
             <div>
-              {t("settings.diag_approval", undefined, {
+              {t("settings.diag_approval", {
                 mode: props.openworkServerDiagnostics.approval.mode,
                 ms: String(props.openworkServerDiagnostics.approval.timeoutMs),
               })}
             </div>
-            <div>{t("settings.diag_workspaces", undefined, { count: String(props.openworkServerDiagnostics.workspaceCount) })}</div>
+            <div>{t("settings.diag_workspaces", { count: String(props.openworkServerDiagnostics.workspaceCount) })}</div>
             <div>
-              {t("settings.diag_selected_workspace", undefined, {
+              {t("settings.diag_selected_workspace", {
                 id: props.openworkServerDiagnostics.selectedWorkspaceId ?? "—",
               })}
             </div>
             <div>
-              {t("settings.diag_runtime_workspace", undefined, {
+              {t("settings.diag_runtime_workspace", {
                 id: props.openworkServerDiagnostics.activeWorkspaceId ?? "—",
               })}
             </div>
             <div>
-              {t("settings.diag_config_path", undefined, {
+              {t("settings.diag_config_path", {
                 path: props.openworkServerDiagnostics.server.configPath ?? t("settings.diag_default"),
               })}
             </div>
             <div>
-              {t("settings.diag_token_source", undefined, {
+              {t("settings.diag_token_source", {
                 source: props.openworkServerDiagnostics.tokenSource.client,
               })}
             </div>
             <div>
-              {t("settings.diag_host_token_source", undefined, {
+              {t("settings.diag_host_token_source", {
                 source: props.openworkServerDiagnostics.tokenSource.host,
               })}
             </div>
@@ -500,19 +500,19 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <div className="truncate font-mono text-[11px] text-dls-secondary">
               {props.runtimeWorkspaceId
-                ? t("settings.worker_id_label", undefined, { id: props.runtimeWorkspaceId })
+                ? t("settings.worker_id_label", { id: props.runtimeWorkspaceId })
                 : t("settings.worker_unresolved")}
             </div>
           </div>
           {props.openworkServerCapabilities ? (
             <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-              <div>{t("settings.cap_skills", undefined, { value: formatCapability(props.openworkServerCapabilities.skills) })}</div>
-              <div>{t("settings.cap_plugins", undefined, { value: formatCapability(props.openworkServerCapabilities.plugins) })}</div>
-              <div>{t("settings.cap_mcp", undefined, { value: formatCapability(props.openworkServerCapabilities.mcp) })}</div>
-              <div>{t("settings.cap_commands", undefined, { value: formatCapability(props.openworkServerCapabilities.commands) })}</div>
-              <div>{t("settings.cap_config", undefined, { value: formatCapability(props.openworkServerCapabilities.config) })}</div>
+              <div>{t("settings.cap_skills", { value: formatCapability(props.openworkServerCapabilities.skills) })}</div>
+              <div>{t("settings.cap_plugins", { value: formatCapability(props.openworkServerCapabilities.plugins) })}</div>
+              <div>{t("settings.cap_mcp", { value: formatCapability(props.openworkServerCapabilities.mcp) })}</div>
+              <div>{t("settings.cap_commands", { value: formatCapability(props.openworkServerCapabilities.commands) })}</div>
+              <div>{t("settings.cap_config", { value: formatCapability(props.openworkServerCapabilities.config) })}</div>
               <div>
-                {t("settings.cap_browser_tools", undefined, {
+                {t("settings.cap_browser_tools", {
                   value: (() => {
                     const browser = props.openworkServerCapabilities.toolProviders?.browser;
                     if (!browser?.enabled) return t("settings.disabled");
@@ -521,7 +521,7 @@ export function DebugView(props: DebugViewProps) {
                 })}
               </div>
               <div>
-                {t("settings.cap_file_tools", undefined, {
+                {t("settings.cap_file_tools", {
                   value: (() => {
                     const files = props.openworkServerCapabilities.toolProviders?.files;
                     if (!files) return t("config.unavailable");
@@ -533,7 +533,7 @@ export function DebugView(props: DebugViewProps) {
                 })}
               </div>
               <div>
-                {t("settings.cap_sandbox", undefined, {
+                {t("settings.cap_sandbox", {
                   value: props.openworkServerCapabilities.sandbox
                     ? `${props.openworkServerCapabilities.sandbox.backend} (${props.openworkServerCapabilities.sandbox.enabled ? t("settings.on") : t("settings.off")})`
                     : t("config.unavailable"),
@@ -648,7 +648,7 @@ export function DebugView(props: DebugViewProps) {
           </div>
         </div>
         <div className="text-[11px] text-dls-secondary">
-          {t("settings.developer_log_count", undefined, { count: String(props.developerLogRecordCount) })}
+          {t("settings.developer_log_count", { count: String(props.developerLogRecordCount) })}
         </div>
         <pre className={monoPreClass}>{props.developerLogText || t("settings.developer_log_empty")}</pre>
         {props.developerLogStatus ? <StatusBanner tone="info" message={props.developerLogStatus} /> : null}
@@ -681,9 +681,9 @@ export function DebugView(props: DebugViewProps) {
           </div>
           {props.sandboxProbeResult ? (
             <div className="space-y-1 text-[12px] text-dls-secondary">
-              <div>{t("settings.sandbox_run_id", undefined, { id: props.sandboxProbeResult.runId ?? "—" })}</div>
+              <div>{t("settings.sandbox_run_id", { id: props.sandboxProbeResult.runId ?? "—" })}</div>
               <div>
-                {t("settings.sandbox_result", undefined, {
+                {t("settings.sandbox_result", {
                   status: props.sandboxProbeResult.ready ? t("settings.sandbox_ready") : t("settings.sandbox_error"),
                 })}
               </div>

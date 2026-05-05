@@ -155,8 +155,19 @@ const resolvePluralKey = (loc: Language, key: string, count: number): string => 
  *   `${key}_one` / `${key}_other` (or `${key}_zero` when count === 0) per
  *   `Intl.PluralRules`, and falls back to the bare key when no variants exist.
  */
-export const t = (key: string, params?: Record<string, string | number> & { lng?: Language }): string => {
-  const loc = params?.lng ?? locale();
+type TranslationParams = Record<string, string | number> & { lng?: Language };
+
+export const t = (
+  key: string,
+  paramsOrLocale?: TranslationParams | Language,
+  legacyParams?: Record<string, string | number>,
+): string => {
+  const params = legacyParams ?? (typeof paramsOrLocale === "string" ? undefined : paramsOrLocale);
+  const loc: Language = typeof paramsOrLocale === "string"
+    ? paramsOrLocale
+    : isLanguage(params?.lng)
+      ? params.lng
+      : locale();
 
   const lookupKey =
     typeof params?.count === "number" ? resolvePluralKey(loc, key, params.count) : key;
