@@ -21,7 +21,7 @@
   --dls-background: var(--slate-1);
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
-  --dls-border: var(--slate-6);
+  --dls-border: #f3f4f6;
   --dls-accent: var(--blue-9);
   --dls-accent-hover: var(--blue-10);
   --dls-accent-rgb: 0 144 255;
@@ -75,7 +75,7 @@
   --dls-background: var(--slate-1);
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
-  --dls-border: var(--slate-6);
+  --dls-border: #262626;
   --dls-accent: var(--blue-9);
   --dls-accent-hover: var(--blue-10);
   --dls-accent-rgb: 59 142 247;
