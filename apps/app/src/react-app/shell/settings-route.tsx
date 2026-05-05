@@ -14,8 +14,16 @@ import {
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
-import type { Client, ProviderListItem, SettingsTab, WorkspaceDisplay, WorkspacePreset, WorkspaceSessionGroup } from "../../app/types";
-import { isSandboxWorkspace } from "../../app/utils";
+import type {
+  Client,
+  ProviderListItem,
+  SettingsTab,
+  WorkspaceConnectionState,
+  WorkspaceDisplay,
+  WorkspacePreset,
+  WorkspaceSessionGroup,
+} from "../../app/types";
+import { getWorkspaceTaskLoadErrorDisplay, isSandboxWorkspace } from "../../app/utils";
 import { currentLocale, t, setLocale, type Language } from "../../i18n";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/connections/store";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../domains/connections/openwork-server-store";
@@ -31,9 +39,11 @@ import { EnvironmentView } from "../domains/settings/pages/environment-view";
 import { ExtensionsView } from "../domains/settings/pages/extensions-view";
 import { McpView } from "../domains/settings/pages/mcp-view";
 import { RecoveryView } from "../domains/settings/pages/recovery-view";
+import { MessagingView } from "../domains/settings/pages/messaging-view";
 import { SkillsView } from "../domains/settings/pages/skills-view";
 import { UpdatesView } from "../domains/settings/pages/updates-view";
 import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
+import { useMessagingViewProps } from "../domains/settings/state/messaging-view-state";
 import { useElectronUpdaterState } from "../domains/settings/state/electron-updater-state";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "../domains/settings/shell/settings-shell";
@@ -47,6 +57,8 @@ import {
   useWorkspaceShellLayout,
 } from "./workspace-shell-layout";
 import {
+  openworkServerInfo,
+  openworkServerRestart,
   engineStart,
   pickDirectory,
   resolveWorkspaceListSelectedId,
@@ -61,14 +73,20 @@ import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictio
 import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
 import { isDesktopRuntime, isElectronRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
+import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import { useRemoteWorkspaceConnectionEditor } from "../domains/workspace/use-remote-workspace-connection-editor";
+import {
+  diagnoseRemoteWorkspaceTaskLoadFailure,
+  getRemoteWorkspaceConnectionKey,
+  testRemoteWorkspaceConnection as runRemoteWorkspaceDiagnostics,
+} from "../domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef, WorkspaceConnectionState } from "../../app/types";
 import { recordInspectorEvent } from "./app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import {
   recoverRemoteWorkspace,
-  testRemoteWorkspaceConnection,
 } from "../domains/workspace/remote-connection";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
@@ -307,15 +325,6 @@ function applyThemeMode(mode: PersistedThemeMode) {
   document.documentElement.dataset.theme = resolved;
 }
 
-function PlaceholderSettingsView(props: { title: string; detail: string }) {
-  return (
-    <div className="rounded-[28px] border border-dls-border bg-dls-surface p-5 text-sm text-gray-10 md:p-6">
-      <div className="font-medium text-gray-12">{props.title}</div>
-      <div className="mt-2 leading-relaxed">{props.detail}</div>
-    </div>
-  );
-}
-
 export function SettingsRoute() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -330,8 +339,7 @@ export function SettingsRoute() {
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
-  const [connectingWorkspaceId, setConnectingWorkspaceId] = useState<string | null>(null);
-  const [workspaceConnectionStateById, setWorkspaceConnectionStateById] = useState<Record<string, WorkspaceConnectionState>>({});
+  const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
@@ -346,6 +354,8 @@ export function SettingsRoute() {
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
   const pollMcpServersAfterReloadRef = useRef<(() => void | Promise<void>) | null>(null);
+  const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
+  const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
@@ -402,6 +412,20 @@ export function SettingsRoute() {
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
     [selectedWorkspaceId, workspaces],
   );
+  const workspaceConnectionStateById = useMemo(() => {
+    const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
+    for (const workspace of workspaces) {
+      if (workspace.workspaceType !== "remote") continue;
+      const error = errorsByWorkspaceId[workspace.id]?.trim();
+      if (!error || next[workspace.id]?.status === "connecting") continue;
+      next[workspace.id] ??= {
+        status: "error",
+        message: getWorkspaceTaskLoadErrorDisplay(workspace, error).message || error,
+        checkedAt: null,
+      };
+    }
+    return next;
+  }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
   const selectedWorkspaceRoot = selectedWorkspace?.path?.trim() || "";
   const selectedWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () =>
@@ -517,7 +541,18 @@ export function SettingsRoute() {
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         activeClient: () => routeStateRef.current.activeClient,
         selectedWorkspaceDisplay: () => routeStateRef.current.selectedWorkspaceDisplay,
-        restartLocalServer: async () => false,
+        restartLocalServer: async () => {
+          if (!isDesktopRuntime()) return false;
+          try {
+            await openworkServerRestart({
+              remoteAccessEnabled:
+                readOpenworkServerSettings().remoteAccessEnabled === true,
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        },
         createRemoteWorkspaceFlow: async () => false,
       }),
     [],
@@ -771,12 +806,28 @@ export function SettingsRoute() {
                   normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
                 )
               : (response.items ?? []);
-            return { workspaceId: workspace.id, sessions: items, error: null as string | null };
+            return {
+              workspaceId: workspace.id,
+              sessions: items,
+              error: null as string | null,
+              connectionState: null as WorkspaceConnectionState | null,
+            };
           } catch (error) {
+            const fallback = error instanceof Error ? error.message : t("app.unknown_error");
+            if (workspace.workspaceType === "remote") {
+              const connectionState = await diagnoseRemoteWorkspaceTaskLoadFailure(workspace, fallback);
+              return {
+                workspaceId: workspace.id,
+                sessions: [],
+                error: connectionState.message ?? "Remote worker connection failed.",
+                connectionState,
+              };
+            }
             return {
               workspaceId: workspace.id,
               sessions: [],
-              error: error instanceof Error ? error.message : t("app.unknown_error"),
+              error: fallback,
+              connectionState: null,
             };
           }
         }),
@@ -788,6 +839,17 @@ export function SettingsRoute() {
       setWorkspaces(nextWorkspaces);
       setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
+      setWorkspaceConnectionOverrides((current) => {
+        const next = { ...current };
+        for (const entry of sessionEntries) {
+          if (entry.connectionState) {
+            next[entry.workspaceId] = entry.connectionState;
+          } else if (next[entry.workspaceId]?.status === "error") {
+            delete next[entry.workspaceId];
+          }
+        }
+        return next;
+      });
       setSelectedWorkspaceId((current) =>
         reconcileSelectedWorkspaceId(current, list, desktopList, nextWorkspaces),
       );
@@ -819,24 +881,115 @@ export function SettingsRoute() {
   }, [workspaces]);
 
   useEffect(() => {
-    const remoteIds = new Set(
-      workspaces.filter((workspace) => workspace.workspaceType === "remote").map((workspace) => workspace.id),
-    );
-    setWorkspaceConnectionStateById((current) => {
+    const activeWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+    setWorkspaceConnectionOverrides((current) => {
       let changed = false;
       const next: Record<string, WorkspaceConnectionState> = {};
-      for (const [id, state] of Object.entries(current)) {
-        if (remoteIds.has(id)) {
-          next[id] = state;
+      for (const [workspaceId, state] of Object.entries(current)) {
+        if (activeWorkspaceIds.has(workspaceId)) {
+          next[workspaceId] = state;
         } else {
           changed = true;
         }
       }
       return changed ? next : current;
     });
-    setConnectingWorkspaceId((current) => (current && remoteIds.has(current) ? current : null));
   }, [workspaces]);
 
+  const handleRemoteWorkspaceConnectionSaved = useCallback(
+    async (workspaceId: string) => {
+      delete remoteWorkspaceCheckRunRef.current[workspaceId];
+      setWorkspaceConnectionOverrides((current) => {
+        const next = { ...current };
+        delete next[workspaceId];
+        return next;
+      });
+      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
+      await refreshRouteState();
+    },
+    [refreshRouteState],
+  );
+
+  const remoteWorkspaceConnectionEditor = useRemoteWorkspaceConnectionEditor({
+    workspaces,
+    onSaved: handleRemoteWorkspaceConnectionSaved,
+  });
+
+  const runRemoteWorkspaceConnectionCheck = useCallback(
+    async (workspaceId: string, mode: "test" | "recover") => {
+      const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
+      if (!workspace || workspace.workspaceType !== "remote") return false;
+      const connectionKey = getRemoteWorkspaceConnectionKey(workspace);
+      remoteWorkspaceCheckRunCounterRef.current += 1;
+      const runId = String(remoteWorkspaceCheckRunCounterRef.current);
+      remoteWorkspaceCheckRunRef.current[workspaceId] = runId;
+
+      setWorkspaceConnectionOverrides((current) => ({
+        ...current,
+        [workspaceId]: {
+          status: "connecting",
+          message: t("config.testing_connection"),
+          checkedAt: null,
+        },
+      }));
+
+      const result =
+        mode === "recover"
+          ? await (async () => {
+              const recovered = await recoverRemoteWorkspace(
+                workspace,
+                workspace.openworkToken?.trim() || readOpenworkServerSettings().token || token,
+              );
+              return {
+                ok: recovered.ok,
+                state: {
+                  status: recovered.ok ? "connected" : "error",
+                  message:
+                    recovered.message ??
+                    (recovered.ok ? t("status.connected") : "Remote worker connection failed."),
+                  checkedAt: Date.now(),
+                } satisfies WorkspaceConnectionState,
+              };
+            })()
+          : await runRemoteWorkspaceDiagnostics(workspace);
+      const currentWorkspace = workspacesRef.current.find((item) => item.id === workspaceId);
+      if (
+        remoteWorkspaceCheckRunRef.current[workspaceId] !== runId ||
+        !currentWorkspace ||
+        getRemoteWorkspaceConnectionKey(currentWorkspace) !== connectionKey
+      ) {
+        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+          delete remoteWorkspaceCheckRunRef.current[workspaceId];
+        }
+        return false;
+      }
+      setWorkspaceConnectionOverrides((current) => ({
+        ...current,
+        [workspaceId]: result.state,
+      }));
+
+      if (!result.ok) {
+        setErrorsByWorkspaceId((current) => ({
+          ...current,
+          [workspaceId]: result.state.message ?? "Remote worker connection failed.",
+        }));
+        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+          delete remoteWorkspaceCheckRunRef.current[workspaceId];
+        }
+        return false;
+      }
+
+      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
+      if (mode === "recover") {
+        await refreshRouteState();
+      }
+      if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
+        delete remoteWorkspaceCheckRunRef.current[workspaceId];
+      }
+      return true;
+    },
+    [refreshRouteState, token],
+  );
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     if (loading) return;
@@ -922,13 +1075,17 @@ export function SettingsRoute() {
     void connectionsStore.refreshMcpServers();
   }, [activeClient, connectionsStore, providerAuthStore, selectedWorkspace?.id]);
 
-  if (route.redirectPath) {
-    return <Navigate to={route.redirectPath} replace />;
-  }
-
   const selectedWorkspaceName = selectedWorkspace?.displayNameResolved ?? t("session.workspace_fallback");
   const workspaceType = selectedWorkspace?.workspaceType ?? "local";
   const isRemoteWorkspace = workspaceType === "remote";
+  const canWriteWorkspaceSkills =
+    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWriteSkills;
+  const canWriteWorkspacePlugins =
+    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWritePlugins;
+  const skillsAccessHint =
+    isRemoteWorkspace && !canWriteWorkspaceSkills ? t("app.skills_hint_readonly") : null;
+  const pluginsAccessHint =
+    isRemoteWorkspace && !canWriteWorkspacePlugins ? t("app.plugins_hint_readonly") : null;
   const defaultModelLabel = local.prefs.defaultModel
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
     : t("session.default_model");
@@ -941,10 +1098,7 @@ export function SettingsRoute() {
     ? "bg-green-7/10 text-green-11 border-green-7/20"
     : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   const providerSummary = providerConnectedIds.length > 0
-    ? t("status.providers_connected", undefined, {
-      count: providerConnectedIds.length,
-      plural: providerConnectedIds.length === 1 ? "" : "s",
-    })
+    ? t("status.providers_connected", { count: providerConnectedIds.length })
     : t("settings.no_providers_connected");
   const connectedProviders = providers
     .filter((provider) => providerConnectedIds.includes(provider.id))
@@ -1039,62 +1193,6 @@ export function SettingsRoute() {
     }
   };
 
-  const handleTestWorkspaceConnection = async (workspaceId: string) => {
-    const workspace = workspacesRef.current.find((item) => item.id === workspaceId) ?? null;
-    if (!workspace) return false;
-
-    setConnectingWorkspaceId(workspaceId);
-    setWorkspaceConnectionStateById((current) => ({
-      ...current,
-      [workspaceId]: { status: "connecting", message: null, checkedAt: current[workspaceId]?.checkedAt ?? null },
-    }));
-
-    try {
-      const result = await testRemoteWorkspaceConnection(
-        workspace,
-        workspace.openworkToken?.trim() || readOpenworkServerSettings().token || token,
-      );
-      setWorkspaceConnectionStateById((current) => ({
-        ...current,
-        [workspaceId]: { status: result.ok ? "connected" : "error", message: result.message, checkedAt: Date.now() },
-      }));
-      if (result.ok) {
-        void refreshRouteState();
-      }
-      return result.ok;
-    } finally {
-      setConnectingWorkspaceId((current) => (current === workspaceId ? null : current));
-    }
-  };
-
-  const handleRecoverWorkspace = async (workspaceId: string) => {
-    const workspace = workspacesRef.current.find((item) => item.id === workspaceId) ?? null;
-    if (!workspace) return false;
-
-    setConnectingWorkspaceId(workspaceId);
-    setWorkspaceConnectionStateById((current) => ({
-      ...current,
-      [workspaceId]: { status: "connecting", message: null, checkedAt: current[workspaceId]?.checkedAt ?? null },
-    }));
-
-    try {
-      const result = await recoverRemoteWorkspace(
-        workspace,
-        workspace.openworkToken?.trim() || readOpenworkServerSettings().token || token,
-      );
-      setWorkspaceConnectionStateById((current) => ({
-        ...current,
-        [workspaceId]: { status: result.ok ? "connected" : "error", message: result.message, checkedAt: Date.now() },
-      }));
-      if (result.ok) {
-        void refreshRouteState();
-      }
-      return result.ok;
-    } finally {
-      setConnectingWorkspaceId((current) => (current === workspaceId ? null : current));
-    }
-  };
-
   const handleCreateRemoteWorkspace = async (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
@@ -1129,6 +1227,62 @@ export function SettingsRoute() {
       setCreateWorkspaceRemoteBusy(false);
     }
   };
+
+  const handleReconnectMessagingServer = useCallback(async () => {
+    const ok = await openworkServerStore.reconnectOpenworkServer();
+    if (ok) {
+      await refreshRouteState();
+    }
+    return ok;
+  }, [openworkServerStore, refreshRouteState]);
+
+  const handleRestartLocalServer = useCallback(async () => {
+    if (!isDesktopRuntime()) return false;
+    try {
+      await openworkServerRestart({
+        remoteAccessEnabled:
+          readOpenworkServerSettings().remoteAccessEnabled === true,
+      });
+      await openworkServerStore.reconnectOpenworkServer();
+      await refreshRouteState();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [openworkServerStore, refreshRouteState]);
+
+  const handleRestartMessagingWorker = useCallback(async () => {
+    if (!isDesktopRuntime()) return false;
+
+    try {
+      await openworkServerRestart({
+        remoteAccessEnabled:
+          readOpenworkServerSettings().remoteAccessEnabled === true,
+      });
+      await openworkServerStore.reconnectOpenworkServer();
+      await refreshRouteState();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [openworkServerStore, refreshRouteState]);
+
+  const messagingViewProps = useMessagingViewProps({
+    busy,
+    openworkServerStatus: openworkServerSnapshot.openworkServerStatus,
+    openworkServerUrl: openworkServerSnapshot.openworkServerUrl,
+    openworkServerClient:
+      openworkClient ?? openworkServerSnapshot.openworkServerClient,
+    openworkReconnectBusy: openworkServerSnapshot.openworkReconnectBusy,
+    reconnectOpenworkServer: handleReconnectMessagingServer,
+    restartMessagingWorker: handleRestartMessagingWorker,
+    workspaceId: selectedWorkspace?.id ?? null,
+    selectedWorkspaceRoot,
+  });
+
+  if (route.redirectPath) {
+    return <Navigate to={route.redirectPath} replace />;
+  }
 
   const settingsView = (() => {
     switch (route.tab) {
@@ -1187,14 +1341,33 @@ export function SettingsRoute() {
             onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
           />
         );
+      case "automations":
+        return (
+          <AutomationsView
+            automations={automationsStore}
+            busy={busy}
+            selectedWorkspaceRoot={selectedWorkspaceRoot}
+            createSessionAndOpen={async () => undefined}
+            newTaskDisabled={!opencodeClient}
+            schedulerInstalled={false}
+            canEditPlugins={canWriteWorkspacePlugins}
+            addPlugin={async () => {
+              setRouteError("Scheduler plugin install is not wired into the React settings route yet.");
+            }}
+            reloadWorkspaceEngine={reloadCoordinator.reloadWorkspaceEngine}
+            reloadBusy={false}
+            canReloadWorkspace={reloadCoordinator.canReloadWorkspaceEngine}
+            openLink={(url) => platform.openLink(url)}
+          />
+        );
       case "skills":
         return (
           <SkillsView
             workspaceName={selectedWorkspaceName}
             busy={busy}
-            canInstallSkillCreator={!isRemoteWorkspace}
+            canInstallSkillCreator={canWriteWorkspaceSkills}
             canUseDesktopTools={!isRemoteWorkspace}
-            accessHint={isRemoteWorkspace ? t("app.skills_hint_readonly") : null}
+            accessHint={skillsAccessHint}
             extensions={extensionsStore}
             onOpenLink={(url) => platform.openLink(url)}
             createSessionAndOpen={async (_command?: string): Promise<string | undefined> => {
@@ -1209,9 +1382,9 @@ export function SettingsRoute() {
             busy={busy}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
             isRemoteWorkspace={isRemoteWorkspace}
-            canEditPlugins={!isRemoteWorkspace}
+            canEditPlugins={canWriteWorkspacePlugins}
             canUseGlobalScope={!isRemoteWorkspace}
-            accessHint={isRemoteWorkspace ? t("app.plugins_hint_readonly") : null}
+            accessHint={pluginsAccessHint}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
             mcpConnectedAppsCount={mcpConnectedAppsCount}
@@ -1282,7 +1455,7 @@ export function SettingsRoute() {
             openworkReconnectBusy={openworkServerSnapshot.openworkReconnectBusy}
             reconnectOpenworkServer={openworkServerStore.reconnectOpenworkServer}
             engineInfo={null}
-            restartLocalServer={async () => false}
+            restartLocalServer={handleRestartLocalServer}
             stopHost={() => {}}
             developerMode={developerMode}
             toggleDeveloperMode={() => setDeveloperMode((current) => !current)}
@@ -1401,6 +1574,8 @@ export function SettingsRoute() {
             runtimeKey={environmentRuntimeKey}
           />
         );
+      case "messaging":
+        return <MessagingView {...messagingViewProps} />;
       case "debug":
         return <DebugView {...debugViewProps} />;
       default:
@@ -1422,7 +1597,7 @@ export function SettingsRoute() {
           selectedWorkspaceId,
           developerMode,
           selectedSessionId: null,
-          connectingWorkspaceId,
+          connectingWorkspaceId: null,
           workspaceConnectionStateById,
           newTaskDisabled: !opencodeClient,
           onSelectWorkspace: async (workspaceId) => {
@@ -1434,9 +1609,9 @@ export function SettingsRoute() {
           onOpenRenameWorkspace: () => {},
           onShareWorkspace: () => {},
           onRevealWorkspace: () => {},
-          onRecoverWorkspace: handleRecoverWorkspace,
-          onTestWorkspaceConnection: handleTestWorkspaceConnection,
-          onEditWorkspaceConnection: () => {},
+          onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
+          onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
+          onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
           onForgetWorkspace: () => {},
           onOpenCreateWorkspace: handleOpenCreateWorkspace,
         }}
@@ -1488,10 +1663,20 @@ export function SettingsRoute() {
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
       />
+      <CreateRemoteWorkspaceModal
+        open={remoteWorkspaceConnectionEditor.workspace !== null}
+        onClose={remoteWorkspaceConnectionEditor.close}
+        onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
+        initialValues={remoteWorkspaceConnectionEditor.initialValues}
+        submitting={remoteWorkspaceConnectionEditor.busy}
+        error={remoteWorkspaceConnectionEditor.error}
+        title={t("dashboard.edit_remote_workspace_title")}
+        subtitle={t("dashboard.edit_remote_workspace_subtitle")}
+        confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
+      />
       <ConnectionsModals
         client={activeClient}
         projectDir={selectedWorkspaceRoot}
-        language={currentLocale() as Language}
         reloadBlocked={activeReloadBlockingSessions.length > 0}
         activeSessions={activeReloadBlockingSessions}
         isRemoteWorkspace={selectedWorkspace?.workspaceType === "remote"}

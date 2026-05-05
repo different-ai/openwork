@@ -102,4 +102,9 @@ export default defineConfig({
   build: {
     target: "esnext",
   },
+  resolve: {
+    alias: {
+      "@": resolve(appRoot, "src"),
+    },
+  },
 });

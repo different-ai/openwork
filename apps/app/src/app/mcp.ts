@@ -1,4 +1,4 @@
-import { parse } from "jsonc-parser";
+import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/desktop";
 import { CHROME_DEVTOOLS_MCP_COMMAND, CHROME_DEVTOOLS_MCP_ID } from "./constants";
@@ -56,23 +56,28 @@ export async function removeMcpFromConfig(
   name: string,
 ): Promise<void> {
   const configFile = await readOpencodeConfig("project", projectDir);
-  let existingConfig: Record<string, unknown> = {};
-  if (configFile.exists && configFile.content?.trim()) {
-    try {
-      existingConfig = parse(configFile.content) ?? {};
-    } catch {
-      existingConfig = {};
-    }
+  const raw = configFile.exists && configFile.content?.trim()
+    ? configFile.content
+    : "{}\n";
+
+  const parseErrors: Array<{ error: number; offset: number; length: number }> = [];
+  const existingConfig = parse(raw, parseErrors, { allowTrailingComma: true }) as Record<string, unknown> | undefined;
+  if (parseErrors.length > 0) {
+    const details = parseErrors
+      .map((entry) => printParseErrorCode(entry.error))
+      .join(", ");
+    throw new Error(`Failed to parse opencode config: ${details}`);
   }
 
-  const mcpSection = existingConfig["mcp"] as Record<string, unknown> | undefined;
+  const mcpSection = existingConfig?.["mcp"] as Record<string, unknown> | undefined;
   if (!mcpSection || !(name in mcpSection)) return;
 
-  delete mcpSection[name];
+  const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
+  const updated = applyEdits(raw, modify(raw, ["mcp", name], undefined, { formattingOptions }));
   const writeResult = await writeOpencodeConfig(
     "project",
     projectDir,
-    `${JSON.stringify(existingConfig, null, 2)}\n`,
+    updated.endsWith("\n") ? updated : `${updated}\n`,
   );
   if (!writeResult.ok) {
     throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");

@@ -23,6 +23,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "../../../shell/app-inspector";
+import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
@@ -42,6 +43,7 @@ import {
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
 
 type SessionError = {
   message: string;
@@ -84,24 +86,26 @@ export type SessionSurfaceProps = {
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
 };
 
+function messageToReadableText(message: UIMessage) {
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+  const body = message.parts
+    .flatMap((part) => {
+      if (part.type === "text") return [part.text];
+      if (part.type === "reasoning") return [part.text];
+      if (part.type === "dynamic-tool") {
+        if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
+        if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
+        return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
+      }
+      return [];
+    })
+    .join("\n\n");
+  return `${header}\n${body}`.trim();
+}
+
 function transcriptToText(messages: UIMessage[]) {
   return messages
-    .map((message) => {
-      const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
-      const body = message.parts
-        .flatMap((part) => {
-          if (part.type === "text") return [part.text];
-          if (part.type === "reasoning") return [part.text];
-          if (part.type === "dynamic-tool") {
-            if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
-            if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
-            return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
-          }
-          return [];
-        })
-        .join("\n\n");
-      return `${header}\n${body}`.trim();
-    })
+    .map(messageToReadableText)
     .filter(Boolean)
     .join("\n\n---\n\n");
 }
@@ -112,6 +116,17 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
   return "Ready";
 }
+
+function controlTextArgument(args: unknown) {
+  if (typeof args === "string") return args;
+  if (args && typeof args === "object" && "text" in args) {
+    const text = (args as { text?: unknown }).text;
+    if (typeof text === "string") return text;
+  }
+  return DEFAULT_COMPOSER_CONTROL_TEXT;
+}
+
+const waitForControl = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   const queryClient = getReactQueryClient();
@@ -246,6 +261,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   attachmentsRef.current = attachments;
@@ -473,7 +489,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     // Intentionally allow sending while the assistant is still streaming.
@@ -499,9 +515,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setAwaitingAssistantBaseline(null);
       setSending(false);
     }
-  };
+  }, [attachments, buildDraft, draft, props.onDraftChange, props.onSendDraft, renderedMessages.length]);
 
-  const handleAbort = async () => {
+  const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
     try {
@@ -510,7 +526,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } catch (nextError) {
       setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
     }
-  };
+  }, [chatStreaming, opencodeClient, props.sessionId, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (liveStatus.type === "idle") {
@@ -599,6 +615,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
+  const typeComposerText = useCallback(async (text: string) => {
+    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    setDraft(text);
+    await waitForControl(40);
+  }, []);
+
+  const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.set_text",
+    label: "Type into the composer",
+    description: "Replace the current session draft and type the supplied text visibly.",
+    sideEffect: "none",
+    requiresArgs: true,
+    args: [{ name: "text", type: "string", required: true, description: "Prompt text to place in the composer." }],
+    previewArgs: { text: DEFAULT_COMPOSER_CONTROL_TEXT },
+    targetRef: composerShellRef,
+    execute: async (args, helpers) => {
+      const text = controlTextArgument(args);
+      helpers.setNarration(`Typing ${text.length.toLocaleString()} characters into the composer…`);
+      await typeComposerText(text);
+      props.onDraftChange(buildDraft(text, attachments));
+      return { draftLength: text.length };
+    },
+  }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
+  useControlAction(composerSetTextControlAction);
+
+  const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.send",
+    label: "Send the composer prompt",
+    description: "Send the currently visible composer draft to the active session.",
+    sideEffect: "mutation",
+    disabled: (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleSend();
+      return true;
+    },
+  }), [attachments.length, draft, handleSend, model.transitionState]);
+  useControlAction(composerSendControlAction);
+
+  const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.stop",
+    label: "Stop the current run",
+    description: "Stop the current streaming session run.",
+    sideEffect: "mutation",
+    disabled: !chatStreaming,
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleAbort();
+      return true;
+    },
+  }), [chatStreaming, handleAbort]);
+  useControlAction(composerStopControlAction);
+
   const listSkills = async (): Promise<SkillCard[]> => {
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
     const next = (response.items ?? []).map((skill) => ({
@@ -673,6 +742,79 @@ export function SessionSurface(props: SessionSurfaceProps) {
     containerRef: scrollRef,
     contentRef,
   });
+
+  const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_top",
+    label: "Go to the top of the session",
+    description: "Scroll the visible session transcript to the first messages.",
+    sideEffect: "none",
+    execute: () => {
+      const container = scrollRef.current;
+      if (!container) return { ok: false, error: "Session transcript is not mounted" };
+      container.scrollTo({ top: 0, behavior: "smooth" });
+      return { ok: true, position: "top" };
+    },
+  }), []);
+  useControlAction(sessionScrollTopControlAction);
+
+  const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_bottom",
+    label: "Go to the bottom of the session",
+    description: "Scroll the visible session transcript to the newest messages and composer area.",
+    sideEffect: "none",
+    execute: () => {
+      sessionScroll.jumpToLatest("smooth");
+      return { ok: true, position: "bottom" };
+    },
+  }), [sessionScroll.jumpToLatest]);
+  useControlAction(sessionScrollBottomControlAction);
+
+  const sessionLatestMessageControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.latest_message",
+    label: "Read the latest session message",
+    description: "Return the latest visible message in the current session transcript.",
+    sideEffect: "none",
+    execute: () => {
+      const message = renderedMessages[renderedMessages.length - 1];
+      if (!message) return { ok: false, error: "No messages are visible in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        index: renderedMessages.length - 1,
+        role: message.role,
+        text: messageToReadableText(message),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionLatestMessageControlAction);
+
+  const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.read_transcript",
+    label: "Read the current session transcript",
+    description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
+    sideEffect: "none",
+    args: [{ name: "count", type: "number", required: false, description: "Number of recent messages to return, from 1 to 30. Defaults to 10." }],
+    execute: (args) => {
+      const count = typeof args === "object" && args !== null && "count" in args && typeof (args as { count?: unknown }).count === "number"
+        ? Math.min(Math.max(1, (args as { count: number }).count), 30)
+        : 10;
+      const total = renderedMessages.length;
+      const slice = renderedMessages.slice(-count);
+      if (!slice.length) return { ok: false, error: "No messages in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        messageCount: total,
+        returned: slice.length,
+        messages: slice.map((message, index) => ({
+          index: total - slice.length + index,
+          role: message.role,
+          text: messageToReadableText(message),
+        })),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionReadTranscriptControlAction);
 
   return (
     <DevProfiler id="SessionSurface">
@@ -794,7 +936,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+      <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <DevProfiler id="SessionComposer">
         <ReactSessionComposer
           draft={draft}

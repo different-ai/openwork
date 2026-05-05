@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 
-import { currentLocale, t } from "../../../i18n";
+import { t } from "../../../i18n";
 import {
   errorBannerClass,
   modalBodyClass,
@@ -22,7 +22,6 @@ export function CreateRemoteWorkspaceModal(
   props: CreateRemoteWorkspaceModalProps,
 ) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const translate = (key: string) => t(key, currentLocale());
 
   const [openworkHostUrl, setOpenworkHostUrl] = useState("");
   const [openworkToken, setOpenworkToken] = useState("");
@@ -31,11 +30,11 @@ export function CreateRemoteWorkspaceModal(
   const [displayName, setDisplayName] = useState("");
 
   const showClose = props.showClose ?? true;
-  const title = props.title ?? translate("dashboard.create_remote_workspace_title");
+  const title = props.title ?? t("dashboard.create_remote_workspace_title");
   const subtitle =
-    props.subtitle ?? translate("dashboard.create_remote_workspace_subtitle");
+    props.subtitle ?? t("dashboard.create_remote_workspace_subtitle");
   const confirmLabel =
-    props.confirmLabel ?? translate("dashboard.create_remote_workspace_confirm");
+    props.confirmLabel ?? t("dashboard.create_remote_workspace_confirm");
   const isInline = props.inline ?? false;
   const submitting = props.submitting ?? false;
 
@@ -116,7 +115,7 @@ export function CreateRemoteWorkspaceModal(
               disabled={submitting}
               className={pillGhostClass}
             >
-              {translate("common.cancel")}
+              {t("common.cancel")}
             </button>
           ) : null}
           <button
@@ -132,7 +131,7 @@ export function CreateRemoteWorkspaceModal(
             disabled={!canSubmit}
             title={
               !openworkHostUrl.trim()
-                ? translate("dashboard.remote_base_url_required")
+                ? t("dashboard.remote_base_url_required")
                 : undefined
             }
             className={pillPrimaryClass}

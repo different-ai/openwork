@@ -1,14 +1,23 @@
 name: Opencode Agents
 
 on:
-  issues:
-    types: [opened]
-  pull_request_target:
-    types: [opened]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Run issue triage or duplicate PR check
+        required: true
+        type: choice
+        options:
+          - issue
+          - pull_request
+      number:
+        description: Issue or pull request number
+        required: true
+        type: number
 
 jobs:
   triage-issue:
-    if: github.event_name == 'issues'
+    if: inputs.target == 'issue'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -33,17 +42,18 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ inputs.number }}
         run: |
           cat > /tmp/issue_prompt.txt <<'PROMPT_EOF'
           The following issue was just opened, triage it:
           PROMPT_EOF
+          ISSUE_TITLE="$(gh issue view "$ISSUE_NUMBER" --json title --jq .title)"
+          ISSUE_BODY="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body)"
           printf '\nTitle: %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" >> /tmp/issue_prompt.txt
           opencode run --agent triage "$(cat /tmp/issue_prompt.txt)"
 
   duplicate-prs:
-    if: github.event_name == 'pull_request_target' && github.event.pull_request.user.login != 'opencode-agent[bot]'
+    if: inputs.target == 'pull_request'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -67,7 +77,7 @@ jobs:
       - name: Build prompt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ inputs.number }}
         run: |
           {
             echo "Check for duplicate PRs related to this new PR:"
@@ -84,7 +94,7 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ inputs.number }}
         run: |
           opencode run --agent duplicate-pr "$(cat pr_info.txt)" > /tmp/comment_output.txt
 

@@ -2,6 +2,7 @@
 import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
 
 import type { WorkspacePreset } from "../../../app/types";
+import { t } from "../../../i18n";
 import {
   errorBannerClass,
   modalBodyClass,
@@ -34,7 +35,6 @@ export type CreateWorkspaceProgressSnapshot = {
 };
 
 export type CreateWorkspaceLocalPanelProps = {
-  translate: (key: string) => string;
   selectedFolder: string | null;
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
@@ -91,27 +91,27 @@ export function CreateWorkspaceLocalPanel(
         <div className="space-y-4">
           <div className={surfaceCardClass}>
             <div className={sectionTitleClass}>
-              {props.translate("welcome.folder_title")}
+              {t("welcome.folder_title")}
             </div>
             <div className={`${sectionBodyClass} mt-2`}>
-              {props.translate("welcome.folder_explanation")}
+              {t("welcome.folder_explanation")}
             </div>
             <ul className="mt-3 space-y-1.5 pl-1">
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
                 <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
-                {props.translate("welcome.folder_read")}
+                {t("welcome.folder_read")}
               </li>
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
                 <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
-                {props.translate("welcome.folder_write")}
+                {t("welcome.folder_write")}
               </li>
               <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
                 <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
-                {props.translate("welcome.folder_anything")}
+                {t("welcome.folder_anything")}
               </li>
             </ul>
             <div className="mt-2 text-[12px] text-dls-secondary italic">
-              {props.translate("welcome.folder_drop_hint")}
+              {t("welcome.folder_drop_hint")}
             </div>
 
             <div className="mt-4 rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3">
@@ -138,7 +138,7 @@ export function CreateWorkspaceLocalPanel(
                   <FolderPlus size={14} />
                 )}
                 {props.hasSelectedFolder
-                  ? props.translate("dashboard.change")
+                  ? t("dashboard.change")
                   : "Select folder"}
               </button>
             </div>
@@ -229,7 +229,7 @@ export function CreateWorkspaceLocalPanel(
         props.workerDisabledReason ? (
           <div className={warningBannerClass}>
             <div className="font-semibold text-amber-12">
-              {props.translate("dashboard.sandbox_get_ready_title")}
+              {t("dashboard.sandbox_get_ready_title")}
             </div>
             <div className="mt-1 leading-relaxed">
               {props.workerDisabledReason || props.workerCtaDescription}
@@ -286,7 +286,7 @@ export function CreateWorkspaceLocalPanel(
             disabled={props.submitting}
             className={pillGhostClass}
           >
-            {props.translate("common.cancel")}
+            {t("common.cancel")}
           </button>
           {props.onConfirmWorker ? (
             <button
@@ -302,7 +302,7 @@ export function CreateWorkspaceLocalPanel(
               }
               title={
                 !props.selectedFolder
-                  ? props.translate("dashboard.choose_folder_continue")
+                  ? t("dashboard.choose_folder_continue")
                   : props.workerDisabledReason || undefined
               }
               className={pillSecondaryClass}
@@ -310,11 +310,11 @@ export function CreateWorkspaceLocalPanel(
               {props.workerSubmitting ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 size={16} className="animate-spin" />
-                  {props.translate("dashboard.sandbox_checking_docker")}
+                  {t("dashboard.sandbox_checking_docker")}
                 </span>
               ) : (
                 (props.workerLabel ??
-                  props.translate("dashboard.create_sandbox_confirm"))
+                  t("dashboard.create_sandbox_confirm"))
               )}
             </button>
           ) : null}
@@ -324,7 +324,7 @@ export function CreateWorkspaceLocalPanel(
             disabled={!props.selectedFolder || props.submitting}
             title={
               !props.selectedFolder
-                ? props.translate("dashboard.choose_folder_continue")
+                ? t("dashboard.choose_folder_continue")
                 : undefined
             }
             className={pillPrimaryClass}
@@ -336,7 +336,7 @@ export function CreateWorkspaceLocalPanel(
               </span>
             ) : (
               (props.confirmLabel ??
-                props.translate("dashboard.create_workspace_confirm"))
+                t("dashboard.create_workspace_confirm"))
             )}
           </button>
         </div>

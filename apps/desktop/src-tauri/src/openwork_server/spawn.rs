@@ -9,6 +9,8 @@ use tauri::AppHandle;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+use crate::paths::resolve_process_working_dir;
+
 pub const OPENWORK_PORT_RANGE_START: u16 = 48_000;
 pub const OPENWORK_PORT_RANGE_END: u16 = 51_000;
 const PREFERRED_PORT_RETRY_ATTEMPTS: usize = 20;
@@ -222,6 +224,7 @@ pub fn spawn_openwork_server(
         .first()
         .map(|path| Path::new(path))
         .unwrap_or_else(|| Path::new("."));
+    let cwd = resolve_process_working_dir(app, cwd, "openwork-server")?;
     let mut command = command.args(args).current_dir(cwd);
 
     // User env first so it can never override OPENWORK_TOKEN / credentials.

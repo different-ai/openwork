@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import { t, currentLocale } from "../../../i18n";
+import { t } from "../../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../../../app/types";
 import { isDesktopRuntime } from "../../../app/utils";
 import {
@@ -227,11 +227,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       resolvedOpenworkCapabilities,
       openworkServerCanWriteSkills:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.skills?.write ?? false),
       openworkServerCanWritePlugins:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.plugins?.write ?? false),
       openworkServerHostInfo: state.openworkServerHostInfo,
       openworkServerDiagnostics: state.openworkServerDiagnostics,
@@ -567,7 +565,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
             openworkAuditError:
               error instanceof Error
                 ? error.message
-                : t("app.error_audit_load", currentLocale()),
+                : t("app.error_audit_load"),
           }));
         }
       })();
@@ -736,7 +734,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
         const restarted = await options.restartLocalServer();
         if (!restarted) {
-          throw new Error(t("app.error_restart_local_worker", currentLocale()));
+          throw new Error(t("app.error_restart_local_worker"));
         }
         await reconnectOpenworkServer();
       }
@@ -747,7 +745,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         shareRemoteAccessError:
           error instanceof Error
             ? error.message
-            : t("app.error_remote_access", currentLocale()),
+            : t("app.error_remote_access"),
       }));
       return;
     } finally {

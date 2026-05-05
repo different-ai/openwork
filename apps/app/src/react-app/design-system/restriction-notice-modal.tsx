@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { X } from "lucide-react";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import { Button } from "./button";
 
 export type RestrictionNoticeModalProps = {
@@ -35,7 +35,7 @@ export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
           <button
             type="button"
             className="inline-flex h-9 w-9 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            aria-label={t("common.close", currentLocale())}
+            aria-label={t("common.close")}
             onClick={props.onClose}
           >
             <X size={18} />
@@ -48,7 +48,7 @@ export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
           </p>
           <div className="mt-6 flex justify-end">
             <Button variant="primary" onClick={props.onClose}>
-              {t("common.close", currentLocale())}
+              {t("common.close")}
             </Button>
           </div>
         </div>

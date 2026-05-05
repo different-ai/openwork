@@ -1318,6 +1318,20 @@ function resolveManagedOpencodeHost(requestedHost?: string): string {
   return normalized === "localhost" ? "127.0.0.1" : normalized;
 }
 
+const OPENCODE_LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"] as const;
+
+function resolveOpencodeLogLevel(requested?: string): string | undefined {
+  const trimmed = requested?.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.toUpperCase();
+  if (!(OPENCODE_LOG_LEVELS as readonly string[]).includes(normalized)) {
+    throw new Error(
+      `Unsupported --opencode-log-level value: ${requested}. Expected one of: ${OPENCODE_LOG_LEVELS.join(", ")}.`,
+    );
+  }
+  return normalized;
+}
+
 function resolveOpenworkRemoteAccess(args: ParsedArgs): boolean {
   const explicitHost =
     readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST;
@@ -3678,6 +3692,7 @@ function printHelp(): void {
     "  --opencode-host <host>    Bind host for opencode serve (loopback only, default: 127.0.0.1)",
     "  --opencode-port <port>    Port for opencode serve (default: random)",
     "  --opencode-workdir <p>    Workdir for router-managed opencode serve",
+    "  --opencode-log-level <l>  Log level for opencode serve (DEBUG, INFO, WARN, ERROR; default: opencode default)",
     "  --opencode-auth           OpenCode basic auth is always enabled",
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
@@ -3780,6 +3795,7 @@ async function startOpencode(options: {
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
+  logLevel?: string;
   opencodeRouterHealthPort?: number;
 }) {
   const args = [
@@ -3789,6 +3805,9 @@ async function startOpencode(options: {
     "--port",
     String(options.port),
   ];
+  if (options.logLevel) {
+    args.push("--log-level", options.logLevel);
+  }
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
   }
@@ -4241,6 +4260,7 @@ async function writeSandboxEntrypoint(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4269,6 +4289,10 @@ async function writeSandboxEntrypoint(options: {
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
     .join(" ");
+
+  const opencodeLogLevelArg = options.opencode.logLevel
+    ? `--log-level ${shQuote(options.opencode.logLevel)}`
+    : "";
 
   const openworkCors = options.openwork.corsOrigins.length
     ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
@@ -4338,7 +4362,7 @@ async function writeSandboxEntrypoint(options: {
     '  if [ -n "$opencode_pid" ]; then kill "$opencode_pid" 2>/dev/null || true; fi',
     "}",
     "trap cleanup INT TERM",
-    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
+    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))}${opencodeLogLevelArg ? ` ${opencodeLogLevelArg}` : ""} ${opencodeCors} &`,
     "opencode_pid=$!",
     options.openwork.opencodeRouterEnabled
       ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &`
@@ -4382,6 +4406,7 @@ async function startDockerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4563,6 +4588,7 @@ async function startAppleContainerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -5599,6 +5625,10 @@ async function spawnRouterDaemon(
   const opencodeWorkdir =
     readFlag(args.flags, "opencode-workdir") ??
     process.env.OPENWORK_OPENCODE_WORKDIR;
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload =
     readFlag(args.flags, "opencode-hot-reload") ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD;
@@ -5634,6 +5664,8 @@ async function spawnRouterDaemon(
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
   if (opencodePort) commandArgs.push("--opencode-port", String(opencodePort));
   if (opencodeWorkdir) commandArgs.push("--opencode-workdir", opencodeWorkdir);
+  if (opencodeLogLevel)
+    commandArgs.push("--opencode-log-level", opencodeLogLevel);
   if (opencodeHotReload)
     commandArgs.push("--opencode-hot-reload", opencodeHotReload);
   if (opencodeHotReloadDebounceMs)
@@ -5925,6 +5957,10 @@ async function runRouterDaemon(args: ParsedArgs) {
     "127.0.0.1",
     state.opencode?.port,
   );
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
     {
@@ -6057,6 +6093,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       logger,
       runId,
       logFormat,
+      logLevel: opencodeLogLevel,
     });
     opencodeChild = child;
     logger.info("Process spawned", { pid: child.pid ?? 0 }, "opencode");
@@ -6997,6 +7034,10 @@ async function runStart(args: ParsedArgs) {
           ),
           "127.0.0.1",
         );
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
     {
@@ -7347,6 +7388,7 @@ async function runStart(args: ParsedArgs) {
       logger,
       runId,
       logFormat,
+      logLevel: opencodeLogLevel,
       opencodeRouterHealthPort: opencodeRouterEnabled
         ? opencodeRouterHealthPort
         : undefined,
@@ -7981,6 +8023,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
@@ -8024,6 +8067,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
@@ -8154,6 +8198,7 @@ async function runStart(args: ParsedArgs) {
         logger,
         runId,
         logFormat,
+        logLevel: opencodeLogLevel,
         opencodeRouterHealthPort: opencodeRouterEnabled
           ? opencodeRouterHealthPort
           : undefined,

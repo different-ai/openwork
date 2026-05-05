@@ -15,7 +15,11 @@ export type PluginsExtensionsStore = {
   refreshPlugins: (scope?: "project" | "global") => void | Promise<void>;
   pluginConfigPath: () => string | null;
   pluginConfig: () => { path?: string | null } | null;
-  pluginList: () => string[];
+  pluginList: () => Array<{
+    name: string;
+    source: "config" | "dir.project" | "dir.global";
+    removable: boolean;
+  }>;
   pluginInput: () => string;
   setPluginInput: (value: string) => void;
   pluginStatus: () => string | null;
@@ -247,27 +251,38 @@ export function PluginsView(props: PluginsViewProps) {
           </div>
         ) : (
           <div className="grid gap-2">
-            {extensions.pluginList().map((pluginName) => (
+            {extensions.pluginList().map((plugin) => (
               <div
-                key={pluginName}
+                key={plugin.name}
                 className="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5"
               >
-                <div className="text-sm text-gray-12 font-mono flex items-center gap-2">
-                  <Cpu size={14} className="text-gray-10" />
-                  {pluginName}
+                <div>
+                  <div className="text-sm text-gray-12 font-mono flex items-center gap-2">
+                    <Cpu size={14} className="text-gray-10" />
+                    {plugin.name}
+                  </div>
+                  {!plugin.removable ? (
+                    <div className="mt-1 text-xs text-gray-10">
+                      {plugin.source === "dir.global"
+                        ? "Discovered from a global plugin folder."
+                        : "Discovered from the workspace plugin folder."}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="text-[10px] uppercase tracking-wide text-gray-10">
-                    {t("plugins.enabled")}
+                    {plugin.removable ? t("plugins.enabled") : t("settings.cap_read_only")}
                   </div>
-                  <Button
-                    variant="ghost"
-                    className="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
-                    onClick={() => extensions.removePlugin(pluginName)}
-                    disabled={props.busy || !props.canEditPlugins}
-                  >
-                    {t("plugins.remove")}
-                  </Button>
+                  {plugin.removable ? (
+                    <Button
+                      variant="ghost"
+                      className="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
+                      onClick={() => extensions.removePlugin(plugin.name)}
+                      disabled={props.busy || !props.canEditPlugins}
+                    >
+                      {t("plugins.remove")}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ))}

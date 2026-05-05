@@ -57,6 +57,7 @@ Read `ARCHITECTURE.md` for runtime flow, server-vs-shell ownership, and architec
 * **Open source**: keep the repo portable; no secrets committed.
 * **Slick and fluid**: 60fps animations, micro-interactions, premium feel.
 * **Mobile-native**: touch targets, gestures, and layouts optimized for small screens.
+* **Provider-neutral control**: expose app actions through OpenWork-owned control surfaces first; provider-specific controllers should drive those surfaces rather than hardwiring provider logic into the app UI.
 
 ## Task Intake (Required)
 

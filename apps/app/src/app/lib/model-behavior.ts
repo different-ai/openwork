@@ -143,7 +143,7 @@ const getVariantDescription = (
   if (key === "xhigh" || key === "max") return family === "anthropic"
     ? t("model_behavior.desc_max_anthropic")
     : t("model_behavior.desc_max");
-  return t("model_behavior.desc_generic", undefined, { label: label.toLowerCase() });
+  return t("model_behavior.desc_generic", { label: label.toLowerCase() });
 };
 
 export const getModelBehaviorOptions = (

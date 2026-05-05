@@ -1,13 +1,69 @@
 /** @jsxImportSource react */
-import type { ReactNode } from "react";
-import { RefreshCcw } from "lucide-react";
+import type * as React from "react";
+import {
+  Bug,
+  Cloud,
+  Cog,
+  Paintbrush,
+  Puzzle,
+  RefreshCcw,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  Wrench,
+} from "lucide-react";
 
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+} from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
+import {
+  SettingsContent,
+  SettingsPanel,
+  SettingsPanelDescription,
+  SettingsPanelHeading,
+  SettingsPanelTitle,
+  SettingsPanelToolbar,
+  SettingsPanelToolbarActions,
+  SettingsPanelToolbarButton,
+  SettingsPanelToolbarMessage,
+  SettingsPanelToolbarStatus,
+} from "./panel";
 
-const settingsRailClass = "rounded-[24px] border border-dls-border bg-dls-sidebar p-3";
-const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
+export function getSettingsTabIcon(tab: SettingsTab) {
+  switch (tab) {
+    case "den":
+      return Cloud;
+    case "skills":
+      return Sparkles;
+    case "extensions":
+      return Puzzle;
+    case "environment":
+      return Terminal;
+    case "advanced":
+      return Wrench;
+    case "appearance":
+      return Paintbrush;
+    case "updates":
+      return RefreshCcw;
+    case "recovery":
+      return ShieldCheck;
+    case "debug":
+      return Bug;
+    default:
+      return Cog;
+  }
+}
 
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
@@ -82,7 +138,7 @@ type SettingsPageProps = {
   updateToolbarDisabled?: boolean;
   updateRestartBlockedMessage?: string | null;
   onUpdateToolbarAction?: () => void;
-  children: ReactNode;
+  children: React.ReactNode;
 };
 
 export function SettingsPage(props: SettingsPageProps) {
@@ -90,97 +146,95 @@ export function SettingsPage(props: SettingsPageProps) {
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
 
   return (
-    <section className="space-y-6 md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-8 md:space-y-0">
-      <aside className="space-y-6 md:sticky md:top-4 md:self-start">
-        <div className={settingsRailClass}>
-          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
-            {t("settings.group_workspace")}
-          </div>
-          <div className="space-y-1">
-            {workspaceTabs.map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
-                  props.activeTab === tab
-                    ? "bg-dls-surface text-dls-text shadow-sm"
-                    : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
-                }`}
-                onClick={() => props.onSelectTab(tab)}
-              >
-                <span>{getSettingsTabLabel(tab)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+    <SidebarProvider className="relative min-h-full min-w-0">
+        <Sidebar collapsible="none" className="absolute inset-0">
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>{t("settings.group_workspace")}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {workspaceTabs.map((tab) => {
+                    const Icon = getSettingsTabIcon(tab);
+                    return (
+                      <SidebarMenuItem key={tab}>
+                        <SidebarMenuButton
+                          type="button"
+                          isActive={props.activeTab === tab}
+                          onClick={() => props.onSelectTab(tab)}
+                        >
+                          <Icon />
+                          <span>{getSettingsTabLabel(tab)}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
 
-        <div className={settingsRailClass}>
-          <div className="mb-2 px-2 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-8">
-            {t("settings.group_global")}
-          </div>
-          <div className="space-y-1">
-            {globalTabs.map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
-                  props.activeTab === tab
-                    ? "bg-dls-surface text-dls-text shadow-sm"
-                    : "text-gray-10 hover:bg-dls-surface/50 hover:text-dls-text"
-                }`}
-                onClick={() => props.onSelectTab(tab)}
-              >
-                <span>{getSettingsTabLabel(tab)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </aside>
+            <SidebarGroup>
+              <SidebarGroupLabel>{t("settings.group_global")}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {globalTabs.map((tab) => {
+                    const Icon = getSettingsTabIcon(tab);
+                    return (
+                      <SidebarMenuItem key={tab}>
+                        <SidebarMenuButton
+                          type="button"
+                          isActive={props.activeTab === tab}
+                          onClick={() => props.onSelectTab(tab)}
+                        >
+                          <Icon />
+                          <span>{getSettingsTabLabel(tab)}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </Sidebar>
 
-      <div className="min-w-0 space-y-6">
-        <div className={`${settingsPanelClass} flex flex-col gap-3 md:flex-row md:items-center md:justify-between`}>
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold tracking-tight text-gray-12">
-              {getSettingsTabLabel(props.activeTab)}
-            </h2>
-            <p className="text-sm text-gray-9">
-              {getSettingsTabDescription(props.activeTab)}
-            </p>
-          </div>
+        <SidebarInset className="h-full min-w-0 w-full max-w-full overflow-hidden">
+        <SettingsContent>
+          <SettingsPanel>
+            <SettingsPanelHeading>
+              <SettingsPanelTitle>{getSettingsTabLabel(props.activeTab)}</SettingsPanelTitle>
+              <SettingsPanelDescription>{getSettingsTabDescription(props.activeTab)}</SettingsPanelDescription>
+            </SettingsPanelHeading>
 
-          {props.showUpdateToolbar && props.activeTab === "general" ? (
-            <div className="mt-4 space-y-2 md:mt-0 md:max-w-sm md:text-right">
-              <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                <div
-                  className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs shadow-sm ${props.updateToolbarTone ?? "bg-gray-4/60 text-gray-11 border-gray-7/50"}`}
-                  title={props.updateToolbarTitle}
-                >
-                  {props.updateToolbarSpinning ? <RefreshCcw size={12} className="animate-spin" /> : null}
-                  <span className="tabular-nums whitespace-nowrap">{props.updateToolbarLabel}</span>
-                </div>
-                {props.updateToolbarActionLabel ? (
-                  <Button
-                    variant="outline"
-                    className="h-8 rounded-full border-gray-6/60 bg-gray-1/70 px-3 py-0 text-xs hover:bg-gray-2/70"
-                    onClick={props.onUpdateToolbarAction}
-                    disabled={props.updateToolbarDisabled}
-                    title={props.updateRestartBlockedMessage ?? ""}
+            {props.showUpdateToolbar && props.activeTab === "general" ? (
+              <SettingsPanelToolbar>
+                <SettingsPanelToolbarActions>
+                  <SettingsPanelToolbarStatus
+                    tone={props.updateToolbarTone}
+                    title={props.updateToolbarTitle}
+                    spinning={props.updateToolbarSpinning}
                   >
-                    {props.updateToolbarActionLabel}
-                  </Button>
+                    {props.updateToolbarLabel}
+                  </SettingsPanelToolbarStatus>
+                  {props.updateToolbarActionLabel ? (
+                    <SettingsPanelToolbarButton
+                      onClick={props.onUpdateToolbarAction}
+                      disabled={props.updateToolbarDisabled}
+                      title={props.updateRestartBlockedMessage ?? ""}
+                    >
+                      {props.updateToolbarActionLabel}
+                    </SettingsPanelToolbarButton>
+                  ) : null}
+                </SettingsPanelToolbarActions>
+                {props.updateRestartBlockedMessage ? (
+                  <SettingsPanelToolbarMessage>{props.updateRestartBlockedMessage}</SettingsPanelToolbarMessage>
                 ) : null}
-              </div>
-              {props.updateRestartBlockedMessage ? (
-                <div className="text-xs leading-relaxed text-amber-11/90 md:max-w-sm">
-                  {props.updateRestartBlockedMessage}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+              </SettingsPanelToolbar>
+            ) : null}
+          </SettingsPanel>
 
-        {props.children}
-      </div>
-    </section>
+          {props.children}
+        </SettingsContent>
+        </SidebarInset>
+    </SidebarProvider>
   );
 }

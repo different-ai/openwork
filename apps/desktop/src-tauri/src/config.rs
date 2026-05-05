@@ -7,14 +7,19 @@ use crate::types::{ExecResult, OpencodeConfigFile};
 fn opencode_config_candidates(
     scope: &str,
     project_dir: &str,
-) -> Result<(PathBuf, PathBuf), String> {
+) -> Result<Vec<PathBuf>, String> {
     match scope {
         "project" => {
             if project_dir.trim().is_empty() {
                 return Err("projectDir is required".to_string());
             }
             let root = PathBuf::from(project_dir);
-            Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
+            Ok(vec![
+                root.join("opencode.jsonc"),
+                root.join("opencode.json"),
+                root.join(".opencode").join("opencode.jsonc"),
+                root.join(".opencode").join("opencode.json"),
+            ])
         }
         "global" => {
             let base = if let Ok(dir) = env::var("XDG_CONFIG_HOME") {
@@ -26,24 +31,25 @@ fn opencode_config_candidates(
             };
 
             let root = base.join("opencode");
-            Ok((root.join("opencode.jsonc"), root.join("opencode.json")))
+            Ok(vec![root.join("opencode.jsonc"), root.join("opencode.json")])
         }
         _ => Err("scope must be 'project' or 'global'".to_string()),
     }
 }
 
 pub fn resolve_opencode_config_path(scope: &str, project_dir: &str) -> Result<PathBuf, String> {
-    let (jsonc_path, json_path) = opencode_config_candidates(scope, project_dir)?;
+    let candidates = opencode_config_candidates(scope, project_dir)?;
 
-    if jsonc_path.exists() {
-        return Ok(jsonc_path);
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.clone());
+        }
     }
 
-    if json_path.exists() {
-        return Ok(json_path);
-    }
-
-    Ok(jsonc_path)
+    candidates
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No config path candidates available".to_string())
 }
 
 pub fn read_opencode_config(scope: &str, project_dir: &str) -> Result<OpencodeConfigFile, String> {

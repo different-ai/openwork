@@ -202,6 +202,26 @@ export type OpenworkWorkspaceExport = {
   files?: Array<{ path: string; content: string }>;
 };
 
+export type OpenworkWorkspaceImportChange = {
+  kind: "opencode" | "openwork" | "skill" | "command" | "file";
+  action: "create" | "update" | "replace" | "delete" | "unchanged";
+  label: string;
+  path: string;
+};
+
+export type OpenworkWorkspaceImportPreview = {
+  fingerprint: string;
+  summary: {
+    total: number;
+    create: number;
+    update: number;
+    replace: number;
+    delete: number;
+    unchanged: number;
+  };
+  changes: OpenworkWorkspaceImportChange[];
+};
+
 export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
 
 export type OpenworkWorkspaceExportWarning = {
@@ -859,13 +879,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       });
     },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
-      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
+      requestJson<{ ok: boolean; preview?: OpenworkWorkspaceImportPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
         timeoutMs: timeouts.workspaceImport,
       }),
+    previewWorkspaceImport: (workspaceId: string, payload: Record<string, unknown>) =>
+      requestJson<OpenworkWorkspaceImportPreview>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/import/preview`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.workspaceImport,
+        },
+      ),
     materializeBlueprintSessions: (workspaceId: string) =>
       requestJson<OpenworkBlueprintSessionsMaterializeResult>(
         baseUrl,

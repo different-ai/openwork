@@ -269,15 +269,15 @@ export function formatRelativeTime(timestampMs: number) {
   }
 
   if (delta < 60_000) {
-    return t("time.seconds_ago", undefined, { count: Math.max(1, Math.round(delta / 1000)) });
+    return t("time.seconds_ago", { count: Math.max(1, Math.round(delta / 1000)) });
   }
 
   if (delta < 60 * 60_000) {
-    return t("time.minutes_ago", undefined, { count: Math.max(1, Math.round(delta / 60_000)) });
+    return t("time.minutes_ago", { count: Math.max(1, Math.round(delta / 60_000)) });
   }
 
   if (delta < 24 * 60 * 60_000) {
-    return t("time.hours_ago", undefined, { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
+    return t("time.hours_ago", { count: Math.max(1, Math.round(delta / (60 * 60_000))) });
   }
 
   return new Date(timestampMs).toLocaleDateString();
@@ -337,14 +337,22 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
   );
 }
 
+export function redactTokenLikeText(value: string): string {
+  return value
+    .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\b(authorization:\s*bearer\s+)[^\s,]+/gi, "$1[redacted]")
+    .replace(/\b(bearer\s+)[a-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .replace(/\bowt_[a-z0-9_-]+\b/gi, "owt_[redacted]");
+}
+
 export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error?: string | null) {
-  const raw = error?.trim() ?? "";
+  const raw = redactTokenLikeText(error?.trim() ?? "");
   const fallbackTitle = raw || "Failed to load tasks";
   if (!raw || !isSandboxWorkspace(workspace)) {
     return {
       tone: "error" as const,
       label: "Error",
-      message: "Failed to load tasks",
+      message: raw && workspace.workspaceType === "remote" ? raw : "Failed to load tasks",
       title: fallbackTitle,
     };
   }

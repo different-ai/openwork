@@ -546,7 +546,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     if (previousProviderId && previousProviderId !== localProviderId) {
       updated = removeCloudProviderComment(updated, previousProviderId);
-      const previousEdits = modify(updated, ["provider", previousProviderId], undefined, {
+      const previousEdits = modify(updated, ["provider", previousProviderId], {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       });
       updated = applyEdits(updated, previousEdits);
@@ -576,7 +576,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       ? raw
       : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
     updated = removeCloudProviderComment(updated, providerId);
-    const providerEdits = modify(updated, ["provider", providerId], undefined, {
+    const providerEdits = modify(updated, ["provider", providerId], {
       formattingOptions: { insertSpaces: true, tabSize: 2 },
     });
     updated = applyEdits(updated, providerEdits);
@@ -814,7 +814,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const heading = (() => {
       if (status === 401 || status === 403) return t("providers.auth_failed");
       if (status === 429) return t("providers.rate_limit_exceeded");
-      if (provider) return t("providers.provider_error", undefined, { provider });
+      if (provider) return t("providers.provider_error", { provider });
       return fallback;
     })();
 

@@ -145,10 +145,13 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   });
 }
 
-export async function upsertSkill(
-  workspaceRoot: string,
-  payload: { name: string; content: string; description?: string },
-): Promise<{ path: string; action: "added" | "updated" }> {
+export type UpsertSkillPayload = {
+  name: string;
+  content: string;
+  description?: string;
+};
+
+export function buildSkillContent(payload: UpsertSkillPayload): { name: string; content: string } {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {
@@ -177,12 +180,24 @@ export async function upsertSkill(
     content = frontmatter + payload.content.replace(/^\n/, "");
   }
 
+  return {
+    name,
+    content: content.endsWith("\n") ? content : content + "\n",
+  };
+}
+
+export async function upsertSkill(
+  workspaceRoot: string,
+  payload: UpsertSkillPayload,
+): Promise<{ path: string; action: "added" | "updated" }> {
+  const skill = buildSkillContent(payload);
+
   const baseDir = projectSkillsDir(workspaceRoot);
-  const skillDir = join(baseDir, name);
+  const skillDir = join(baseDir, skill.name);
   await mkdir(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
   const existed = await exists(skillPath);
-  await writeFile(skillPath, content.endsWith("\n") ? content : content + "\n", "utf8");
+  await writeFile(skillPath, skill.content, "utf8");
   return { path: skillPath, action: existed ? "updated" : "added" };
 }
 
