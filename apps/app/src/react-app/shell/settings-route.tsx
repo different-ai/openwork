@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { SUGGESTED_PLUGINS } from "../../app/constants";
 import { createClient } from "../../app/lib/opencode";
@@ -96,6 +96,8 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
+import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
+import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -266,9 +268,12 @@ function parseSettingsPath(pathname: string): {
   redirectPath: string | null;
   extensionsSection?: "all" | "mcp" | "plugins";
 } {
-  const trimmed = pathname.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "");
+  const trimmed = pathname
+    .replace(/^\/workspace\/[^/]+\/settings\/?/, "")
+    .replace(/^\/settings\/?/, "")
+    .replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return { tab: "general", redirectPath: "/settings/general" };
+    return { tab: "general", redirectPath: "general" };
   }
 
   const [head, tail] = trimmed.split("/");
@@ -288,7 +293,7 @@ function parseSettingsPath(pathname: string): {
       if (tail === "plugins") return { tab: "extensions", redirectPath: null, extensionsSection: "plugins" };
       return { tab: "extensions", redirectPath: null, extensionsSection: "all" };
     default:
-      return { tab: "general", redirectPath: "/settings/general" };
+      return { tab: "general", redirectPath: "general" };
   }
 }
 
@@ -312,6 +317,34 @@ function writeStoredBoolean(key: string, value: boolean) {
   }
 }
 
+function readNavigationWorkspaceId(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const value = (state as { workspaceId?: unknown }).workspaceId;
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+function readNavigationSessionId(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const value = (state as { sessionId?: unknown }).sessionId;
+  return typeof value === "string" ? value.trim() || null : null;
+}
+
+function findSessionWorkspaceId(
+  sessionId: string | null,
+  entries: Array<{ workspaceId: string; sessions: any[] }>,
+) {
+  const id = sessionId?.trim();
+  if (!id) return null;
+  return entries.find((entry) => entry.sessions.some((session: any) => session?.id === id))?.workspaceId ?? null;
+}
+
+function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+  if (route.tab === "extensions" && route.extensionsSection && route.extensionsSection !== "all") {
+    return `extensions/${route.extensionsSection}`;
+  }
+  return route.tab;
+}
+
 function readStoredThemeMode(): PersistedThemeMode {
   if (typeof window === "undefined") return "system";
   try {
@@ -332,19 +365,24 @@ function applyThemeMode(mode: PersistedThemeMode) {
 export function SettingsRoute() {
   const navigate = useNavigate();
   const location = useLocation();
+  const params = useParams<{ workspaceId?: string }>();
+  const routeWorkspaceId = params.workspaceId?.trim() || "";
   const local = useLocal();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
   const route = parseSettingsPath(location.pathname);
+  const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
+  const navigationSessionId = readNavigationSessionId(location.state);
 
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState(() => navigationWorkspaceId ?? readActiveWorkspaceId() ?? "");
+  const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [openworkClient, setOpenworkClient] = useState<OpenworkServerClient | null>(null);
@@ -417,7 +455,7 @@ export function SettingsRoute() {
   });
 
   const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
     [selectedWorkspaceId, workspaces],
   );
   const workspaceConnectionStateById = useMemo(() => {
@@ -678,10 +716,10 @@ export function SettingsRoute() {
   );
 
   const opencodeBaseUrl = useMemo(() => {
-    if (!selectedWorkspaceId || !baseUrl) return "";
+    if (!selectedWorkspace || !selectedWorkspaceId || !baseUrl) return "";
     const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, selectedWorkspaceId) ?? baseUrl;
     return `${mounted.replace(/\/+$/, "")}/opencode`;
-  }, [baseUrl, selectedWorkspaceId]);
+  }, [baseUrl, selectedWorkspace, selectedWorkspaceId]);
 
   const opencodeClient = useMemo(
     () =>
@@ -800,7 +838,11 @@ export function SettingsRoute() {
         setWorkspaces(desktopWorkspaces);
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
-        setSelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+        setLegacySelectedWorkspaceId((current) => {
+          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          writeActiveWorkspaceId(next || null);
+          return next;
+        });
         return;
       }
 
@@ -869,9 +911,13 @@ export function SettingsRoute() {
         }
         return next;
       });
-      setSelectedWorkspaceId((current) =>
-        reconcileSelectedWorkspaceId(current, list, desktopList, nextWorkspaces),
-      );
+      setLegacySelectedWorkspaceId((current) => {
+        const sessionWorkspaceId = findSessionWorkspaceId(navigationSessionId, sessionEntries);
+        const preferred = routeWorkspaceId || sessionWorkspaceId || navigationWorkspaceId || current || readActiveWorkspaceId() || "";
+        const next = reconcileSelectedWorkspaceId(preferred, list, desktopList, nextWorkspaces);
+        writeActiveWorkspaceId(next || null);
+        return next;
+      });
     } catch (error) {
       const message = describeRouteError(error);
       console.error("[settings-route] refreshRouteState failed", error);
@@ -883,7 +929,11 @@ export function SettingsRoute() {
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
         setWorkspaces(desktopWorkspaces);
-        setSelectedWorkspaceId((current) => current || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+        setLegacySelectedWorkspaceId((current) => {
+          const next = current || readActiveWorkspaceId() || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "";
+          writeActiveWorkspaceId(next || null);
+          return next;
+        });
       }
     } finally {
       setLoading(false);
@@ -893,7 +943,7 @@ export function SettingsRoute() {
       // completed our first data load.
       markBootRouteReady();
     }
-  }, [markBootRouteReady]);
+  }, [markBootRouteReady, navigationSessionId, navigationWorkspaceId, routeWorkspaceId]);
 
   useEffect(() => {
     workspacesRef.current = workspaces;
@@ -1110,6 +1160,9 @@ export function SettingsRoute() {
     }));
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
+  const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
+    ? "Workspace was not found. Select a new workspace from the sidebar."
+    : null;
   const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
     ? ROUTE_OPENWORK_CAPABILITIES
     : null;
@@ -1231,7 +1284,7 @@ export function SettingsRoute() {
     if (selectedWorkspaceId === workspaceId) {
       const nextWorkspace = workspaces.find((workspace) => workspace.id !== workspaceId);
       const nextId = nextWorkspace?.id ?? "";
-      setSelectedWorkspaceId(nextId);
+      setLegacySelectedWorkspaceId(nextId);
       if (nextId) {
         await workspaceSetSelected(nextId).catch(() => undefined);
       }
@@ -1362,7 +1415,14 @@ export function SettingsRoute() {
   });
 
   if (route.redirectPath) {
-    return <Navigate to={route.redirectPath} replace />;
+    const target = selectedWorkspaceId
+      ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
+      : `/settings/${route.redirectPath}`;
+    return <Navigate to={target} replace state={location.state} />;
+  }
+
+  if (!routeWorkspaceId && selectedWorkspaceId) {
+    return <Navigate to={workspaceSettingsRoute(selectedWorkspaceId, settingsPathForRoute(route))} replace state={location.state} />;
   }
 
   const settingsView = (() => {
@@ -1452,7 +1512,7 @@ export function SettingsRoute() {
             extensions={extensionsStore}
             onOpenLink={(url) => platform.openLink(url)}
             createSessionAndOpen={async (_command?: string): Promise<string | undefined> => {
-              navigate("/session");
+              navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
               return undefined;
             }}
           />
@@ -1470,7 +1530,10 @@ export function SettingsRoute() {
             extensions={extensionsStore}
             mcpConnectedAppsCount={mcpConnectedAppsCount}
             initialSection={route.extensionsSection}
-            setSectionRoute={(section) => navigate(`/settings/extensions/${section}`)}
+            setSectionRoute={(section) => {
+              const path = `extensions/${section}`;
+              navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`);
+            }}
             onRefresh={() => {
               void connectionsStore.refreshMcpServers();
               void extensionsStore.refreshPlugins();
@@ -1668,7 +1731,7 @@ export function SettingsRoute() {
     <>
       <SettingsShell
         activeTab={route.tab}
-        onSelectTab={(tab) => navigate(`/settings/${tab}`)}
+        onSelectTab={(tab) => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, tab) : `/settings/${tab}`)}
         developerMode={developerMode}
         selectedWorkspaceName={selectedWorkspaceName}
         headerStatus={routeOpenworkStatus}
@@ -1682,11 +1745,16 @@ export function SettingsRoute() {
           workspaceConnectionStateById,
           newTaskDisabled: !opencodeClient,
           onSelectWorkspace: async (workspaceId) => {
-            setSelectedWorkspaceId(workspaceId);
+            setLegacySelectedWorkspaceId(workspaceId);
+            writeActiveWorkspaceId(workspaceId || null);
+            if (isDesktopRuntime()) {
+              void workspaceSetSelected(workspaceId).catch(() => undefined);
+              void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
+            }
             return true;
           },
-          onOpenSession: (_workspaceId, sessionId) => navigate(`/session/${sessionId}`),
-          onCreateTaskInWorkspace: () => navigate("/session"),
+          onOpenSession: (workspaceId, sessionId) => navigate(workspaceSessionRoute(workspaceId, sessionId)),
+          onCreateTaskInWorkspace: (workspaceId) => navigate(workspaceSessionRoute(workspaceId)),
           onOpenRenameWorkspace: handleOpenRenameWorkspace,
           onShareWorkspace: shareWorkspaceState.openShareWorkspace,
           onRevealWorkspace: (id) => void handleRevealWorkspace(id),
@@ -1696,10 +1764,10 @@ export function SettingsRoute() {
           onForgetWorkspace: (id) => void handleForgetWorkspace(id),
           onOpenCreateWorkspace: handleOpenCreateWorkspace,
         }}
-        onClose={() => navigate("/session")}
+        onClose={() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session")}
         sidebarWidth={shellLayout.leftSidebarWidth}
         onSidebarResizeStart={shellLayout.startLeftSidebarResize}
-        error={routeError}
+        error={routeError ?? notFoundRouteError}
       >
         {settingsView}
       </SettingsShell>

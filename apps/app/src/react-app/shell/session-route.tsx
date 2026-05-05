@@ -108,6 +108,7 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
 import { useSessionControlActions } from "../domains/session/control/session-control-actions";
+import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -348,8 +349,17 @@ export function SessionRoute() {
   const { showToast } = useStatusToasts();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
-  const params = useParams<{ sessionId?: string }>();
+  const params = useParams<{ workspaceId?: string; sessionId?: string }>();
+  const routeWorkspaceId = params.workspaceId?.trim() || "";
   const selectedSessionId = params.sessionId?.trim() || null;
+  const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
+    const id = workspaceId.trim();
+    if (!id) {
+      navigate(legacySessionRoute(sessionId), options);
+      return;
+    }
+    navigate(workspaceSessionRoute(id, sessionId), options);
+  }, [navigate]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
   const [loading, setLoading] = useState(true);
@@ -361,7 +371,8 @@ export function SessionRoute() {
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [routeError, setRouteError] = useState<string | null>(null);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(() => readActiveWorkspaceId() ?? "");
+  const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState<string>(() => readActiveWorkspaceId() ?? "");
+  const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
@@ -557,7 +568,7 @@ export function SessionRoute() {
         setWorkspaces(desktopWorkspaces);
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
-        setSelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+        setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
         return;
       }
 
@@ -580,6 +591,9 @@ export function SessionRoute() {
       // activeId, the server's activeId, then the first known workspace.
       const persistedActiveId = readActiveWorkspaceId();
       let nextWorkspaceId =
+        (routeWorkspaceId && nextWorkspaces.some((w) => w.id === routeWorkspaceId)
+          ? routeWorkspaceId
+          : "") ||
         (persistedActiveId && nextWorkspaces.some((w) => w.id === persistedActiveId)
           ? persistedActiveId
           : "") ||
@@ -611,7 +625,7 @@ export function SessionRoute() {
           ? [nextWorkspaceId]
           : [],
       );
-      setSelectedWorkspaceId(nextWorkspaceId);
+      setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
       // Mark the chosen workspace as active on the server so that the
       // OpenCode engine bound to it re-reads opencode.jsonc and applies
@@ -646,7 +660,7 @@ export function SessionRoute() {
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
         setWorkspaces(desktopWorkspaces);
-        setSelectedWorkspaceId((current) =>
+        setLegacySelectedWorkspaceId((current) =>
           current || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "",
         );
       }
@@ -660,7 +674,7 @@ export function SessionRoute() {
         markBootRouteReady();
       }
     }
-  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, selectedSessionId]);
+  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, selectedSessionId]);
 
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
@@ -921,14 +935,25 @@ export function SessionRoute() {
   // restore the last session the user opened in the active workspace.
   useEffect(() => {
     if (loading) return;
+    if (!routeWorkspaceId && selectedWorkspaceId) {
+      navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
+      return;
+    }
     if (selectedSessionId) return;
     if (!selectedWorkspaceId) return;
     const remembered = readLastSessionFor(selectedWorkspaceId);
     if (!remembered) return;
     const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
     if (!sessions.some((session: any) => session?.id === remembered)) return;
-    navigate(`/session/${remembered}`, { replace: true });
-  }, [loading, navigate, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
+    navigateToWorkspaceSession(selectedWorkspaceId, remembered, { replace: true });
+  }, [
+    loading,
+    navigateToWorkspaceSession,
+    routeWorkspaceId,
+    selectedSessionId,
+    selectedWorkspaceId,
+    sessionsByWorkspaceId,
+  ]);
 
   // Redirect to /welcome when no workspaces exist and the user hasn't
   // completed onboarding. This fires after the initial route refresh so
@@ -953,8 +978,19 @@ export function SessionRoute() {
     [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
   );
 
+  const sidebarActiveWorkspaceId = useMemo(() => {
+    const sessionId = selectedSessionId?.trim() ?? "";
+    if (sessionId) {
+      const owner = workspaceSessionGroups.find((group) =>
+        group.sessions.some((session: any) => session?.id === sessionId),
+      );
+      if (owner?.workspace.id) return owner.workspace.id;
+    }
+    return selectedWorkspaceId;
+  }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
+
   const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
     [selectedWorkspaceId, workspaces],
   );
   const workspaceConnectionStateById = useMemo(() => {
@@ -1002,6 +1038,20 @@ export function SessionRoute() {
   }, [baseUrl, selectedWorkspaceId]);
   const selectedWorkspaceIsLoading = retryingWorkspaceIds.includes(selectedWorkspaceId);
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
+  const selectedSessionKnown = Boolean(
+    selectedSessionId &&
+      (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).some((session: any) => session?.id === selectedSessionId),
+  );
+  const routeNotFoundMessage = (() => {
+    if (loading) return null;
+    if (routeWorkspaceId && !selectedWorkspace) {
+      return "Workspace was not found. Select a new workspace from the sidebar.";
+    }
+    if (selectedSessionId && !selectedWorkspaceIsLoading && !selectedSessionKnown) {
+      return "Session was not found. Select a new session from the sidebar.";
+    }
+    return null;
+  })();
   // Boot-level loading blocks the whole UI. Session-list retries only fill the
   // sidebar; they must not gate the composer/New task.
   const effectiveLoading = loading;
@@ -1289,6 +1339,14 @@ export function SessionRoute() {
     return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
   }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot]);
 
+  const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
+    const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
+    const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
+    const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
+    writeActiveWorkspaceId(workspaceId || null);
+    navigate(target, { state: { workspaceId, sessionId } });
+  }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1326,7 +1384,7 @@ export function SessionRoute() {
         setModelPickerOpen(true);
       },
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins") => {
-        navigate(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/mcp" : section === "plugins" ? "/settings/den" : "/settings/general");
+        handleOpenSettings(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : "/settings/general");
       },
       onSendDraft: async (draft: ComposerDraft) => {
         const text = (draft.resolvedText ?? draft.text).trim();
@@ -1412,6 +1470,7 @@ export function SessionRoute() {
     };
   }, [
     client,
+    handleOpenSettings,
     local,
     listSlashCommands,
     modelLabel,
@@ -1549,9 +1608,9 @@ export function SessionRoute() {
         await client.deleteWorkspace(workspaceId).catch(() => undefined);
       }
       if (selectedWorkspaceId === workspaceId) {
-        setSelectedWorkspaceId("");
+        setLegacySelectedWorkspaceId("");
         writeActiveWorkspaceId(null);
-        navigate("/session");
+        navigate(legacySessionRoute());
       }
       forgetWorkspaceMemory(workspaceId);
       await refreshRouteState();
@@ -1640,14 +1699,14 @@ export function SessionRoute() {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
-      setSelectedWorkspaceId(workspaceId);
+      setLegacySelectedWorkspaceId(workspaceId);
       writeActiveWorkspaceId(workspaceId || null);
       writeLastSessionFor(workspaceId, session.id);
       setSessionsByWorkspaceId((current) => ({
         ...current,
         [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
       }));
-      navigate(`/session/${session.id}`);
+      navigateToWorkspaceSession(workspaceId, session.id);
       void refreshRouteState();
     } catch (error) {
       const message = describeRouteError(error);
@@ -1663,7 +1722,7 @@ export function SessionRoute() {
         }
       }
     }
-  }, [baseUrl, errorsByWorkspaceId, loading, navigate, refreshRouteState, retryingWorkspaceIds, token, workspaces]);
+  }, [baseUrl, errorsByWorkspaceId, loading, navigateToWorkspaceSession, refreshRouteState, retryingWorkspaceIds, token, workspaces]);
 
   // Global shortcuts:
   //   Cmd/Ctrl+N  -> new task in selected workspace
@@ -1700,12 +1759,15 @@ export function SessionRoute() {
   }, [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
 
   const navigateToSessionForControl = useCallback((sessionId: string) => {
-    navigate(`/session/${sessionId}`);
-  }, [navigate]);
+    const owner = Object.entries(sessionsByWorkspaceId).find(([, sessions]) =>
+      (sessions ?? []).some((session: any) => session?.id === sessionId),
+    )?.[0];
+    navigateToWorkspaceSession(owner || selectedWorkspaceId, sessionId);
+  }, [navigateToWorkspaceSession, selectedWorkspaceId, sessionsByWorkspaceId]);
 
   const navigateToSessionRootForControl = useCallback(() => {
-    navigate("/session");
-  }, [navigate]);
+    navigateToWorkspaceSession(selectedWorkspaceId);
+  }, [navigateToWorkspaceSession, selectedWorkspaceId]);
 
   const openModelPickerForControl = useCallback(() => {
     setModelPickerOpen(true);
@@ -1806,14 +1868,14 @@ export function SessionRoute() {
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (createdId) {
-        navigate("/settings/general");
+        handleOpenSettings("/settings/general", createdId);
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [client, local, navigate, refreshRouteState]);
+  }, [client, handleOpenSettings, local, refreshRouteState]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
@@ -1892,7 +1954,7 @@ export function SessionRoute() {
           }),
         );
       }}
-      onOpenSettings={() => navigate("/settings/general")}
+      onOpenSettings={() => handleOpenSettings("/settings/general")}
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,
@@ -1906,7 +1968,7 @@ export function SessionRoute() {
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
         onSelectWorkspace: async (workspaceId) => {
           if (workspaceId === selectedWorkspaceId) return true;
-          setSelectedWorkspaceId(workspaceId);
+          setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (client && workspace && !sessionsByWorkspaceId[workspaceId]?.length) {
@@ -1936,16 +1998,20 @@ export function SessionRoute() {
           if (remembered && remembered !== selectedSessionId) {
             const known = sessionsByWorkspaceId[workspaceId];
             if (known?.some((session: any) => session?.id === remembered)) {
-              navigate(`/session/${remembered}`);
+              navigateToWorkspaceSession(workspaceId, remembered);
+            } else {
+              navigateToWorkspaceSession(workspaceId);
             }
+          } else {
+            navigateToWorkspaceSession(workspaceId);
           }
           return true;
         },
         onOpenSession: (workspaceId, sessionId) => {
-          setSelectedWorkspaceId(workspaceId);
+          setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           writeLastSessionFor(workspaceId, sessionId);
-          navigate(`/session/${sessionId}`);
+          navigateToWorkspaceSession(workspaceId, sessionId);
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: async (workspaceId) => {
@@ -1965,14 +2031,14 @@ export function SessionRoute() {
           // Make sure the new session is the active pair before navigating
           // so the surface renders the new id immediately instead of going
           // through the "unknown session" render tick.
-          setSelectedWorkspaceId(workspaceId);
+          setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           writeLastSessionFor(workspaceId, session.id);
           setSessionsByWorkspaceId((current) => ({
             ...current,
             [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
           }));
-          navigate(`/session/${session.id}`);
+          navigateToWorkspaceSession(workspaceId, session.id);
           // Refresh in the background so the new session picks up its real
           // metadata (title, timestamps) as soon as the server knows them.
           void refreshRouteState();
@@ -2050,7 +2116,7 @@ export function SessionRoute() {
           ? async (sessionId) => {
               await client.deleteSession(selectedWorkspaceId, sessionId);
               if (selectedSessionId === sessionId) {
-                navigate("/session");
+                navigateToWorkspaceSession(selectedWorkspaceId);
               }
               await refreshRouteState();
             }
@@ -2063,6 +2129,7 @@ export function SessionRoute() {
         statusPingClass: "bg-amber-9/35 animate-ping",
         statusPulse: true,
       } : undefined}
+      notFoundMessage={routeNotFoundMessage}
     />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
@@ -2110,8 +2177,8 @@ export function SessionRoute() {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
         }
       }}
-      onOpenSession={(_workspaceId, sessionId) => navigate(`/session/${sessionId}`)}
-      onOpenSettings={(route) => navigate(route ?? "/settings/general")}
+      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+      onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
       sessions={paletteSessionOptions}
     />
     <ModelPickerModal
@@ -2137,7 +2204,7 @@ export function SessionRoute() {
       onBehaviorChange={() => {}}
       onOpenSettings={() => {
         setModelPickerOpen(false);
-        navigate("/settings/general");
+        handleOpenSettings("/settings/general");
       }}
       onClose={() => setModelPickerOpen(false)}
     />

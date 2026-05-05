@@ -122,6 +122,7 @@ export type SessionPageProps = {
   questionReplyBusy?: boolean;
   respondQuestion?: (requestID: string, answers: string[][]) => void;
   statusBar?: Partial<StatusBarOverrides>;
+  notFoundMessage?: string | null;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
 };
@@ -434,7 +435,14 @@ export function SessionPage(props: SessionPageProps) {
 
               {!showDelayedSessionLoadingState && !canRenderReactSurface && !showStartupSkeleton ? (
                 <div className={`mx-auto max-w-[800px] px-6 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}>
-                  {showWorkspaceSetupEmptyState ? (
+                  {props.notFoundMessage ? (
+                    <div className="px-6 py-16 text-center">
+                      <div className="mx-auto max-w-md rounded-2xl border border-dls-border bg-dls-card px-5 py-6 shadow-[var(--dls-card-shadow)]">
+                        <h3 className="text-base font-medium text-dls-text">Workspace or session not found</h3>
+                        <p className="mt-2 text-sm leading-6 text-dls-secondary">{props.notFoundMessage}</p>
+                      </div>
+                    </div>
+                  ) : showWorkspaceSetupEmptyState ? (
                     <div className="space-y-6 px-6 text-center">
                       <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-hover">
                         <Zap className="text-dls-secondary" />

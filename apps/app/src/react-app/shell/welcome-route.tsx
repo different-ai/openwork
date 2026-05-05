@@ -18,6 +18,7 @@ import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-moda
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { writeActiveWorkspaceId } from "./session-memory";
+import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -97,7 +98,7 @@ export function WelcomeRoute() {
         }
         markOnboardingComplete();
         setModalOpen(false);
-        navigate("/settings/general", { replace: true });
+        navigate(createdId ? workspaceSettingsRoute(createdId, "general") : "/settings/general", { replace: true });
       } catch (error) {
         setCreateError(
           error instanceof Error ? error.message : "Failed to create workspace.",
@@ -140,7 +141,7 @@ export function WelcomeRoute() {
         }
         markOnboardingComplete();
         setModalOpen(false);
-        navigate("/session", { replace: true });
+        navigate(createdId ? workspaceSessionRoute(createdId) : "/session", { replace: true });
         return true;
       } catch (error) {
         setRemoteError(
