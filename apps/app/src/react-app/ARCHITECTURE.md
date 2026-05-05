@@ -94,6 +94,46 @@ Cross-domain imports go through module boundaries, not a shared blob.
 - Feature-specific state that is tightly coupled to one domain lives inside that domain
   (`domains/session/sync/`, `domains/settings/state/`).
 
+## Active workspace and session
+
+Workspace and session identity are route state, not app-global mutable state.
+
+Canonical workspace-scoped routes:
+
+- `/workspace/:workspaceId/session`
+- `/workspace/:workspaceId/session/:sessionId`
+- `/workspace/:workspaceId/settings/:tab`
+- `/workspace/:workspaceId/settings/extensions/:section`
+
+Use `react-app/shell/workspace-routes.ts` to build these paths. Do not hand-build `/session/...`
+or `/settings/...` URLs for workspace-scoped flows.
+
+Rules for agents and future code:
+
+- In session or workspace-scoped settings routes, read the active workspace from the URL
+  `workspaceId` param first.
+- Read the active session from the URL `sessionId` param. A selected session should never imply a
+  different workspace than the URL workspace.
+- The legacy `openwork.react.activeWorkspace` and `openwork.react.sessionByWorkspace` values are
+  only restore/fallback memory. They are not authoritative while a workspace-scoped URL is active.
+- `/session`, `/session/:sessionId`, and `/settings/*` are compatibility entry points. They should
+  redirect to workspace-scoped URLs when the workspace can be resolved.
+- Missing URL resources should not silently fall back to the first workspace. Show a not-found state
+  and let the user pick a workspace/session from the sidebar.
+- Workspace-scoped actions (rename workspace, create session, open MCP/settings tabs, quick actions,
+  commands, delete session) should use the URL-derived workspace/session context or receive explicit
+  workspace/session ids from the caller.
+
+Practical examples:
+
+- From session B in workspace B, opening settings should navigate to
+  `/workspace/B/settings/general`.
+- Opening a session from the command palette should navigate to
+  `/workspace/<owner-workspace-id>/session/<session-id>`, where the owner is found from the session
+  list.
+- Creating a new task in a workspace should navigate to
+  `/workspace/<workspace-id>/session/<new-session-id>`.
+
 ## Framework-agnostic boundary
 
 Anything that is already Solid-free stays under `src/app/` and is re-exported from the React
