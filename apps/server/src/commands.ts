@@ -65,10 +65,16 @@ export async function listCommands(workspaceRoot: string, scope: "workspace" | "
   return listCommandsInDir(projectCommandsDir(workspaceRoot), "workspace");
 }
 
-export async function upsertCommand(
-  workspaceRoot: string,
-  payload: { name: string; description?: string; template: string; agent?: string; model?: string | null; subtask?: boolean },
-): Promise<string> {
+export type UpsertCommandPayload = {
+  name: string;
+  description?: string;
+  template: string;
+  agent?: string;
+  model?: string | null;
+  subtask?: boolean;
+};
+
+export function buildCommandContent(payload: UpsertCommandPayload): { name: string; content: string } {
   if (!payload.template || payload.template.trim().length === 0) {
     throw new ApiError(400, "invalid_command_template", "Command template is required");
   }
@@ -82,10 +88,18 @@ export async function upsertCommand(
     subtask: payload.subtask ?? false,
   }));
   const content = frontmatter + "\n" + payload.template.trim() + "\n";
+  return { name: sanitized, content };
+}
+
+export async function upsertCommand(
+  workspaceRoot: string,
+  payload: UpsertCommandPayload,
+): Promise<string> {
+  const command = buildCommandContent(payload);
   const dir = projectCommandsDir(workspaceRoot);
   await mkdir(dir, { recursive: true });
-  const path = join(dir, `${sanitized}.md`);
-  await writeFile(path, content, "utf8");
+  const path = join(dir, `${command.name}.md`);
+  await writeFile(path, command.content, "utf8");
   return path;
 }
 

@@ -9,13 +9,12 @@ import {
   X,
 } from "lucide-react";
 
-import { t, type Language } from "../../../../i18n";
+import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
 export type ControlChromeSetupModalProps = {
   open: boolean;
   busy: boolean;
-  language: Language;
   mode: "connect" | "edit";
   initialUseExistingProfile: boolean;
   onClose: () => void;
@@ -23,7 +22,6 @@ export type ControlChromeSetupModalProps = {
 };
 
 export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
-  const tr = (key: string) => t(key, props.language);
   const [useExistingProfile, setUseExistingProfile] = useState(
     props.initialUseExistingProfile,
   );
@@ -37,8 +35,8 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
 
   const ctaLabel =
     props.mode === "edit"
-      ? tr("mcp.control_chrome_save")
-      : tr("mcp.control_chrome_connect");
+      ? t("mcp.control_chrome_save")
+      : t("mcp.control_chrome_connect");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -57,10 +55,10 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-gray-12 sm:text-2xl">
-                  {tr("mcp.control_chrome_setup_title")}
+                  {t("mcp.control_chrome_setup_title")}
                 </h2>
                 <p className="mt-1 max-w-xl text-sm leading-6 text-gray-11">
-                  {tr("mcp.control_chrome_setup_subtitle")}
+                  {t("mcp.control_chrome_setup_subtitle")}
                 </p>
               </div>
             </div>
@@ -68,7 +66,7 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
               type="button"
               className="rounded-xl p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
               onClick={props.onClose}
-              aria-label={tr("common.cancel")}
+              aria-label={t("common.cancel")}
             >
               <X size={20} />
             </button>
@@ -83,15 +81,15 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-gray-12">
-                  {tr("mcp.control_chrome_browser_title")}
+                  {t("mcp.control_chrome_browser_title")}
                 </h3>
                 <p className="mt-1 text-sm text-gray-11">
-                  {tr("mcp.control_chrome_browser_hint")}
+                  {t("mcp.control_chrome_browser_hint")}
                 </p>
                 <ol className="mt-3 space-y-2 text-sm leading-6 text-gray-12">
-                  <li>1. {tr("mcp.control_chrome_browser_step_one")}</li>
-                  <li>2. {tr("mcp.control_chrome_browser_step_two")}</li>
-                  <li>3. {tr("mcp.control_chrome_browser_step_three")}</li>
+                  <li>1. {t("mcp.control_chrome_browser_step_one")}</li>
+                  <li>2. {t("mcp.control_chrome_browser_step_two")}</li>
+                  <li>3. {t("mcp.control_chrome_browser_step_three")}</li>
                 </ol>
                 <a
                   href="https://github.com/ChromeDevTools/chrome-devtools-mcp"
@@ -99,7 +97,7 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
                   rel="noopener noreferrer"
                   className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-11 transition-colors hover:text-blue-12"
                 >
-                  {tr("mcp.control_chrome_docs")}
+                  {t("mcp.control_chrome_docs")}
                   <ExternalLink size={12} />
                 </a>
               </div>
@@ -113,10 +111,10 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-gray-12">
-                  {tr("mcp.control_chrome_profile_title")}
+                  {t("mcp.control_chrome_profile_title")}
                 </h3>
                 <p className="mt-1 text-sm leading-6 text-gray-11">
-                  {tr("mcp.control_chrome_profile_hint")}
+                  {t("mcp.control_chrome_profile_hint")}
                 </p>
 
                 <button
@@ -128,10 +126,10 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
                 >
                   <div className="space-y-1">
                     <div className="text-sm font-semibold text-gray-12">
-                      {tr("mcp.control_chrome_toggle_label")}
+                      {t("mcp.control_chrome_toggle_label")}
                     </div>
                     <div className="text-xs leading-5 text-gray-11">
-                      {tr("mcp.control_chrome_toggle_hint")}
+                      {t("mcp.control_chrome_toggle_hint")}
                     </div>
                   </div>
 
@@ -150,8 +148,8 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
 
                 <div className="mt-3 rounded-2xl border border-dashed border-gray-6 bg-gray-2/70 px-4 py-3 text-xs leading-5 text-gray-11">
                   {useExistingProfile
-                    ? tr("mcp.control_chrome_toggle_on")
-                    : tr("mcp.control_chrome_toggle_off")}
+                    ? t("mcp.control_chrome_toggle_on")
+                    : t("mcp.control_chrome_toggle_off")}
                 </div>
               </div>
             </div>
@@ -160,7 +158,7 @@ export function ControlChromeSetupModal(props: ControlChromeSetupModalProps) {
 
         <div className="flex flex-col-reverse gap-3 border-t border-gray-6 bg-gray-2/80 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-7">
           <Button variant="ghost" onClick={props.onClose}>
-            {tr("mcp.auth.cancel")}
+            {t("mcp.auth.cancel")}
           </Button>
           <Button
             variant="secondary"

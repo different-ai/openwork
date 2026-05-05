@@ -3,6 +3,10 @@
 # permissions. In-place migration from Tauri to Electron depends on this.
 appId: com.differentai.openwork
 productName: OpenWork
+protocols:
+  - name: OpenWork
+    schemes:
+      - openwork
 directories:
   output: dist-electron
 files:
@@ -24,13 +28,13 @@ publish:
     repo: openwork
     releaseType: release
 mac:
-  icon: src-tauri/icons/icon.icns
+  icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
   extraResources:
-    - from: src-tauri/sidecars
+    - from: resources/sidecars
       to: sidecars
       filter:
         - opencode
@@ -52,9 +56,9 @@ mac:
     - dmg
     - zip
 linux:
-  icon: src-tauri/icons/icon.png
+  icon: resources/icons/icon.png
   extraResources:
-    - from: src-tauri/sidecars
+    - from: resources/sidecars
       to: sidecars
       filter:
         - opencode
@@ -76,9 +80,9 @@ linux:
     - AppImage
     - tar.gz
 win:
-  icon: src-tauri/icons/icon.ico
+  icon: resources/icons/icon.ico
   extraResources:
-    - from: src-tauri/sidecars
+    - from: resources/sidecars
       to: sidecars
       filter:
         - opencode.exe

@@ -54,14 +54,14 @@ export function MarketplacesScreen() {
         <div className="rounded-2xl border border-gray-100 bg-white px-6 py-10 text-[14px] text-gray-500">
           Loading marketplaces…
         </div>
-      ) : !hasAnyIntegration ? (
+      ) : !hasAnyIntegration && marketplaces.length === 0 ? (
         <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
       ) : filtered.length === 0 ? (
         <EmptyState
           title={marketplaces.length === 0 ? "No marketplaces yet" : "No marketplaces match that search"}
           description={
             marketplaces.length === 0
-              ? "Marketplaces show up here when you import a repository that has a `.claude-plugin/marketplace.json` manifest."
+              ? "Imported marketplaces and connected integration marketplaces will show up here when they are available."
               : "Try a different search term or open the plugins tab."
           }
           action={

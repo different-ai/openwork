@@ -70,9 +70,7 @@ Agents, skills, and commands should model the following as OpenWork server behav
 - workspace creation and initialization
 - writes to `.opencode/`, `opencode.json`, and `opencode.jsonc`
 - OpenWork workspace config writes (`.opencode/openwork.json`)
-- workspace template export/import, including shareable `.opencode/**` files and `opencode.json` state
-- workspace template starter-session materialization from portable blueprint config (not copied runtime session history)
-- share-bundle publish/fetch flows used by OpenWork template links
+- share-bundle publish/fetch flows for supported OpenWork capability bundles such as skills
 - reload event generation after config or capability changes
 - other filesystem-backed capability changes that must work across desktop host mode and remote clients
 
@@ -89,12 +87,13 @@ If an agent needs one of the server-owned behaviors above and only a Tauri path 
 
 OpenWork desktop ships through two release channels:
 
-- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized Tauri bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`; when Electron publishing is enabled, the same release also carries signed, notarized Electron macOS assets plus `latest-mac.yml`.
-- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes signed, notarized Tauri and Electron builds to the rolling GitHub release tagged `alpha-macos-latest`. The Tauri alpha updater manifest lives at `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`; Electron alpha assets include `latest-mac.yml` on the same release.
+- **Stable** (default, all platforms): versioned builds produced by the `Release App` workflow. Each tag `vX.Y.Z` publishes signed, notarized Tauri bundles plus a `latest.json` updater manifest at `https://github.com/different-ai/openwork/releases/latest/download/latest.json`; when Electron publishing is enabled, the same release also carries signed, notarized Electron macOS assets plus `latest-mac.yml` at `https://github.com/different-ai/openwork/releases/latest/download/latest-mac.yml`.
+- **Alpha** (macOS arm64 only, rolling): every merge to `dev` publishes signed, notarized Tauri and Electron builds to the rolling GitHub release tagged `alpha-macos-latest`. The Tauri alpha updater manifest lives at `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest.json`; Electron alpha assets include `latest-mac.yml` at `https://github.com/different-ai/openwork/releases/download/alpha-macos-latest/latest-mac.yml` on the same release.
 
 Guidelines:
 
-- The alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- The Tauri alpha channel is an opt-in preference (`LocalPreferences.releaseChannel`). The normal Updates toggle is rendered only when `isTauriRuntime()` and `isMacPlatform()` both resolve true; other platforms silently fall back to stable even if the stored preference says `"alpha"`.
+- The Electron alpha channel is Debug-only during the migration window. Migrated Electron users can switch feeds from Settings → Debug → Electron alpha channel; the normal Updates page stays on the selected Electron feed and defaults to stable.
 - Alpha builds advertise the next patch version plus an `-alpha.<runNumber>+<sha>` prerelease suffix. That keeps semver ordering `stable < alpha.1 < alpha.2 < next stable` so alpha users migrate forward cleanly when the next stable ships.
 - Alpha and stable share the same Tauri updater signing keypair so an installed stable can upgrade into alpha and vice versa without re-installing manually.
 - Apple signing and notarization are required on both channels; `alpha-macos-aarch64.yml` fails closed unless `MACOS_NOTARIZE=true`, and the `Release App` Electron job reuses the same Tauri Apple signing/notary secrets.
@@ -104,7 +103,8 @@ Code references:
 
 - Workflow: `.github/workflows/alpha-macos-aarch64.yml`
 - Endpoint resolution: `apps/app/src/app/lib/release-channels.ts`
-- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`
+- Electron alpha resolver: `apps/app/src/app/lib/electron-alpha.ts`
+- Preference plumbing: `apps/app/src/react-app/kernel/local-provider.tsx`, `apps/app/src/react-app/domains/settings/pages/updates-view.tsx`, `apps/app/src/react-app/domains/settings/pages/debug-view.tsx`
 - Stable workflow (reference): `.github/workflows/release-macos-aarch64.yml`
 
 ## Reload-required flow
@@ -133,6 +133,13 @@ Do not invent a separate reload banner per feature. New UI that needs restart se
 3. rely on the shared reload popup to explain and execute the restart path
 
 Current examples that should use this shared flow include MCP changes, auto context compaction, default model changes, authorized folder updates, plugin changes, and other `opencode.json` writes.
+
+When the desktop shell asks the OpenWork server to manage OpenCode, the managed
+OpenCode process starts from a shell-owned local workdir under app data instead
+of the user's selected workspace. Workspace-specific file access still flows
+through the OpenWork server and `x-opencode-directory`, but startup no longer
+depends on opening a project `opencode.json` from slow cloud-synced folders such
+as iCloud Drive.
 
 ## opencode primitives
 how to pick the right extension abstraction for 
@@ -192,6 +199,42 @@ These are all opencode primitives you can read the docs to find out exactly how 
 ## Core Architecture
 
 OpenWork is a client experience that consumes OpenWork server surfaces.
+
+### Provider-neutral app control surface
+
+OpenWork app control mode is owned by the UI runtime. The app exposes a
+provider-neutral action registry through `window.__openworkControl` so external
+controllers can inspect the current route, discover visible/safe actions, and
+request an action by ID without depending on DOM scraping or a specific model
+provider.
+
+Guidelines:
+
+- The app owns visible, screen-local state: which actions are available, which
+  element should be spotlighted, and how actions are choreographed so users can
+  see control happen.
+- Controllers such as MCP bridges, test harnesses, or optional external drivers should
+  call the app control surface instead of reaching into app internals.
+- Provider/API secrets and privileged filesystem or server mutations remain
+  server-owned; the app control surface should route those through OpenWork
+  server APIs rather than adding provider-specific behavior to the UI.
+- Raw screenshot or coordinate-based control is a fallback for uninstrumented
+  surfaces, not the default architecture.
+
+### MCP UI Control profile
+
+OpenWork should standardize external app control through MCP where possible. The
+app-local `window.__openworkControl` registry remains the source of current UI
+affordances, but public integrations should expose those affordances as MCP
+tools that follow `docs/mcp-ui-control-profile.md`:
+
+- `ui.snapshot` for current semantic app state
+- `ui.list_actions` for currently available action metadata and input schemas
+- `ui.execute_action` for running one semantic action by ID
+
+Standalone control clients such as HandsFree should be MCP clients first: they
+can connect to any configured MCP server and call generic MCP tools. OpenWork's
+local UI bridge is an implementation detail behind the OpenWork MCP surface.
 
 OpenWork supports two product runtime modes for users:
 

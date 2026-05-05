@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 
-import { t, type Language } from "../../../../i18n";
+import { t } from "../../../../i18n";
 
 const RESET_CONFIRM_PLACEHOLDER = "{resetWord}";
 const RESET_CONFIRM_WORD = "RESET";
@@ -21,17 +21,14 @@ export type ResetModalProps = {
   busy: boolean;
   canReset: boolean;
   hasActiveRuns: boolean;
-  language: Language;
   onClose: () => void;
   onConfirm: () => void;
   onTextChange: (value: string) => void;
 };
 
 export function ResetModal(props: ResetModalProps) {
-  const translate = (key: string) => t(key, props.language);
-
   const resetConfirmationHint = (): ReactNode => {
-    const template = translate("settings.reset_confirmation_hint");
+    const template = t("settings.reset_confirmation_hint");
     const parts = template.split(RESET_CONFIRM_PLACEHOLDER);
     if (parts.length === 1) return template;
     const nodes: ReactNode[] = [];
@@ -58,8 +55,8 @@ export function ResetModal(props: ResetModalProps) {
             <div>
               <h3 className="text-lg font-semibold text-gray-12">
                 {props.mode === "onboarding"
-                  ? translate("settings.reset_onboarding_title")
-                  : translate("settings.reset_app_data_title")}
+                  ? t("settings.reset_onboarding_title")
+                  : t("settings.reset_app_data_title")}
               </h3>
               <p className="text-sm text-gray-11 mt-1">
                 {resetConfirmationHint()}
@@ -78,23 +75,23 @@ export function ResetModal(props: ResetModalProps) {
           <div className="mt-6 space-y-4">
             <div className="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11">
               {props.mode === "onboarding"
-                ? translate("settings.reset_onboarding_warning")
-                : translate("settings.reset_app_data_warning")}
+                ? t("settings.reset_onboarding_warning")
+                : t("settings.reset_app_data_warning")}
             </div>
 
             {props.hasActiveRuns ? (
               <div className="text-xs text-red-11">
-                {translate("settings.reset_stop_active_runs")}
+                {t("settings.reset_stop_active_runs")}
               </div>
             ) : null}
 
             <label className="block">
               <span className="mb-1.5 block text-[13px] font-medium text-dls-text">
-                {translate("settings.reset_confirmation_label")}
+                {t("settings.reset_confirmation_label")}
               </span>
               <input
                 type="text"
-                placeholder={translate("settings.reset_confirmation_placeholder")}
+                placeholder={t("settings.reset_confirmation_placeholder")}
                 value={props.text}
                 onChange={(event) => props.onTextChange(event.currentTarget.value)}
                 disabled={props.busy}
@@ -110,7 +107,7 @@ export function ResetModal(props: ResetModalProps) {
               onClick={props.onClose}
               disabled={props.busy}
             >
-              {translate("settings.reset_cancel")}
+              {t("settings.reset_cancel")}
             </button>
             <button
               type="button"
@@ -118,7 +115,7 @@ export function ResetModal(props: ResetModalProps) {
               onClick={props.onConfirm}
               disabled={!props.canReset}
             >
-              {translate("settings.reset_confirm_button")}
+              {t("settings.reset_confirm_button")}
             </button>
           </div>
         </div>

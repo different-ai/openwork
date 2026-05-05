@@ -21,6 +21,7 @@ type RuntimeStatusCardProps = {
   statusLabel: string;
   statusStyle: string;
   statusDot: string;
+  detailLines?: string[];
 };
 
 export type AdvancedViewProps = {
@@ -65,8 +66,24 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
         <span className={`h-2 w-2 rounded-full ${props.statusDot}`} />
         {props.statusLabel}
       </div>
+      {props.detailLines?.length ? (
+        <div className="space-y-1 border-t border-gray-6/50 pt-2 text-[11px] text-gray-9">
+          {props.detailLines.map((line) => (
+            <div key={line} className="truncate" title={line}>
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function formatOpencodeBinary(info: EngineInfo | null) {
+  const binary = info?.opencodeBinPath?.trim();
+  if (!binary) return "—";
+  const source = info?.opencodeBinSource?.trim();
+  return source ? `${binary} (${source})` : binary;
 }
 
 export function AdvancedView(props: AdvancedViewProps) {
@@ -211,6 +228,11 @@ export function AdvancedView(props: AdvancedViewProps) {
             statusLabel={clientStatusLabel}
             statusStyle={clientStatusStyle}
             statusDot={clientStatusDot}
+            detailLines={[
+              t("settings.diag_opencode_binary", undefined, {
+                binary: formatOpencodeBinary(props.engineInfo),
+              }),
+            ]}
           />
           <RuntimeStatusCard
             icon={<Server size={18} />}

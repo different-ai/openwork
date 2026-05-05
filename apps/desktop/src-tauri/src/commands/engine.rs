@@ -108,6 +108,29 @@ fn parse_base_url_port(base_url: &str) -> Option<u16> {
         .and_then(|(_, port)| port.parse::<u16>().ok())
 }
 
+fn opencode_bin_source(notes: &[String], in_path: bool) -> Option<String> {
+    if notes
+        .iter()
+        .any(|note| note.contains("Using OPENCODE_BIN_PATH"))
+    {
+        return Some("custom".to_string());
+    }
+    if notes
+        .iter()
+        .any(|note| note.contains("Using bundled sidecar"))
+    {
+        return Some("bundled".to_string());
+    }
+    if in_path {
+        return Some("path".to_string());
+    }
+    if notes.iter().any(|note| note.starts_with("Found at ")) {
+        return Some("known-location".to_string());
+    }
+
+    None
+}
+
 fn probe_openwork_managed_opencode(
     server_base_url: &str,
     owner_token: &str,
@@ -186,7 +209,7 @@ pub fn engine_doctor(
     prefer_sidecar: Option<bool>,
     opencode_bin_path: Option<String>,
 ) -> EngineDoctorResult {
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(true);
     let resource_dir = app.path().resource_dir().ok();
 
     let current_bin_dir = tauri::process::current_binary(&app.env())
@@ -200,6 +223,7 @@ pub fn engine_doctor(
         resource_dir.as_deref(),
         current_bin_dir.as_deref(),
     );
+    let resolved_source = opencode_bin_source(&notes, in_path);
 
     let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
         match resolved.as_ref() {
@@ -220,6 +244,7 @@ pub fn engine_doctor(
         found: resolved.is_some(),
         in_path,
         resolved_path: resolved.map(|path| path.to_string_lossy().to_string()),
+        resolved_source,
         version,
         supports_serve,
         notes,
@@ -316,13 +341,14 @@ pub fn engine_start(
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
-    let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+    let prefer_sidecar = prefer_sidecar.unwrap_or(true);
     let _guard = EnvVarGuard::apply("OPENCODE_BIN_PATH", opencode_bin_path.as_deref());
-    let (program, _in_path, notes) = resolve_engine_path(
+    let (program, in_path, notes) = resolve_engine_path(
         prefer_sidecar,
         resource_dir.as_deref(),
         current_bin_dir.as_deref(),
     );
+    let opencode_bin_source = opencode_bin_source(&notes, in_path);
     let Some(program) = program else {
         let notes_text = notes.join("\n");
         let install_command = pinned_opencode_install_command();
@@ -332,6 +358,7 @@ pub fn engine_start(
     };
 
     let opencode_bin = program.to_string_lossy().to_string();
+    let opencode_bin_path = Some(opencode_bin.clone());
     drop(state);
 
     if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
@@ -348,6 +375,7 @@ pub fn engine_start(
         openwork_remote_access_enabled,
         true,
         Some(&opencode_bin),
+        opencode_bin_source.as_deref(),
     )?;
 
     let managed_opencode = match (
@@ -372,6 +400,8 @@ pub fn engine_start(
                 state.base_url = Some(opencode.base_url.clone());
                 state.opencode_username = opencode.username.clone();
                 state.opencode_password = opencode.password.clone();
+                state.opencode_bin_path = opencode_bin_path.clone();
+                state.opencode_bin_source = opencode_bin_source.clone();
                 state.last_stdout = None;
                 state.last_stderr = None;
             }
@@ -380,6 +410,8 @@ pub fn engine_start(
             if let Ok(mut state) = manager.inner.lock() {
                 state.runtime = EngineRuntime::Direct;
                 state.project_dir = Some(project_dir.clone());
+                state.opencode_bin_path = opencode_bin_path.clone();
+                state.opencode_bin_source = opencode_bin_source.clone();
                 state.last_stderr = Some(truncate_output(
                     "OpenWork server did not report a managed OpenCode workspace",
                     8000,
@@ -390,6 +422,8 @@ pub fn engine_start(
             if let Ok(mut state) = manager.inner.lock() {
                 state.runtime = EngineRuntime::Direct;
                 state.project_dir = Some(project_dir.clone());
+                state.opencode_bin_path = opencode_bin_path.clone();
+                state.opencode_bin_source = opencode_bin_source.clone();
                 state.last_stderr = Some(truncate_output(
                     &format!("OpenWork server workspace probe: {error}"),
                     8000,

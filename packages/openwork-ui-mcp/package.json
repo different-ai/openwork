@@ -1,0 +1,30 @@
+{
+  "name": "openwork-ui-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for OpenWork UI control — exposes snapshot, actions, and execute as MCP tools",
+  "author": "OpenWork <support@openworklabs.com>",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openwork-ui-mcp": "index.mjs"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "scripts": {
+    "check": "node --check index.mjs",
+    "test": "node --check index.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/openwork-ui-mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  }
+}

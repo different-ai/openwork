@@ -8,9 +8,15 @@ import {
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
-import { hydrateOpenworkServerSettingsFromEnv, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import {
+  hydrateOpenworkServerSettingsFromEnv,
+  readOpenworkServerSettings,
+  writeOpenworkServerSettings,
+} from "../../app/lib/openwork-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
@@ -158,6 +164,7 @@ export function useDesktopRuntimeBoot() {
                   fresh.ownerToken?.trim() ||
                   fresh.clientToken?.trim() ||
                   undefined,
+                hostToken: fresh.hostToken?.trim() || undefined,
                 portOverride: fresh.port ?? undefined,
                 remoteAccessEnabled: fresh.remoteAccessEnabled === true,
               });
@@ -183,20 +190,53 @@ export function useDesktopRuntimeBoot() {
           .filter((entry) => entry.workspaceType !== "remote")
           .map((entry) => entry.path?.trim() ?? "")
           .filter((path): path is string => path.length > 0);
-        const workspacePaths = [workspaceRoot];
-        for (const path of localPaths) {
-          if (!workspacePaths.includes(path)) workspacePaths.push(path);
-        }
+        const workspacePathsFor = (root: string) => {
+          const paths = [root];
+          for (const path of localPaths) {
+            if (!paths.includes(path)) paths.push(path);
+          }
+          return paths;
+        };
 
         setPhase("starting-engine", "Starting your workspace");
-        const engineStartResult = await engineStart(workspaceRoot, {
+        let engineStartResult = await engineStart(workspaceRoot, {
           runtime: "direct",
-          workspacePaths,
+          workspacePaths: workspacePathsFor(workspaceRoot),
+          openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
-          setError(error instanceof Error ? error.message : safeStringify(error));
           return null;
         });
+
+        if (!engineStartResult) {
+          const fallback = list.workspaces.find((entry) => {
+            const path = entry.path?.trim() ?? "";
+            return entry.workspaceType !== "remote" && path && path !== workspaceRoot;
+          });
+          const fallbackRoot = fallback?.path?.trim() ?? "";
+          if (fallback && fallbackRoot) {
+            console.warn("[desktop-boot] selected workspace failed; trying fallback workspace", {
+              selectedWorkspaceId: workspace.id,
+              fallbackWorkspaceId: fallback.id,
+            });
+            setPhase("starting-engine", "Starting another workspace");
+            engineStartResult = await engineStart(fallbackRoot, {
+              runtime: "direct",
+              workspacePaths: workspacePathsFor(fallbackRoot).filter((path) => path !== workspaceRoot),
+              openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+            }).catch((error) => {
+              console.warn("[desktop-boot] fallback engineStart failed:", error);
+              setError(error instanceof Error ? error.message : safeStringify(error));
+              return null;
+            });
+            if (engineStartResult) {
+              void workspaceSetSelected(fallback.id).catch(() => undefined);
+              void workspaceSetRuntimeActive(fallback.id).catch(() => undefined);
+            }
+          } else {
+            setError("Failed to start the selected workspace.");
+          }
+        }
 
         if (engineStartResult) {
           if (engineStartResult.baseUrl) {
@@ -211,6 +251,7 @@ export function useDesktopRuntimeBoot() {
                   freshInfo.ownerToken?.trim() ||
                   freshInfo.clientToken?.trim() ||
                   undefined,
+                hostToken: freshInfo.hostToken?.trim() || undefined,
                 portOverride: freshInfo.port ?? undefined,
                 remoteAccessEnabled: freshInfo.remoteAccessEnabled === true,
               });

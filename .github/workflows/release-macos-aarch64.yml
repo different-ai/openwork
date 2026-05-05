@@ -32,7 +32,7 @@ on:
         description: "Notarize macOS builds (requires Apple team configured)"
         required: false
         type: boolean
-        default: false
+        default: true
       build_tauri:
         description: "Build desktop (Tauri) artifacts"
         required: false
@@ -54,7 +54,7 @@ on:
         type: boolean
         default: true
       publish_electron:
-        description: "Build + publish Electron desktop artifacts (macOS) alongside Tauri"
+        description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows) alongside Tauri"
         required: false
         type: boolean
         default: false
@@ -132,7 +132,12 @@ jobs:
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            RELEASE_BODY="See the assets to download this version and install."
+            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s' \
+              "## What's new" \
+              "$TAG" \
+              "- Download the attached installer for your platform." \
+              "- Electron builds use the attached latest-mac.yml updater feed when Electron publishing is enabled." \
+              "- Tauri builds use the attached latest.json updater manifest."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -462,14 +467,43 @@ jobs:
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
+
+          missing=()
+          for name in \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD \
+            APPLE_SIGNING_IDENTITY; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing macOS notarization/signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
           NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
           chmod 600 "$NOTARY_KEY_PATH"
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Reject unnotarized macOS Tauri release
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
+        shell: bash
+        run: |
+          echo "macOS release assets must be notarized. Re-run with notarize=true or set MACOS_NOTARIZE=true." >&2
+          exit 1
 
       - name: Build + upload (notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -506,7 +540,7 @@ jobs:
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
       - name: Build + upload
-        if: matrix.os_type != 'macos' || env.MACOS_NOTARIZE != 'true'
+        if: matrix.os_type != 'macos'
         uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
         env:
           CI: true
@@ -537,45 +571,35 @@ jobs:
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin)
-              asset_arch="aarch64"
-              ;;
-            x86_64-apple-darwin)
-              asset_arch="x64"
-              ;;
-            *)
-              echo "Unexpected target for macOS verify: ${{ matrix.target }}" >&2
-              exit 1
-              ;;
-          esac
-
           tmp_dir="$RUNNER_TEMP/openwork-bundle-verify"
+          archive_path="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenWork.app.tar.gz"
+
+          if [ ! -f "$archive_path" ]; then
+            echo "ERROR: updater archive missing from local build output: $archive_path" >&2
+            exit 1
+          fi
+
           rm -rf "$tmp_dir"
           mkdir -p "$tmp_dir"
 
-          gh release download "${RELEASE_TAG}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "openwork-desktop-darwin-${asset_arch}.app.tar.gz" \
-            --dir "$tmp_dir"
-
-          tar -xzf "$tmp_dir/openwork-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
+          tar -xzf "$archive_path" -C "$tmp_dir"
 
           app_path="$tmp_dir/OpenWork.app"
-          manifest_path="$app_path/Contents/MacOS/versions.json"
+          manifest_path="$app_path/Contents/Resources/versions.json"
 
           if [ ! -f "$manifest_path" ]; then
             echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
-            echo "Hint: ensure apps/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
+            echo "Hint: ensure apps/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json as a resource" >&2
             exit 1
           fi
 
           echo "Found bundled versions.json at $manifest_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          spctl -a -vv -t execute "$app_path"
+          xcrun stapler validate "$app_path"
 
   publish-updater-json:
     name: Publish consolidated latest.json
@@ -611,23 +635,61 @@ jobs:
             --clobber
 
   publish-electron:
-    name: Build + publish Electron desktop (macOS)
+    name: Build + publish Electron (${{ matrix.artifact }})
     # Runs alongside the Tauri jobs so the same release carries both
-    # latest.json (Tauri updater) AND latest-mac.yml (electron-updater).
+    # latest.json (Tauri updater) AND latest-*.yml (electron-updater).
     # Gated on RELEASE_PUBLISH_ELECTRON=true (repo var) OR the workflow
     # input of the same name so opt-in during rollout, opt-out if a
     # non-migration release doesn't want Electron artifacts.
     needs: [resolve-release, verify-release]
     if: ${{ vars.RELEASE_PUBLISH_ELECTRON == 'true' || github.event.inputs.publish_electron == 'true' }}
-    runs-on: macos-14
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 120
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-macos-arm64
+            electron_args: "--mac --arm64"
+            target_triple: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            artifact: electron-macos-x64
+            electron_args: "--mac --x64"
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            os_type: linux
+            artifact: electron-linux-x64
+            electron_args: "--linux --x64"
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os_type: linux
+            artifact: electron-linux-arm64
+            electron_args: "--linux --arm64"
+            target_triple: aarch64-unknown-linux-gnu
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-windows-x64
+            electron_args: "--win --x64"
+            target_triple: x86_64-pc-windows-msvc
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+
+      - name: Enable git long paths (Windows)
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -644,24 +706,109 @@ jobs:
         with:
           bun-version: 1.3.9
 
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-pnpm-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build + package Electron app
+      - name: Write Electron notary API key (macOS)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
-          # electron-builder reads these to codesign + notarize the .app.
-          # Reuses the same secrets the Tauri path already uses.
-          CSC_LINK: ${{ secrets.APPLE_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # electron-builder needs this to upload artifacts + the updater
-          # feed manifest (latest-mac.yml) to the GitHub release.
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing Electron macOS notarization/signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
+
+          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Reject unnotarized macOS Electron release
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
+        shell: bash
+        run: |
+          echo "macOS Electron release assets must be notarized. Re-run with notarize=true or set MACOS_NOTARIZE=true." >&2
+          exit 1
+
+      - name: Build Electron app
+        shell: bash
+        env:
+          # TARGET tells prepare-sidecar.mjs which architecture's sidecars
+          # to download (critical for cross-arch builds like x64 on arm64 mac).
+          TARGET: ${{ matrix.target_triple }}
+        run: pnpm --filter @openwork/desktop build:electron
+
+      - name: Package + publish Electron (macOS, signed + notarized)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pnpm --filter @openwork/desktop package:electron --publish always
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
+
+      - name: Package + publish Electron (Linux)
+        if: matrix.os_type == 'linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
+
+      - name: Package + publish Electron (Windows)
+        if: matrix.os_type == 'windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            ${{ matrix.electron_args }} \
+            --publish always
 
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
@@ -785,7 +932,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          # Dispatch-based release recovery uses the workflow ref so fixes to
+          # npm release automation can run without moving an already-shipped tag.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
@@ -985,6 +1134,7 @@ jobs:
       - verify-release
       - publish-tauri
       - publish-updater-json
+      - publish-electron
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
@@ -995,6 +1145,7 @@ jobs:
       needs.verify-release.result == 'success' &&
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
       (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
+      (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')

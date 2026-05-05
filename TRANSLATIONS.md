@@ -18,10 +18,10 @@ If you want to add a new README language:
 
 You can also help translate the app UI via:
 
-- `packages/app/src/i18n/`
+- `apps/app/src/i18n/`
 
-Currently available app UI locales: English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`).
+Currently available app UI locales: English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`), Russian (`ru`).
 
-Locale files live in `packages/app/src/i18n/locales/`.
+Locale files live in `apps/app/src/i18n/locales/`.
 
 If you are unsure where to start, open an issue and mention the language you want to contribute.

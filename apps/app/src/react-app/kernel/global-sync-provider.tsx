@@ -24,7 +24,7 @@ import type {
   VcsInfo,
 } from "@opencode-ai/sdk/v2/client";
 
-import { currentLocale, t } from "../../i18n";
+import { t } from "../../i18n";
 import { unwrap } from "../../app/lib/opencode";
 import type { McpStatusMap, TodoItem } from "../../app/types";
 import { safeStringify } from "../../app/utils";
@@ -134,7 +134,7 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
       error instanceof Error ? error.message : safeStringify(error);
     setState((previous) => ({
       ...previous,
-      error: message || t("app.unknown_error", currentLocale()),
+      error: message || t("app.unknown_error"),
     }));
   }, []);
 

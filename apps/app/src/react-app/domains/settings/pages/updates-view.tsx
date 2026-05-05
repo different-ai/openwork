@@ -3,6 +3,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime } from "../../../../app
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
+import type { SettingsUpdateStatus } from "../state/electron-updater-state";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
 
@@ -15,20 +16,11 @@ export type UpdatesViewProps = {
   toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
   toggleUpdateAutoDownload: () => void;
-  updateStatus: {
-    state: string;
-    lastCheckedAt?: number | null;
-    version?: string;
-    date?: string;
-    notes?: string;
-    totalBytes?: number | null;
-    downloadedBytes?: number;
-    message?: string;
-  } | null;
+  updateStatus: SettingsUpdateStatus;
   anyActiveRuns: boolean;
-  checkForUpdates: () => void;
-  downloadUpdate: () => void;
-  installUpdateAndRestart: () => void;
+  checkForUpdates: () => void | Promise<void>;
+  downloadUpdate: () => void | Promise<void>;
+  installUpdateAndRestart: () => void | Promise<void>;
   /** Currently selected release channel. Optional; callers may omit. */
   releaseChannel?: ReleaseChannel;
   /**
@@ -181,9 +173,22 @@ export function UpdatesView(props: UpdatesViewProps) {
                   ) : null}
 
                   {updateState === "downloading" ? (
-                    <div className="text-xs text-gray-7">
-                      {formatBytes(updateDownloadedBytes ?? 0)}
-                      {updateTotalBytes != null ? ` / ${formatBytes(updateTotalBytes)}` : ""}
+                    <div className="space-y-1.5">
+                      <div className="text-xs text-gray-7">
+                        {formatBytes(updateDownloadedBytes ?? 0)}
+                        {updateTotalBytes != null ? ` / ${formatBytes(updateTotalBytes)}` : ""}
+                        {updateTotalBytes != null && updateTotalBytes > 0
+                          ? ` (${Math.round(((updateDownloadedBytes ?? 0) / updateTotalBytes) * 100)}%)`
+                          : ""}
+                      </div>
+                      {updateTotalBytes != null && updateTotalBytes > 0 ? (
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-4">
+                          <div
+                            className="h-full rounded-full bg-dls-accent transition-[width] duration-300 ease-out"
+                            style={{ width: `${Math.min(100, Math.round(((updateDownloadedBytes ?? 0) / updateTotalBytes) * 100))}%` }}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 

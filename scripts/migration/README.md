@@ -114,7 +114,9 @@ Once v0.12.x has been stable for 1-2 weeks:
    - `dev` → `node ./scripts/electron-dev.mjs`
    - `build` → `node ./scripts/electron-build.mjs`
    - `package` → `pnpm run build && pnpm exec electron-builder …`
-2. Removes `apps/desktop/src-tauri/` entirely.
+2. Removes `apps/desktop/src-tauri/` entirely. Electron icons and generated
+   sidecars already live under `apps/desktop/resources/`, so this step no
+   longer removes anything the Electron packager needs.
 3. Strips `@tauri-apps/*` from `apps/app/package.json` and
    `apps/story-book/package.json`.
 4. Collapses `apps/app/src/app/lib/desktop-tauri.ts` into

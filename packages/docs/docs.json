@@ -12,6 +12,9 @@
     "light": "#3b82f6",
     "dark": "#011627"
   },
+  "api": {
+    "openapi": "openapi.json"
+  },
   "navigation": {
     "tabs": [
       {
@@ -68,6 +71,7 @@
             "group": "Run in the cloud",
             "pages": [
               "cloud/run-in-the-cloud/shared-workspace",
+              "cloud/run-in-the-cloud/cloud-mcp",
               "cloud/run-in-the-cloud/connect-slack"
             ]
           },
@@ -77,7 +81,7 @@
       },
       {
         "tab": "API",
-        "openapi": "https://api.openworklabs.com/openapi.json"
+        "openapi": "/openapi.json"
       },
       {
         "tab": "Roadmap",

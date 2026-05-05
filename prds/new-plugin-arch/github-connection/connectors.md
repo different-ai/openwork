@@ -1026,7 +1026,7 @@ No existing data to migrate — these are all new tables. The existing `/v1/orgs
 ### Integration
 
 - **Real GitHub**: a test org + throwaway repo under `different-ai/openwork-test-plugins` with fixture plugins. CI authenticates with a PAT; runs a full ingest + install + uninstall against a temp worktree. Skipped in local unless `OPENWORK_TEST_GITHUB_PAT` is set.
-- **Real OpenWork server**: spins up `packaging/docker/dev-up.sh`, provisions a workspace, runs materialization, diffs `.opencode/` against expectations.
+- **Real OpenWork server**: starts a local OpenWork app/server stack, provisions a workspace, runs materialization, diffs `.opencode/` against expectations.
 
 ### End-to-end
 

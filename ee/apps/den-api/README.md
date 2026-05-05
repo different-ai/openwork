@@ -12,6 +12,18 @@ It carries the full migrated Den API route surface in a foldered Hono structure 
 pnpm --filter @openwork-ee/den-api dev:local
 ```
 
+## Local demo org seed
+
+With a local Den MySQL database running, seed a demo organization:
+
+```bash
+pnpm --filter @openwork-ee/den-api seed:demo-org
+```
+
+This creates `Acme Robotics` with demo users, teams, pending invites, and an imported Anthropic Knowledge Work Plugins marketplace. It is guarded by `OPENWORK_DEV_MODE=1`, defaults to the local Den DB URL, and does not create workers or active external integrations.
+
+Default owner login: `alex@acme.test` / `OpenWorkDemo123!`.
+
 ## Current routes
 
 - `GET /` -> `302 https://openworklabs.com`

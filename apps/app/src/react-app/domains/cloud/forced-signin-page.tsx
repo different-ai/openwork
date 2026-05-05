@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
 
-import { currentLocale, t } from "../../../i18n";
+import { t } from "../../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
@@ -20,6 +20,7 @@ import {
   type DenSessionUpdatedDetail,
 } from "../../../app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
+import { useBootState } from "../../shell/boot-state";
 import { useDenAuth } from "./den-auth-provider";
 import { useDesktopConfig } from "./desktop-config-provider";
 import { DenSignInSurface } from "./den-signin-surface";
@@ -76,7 +77,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const desktopConfig = useDesktopConfig();
-  const tr = useCallback((key: string) => t(key, currentLocale()), []);
+  const { markRouteReady } = useBootState();
 
   const initial = readDenSettings();
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
@@ -100,19 +101,19 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       platform.openLink(buildDenAuthUrl(baseUrl, mode));
       setStatusMessage(
         mode === "sign-up"
-          ? tr("den.status_browser_signup")
-          : tr("den.status_browser_signin"),
+          ? t("den.status_browser_signup")
+          : t("den.status_browser_signin"),
       );
       setAuthError(null);
     },
-    [baseUrl, platform, tr],
+    [baseUrl, platform],
   );
 
   const submitManualAuth = useCallback(async () => {
     const parsed = parseManualAuthInput(manualAuthInput);
     if (!parsed || authBusy) {
       if (!parsed) {
-        setAuthError(tr("den.error_paste_valid_code"));
+        setAuthError(t("den.error_paste_valid_code"));
       }
       return;
     }
@@ -121,14 +122,14 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
     setAuthBusy(true);
     setAuthError(null);
-    setStatusMessage(tr("den.signing_in"));
+    setStatusMessage(t("den.signing_in"));
 
     try {
       const result = await createDenClient({
         baseUrl: nextBaseUrl,
       }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
-        throw new Error(tr("den.error_no_token"));
+        throw new Error(t("den.error_no_token"));
       }
 
       if (developerMode) {
@@ -159,17 +160,17 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         message:
           error instanceof Error
             ? error.message
-            : tr("den.error_signin_failed"),
+            : t("den.error_signin_failed"),
       });
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, baseUrl, developerMode, manualAuthInput, tr]);
+  }, [authBusy, baseUrl, developerMode, manualAuthInput]);
 
   const applyBaseUrl = useCallback(async () => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft);
     if (!normalized) {
-      setBaseUrlError(tr("den.error_base_url"));
+      setBaseUrlError(t("den.error_base_url"));
       return;
     }
 
@@ -198,23 +199,27 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         { persistBootstrap: false },
       );
       setAuthError(null);
-      setStatusMessage(tr("den.status_base_url_updated"));
+      setStatusMessage(t("den.status_base_url_updated"));
       void desktopConfig.refresh();
       void denAuth.refresh();
     } catch (error) {
       setBaseUrlError(
         error instanceof Error
           ? error.message
-          : tr("den.error_base_url"),
+          : t("den.error_base_url"),
       );
     } finally {
       setBaseUrlBusy(false);
     }
-  }, [baseUrlDraft, denAuth, desktopConfig, developerMode, tr]);
+  }, [baseUrlDraft, denAuth, desktopConfig, developerMode]);
 
   // Listen for Den session events broadcast from the Tauri deep-link handler,
   // a successful browser auth, or an org switch, and reflect the result in
   // the sign-in surface's status/error banners.
+  useEffect(() => {
+    markRouteReady();
+  }, [markRouteReady]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -233,12 +238,12 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         const email = customEvent.detail.email?.trim();
         setStatusMessage(
           email
-            ? t("den.status_cloud_signed_in_as", currentLocale(), { email })
-            : tr("den.status_cloud_signin_done"),
+            ? t("den.status_cloud_signed_in_as", { email })
+            : t("den.status_cloud_signin_done"),
         );
       } else if (customEvent.detail?.status === "error") {
         setAuthError(
-          customEvent.detail.message?.trim() || tr("den.error_signin_failed"),
+          customEvent.detail.message?.trim() || t("den.error_signin_failed"),
         );
       }
     };
@@ -250,7 +255,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
         handler as EventListener,
       );
     };
-  }, [tr]);
+  }, []);
 
   return (
     <DenSignInSurface

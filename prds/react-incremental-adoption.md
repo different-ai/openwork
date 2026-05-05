@@ -321,14 +321,14 @@ This is added to the test actions for each phase.
 ## Isolation & Testing Strategy
 
 ### Per-phase Docker isolation
-Each phase gets tested against two independent Docker dev stacks:
+Each phase gets tested against two independent local app/server stacks:
 
 ```
 Stack A (control): runs the existing SolidJS app
-  → packaging/docker/dev-up.sh → server :PORT_A, web :PORT_A_WEB
+  → server :PORT_A, web :PORT_A_WEB
 
 Stack B (experiment): independent server
-  → packaging/docker/dev-up.sh → server :PORT_B, web :PORT_B_WEB
+  → server :PORT_B, web :PORT_B_WEB
 ```
 
 Both stacks share the same repo (bind-mounted), but run independent servers with independent tokens and hostnames (verified via `hostname` command through the UI).
@@ -577,7 +577,7 @@ Phases 0-3 are fast and highly visible. Phase 4 can run in parallel. Phases 6+ c
 ## Verification Approach
 
 Every phase:
-1. Boot two Docker dev stacks (`dev-up.sh` x2).
+1. Boot two independent local app/server stacks.
 2. Connect Stack B as a workspace from Stack A's UI.
 3. Run the phase's test actions via Chrome DevTools (`functions.chrome-devtools_*`).
 4. Screenshot evidence saved to repo.

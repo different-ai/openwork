@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { ArrowUpRight, Cloud } from "lucide-react";
 
-import { currentLocale, t } from "../../../i18n";
+import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { Button } from "../../design-system/button";
 import { TextInput } from "../../design-system/text-input";
@@ -50,7 +50,6 @@ const errorBannerClass =
  * feature parity is obvious.
  */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
-  const tr = (key: string) => t(key, currentLocale());
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
 
   const content = (
@@ -59,11 +58,11 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         <div className="space-y-2">
           <div className={headerBadgeClass}>
             <Cloud size={13} className="text-dls-secondary" />
-            {tr("den.cloud_section_title")}
+            {t("den.cloud_section_title")}
           </div>
           <div>
             <div className="text-sm font-medium text-dls-text">
-              {tr("den.signin_title")}
+              {t("den.signin_title")}
             </div>
           </div>
         </div>
@@ -72,13 +71,13 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
       {props.developerMode ? (
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
           <TextInput
-            label={tr("den.cloud_control_plane_url_label")}
+            label={t("den.cloud_control_plane_url_label")}
             value={props.baseUrlDraft}
             onChange={(event) =>
               props.onBaseUrlDraftInput(event.currentTarget.value)
             }
             placeholder={DEFAULT_DEN_BASE_URL}
-            hint={tr("den.cloud_control_plane_url_hint")}
+            hint={t("den.cloud_control_plane_url_hint")}
             disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
           />
           <div className="flex flex-wrap items-center gap-2">
@@ -88,7 +87,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               onClick={props.onResetBaseUrl}
               disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
             >
-              {tr("den.cloud_control_plane_reset")}
+              {t("den.cloud_control_plane_reset")}
             </Button>
             <Button
               variant="secondary"
@@ -96,14 +95,14 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               onClick={props.onApplyBaseUrl}
               disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
             >
-              {tr("den.cloud_control_plane_save")}
+              {t("den.cloud_control_plane_save")}
             </Button>
             <Button
               variant="outline"
               className="h-9 px-3 text-xs"
               onClick={props.onOpenControlPlane}
             >
-              {tr("den.cloud_control_plane_open")}
+              {t("den.cloud_control_plane_open")}
               <ArrowUpRight size={13} />
             </Button>
           </div>
@@ -120,7 +119,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
       <div className="space-y-2">
         <div className="max-w-[54ch] text-sm text-dls-secondary">
-          {tr("den.auto_reconnect_hint")}
+          {t("den.auto_reconnect_hint")}
         </div>
       </div>
 
@@ -129,7 +128,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           variant="secondary"
           onClick={() => props.onOpenBrowserAuth("sign-in")}
         >
-          {tr("den.signin_button")}
+          {t("den.signin_button")}
           <ArrowUpRight size={13} />
         </Button>
         <Button
@@ -137,7 +136,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           className="h-9 px-3 text-xs"
           onClick={() => props.onOpenBrowserAuth("sign-up")}
         >
-          {tr("den.create_account")}
+          {t("den.create_account")}
           <ArrowUpRight size={13} />
         </Button>
         <Button
@@ -147,22 +146,22 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           disabled={props.authBusy || props.sessionBusy}
         >
           {props.manualAuthOpen
-            ? tr("den.hide_signin_code")
-            : tr("den.paste_signin_code")}
+            ? t("den.hide_signin_code")
+            : t("den.paste_signin_code")}
         </Button>
       </div>
 
       {props.manualAuthOpen ? (
         <div className={`${settingsPanelSoftClass} space-y-3`}>
           <TextInput
-            label={tr("den.signin_link_label")}
+            label={t("den.signin_link_label")}
             value={props.manualAuthInput}
             onChange={(event) =>
               props.onManualAuthInput(event.currentTarget.value)
             }
-            placeholder={tr("den.signin_link_placeholder")}
+            placeholder={t("den.signin_link_placeholder")}
             disabled={props.authBusy || props.sessionBusy}
-            hint={tr("den.signin_link_hint")}
+            hint={t("den.signin_link_hint")}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -175,10 +174,10 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 !props.manualAuthInput.trim()
               }
             >
-              {props.authBusy ? tr("den.finishing") : tr("den.finish_signin")}
+              {props.authBusy ? t("den.finishing") : t("den.finish_signin")}
             </Button>
             <div className="text-[11px] text-dls-secondary">
-              {tr("den.signin_code_note")}
+              {t("den.signin_code_note")}
             </div>
           </div>
         </div>

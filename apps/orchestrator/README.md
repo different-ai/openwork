@@ -124,6 +124,11 @@ OPENWORK_LOG_FORMAT=json openwork start --workspace /path/to/workspace
 
 Use `--run-id` or `OPENWORK_RUN_ID` to supply your own correlation id.
 
+OpenCode runs at `INFO` by default, which produces large log files in
+`~/.local/share/opencode/log/`. Pass `--opencode-log-level <DEBUG|INFO|WARN|ERROR>` (or set
+`OPENWORK_OPENCODE_LOG_LEVEL`) to forward `--log-level` to managed `opencode serve` and reduce log
+volume.
+
 OpenWork server logs every request with method, path, status, and duration. Disable this when running
 `openwork-server` directly by setting `OPENWORK_LOG_REQUESTS=0` or passing `--no-log-requests`.
 

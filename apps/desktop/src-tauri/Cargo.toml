@@ -1,6 +1,6 @@
 [package]
 name = "openwork"
-version = "0.12.0"
+version = "0.13.3"
 description = "OpenWork"
 authors = ["Different AI"]
 edition = "2021"

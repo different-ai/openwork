@@ -248,6 +248,37 @@ const sha256File = (filePath) => {
   return hash.digest("hex");
 };
 
+const adHocSignDarwin = (filePath) => {
+  if (process.platform !== "darwin" || !filePath || !existsSync(filePath)) return;
+  const remove = spawnSync("codesign", ["--remove-signature", filePath], {
+    encoding: "utf8",
+  });
+  if (remove.error && remove.error.code === "ENOENT") {
+    throw new Error("codesign is required to prepare runnable macOS sidecars");
+  }
+
+  const sign = spawnSync("codesign", ["--force", "--sign", "-", filePath], {
+    encoding: "utf8",
+  });
+  if (sign.error) {
+    if (sign.error.code === "ENOENT") {
+      throw new Error("codesign is required to prepare runnable macOS sidecars");
+    }
+    throw sign.error;
+  }
+  if (sign.status !== 0) {
+    const stderr = sign.stderr?.trim();
+    throw new Error(`Failed to codesign ${filePath}${stderr ? `: ${stderr}` : ""}`);
+  }
+};
+
+const adHocSignDarwinSidecars = (paths) => {
+  if (process.platform !== "darwin") return;
+  for (const filePath of [...new Set(paths.filter(Boolean))]) {
+    adHocSignDarwin(filePath);
+  }
+};
+
 const parseChecksum = (content, assetName) => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -603,6 +634,20 @@ if (existsSync(chromeDevtoolsBuildPath)) {
     }
   }
 }
+
+adHocSignDarwinSidecars([
+  opencodePath,
+  opencodeTargetPath,
+  openworkServerBuildPath,
+  openworkServerPath,
+  openworkServerTargetPath,
+  orchestratorBuildPath,
+  orchestratorPath,
+  orchestratorTargetPath,
+  chromeDevtoolsBuildPath,
+  chromeDevtoolsPath,
+  chromeDevtoolsTargetPath,
+]);
 
 const openworkServerVersion = (() => {
   try {

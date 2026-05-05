@@ -15,7 +15,7 @@
 OpenWork is designed around the idea that you can easily ship your agentic workflows for your team as a repeatable, productized process.
 
 > [!TIP]
-> **Looking for an [Enterprise Plan](https://openworklabs.com/enterprise)?** [Speak with our Sales Team today](https://cal.com/team/openwork/enterprise)
+> **Looking for an [Enterprise Plan](https://openworklabs.com/enterprise)?** [Speak with our Sales Team today](https://calendar.app.google/86QpCENvhfEzDFLu5)
 >
 > Get enhanced capabilities including feature prioritization, SSO, SLA support, LTS versions, and more.
 
@@ -230,7 +230,17 @@ First contribution checklist:
 
 Translated READMEs: [`translated_readmes/`](./translated_readmes/README.md), available in English, 简体中文, 繁體中文, 日本語.
 
-The App is available in the following languages: English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`).
+The App is available in the following languages:
+- English (`en`)
+- French (`fr`)
+- Spanish (`es`)
+- Catalan (`ca`)
+- Brazilian Portuguese (`pt-BR`)
+- Japanese (`ja`)
+- Simplified Chinese (`zh`)
+- Thai (`th`)
+- Vietnamese (`vi`)
+- Russian (`ru`)
 
 ## For Teams & Businesses
 

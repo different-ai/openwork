@@ -45,6 +45,8 @@ pub struct AppBuildInfo {
     pub git_sha: Option<String>,
     pub build_epoch: Option<String>,
     pub openwork_dev_mode: bool,
+    pub os: &'static str,
+    pub arch: &'static str,
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -422,6 +424,8 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
         git_sha,
         build_epoch,
         openwork_dev_mode: env_truthy("OPENWORK_DEV_MODE"),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
     }
 }
 

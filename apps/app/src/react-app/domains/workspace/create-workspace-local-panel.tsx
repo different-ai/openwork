@@ -1,8 +1,8 @@
 /** @jsxImportSource react */
-import { Boxes, FolderPlus, Loader2, XCircle } from "lucide-react";
+import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
 
-import type { DenTemplate } from "../../../app/lib/den";
 import type { WorkspacePreset } from "../../../app/types";
+import { t } from "../../../i18n";
 import {
   errorBannerClass,
   modalBodyClass,
@@ -35,23 +35,12 @@ export type CreateWorkspaceProgressSnapshot = {
 };
 
 export type CreateWorkspaceLocalPanelProps = {
-  translate: (key: string) => string;
   selectedFolder: string | null;
   hasSelectedFolder: boolean;
   pickingFolder: boolean;
   onPickFolder: () => void;
   submitting: boolean;
-  selectedTemplateId: string | null;
-  setSelectedTemplateId: (
-    next: string | null | ((current: string | null) => string | null),
-  ) => void;
-  showTemplateSection: boolean;
-  cloudWorkspaceTemplates: DenTemplate[];
-  templateCreatorLabel: (template: DenTemplate) => string;
-  formatTemplateTimestamp: (value: string | null) => string;
-  templateError: string | null;
-  templateCacheBusy: boolean;
-  templateCacheError: string | null;
+  localError: string | null;
   onClose: () => void;
   onSubmit: () => void;
   confirmLabel?: string;
@@ -93,7 +82,6 @@ export function CreateWorkspaceLocalPanel(
   props: CreateWorkspaceLocalPanelProps,
 ) {
   const progress = props.progress;
-  const templateBanner = props.templateError || props.templateCacheError;
 
   return (
     <>
@@ -102,10 +90,30 @@ export function CreateWorkspaceLocalPanel(
       >
         <div className="space-y-4">
           <div className={surfaceCardClass}>
-            <div className={sectionTitleClass}>Workspace folder</div>
-            <div className={sectionBodyClass}>
-              Choose where this workspace should live on your device.
+            <div className={sectionTitleClass}>
+              {t("welcome.folder_title")}
             </div>
+            <div className={`${sectionBodyClass} mt-2`}>
+              {t("welcome.folder_explanation")}
+            </div>
+            <ul className="mt-3 space-y-1.5 pl-1">
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {t("welcome.folder_read")}
+              </li>
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {t("welcome.folder_write")}
+              </li>
+              <li className="flex items-start gap-2 text-[13px] text-dls-secondary">
+                <Check size={14} className="mt-0.5 shrink-0 text-emerald-10" />
+                {t("welcome.folder_anything")}
+              </li>
+            </ul>
+            <div className="mt-2 text-[12px] text-dls-secondary italic">
+              {t("welcome.folder_drop_hint")}
+            </div>
+
             <div className="mt-4 rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3">
               {props.hasSelectedFolder ? (
                 <span className="block truncate font-mono text-[12px] text-dls-text">
@@ -130,94 +138,12 @@ export function CreateWorkspaceLocalPanel(
                   <FolderPlus size={14} />
                 )}
                 {props.hasSelectedFolder
-                  ? props.translate("dashboard.change")
+                  ? t("dashboard.change")
                   : "Select folder"}
               </button>
             </div>
           </div>
 
-          {props.showTemplateSection ? (
-            <div className={surfaceCardClass}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-[15px] font-medium tracking-[-0.2px] text-dls-text">
-                    <Boxes size={16} className="text-dls-secondary" />
-                    Team templates
-                  </div>
-                  <div className="mt-1 text-[13px] leading-relaxed text-dls-secondary">
-                    Choose a starting point, or leave blank to create an empty
-                    workspace.
-                  </div>
-                </div>
-                {props.templateCacheBusy ? (
-                  <div className={tagClass}>
-                    <Loader2 size={12} className="animate-spin" />
-                    Syncing
-                  </div>
-                ) : null}
-              </div>
-
-              {templateBanner ? (
-                <div className={`mt-4 ${errorBannerClass}`}>{templateBanner}</div>
-              ) : null}
-
-              {props.cloudWorkspaceTemplates.length === 0 ? (
-                <div
-                  className={`mt-4 ${softCardClass} text-[14px] text-dls-secondary`}
-                >
-                  No shared workspace templates found for this org yet.
-                </div>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  {props.cloudWorkspaceTemplates.map((template) => {
-                    const selected = props.selectedTemplateId === template.id;
-                    return (
-                      <button
-                        key={template.id}
-                        type="button"
-                        className={`${surfaceCardClass} w-full transition-all duration-150 hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] ${
-                          selected
-                            ? "border-[rgba(var(--dls-accent-rgb),0.2)] bg-[rgba(var(--dls-accent-rgb),0.06)] shadow-[inset_0_0_0_1px_rgba(var(--dls-accent-rgb),0.08)]"
-                            : ""
-                        }`.trim()}
-                        onClick={() =>
-                          props.setSelectedTemplateId((current) =>
-                            current === template.id ? null : template.id,
-                          )
-                        }
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0 text-left">
-                            <div className="flex items-center gap-2">
-                              <div className="truncate text-[14px] font-medium text-dls-text">
-                                {template.name}
-                              </div>
-                              {selected ? (
-                                <span className={tagClass}>Selected</span>
-                              ) : null}
-                            </div>
-                            <div className="mt-1 text-[12px] text-dls-secondary">
-                              {props.templateCreatorLabel(template)} ·{" "}
-                              {props.formatTemplateTimestamp(
-                                template.updatedAt ?? template.createdAt,
-                              )}
-                            </div>
-                          </div>
-                          <div
-                            className={`mt-1 h-4 w-4 shrink-0 rounded-full border ${
-                              selected
-                                ? "border-[var(--dls-accent)] bg-[var(--dls-accent)]"
-                                : "border-dls-border bg-dls-surface"
-                            }`.trim()}
-                          />
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -303,7 +229,7 @@ export function CreateWorkspaceLocalPanel(
         props.workerDisabledReason ? (
           <div className={warningBannerClass}>
             <div className="font-semibold text-amber-12">
-              {props.translate("dashboard.sandbox_get_ready_title")}
+              {t("dashboard.sandbox_get_ready_title")}
             </div>
             <div className="mt-1 leading-relaxed">
               {props.workerDisabledReason || props.workerCtaDescription}
@@ -347,6 +273,12 @@ export function CreateWorkspaceLocalPanel(
           </div>
         ) : null}
 
+        {props.localError ? (
+          <div className="mb-3 whitespace-pre-line rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
+            {props.localError}
+          </div>
+        ) : null}
+
         <div className="flex justify-end gap-3">
           <button
             type="button"
@@ -354,7 +286,7 @@ export function CreateWorkspaceLocalPanel(
             disabled={props.submitting}
             className={pillGhostClass}
           >
-            {props.translate("common.cancel")}
+            {t("common.cancel")}
           </button>
           {props.onConfirmWorker ? (
             <button
@@ -370,7 +302,7 @@ export function CreateWorkspaceLocalPanel(
               }
               title={
                 !props.selectedFolder
-                  ? props.translate("dashboard.choose_folder_continue")
+                  ? t("dashboard.choose_folder_continue")
                   : props.workerDisabledReason || undefined
               }
               className={pillSecondaryClass}
@@ -378,11 +310,11 @@ export function CreateWorkspaceLocalPanel(
               {props.workerSubmitting ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 size={16} className="animate-spin" />
-                  {props.translate("dashboard.sandbox_checking_docker")}
+                  {t("dashboard.sandbox_checking_docker")}
                 </span>
               ) : (
                 (props.workerLabel ??
-                  props.translate("dashboard.create_sandbox_confirm"))
+                  t("dashboard.create_sandbox_confirm"))
               )}
             </button>
           ) : null}
@@ -392,7 +324,7 @@ export function CreateWorkspaceLocalPanel(
             disabled={!props.selectedFolder || props.submitting}
             title={
               !props.selectedFolder
-                ? props.translate("dashboard.choose_folder_continue")
+                ? t("dashboard.choose_folder_continue")
                 : undefined
             }
             className={pillPrimaryClass}
@@ -404,7 +336,7 @@ export function CreateWorkspaceLocalPanel(
               </span>
             ) : (
               (props.confirmLabel ??
-                props.translate("dashboard.create_workspace_confirm"))
+                t("dashboard.create_workspace_confirm"))
             )}
           </button>
         </div>

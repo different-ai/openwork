@@ -399,6 +399,25 @@ fn seed_commands(commands_dir: &PathBuf, preset: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_workspace_opencode_config_path(root: &Path) -> PathBuf {
+    let config_path_jsonc = root.join("opencode.jsonc");
+    let config_path_json = root.join("opencode.json");
+    let hidden_config_path_jsonc = root.join(".opencode").join("opencode.jsonc");
+    let hidden_config_path_json = root.join(".opencode").join("opencode.json");
+
+    if config_path_jsonc.exists() {
+        config_path_jsonc
+    } else if config_path_json.exists() {
+        config_path_json
+    } else if hidden_config_path_jsonc.exists() {
+        hidden_config_path_jsonc
+    } else if hidden_config_path_json.exists() {
+        hidden_config_path_json
+    } else {
+        config_path_jsonc
+    }
+}
+
 pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), String> {
     let root = PathBuf::from(workspace_path);
 
@@ -421,15 +440,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
         .map_err(|e| format!("Failed to create .opencode/commands: {e}"))?;
     seed_commands(&commands_dir, preset)?;
 
-    let config_path_jsonc = root.join("opencode.jsonc");
-    let config_path_json = root.join("opencode.json");
-    let config_path = if config_path_jsonc.exists() {
-        config_path_jsonc
-    } else if config_path_json.exists() {
-        config_path_json
-    } else {
-        config_path_jsonc
-    };
+    let config_path = resolve_workspace_opencode_config_path(&root);
 
     let config_exists = config_path.exists();
     let mut config_changed = !config_exists;
@@ -548,4 +559,60 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_workspace_opencode_config_path;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace_root() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("openwork-workspace-files-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn prefers_hidden_opencode_jsonc_when_root_config_is_missing() {
+        let root = temp_workspace_root();
+        let hidden = root.join(".opencode").join("opencode.jsonc");
+        fs::create_dir_all(hidden.parent().unwrap()).unwrap();
+        fs::write(&hidden, "{}\n").unwrap();
+
+        let resolved = resolve_workspace_opencode_config_path(&root);
+        assert_eq!(resolved, hidden);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prefers_root_config_over_hidden_config() {
+        let root = temp_workspace_root();
+        let root_jsonc = root.join("opencode.jsonc");
+        let hidden = root.join(".opencode").join("opencode.jsonc");
+        fs::create_dir_all(hidden.parent().unwrap()).unwrap();
+        fs::write(&root_jsonc, "{}\n").unwrap();
+        fs::write(&hidden, "{}\n").unwrap();
+
+        let resolved = resolve_workspace_opencode_config_path(&root);
+        assert_eq!(resolved, root_jsonc);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn falls_back_to_root_jsonc_path_when_no_config_exists() {
+        let root = temp_workspace_root();
+
+        let resolved = resolve_workspace_opencode_config_path(&root);
+        assert_eq!(resolved, root.join("opencode.jsonc"));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

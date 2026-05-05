@@ -10,14 +10,21 @@ import {
   openworkServerInfo as openworkServerInfoCmd,
   openworkServerRestart as openworkServerRestartCmd,
   pickFile,
+  revealDesktopItemInDir,
   resetOpenworkState,
   sandboxDebugProbe as sandboxDebugProbeCmd,
+  updaterEnvironment as updaterEnvironmentCmd,
   workspaceBootstrap as workspaceBootstrapCmd,
   type AppBuildInfo,
   type EngineInfo,
   type OpenworkServerInfo,
   type SandboxDebugProbeResult,
 } from "../../../../app/lib/desktop";
+import {
+  ELECTRON_ALPHA_RELEASE_PAGE_URL,
+  resolveElectronAlphaArtifact,
+  type ElectronAlphaArtifact,
+} from "../../../../app/lib/electron-alpha";
 import {
   migrateToElectron,
   writeMigrationSnapshotFromTauri,
@@ -28,19 +35,20 @@ import {
 import {
   clearStartupPreference,
   isDesktopRuntime,
+  isElectronRuntime,
+  isMacPlatform,
   isTauriRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import type { DebugViewProps } from "../pages/debug-view";
+import type { ReleaseChannel } from "../../../../app/types";
 import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
 
 const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
 const ENGINE_SOURCE_KEY = "openwork.engineSource";
 const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
-const ELECTRON_PREVIEW_RELEASE_URL = "https://github.com/different-ai/openwork/releases/tag/electron-preview-latest";
-const ELECTRON_INSTALL_CONFIRM_PHRASE = "install electron preview";
 
 type ResetModalMode = "onboarding" | "all";
 
@@ -151,6 +159,7 @@ function describeEngine(info: EngineInfo | null) {
     lines: [
       t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
       t("settings.debug_runtime", undefined, { runtime: info?.runtime ?? "—" }),
+      t("settings.diag_opencode_binary", undefined, { binary: formatOpencodeBinary(info) }),
       t("settings.debug_pid", undefined, { pid: info?.pid ? String(info.pid) : "—" }),
       t("settings.debug_hostname", undefined, { hostname: info?.hostname ?? "—" }),
       t("settings.debug_port", undefined, { port: info?.port ? String(info.port) : "—" }),
@@ -161,12 +170,31 @@ function describeEngine(info: EngineInfo | null) {
   };
 }
 
+function formatOpencodeBinary(info: EngineInfo | null) {
+  return formatBinaryWithSource(info?.opencodeBinPath, info?.opencodeBinSource);
+}
+
+function formatManagedOpencodeBinary(info: OpenworkServerInfo | null) {
+  return formatBinaryWithSource(
+    info?.managedOpencodeBinPath,
+    info?.managedOpencodeBinSource,
+  );
+}
+
+function formatBinaryWithSource(path: string | null | undefined, source: string | null | undefined) {
+  const binary = path?.trim();
+  if (!binary) return "—";
+  const sourceLabel = source?.trim();
+  return sourceLabel ? `${binary} (${sourceLabel})` : binary;
+}
+
 function describeOpenworkServer(info: OpenworkServerInfo | null) {
   const running = Boolean(info?.running);
   return {
     ...statusPill(running),
     lines: [
       t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
+      t("settings.diag_opencode_binary", undefined, { binary: formatManagedOpencodeBinary(info) }),
       t("settings.debug_connect_url", undefined, { url: info?.connectUrl ?? "—" }),
       t("settings.debug_lan_url", undefined, { url: info?.lanUrl ?? "—" }),
       t("settings.debug_mdns_url", undefined, { url: info?.mdnsUrl ?? "—" }),
@@ -238,8 +266,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [developerLogStatus, setDeveloperLogStatus] = useState<string | null>(null);
   const [electronMigrationUrl, setElectronMigrationUrl] = useState("");
   const [electronMigrationSha256, setElectronMigrationSha256] = useState("");
+  const [electronMigrationSha512, setElectronMigrationSha512] = useState("");
+  const [electronMigrationArtifact, setElectronMigrationArtifact] = useState<ElectronAlphaArtifact | null>(null);
   const [electronMigrationBusy, setElectronMigrationBusy] = useState(false);
   const [electronMigrationStatus, setElectronMigrationStatus] = useState<string | null>(null);
+  const [electronAlphaUpdaterBusy, setElectronAlphaUpdaterBusy] = useState(false);
+  const [electronAlphaUpdaterStatus, setElectronAlphaUpdaterStatus] = useState<string | null>(null);
+  const [electronAlphaUpdaterChannel, setElectronAlphaUpdaterChannel] = useState<ReleaseChannel>("stable");
 
   const refreshEngineInfo = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -391,8 +424,70 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   const onOpenElectronPreviewRelease = useCallback(async () => {
     try {
-      await openDesktopUrl(ELECTRON_PREVIEW_RELEASE_URL);
-      setElectronMigrationStatus("Opened the rolling Electron preview release. Download links live there after dev/main push builds finish.");
+      await openDesktopUrl(ELECTRON_ALPHA_RELEASE_PAGE_URL);
+      setElectronMigrationStatus("Opened the rolling Electron alpha release. Download links live there after dev builds finish.");
+    } catch (error) {
+      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+    }
+  }, []);
+
+  const onSetElectronMigrationUrl = useCallback((value: string) => {
+    setElectronMigrationUrl(value);
+    setElectronMigrationArtifact(null);
+  }, []);
+
+  const onSetElectronMigrationSha512 = useCallback((value: string) => {
+    setElectronMigrationSha512(value);
+    setElectronMigrationArtifact(null);
+  }, []);
+
+  const electronMigrationArtifactLabel = useMemo(() => {
+    if (!electronMigrationArtifact) return null;
+    return `Resolved v${electronMigrationArtifact.version} (${electronMigrationArtifact.arch}) · ${electronMigrationArtifact.path}`;
+  }, [electronMigrationArtifact]);
+
+  const onResolveElectronAlphaArtifact = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      setElectronMigrationStatus("Electron alpha migration resolution is only available in the Tauri desktop app.");
+      return;
+    }
+    if (!isMacPlatform()) {
+      setElectronMigrationStatus("Electron alpha migration is macOS-only for now.");
+      return;
+    }
+    setElectronMigrationBusy(true);
+    setElectronMigrationStatus(null);
+    try {
+      const artifact = await resolveElectronAlphaArtifact("arm64");
+      setElectronMigrationArtifact(artifact);
+      setElectronMigrationUrl(artifact.url);
+      setElectronMigrationSha512(artifact.sha512);
+      setElectronMigrationSha256("");
+      setElectronMigrationStatus(
+        `Resolved Electron alpha v${artifact.version} from latest-mac.yml. Review Advanced if you need to override the artifact URL.`,
+      );
+      pushDeveloperLog(`resolved Electron alpha artifact version=${artifact.version} path=${artifact.path}`);
+    } catch (error) {
+      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setElectronMigrationBusy(false);
+    }
+  }, [pushDeveloperLog]);
+
+  const onRevealElectronMigrationBackup = useCallback(async () => {
+    if (!isTauriRuntime() && !isElectronRuntime()) {
+      setElectronMigrationStatus("Migration backup reveal is available only in the desktop app.");
+      return;
+    }
+    try {
+      const env = await updaterEnvironmentCmd();
+      const appBundlePath = env.appBundlePath?.trim();
+      if (!appBundlePath) {
+        setElectronMigrationStatus("Could not resolve the current OpenWork.app bundle path.");
+        return;
+      }
+      await revealDesktopItemInDir(`${appBundlePath}.migrate-bak`);
+      setElectronMigrationStatus("Requested Finder reveal for OpenWork.app.migrate-bak. The backup exists after an install handoff completes.");
     } catch (error) {
       setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -450,11 +545,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       );
     if (!confirmed) return;
 
-    const phrase =
-      typeof window === "undefined"
-        ? ELECTRON_INSTALL_CONFIRM_PHRASE
-        : window.prompt(`Type \"${ELECTRON_INSTALL_CONFIRM_PHRASE}\" to start the Electron preview install handoff.`);
-    if (phrase !== ELECTRON_INSTALL_CONFIRM_PHRASE) {
+    const doubleConfirmed =
+      typeof window === "undefined" ||
+      window.confirm(
+        "Final confirmation: quit Tauri and start installing the resolved Electron alpha now? The current app bundle will be moved to OpenWork.app.migrate-bak before replacement.",
+      );
+    if (!doubleConfirmed) {
       setElectronMigrationStatus("Install handoff cancelled before any app replacement step.");
       return;
     }
@@ -470,6 +566,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const result = await migrateToElectron({
         url,
         sha256: electronMigrationSha256.trim() || undefined,
+        sha512: electronMigrationSha512.trim() || undefined,
       });
       if (!result.ok) {
         throw new Error(result.reason ?? "Electron install handoff failed.");
@@ -479,7 +576,88 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
       setElectronMigrationBusy(false);
     }
-  }, [electronMigrationSha256, electronMigrationUrl, pushDeveloperLog]);
+  }, [electronMigrationSha256, electronMigrationSha512, electronMigrationUrl, pushDeveloperLog]);
+
+  useEffect(() => {
+    if (!developerMode || !isElectronRuntime()) return;
+    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    if (!bridge?.getChannel) return;
+    let cancelled = false;
+    void bridge.getChannel()
+      .then((state) => {
+        if (cancelled) return;
+        setElectronAlphaUpdaterChannel(state.channel ?? "stable");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [developerMode]);
+
+  const onSetElectronAlphaUpdaterChannel = useCallback(async (channel: ReleaseChannel) => {
+    if (!isElectronRuntime()) {
+      setElectronAlphaUpdaterStatus("Electron updater channels are available only in the Electron desktop app.");
+      return;
+    }
+    if (channel === "alpha" && !isMacPlatform()) {
+      setElectronAlphaUpdaterStatus("Electron alpha updates are macOS-only for now.");
+      return;
+    }
+    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    if (!bridge?.setChannel) {
+      setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
+      return;
+    }
+    setElectronAlphaUpdaterBusy(true);
+    setElectronAlphaUpdaterStatus(null);
+    try {
+      const state = await bridge.setChannel(channel);
+      setElectronAlphaUpdaterChannel(state.channel ?? channel);
+      setElectronAlphaUpdaterStatus(
+        `Subscribed Electron updater to ${state.channel ?? channel} (${state.feedUrl}).`,
+      );
+      pushDeveloperLog(`set Electron updater channel=${state.channel ?? channel}`);
+    } catch (error) {
+      setElectronAlphaUpdaterStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setElectronAlphaUpdaterBusy(false);
+    }
+  }, [pushDeveloperLog]);
+
+  const onCheckElectronAlphaUpdates = useCallback(async () => {
+    if (!isElectronRuntime()) {
+      setElectronAlphaUpdaterStatus("Electron update checks are available only in the Electron desktop app.");
+      return;
+    }
+    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    if (!bridge?.check) {
+      setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
+      return;
+    }
+    setElectronAlphaUpdaterBusy(true);
+    setElectronAlphaUpdaterStatus(null);
+    try {
+      const result = await bridge.check();
+      if (result.channel) setElectronAlphaUpdaterChannel(result.channel);
+      if (result.reason === "unavailable") {
+        setElectronAlphaUpdaterStatus("Electron updater is available only in packaged Electron builds.");
+        return;
+      }
+      if (result.reason) {
+        setElectronAlphaUpdaterStatus(result.reason);
+        return;
+      }
+      setElectronAlphaUpdaterStatus(
+        result.available
+          ? `Update available: v${result.latestVersion ?? "unknown"} on ${result.channel ?? electronAlphaUpdaterChannel}. Use Settings → Updates to download and install.`
+          : `No Electron update available on ${result.channel ?? electronAlphaUpdaterChannel}.`,
+      );
+    } catch (error) {
+      setElectronAlphaUpdaterStatus(error instanceof Error ? error.message : safeStringify(error));
+    } finally {
+      setElectronAlphaUpdaterBusy(false);
+    }
+  }, [electronAlphaUpdaterChannel]);
 
   const onRunSandboxDebugProbe = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -581,6 +759,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         writeOpenworkServerSettings({
           urlOverride: hostInfo.baseUrl,
           token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
+          hostToken: hostInfo.hostToken?.trim() || undefined,
           portOverride: hostInfo.port ?? undefined,
           remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
         });
@@ -812,14 +991,25 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       electronMigrationAvailable: isTauriRuntime(),
       electronMigrationUrl,
       electronMigrationSha256,
+      electronMigrationSha512,
+      electronMigrationArtifactLabel,
       electronMigrationBusy,
       electronMigrationStatus,
-      electronPreviewReleaseUrl: ELECTRON_PREVIEW_RELEASE_URL,
-      onSetElectronMigrationUrl: setElectronMigrationUrl,
+      electronPreviewReleaseUrl: ELECTRON_ALPHA_RELEASE_PAGE_URL,
+      onSetElectronMigrationUrl,
       onSetElectronMigrationSha256: setElectronMigrationSha256,
+      onSetElectronMigrationSha512,
       onOpenElectronPreviewRelease,
+      onResolveElectronAlphaArtifact,
+      onRevealElectronMigrationBackup,
       onPrepareElectronMigrationSnapshot,
       onInstallElectronPreviewFromTauri,
+      electronAlphaUpdaterAvailable: isElectronRuntime() && isMacPlatform(),
+      electronAlphaUpdaterBusy,
+      electronAlphaUpdaterStatus,
+      electronAlphaUpdaterChannel,
+      onSetElectronAlphaUpdaterChannel,
+      onCheckElectronAlphaUpdates,
       sandboxProbeBusy,
       sandboxProbeResult,
       sandboxProbeStatus,
@@ -876,9 +1066,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       developerLogStatus,
       developerMode,
       electronMigrationBusy,
+      electronMigrationArtifactLabel,
       electronMigrationSha256,
+      electronMigrationSha512,
       electronMigrationStatus,
       electronMigrationUrl,
+      electronAlphaUpdaterBusy,
+      electronAlphaUpdaterChannel,
+      electronAlphaUpdaterStatus,
       engineCard,
       engineCustomBinPath,
       engineSource,
@@ -892,15 +1087,21 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onExportDeveloperLog,
       onExportRuntimeDebugReport,
       onInstallElectronPreviewFromTauri,
+      onCheckElectronAlphaUpdates,
       onNukeOpenworkAndOpencodeConfig,
       onOpenElectronPreviewRelease,
       onOpenResetModal,
       onPrepareElectronMigrationSnapshot,
       onPickEngineBinary,
+      onResolveElectronAlphaArtifact,
+      onRevealElectronMigrationBackup,
       onResetStartupPreference,
       onRestartOpencode,
       onRestartOpenworkServer,
       onRunSandboxDebugProbe,
+      onSetElectronAlphaUpdaterChannel,
+      onSetElectronMigrationSha512,
+      onSetElectronMigrationUrl,
       onSetEngineSource,
       onStopHost,
       onCopyOpencodeLogs,

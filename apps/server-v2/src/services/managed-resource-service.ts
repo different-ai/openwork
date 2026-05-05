@@ -15,7 +15,7 @@ const DEFAULT_HUB_REPO = {
   ref: "main",
 } as const;
 
-const ALLOWED_BUNDLE_TYPES = new Set(["skill", "skills-set", "workspace-profile"]);
+const ALLOWED_BUNDLE_TYPES = new Set(["skill", "skills-set"]);
 const ALLOWED_PORTABLE_PREFIXES = [".opencode/agents/", ".opencode/plugins/", ".opencode/tools/"];
 const RESERVED_PORTABLE_SEGMENTS = new Set([".DS_Store", "Thumbs.db", "node_modules"]);
 const SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;

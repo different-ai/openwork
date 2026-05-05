@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MonitorUp, Rocket, X } from "lucide-react";
+import { ArrowLeft, MonitorUp, X } from "lucide-react";
 
 import { t } from "../../../i18n";
 import {
@@ -14,7 +14,6 @@ import {
 } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
 import { ShareWorkspaceAccessPanel } from "./share-workspace-access-panel";
-import { ShareWorkspaceTemplatePanel } from "./share-workspace-template-panel";
 import type { ShareView, ShareWorkspaceModalProps } from "./types";
 
 export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
@@ -25,7 +24,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [collaboratorExpanded, setCollaboratorExpanded] = useState(false);
   const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(false);
-  const [teamTemplateName, setTeamTemplateName] = useState("");
 
   const title = props.title ?? t("share.title");
   const workspaceBadge = useMemo(() => {
@@ -42,9 +40,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     setCopiedKey(null);
     setCollaboratorExpanded(false);
     setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
-    setTeamTemplateName(
-      `${props.workspaceName.trim() || t("share.workspace_fallback")} template`,
-    );
   }, [props.open, props.remoteAccess?.enabled, props.workspaceName]);
 
   // Mirror remote-access-enabled changes from the parent while open.
@@ -64,9 +59,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
           props.onClose();
           return view;
         }
-        if (view === "template-public" || view === "template-team") {
-          return "template";
-        }
         return "chooser";
       });
     };
@@ -75,12 +67,7 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   }, [props]);
 
   const goBack = useCallback(() => {
-    setActiveView((view) => {
-      if (view === "template-public" || view === "template-team") {
-        return "template";
-      }
-      return "chooser";
-    });
+    setActiveView("chooser");
   }, []);
 
   const handleCopy = useCallback(async (value: string, key: string) => {
@@ -99,12 +86,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
 
   const headerTitle = (() => {
     switch (activeView) {
-      case "template":
-        return t("share.view_template");
-      case "template-public":
-        return t("share.view_template_public");
-      case "template-team":
-        return t("share.view_template_team");
       case "access":
         return t("share.view_access");
       default:
@@ -114,12 +95,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
 
   const headerSubtitle = (() => {
     switch (activeView) {
-      case "template":
-        return t("share.template_intro");
-      case "template-public":
-        return t("share.subtitle_template_public");
-      case "template-team":
-        return t("share.subtitle_template_team");
       case "access":
         return t("share.subtitle_access");
       default:
@@ -171,73 +146,12 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
           {activeView === "chooser" ? (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
               <WorkspaceOptionCard
-                title={t("share.option_template_title")}
-                description={t("share.option_template_desc")}
-                icon={Rocket}
-                onClick={() => setActiveView("template")}
-              />
-              <WorkspaceOptionCard
                 title={t("share.option_access_title")}
                 description={t("share.option_access_desc")}
                 icon={MonitorUp}
                 onClick={() => setActiveView("access")}
               />
             </div>
-          ) : null}
-
-          {activeView === "template" ||
-          activeView === "template-public" ||
-          activeView === "template-team" ? (
-            <ShareWorkspaceTemplatePanel
-              view={activeView}
-              setView={setActiveView}
-              copiedKey={copiedKey}
-              onCopy={(value, key) => void handleCopy(value, key)}
-              workspaceName={props.workspaceName}
-              teamTemplateName={teamTemplateName}
-              onTeamTemplateNameInput={setTeamTemplateName}
-              onShareWorkspaceProfile={props.onShareWorkspaceProfile}
-              shareWorkspaceProfileBusy={props.shareWorkspaceProfileBusy}
-              shareWorkspaceProfileUrl={props.shareWorkspaceProfileUrl}
-              shareWorkspaceProfileError={props.shareWorkspaceProfileError}
-              shareWorkspaceProfileDisabledReason={
-                props.shareWorkspaceProfileDisabledReason
-              }
-              shareWorkspaceProfileSensitiveWarnings={
-                props.shareWorkspaceProfileSensitiveWarnings
-              }
-              shareWorkspaceProfileSensitiveMode={
-                props.shareWorkspaceProfileSensitiveMode
-              }
-              onShareWorkspaceProfileSensitiveModeChange={
-                props.onShareWorkspaceProfileSensitiveModeChange
-              }
-              onShareWorkspaceProfileToTeam={
-                props.onShareWorkspaceProfileToTeam
-              }
-              shareWorkspaceProfileToTeamBusy={
-                props.shareWorkspaceProfileToTeamBusy
-              }
-              shareWorkspaceProfileToTeamError={
-                props.shareWorkspaceProfileToTeamError
-              }
-              shareWorkspaceProfileToTeamSuccess={
-                props.shareWorkspaceProfileToTeamSuccess
-              }
-              shareWorkspaceProfileToTeamDisabledReason={
-                props.shareWorkspaceProfileToTeamDisabledReason
-              }
-              shareWorkspaceProfileToTeamOrgName={
-                props.shareWorkspaceProfileToTeamOrgName
-              }
-              shareWorkspaceProfileToTeamNeedsSignIn={
-                props.shareWorkspaceProfileToTeamNeedsSignIn
-              }
-              onShareWorkspaceProfileToTeamSignIn={
-                props.onShareWorkspaceProfileToTeamSignIn
-              }
-              templateContentSummary={props.templateContentSummary}
-            />
           ) : null}
 
           {activeView === "access" ? (

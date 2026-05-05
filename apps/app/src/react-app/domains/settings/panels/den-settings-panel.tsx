@@ -1,27 +1,16 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ArrowUpRight,
-  Boxes,
-  Brain,
-  Cloud,
-  KeyRound,
-  LogOut,
-  Package,
-  RefreshCcw,
-  Server,
-  Users,
-} from "lucide-react";
+import * as React from "react";
+import { ArrowUpRight } from "lucide-react";
 
-import { currentLocale, t } from "../../../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
+  type DenOrgMarketplaceResolved,
   type DenOrgLlmProvider,
+  type DenOrgPlugin,
   type DenOrgSkillHub,
-  type DenTemplate,
   type DenUser,
   createDenClient,
   ensureDenActiveOrganization,
@@ -31,49 +20,48 @@ import {
   writeDenSettings,
 } from "../../../../app/lib/den";
 import {
-  clearDenTemplateCache,
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../../app/lib/den-template-cache";
-import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
-import type { CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
+import type { CloudImportedPlugin, CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
 import type { DenOrgSkillCard, SkillCard } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
-import { TextInput } from "../../../design-system/text-input";
-
-type CloudSkillHubRow = {
-  key: string;
-  hubId: string;
-  name: string;
-  hub: DenOrgSkillHub | null;
-  imported: CloudImportedSkillHub | null;
-  status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
-  liveSkillCount: number;
-  importedSkillCount: number;
-};
-
-type CloudProviderRow = {
-  key: string;
-  cloudProviderId: string;
-  provider: DenOrgLlmProvider | null;
-  imported: CloudImportedProvider | null;
-  status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
-  name: string;
-};
-
-type CloudSkillRow = {
-  key: string;
-  cloudSkillId: string;
-  skill: DenOrgSkillCard | null;
-  imported: CloudImportedSkill | null;
-  status: "available" | "installed" | "out_of_sync" | "removed_from_cloud";
-  title: string;
-  installedName: string | null;
-};
+import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  CloudProvidersSection,
+  CloudSkillsSection,
+  CloudWorkersSection,
+  MarketplacePluginsSection,
+  SkillHubsSection,
+  type CloudPluginRow,
+  type CloudProviderRow,
+  type CloudSkillHubRow,
+  type CloudSkillRow,
+} from "../cloud/sections";
+import { CloudAccountSection } from "../cloud/cloud-account-section";
+import { CloudDevMode } from "../cloud/dev-mode";
+import {
+  SettingsSection,
+  SettingsInset,
+  SettingsNotice,
+  SettingsSectionHeader,
+  SettingsSectionHeaderActions,
+  SettingsSectionHeaderContent,
+  SettingsSectionHeaderDescription,
+  SettingsSectionHeaderTitle,
+  SettingsStack,
+  SettingsStatusBadge,
+} from "../settings-section";
+import { useStatusToasts } from "../../shell-feedback/status-toasts";
+import { t } from "@/i18n";
 
 type AsyncResult = { ok: boolean; message: string };
 
@@ -93,6 +81,11 @@ export type DenSettingsExtensionsStore = {
   importCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
   removeCloudOrgSkillHub: (hubId: string) => Promise<AsyncResult>;
   syncCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
+  cloudOrgMarketplaces: () => DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: () => string | null;
+  importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
+  refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
+  importCloudOrgPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => Promise<AsyncResult>;
 };
 
 export type DenSettingsPanelProps = {
@@ -105,12 +98,6 @@ export type DenSettingsPanelProps = {
     directory?: string | null;
     displayName?: string | null;
   }) => Promise<boolean>;
-  openTeamBundle: (input: {
-    templateId: string;
-    name: string;
-    templateData: unknown;
-    organizationName?: string | null;
-  }) => void | Promise<void>;
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
@@ -118,60 +105,10 @@ export type DenSettingsPanelProps = {
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
 };
 
-const settingsPanelClass = "ow-soft-card rounded-[28px] p-5 md:p-6";
-const settingsPanelSoftClass = "ow-soft-card-quiet rounded-2xl p-4";
-const headerBadgeClass =
-  "inline-flex min-h-8 items-center gap-2 rounded-xl border border-dls-border bg-dls-hover px-3 text-[13px] font-medium text-dls-text shadow-sm";
-const headerStatusBadgeClass =
-  "inline-flex min-h-10 min-w-[132px] items-center justify-center gap-2 rounded-2xl border border-dls-border bg-dls-hover px-4 text-center text-sm font-medium text-dls-text shadow-sm";
-const sectionPillClass =
-  "inline-flex items-center gap-1.5 rounded-full border border-dls-border bg-dls-hover px-2.5 py-1 text-[11px] font-medium text-dls-secondary";
-const softNoticeClass =
-  "rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-xs text-dls-secondary";
-const quietControlClass =
-  "border border-dls-border bg-dls-hover text-dls-text shadow-sm";
-const errorBannerClass =
-  "rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11";
-
 const sortStrings = (values: string[]) => [...values].sort();
 
 const sameStringList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
-
-function statusBadgeClass(kind: "ready" | "warning" | "neutral" | "error") {
-  switch (kind) {
-    case "ready":
-      return "border-green-7/30 bg-green-3/20 text-green-11";
-    case "warning":
-      return "border-amber-7/30 bg-amber-3/20 text-amber-11";
-    case "error":
-      return "border-red-7/30 bg-red-3/20 text-red-11";
-    default:
-      return "border-gray-6/60 bg-gray-3/20 text-gray-11";
-  }
-}
-
-function workerStatusMeta(status: string, tr: (key: string) => string) {
-  const normalized = status.trim().toLowerCase();
-  switch (normalized) {
-    case "healthy":
-      return { label: tr("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
-    case "provisioning":
-      return { label: tr("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
-    case "failed":
-      return { label: tr("dashboard.worker_status_attention"), tone: "error" as const, canOpen: false };
-    case "stopped":
-      return { label: tr("dashboard.worker_status_stopped"), tone: "neutral" as const, canOpen: false };
-    default:
-      return {
-        label: normalized
-          ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : tr("dashboard.worker_status_unknown"),
-        tone: "neutral" as const,
-        canOpen: normalized === "ready",
-      };
-  }
-}
 
 function parseManualAuthInput(value: string) {
   const trimmed = value.trim();
@@ -200,61 +137,146 @@ function parseManualAuthInput(value: string) {
   return trimmed.length >= 12 ? { grant: trimmed } : null;
 }
 
-function formatTemplateTimestamp(value: string | null, tr: (key: string) => string) {
-  if (!value) return tr("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return tr("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
+interface DenSignedOutPanelProps {
+  authBusy: boolean;
+  authError: string | null;
+  onClearAuthError: () => void;
+  onOpenBrowserAuth: (mode: "sign-in" | "sign-up") => void;
+  onSubmitManualAuth: (input: string) => Promise<boolean>;
+  sessionBusy: boolean;
 }
 
-function templateCreatorLabel(template: DenTemplate, tr: (key: string) => string) {
-  const creator = template.creator;
-  if (!creator) return tr("dashboard.unknown_creator");
-  return creator.name?.trim() || creator.email?.trim() || tr("dashboard.unknown_creator");
+function DenSignedOutPanel({
+  authBusy,
+  authError,
+  onClearAuthError,
+  onOpenBrowserAuth,
+  onSubmitManualAuth,
+  sessionBusy,
+}: DenSignedOutPanelProps) {
+  const [manualAuthOpen, setManualAuthOpen] = React.useState(false);
+  const [manualAuthInput, setManualAuthInput] = React.useState("");
+  const controlsDisabled = [authBusy, sessionBusy].some(Boolean);
+
+  const submitManualAuth = async () => {
+    const ok = await onSubmitManualAuth(manualAuthInput);
+    if (!ok) return;
+    setManualAuthInput("");
+    setManualAuthOpen(false);
+  };
+
+  return (
+    <SettingsSection>
+      <SettingsSectionHeader>
+        <SettingsSectionHeaderContent>
+          <SettingsSectionHeaderTitle>{t("den.signin_title")}</SettingsSectionHeaderTitle>
+          <SettingsSectionHeaderDescription className="max-w-[54ch]">
+            {t("den.cloud_sleep_hint")}
+          </SettingsSectionHeaderDescription>
+        </SettingsSectionHeaderContent>
+      </SettingsSectionHeader>
+
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => onOpenBrowserAuth("sign-in")}>
+            {t("den.signin_button")}
+            <ArrowUpRight size={13} />
+          </Button>
+          <Button variant="outline" onClick={() => onOpenBrowserAuth("sign-up")}>
+            {t("den.create_account")}
+            <ArrowUpRight size={13} />
+          </Button>
+        </div>
+
+        <Collapsible
+          open={manualAuthOpen}
+          onOpenChange={(open) => {
+            setManualAuthOpen(open);
+            onClearAuthError();
+          }}
+          disabled={controlsDisabled}
+          className="flex flex-col gap-3"
+        >
+          <CollapsibleTrigger
+            render={<Button variant="ghost" size="sm" className="w-fit self-start" disabled={controlsDisabled} />}
+          >
+            {manualAuthOpen ? t("den.hide_signin_code") : t("den.paste_signin_code")}
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <SettingsInset className="flex flex-col gap-y-3">
+              <Field data-disabled={controlsDisabled}>
+                <FieldLabel htmlFor="den-signin-link">{t("den.signin_link_label")}</FieldLabel>
+                <Input
+                  id="den-signin-link"
+                  value={manualAuthInput}
+                  onChange={(event) => setManualAuthInput(event.currentTarget.value)}
+                  placeholder={t("den.signin_link_placeholder")}
+                  disabled={controlsDisabled}
+                />
+                <FieldDescription className="text-xs">{t("den.signin_link_hint")}</FieldDescription>
+              </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => void submitManualAuth()}
+                  disabled={[controlsDisabled, !manualAuthInput.trim()].some(Boolean)}
+                >
+                  {authBusy ? t("den.finishing") : t("den.finish_signin")}
+                </Button>
+              </div>
+            </SettingsInset>
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
+
+      {authError ? <SettingsNotice tone="error">{authError}</SettingsNotice> : null}
+
+      <SettingsInset className="text-sm text-gray-10">
+        {t("den.auto_reconnect_hint")}
+      </SettingsInset>
+    </SettingsSection>
+  );
 }
 
 export function DenSettingsPanel(props: DenSettingsPanelProps) {
-  const tr = useCallback((key: string) => t(key, currentLocale()), []);
-  const tx = useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, currentLocale(), params),
-    [],
-  );
+  const { showToast } = useStatusToasts();
 
-  const initial = useMemo(() => readDenSettings(), []);
+  const initial = React.useMemo(() => readDenSettings(), []);
   const initialBaseUrl = initial.baseUrl || DEFAULT_DEN_BASE_URL;
-  const initialTemplateSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: initialBaseUrl,
-        token: initial.authToken?.trim() || "",
-        orgSlug: initial.activeOrgSlug?.trim() || null,
-      }),
-    [initial.activeOrgSlug, initial.authToken, initialBaseUrl],
+
+  // Connection settings
+  const [baseUrl, setBaseUrl] = React.useState(initialBaseUrl);
+  const [baseUrlDraft, setBaseUrlDraft] = React.useState(initialBaseUrl);
+  const [baseUrlError, setBaseUrlError] = React.useState<string | null>(null);
+  const [authToken, setAuthToken] = React.useState(initial.authToken?.trim() || "");
+  const client = React.useMemo(
+    () => createDenClient({ baseUrl, token: authToken }),
+    [authToken, baseUrl],
   );
 
-  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
-  const [baseUrlDraft, setBaseUrlDraft] = useState(initialBaseUrl);
-  const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
-  const [authToken, setAuthToken] = useState(initial.authToken?.trim() || "");
-  const [activeOrgId, setActiveOrgId] = useState(initial.activeOrgId?.trim() || "");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [manualAuthOpen, setManualAuthOpen] = useState(false);
-  const [manualAuthInput, setManualAuthInput] = useState("");
-  const [sessionBusy, setSessionBusy] = useState(false);
-  const [orgsBusy, setOrgsBusy] = useState(false);
-  const [workersBusy, setWorkersBusy] = useState(false);
-  const [openingWorkerId, setOpeningWorkerId] = useState<string | null>(null);
-  const [openingTemplateId, setOpeningTemplateId] = useState<string | null>(null);
-  const [user, setUser] = useState<DenUser | null>(null);
-  const [orgs, setOrgs] = useState<
+  // Auth session
+  const [authBusy, setAuthBusy] = React.useState(false);
+  const [sessionBusy, setSessionBusy] = React.useState(false);
+  const [user, setUser] = React.useState<DenUser | null>(null);
+  const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
+  const [authError, setAuthError] = React.useState<string | null>(null);
+
+  // Organizations
+  const [activeOrgId, setActiveOrgId] = React.useState(initial.activeOrgId?.trim() || "");
+  const [orgsBusy, setOrgsBusy] = React.useState(false);
+  const [orgs, setOrgs] = React.useState<
     Array<{ id: string; name: string; slug: string; role: "owner" | "admin" | "member" }>
   >([]);
-  const [workers, setWorkers] = useState<
+  const [orgsError, setOrgsError] = React.useState<string | null>(null);
+  const activeOrg = React.useMemo(
+    () => orgs.find((org) => org.id === activeOrgId) ?? null,
+    [activeOrgId, orgs],
+  );
+  const activeOrgName = activeOrg?.name || t("den.no_org_selected");
+
+  // Workers
+  const [workersBusy, setWorkersBusy] = React.useState(false);
+  const [openingWorkerId, setOpeningWorkerId] = React.useState<string | null>(null);
+  const [workers, setWorkers] = React.useState<
     Array<{
       workerId: string;
       workerName: string;
@@ -265,39 +287,48 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       createdAt: string | null;
     }>
   >([]);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [workersError, setWorkersError] = useState<string | null>(null);
-  const [templatesBusy, setTemplatesBusy] = useState(initialTemplateSnapshot.busy);
-  const [templates, setTemplates] = useState(initialTemplateSnapshot.templates);
-  const [templateError, setTemplateError] = useState<string | null>(initialTemplateSnapshot.error);
-  const [skillHubsBusy, setSkillHubsBusy] = useState(false);
-  const [skillHubActionId, setSkillHubActionId] = useState<string | null>(null);
-  const [skillHubActionKind, setSkillHubActionKind] = useState<"import" | "remove" | "sync" | null>(null);
-  const [skillHubActionError, setSkillHubActionError] = useState<string | null>(null);
-  const [skillsBusy, setSkillsBusy] = useState(false);
-  const [skillActionId, setSkillActionId] = useState<string | null>(null);
-  const [skillActionKind, setSkillActionKind] = useState<"import" | "remove" | "sync" | null>(null);
-  const [skillActionError, setSkillActionError] = useState<string | null>(null);
-  const [providersBusy, setProvidersBusy] = useState(false);
-  const [providerActionId, setProviderActionId] = useState<string | null>(null);
-  const [providerActionKind, setProviderActionKind] = useState<"import" | "remove" | "sync" | null>(null);
-  const [providerActionError, setProviderActionError] = useState<string | null>(null);
+  const [workersError, setWorkersError] = React.useState<string | null>(null);
 
-  const activeOrg = useMemo(
-    () => orgs.find((org) => org.id === activeOrgId) ?? null,
-    [activeOrgId, orgs],
-  );
+  // Skill hubs
+  const [skillHubsBusy, setSkillHubsBusy] = React.useState(false);
+  const [skillHubActionId, setSkillHubActionId] = React.useState<string | null>(null);
+  const [skillHubActionKind, setSkillHubActionKind] = React.useState<"import" | "remove" | "sync" | null>(null);
+  const [skillHubActionError, setSkillHubActionError] = React.useState<string | null>(null);
+
+  // Skills
+  const [skillsBusy, setSkillsBusy] = React.useState(false);
+  const [skillActionId, setSkillActionId] = React.useState<string | null>(null);
+  const [skillActionKind, setSkillActionKind] = React.useState<"import" | "remove" | "sync" | null>(null);
+  const [skillActionError, setSkillActionError] = React.useState<string | null>(null);
+
+  // Marketplaces and plugins
+  const [marketplacesBusy, setMarketplacesBusy] = React.useState(false);
+  const [activeMarketplaceId, setActiveMarketplaceId] = React.useState<string | null>(null);
+  const [pluginActionId, setPluginActionId] = React.useState<string | null>(null);
+  const [pluginActionError, setPluginActionError] = React.useState<string | null>(null);
+
+  // Providers
+  const [providersBusy, setProvidersBusy] = React.useState(false);
+  const [providerActionId, setProviderActionId] = React.useState<string | null>(null);
+  const [providerActionKind, setProviderActionKind] = React.useState<"import" | "remove" | "sync" | null>(null);
+  const [providerActionError, setProviderActionError] = React.useState<string | null>(null);
+
   const isSignedIn = Boolean(user && authToken.trim());
-  const activeOrgName = activeOrg?.name || tr("den.no_org_selected");
 
-  const client = useMemo(
-    () => createDenClient({ baseUrl, token: authToken }),
-    [authToken, baseUrl],
-  );
+  const syncCurrentDenSettings = React.useCallback(() => {
+    const resolved = resolveDenBaseUrls(baseUrl);
+    writeDenSettings({
+      baseUrl: resolved.baseUrl,
+      apiBaseUrl: resolved.apiBaseUrl,
+      authToken: authToken || null,
+      activeOrgId: activeOrgId || null,
+      activeOrgSlug: activeOrg?.slug ?? null,
+      activeOrgName: activeOrg?.name ?? null,
+    });
+  }, [activeOrg, activeOrgId, authToken, baseUrl]);
 
-  const installedSkillNames = useMemo(
+  // Derived extension rows
+  const installedSkillNames = React.useMemo(
     () => new Set(props.extensions.skills().map((skill) => skill.name)),
     [props.extensions],
   );
@@ -306,8 +337,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   const liveSkillHubs = props.extensions.cloudOrgSkillHubs();
   const liveSkills = props.extensions.cloudOrgSkills();
   const importedSkills = props.extensions.importedCloudSkills();
+  const liveMarketplaces = props.extensions.cloudOrgMarketplaces();
+  const importedPlugins = props.extensions.importedCloudPlugins();
 
-  const skillHubRows = useMemo<CloudSkillHubRow[]>(() => {
+  const skillHubRows = React.useMemo<CloudSkillHubRow[]>(() => {
     const rows: CloudSkillHubRow[] = liveSkillHubs.map((hub) => {
       const imported = skillHubImports[hub.id] ?? null;
       const currentSkillIds = sortStrings(hub.skills.map((skill) => skill.id));
@@ -346,7 +379,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return rows;
   }, [liveSkillHubs, skillHubImports]);
 
-  const skillRows = useMemo<CloudSkillRow[]>(() => {
+  const skillRows = React.useMemo<CloudSkillRow[]>(() => {
     const rows: CloudSkillRow[] = liveSkills.map((skill) => {
       const imported = importedSkills[skill.id] ?? null;
       const remoteUpdatedAt = skill.updatedAt ? Date.parse(skill.updatedAt) : Number.NaN;
@@ -389,7 +422,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return rows.sort((a, b) => a.title.localeCompare(b.title));
   }, [importedSkills, installedSkillNames, liveSkills]);
 
-  const providerRows = useMemo<CloudProviderRow[]>(() => {
+  const providerRows = React.useMemo<CloudProviderRow[]>(() => {
     const rows: CloudProviderRow[] = props.cloudOrgProviders.map((provider) => {
       const imported = props.importedCloudProviders[provider.id] ?? null;
       const status = !imported
@@ -425,13 +458,30 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     return rows;
   }, [props.cloudOrgProviders, props.importedCloudProviders]);
 
-  const summaryTone = useMemo(() => {
+  const marketplacePluginRows = React.useMemo<Record<string, CloudPluginRow[]>>(() => {
+    const next: Record<string, CloudPluginRow[]> = {};
+    for (const marketplace of liveMarketplaces) {
+      next[marketplace.marketplace.id] = marketplace.plugins.map((plugin) => {
+        const imported = importedPlugins[plugin.id] ?? null;
+        const status = !imported
+          ? "available"
+          : imported.updatedAt !== plugin.updatedAt || imported.files.length !== plugin.memberCount
+            ? "out_of_sync"
+            : "imported";
+        return { marketplaceId: marketplace.marketplace.id, plugin, imported, status };
+      });
+    }
+    return next;
+  }, [importedPlugins, liveMarketplaces]);
+
+  // Summary status
+  const summaryTone = React.useMemo(() => {
     if (
       authError ||
       workersError ||
       orgsError ||
-      templateError ||
       skillActionError ||
+      pluginActionError ||
       providerActionError ||
       skillHubActionError
     ) {
@@ -441,8 +491,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       sessionBusy ||
       orgsBusy ||
       workersBusy ||
-      templatesBusy ||
       skillsBusy ||
+      marketplacesBusy ||
       providersBusy ||
       skillHubsBusy
     ) {
@@ -455,54 +505,53 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     isSignedIn,
     orgsBusy,
     orgsError,
+    marketplacesBusy,
     providerActionError,
     providersBusy,
+    pluginActionError,
     sessionBusy,
     skillActionError,
     skillHubActionError,
     skillHubsBusy,
     skillsBusy,
-    templateError,
-    templatesBusy,
     workersBusy,
     workersError,
   ]);
 
-  const summaryLabel = useMemo(() => {
-    if (authError) return tr("den.needs_attention");
-    if (sessionBusy) return tr("den.checking_session");
-    if (isSignedIn) return tr("dashboard.connected");
-    return tr("den.signed_out");
-  }, [authError, isSignedIn, sessionBusy, tr]);
+  const summaryLabel = React.useMemo(() => {
+    if (authError) return t("den.needs_attention");
+    if (sessionBusy) return t("den.checking_session");
+    if (isSignedIn) return t("dashboard.connected");
+    return t("den.signed_out");
+  }, [authError, isSignedIn, sessionBusy]);
 
-  const clearSessionState = useCallback(() => {
+  // Shared reset helpers
+  const clearSessionState = React.useCallback(() => {
     setUser(null);
     setOrgs([]);
     setWorkers([]);
     setActiveOrgId("");
+    setActiveMarketplaceId(null);
     setOrgsError(null);
     setWorkersError(null);
-    setTemplateError(null);
-    setTemplates([]);
     setSkillHubActionError(null);
+    setPluginActionError(null);
     setProviderActionError(null);
     setSkillHubActionKind(null);
     setProviderActionKind(null);
   }, []);
 
-  const clearSignedInState = useCallback(
+  const clearSignedInState = React.useCallback(
     (message?: string | null) => {
       clearDenSession({ includeBaseUrls: !props.developerMode });
-      clearDenTemplateCache();
       if (!props.developerMode) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
         setBaseUrlDraft(DEFAULT_DEN_BASE_URL);
       }
       setAuthToken("");
       setOpeningWorkerId(null);
-      setOpeningTemplateId(null);
-      setTemplatesBusy(false);
       setSkillHubActionId(null);
+      setPluginActionId(null);
       setProviderActionId(null);
       setSkillHubActionKind(null);
       setProviderActionKind(null);
@@ -514,37 +563,33 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [clearSessionState, props.developerMode],
   );
 
-  useEffect(() => {
-    writeDenSettings({
-      baseUrl,
-      authToken: authToken || null,
-      activeOrgId: activeOrgId || null,
-      activeOrgSlug: activeOrg?.slug ?? null,
-      activeOrgName: activeOrg?.name ?? null,
-    });
-  }, [activeOrg, activeOrgId, authToken, baseUrl]);
+  // Settings persistence
+  React.useEffect(() => {
+    syncCurrentDenSettings();
+  }, [syncCurrentDenSettings]);
 
-  const openControlPlane = useCallback(() => {
+  // Connection settings actions
+  const openControlPlane = React.useCallback(() => {
     props.openLink(resolveDenBaseUrls(baseUrl).baseUrl);
   }, [baseUrl, props]);
 
-  const openBrowserAuth = useCallback(
+  const openBrowserAuth = React.useCallback(
     (mode: "sign-in" | "sign-up") => {
       props.openLink(buildDenAuthUrl(baseUrl, mode));
       setStatusMessage(
         mode === "sign-up"
-          ? tr("den.status_browser_signup")
-          : tr("den.status_browser_signin"),
+          ? t("den.status_browser_signup")
+          : t("den.status_browser_signin"),
       );
       setAuthError(null);
     },
-    [baseUrl, props, tr],
+    [baseUrl, props],
   );
 
-  const applyBaseUrl = useCallback(() => {
+  const applyBaseUrl = React.useCallback(() => {
     const normalized = normalizeDenBaseUrl(baseUrlDraft);
     if (!normalized) {
-      setBaseUrlError(tr("den.error_base_url"));
+      setBaseUrlError(t("den.error_base_url"));
       return;
     }
 
@@ -557,10 +602,50 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(tr("den.status_base_url_updated"));
-  }, [baseUrl, baseUrlDraft, clearSignedInState, tr]);
+    clearSignedInState(t("den.status_base_url_updated"));
+  }, [baseUrl, baseUrlDraft, clearSignedInState]);
 
-  const refreshOrgs = useCallback(
+  // Auth session query candidate: user, sessionBusy, authError
+  React.useEffect(() => {
+    const token = authToken.trim();
+    if (!token) {
+      setSessionBusy(false);
+      clearSessionState();
+      setAuthError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSessionBusy(true);
+    setAuthError(null);
+
+    void createDenClient({ baseUrl, token })
+      .getSession()
+      .then((nextUser) => {
+        if (cancelled) return;
+        setUser(nextUser);
+        setStatusMessage(t("den.status_signed_in_as", { email: nextUser.email }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error instanceof DenApiError && error.status === 401) {
+          clearSignedInState();
+        } else {
+          clearSessionState();
+        }
+        setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
+      })
+      .finally(() => {
+        if (!cancelled) setSessionBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, baseUrl, clearSessionState, clearSignedInState]);
+
+  // Organizations query candidate: orgs, orgsBusy, orgsError
+  const refreshOrgs = React.useCallback(
     async (quiet = false) => {
       if (!authToken.trim()) {
         setOrgs([]);
@@ -596,23 +681,29 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           );
         }
         if (!quiet && response.orgs.length > 0) {
-          setStatusMessage(
-            tx("den.status_loaded_orgs", {
+          showToast({
+            title: t("den.status_loaded_orgs", {
               count: response.orgs.length,
-              plural: response.orgs.length === 1 ? "" : "s",
             }),
-          );
+            tone: "info",
+          });
         }
       } catch (error) {
-        setOrgsError(error instanceof Error ? error.message : tr("den.error_load_orgs"));
+        setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
       } finally {
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, tr, tx],
+    [activeOrgId, authToken, baseUrl, client, showToast],
   );
 
-  const refreshWorkers = useCallback(
+  React.useEffect(() => {
+    if (!user) return;
+    void refreshOrgs(true);
+  }, [refreshOrgs, user]);
+
+  // Workers query candidate: workers, workersBusy, workersError
+  const refreshWorkers = React.useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
       if (!authToken.trim() || !orgId) {
@@ -627,70 +718,34 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         const nextWorkers = await client.listWorkers(orgId, 20);
         setWorkers(nextWorkers);
         if (!quiet) {
-          setStatusMessage(
-            nextWorkers.length > 0
-              ? tx("den.status_loaded_workers", {
+          showToast({
+            title: nextWorkers.length > 0
+              ? t("den.status_loaded_workers", {
                   count: nextWorkers.length,
-                  plural: nextWorkers.length === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_workers", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_workers", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
-          );
+            tone: "info",
+          });
         }
       } catch (error) {
-        setWorkersError(error instanceof Error ? error.message : tr("den.error_load_workers"));
+        setWorkersError(error instanceof Error ? error.message : t("den.error_load_workers"));
       } finally {
         setWorkersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, client, tr, tx],
+    [activeOrg, activeOrgId, authToken, client, showToast],
   );
 
-  const refreshTemplates = useCallback(
-    async (quiet = false) => {
-      const orgSlug = activeOrg?.slug?.trim() ?? "";
-      if (!authToken.trim() || !orgSlug) return;
+  React.useEffect(() => {
+    if (!user || !activeOrgId.trim()) return;
+    void refreshWorkers(true);
+  }, [activeOrgId, refreshWorkers, user]);
 
-      setTemplatesBusy(true);
-      setTemplateError(null);
-
-      try {
-        const nextTemplates = await loadDenTemplateCache(
-          {
-            baseUrl,
-            token: authToken,
-            orgSlug,
-          },
-          { force: true },
-        );
-        setTemplates(nextTemplates);
-        if (!quiet) {
-          setStatusMessage(
-            nextTemplates.length > 0
-              ? tx("den.status_loaded_templates", {
-                  count: nextTemplates.length,
-                  plural: nextTemplates.length === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                })
-              : tx("den.status_no_templates", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
-                }),
-          );
-        }
-      } catch (error) {
-        if (!quiet) {
-          setTemplateError(error instanceof Error ? error.message : tr("den.error_load_templates"));
-        }
-      } finally {
-        setTemplatesBusy(false);
-      }
-    },
-    [activeOrg, authToken, baseUrl, tr, tx],
-  );
-
-  const refreshSkillHubs = useCallback(
+  // Skill hubs query candidate: skillHubsBusy, skillHubActionError
+  const refreshSkillHubs = React.useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
       if (!authToken.trim() || !orgId) return;
@@ -699,14 +754,16 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) setSkillHubActionError(null);
 
       try {
+        syncCurrentDenSettings();
         await props.extensions.refreshCloudOrgSkillHubs({ force: true });
         if (!quiet) {
           const count = props.extensions.cloudOrgSkillHubs().length;
-          setStatusMessage(
-            count > 0
-              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud skill hubs are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
-          );
+          showToast({
+            title: count > 0
+              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud skill hubs are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
+            tone: "info",
+          });
         }
       } catch (error) {
         if (!quiet) {
@@ -718,10 +775,16 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, tr],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
-  const refreshSkills = useCallback(
+  React.useEffect(() => {
+    if (!user || !activeOrgId.trim()) return;
+    void refreshSkillHubs(true);
+  }, [activeOrgId, refreshSkillHubs, user]);
+
+  // Skills query candidate: skillsBusy, skillActionError
+  const refreshSkills = React.useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
       if (!authToken.trim() || !orgId) return;
@@ -730,33 +793,76 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) setSkillActionError(null);
 
       try {
+        syncCurrentDenSettings();
         await props.extensions.refreshCloudOrgSkills({ force: true });
         if (!quiet) {
           const count = props.extensions.cloudOrgSkills().length;
-          setStatusMessage(
-            count > 0
-              ? tx("den.status_loaded_skills", {
+          showToast({
+            title: count > 0
+              ? t("den.status_loaded_skills", {
                   count,
-                  plural: count === 1 ? "" : "s",
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 })
-              : tx("den.status_no_skills", {
-                  name: activeOrg?.name ?? tr("den.active_org_title"),
+              : t("den.status_no_skills", {
+                  name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
-          );
+            tone: "info",
+          });
         }
       } catch (error) {
         if (!quiet) {
-          setSkillActionError(error instanceof Error ? error.message : tr("den.error_load_skills"));
+          setSkillActionError(error instanceof Error ? error.message : t("den.error_load_skills"));
         }
       } finally {
         setSkillsBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, tr, tx],
+    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
   );
 
-  const refreshProviders = useCallback(
+  React.useEffect(() => {
+    if (!user || !activeOrgId.trim()) return;
+    void refreshSkills(true);
+  }, [activeOrgId, refreshSkills, user]);
+
+  // Marketplaces query candidate: marketplacesBusy, pluginActionError
+  const refreshMarketplaces = React.useCallback(
+    async (quiet = false) => {
+      const orgId = activeOrgId.trim();
+      if (!authToken.trim() || !orgId) return;
+
+      setMarketplacesBusy(true);
+      if (!quiet) setPluginActionError(null);
+
+      try {
+        await props.extensions.refreshCloudOrgMarketplaces({ force: true });
+        if (!quiet) {
+          const count = props.extensions.cloudOrgMarketplaces().length;
+          showToast({
+            title: count > 0
+              ? `Loaded ${count} marketplace${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No marketplaces are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
+            tone: "info",
+          });
+        }
+      } catch (error) {
+        if (!quiet) {
+          setPluginActionError(error instanceof Error ? error.message : "Failed to load marketplaces.");
+        }
+      } finally {
+        setMarketplacesBusy(false);
+      }
+    },
+    [activeOrg, activeOrgId, authToken, props.extensions, showToast],
+  );
+
+  React.useEffect(() => {
+    if (!user || !activeOrgId.trim()) return;
+    void refreshMarketplaces(true);
+  }, [activeOrgId, refreshMarketplaces, user]);
+
+  // Providers query candidate: providersBusy, providerActionError
+  const refreshProviders = React.useCallback(
     async (quiet = false) => {
       const orgId = activeOrgId.trim();
       if (!authToken.trim() || !orgId) return;
@@ -765,13 +871,15 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       setProviderActionError(null);
 
       try {
+        syncCurrentDenSettings();
         const items = await props.refreshCloudOrgProviders({ force: !quiet });
         if (!quiet) {
-          setStatusMessage(
-            items.length > 0
-              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? tr("den.active_org_title")}.`
-              : `No cloud providers are available for ${activeOrg?.name ?? tr("den.active_org_title")}.`,
-          );
+          showToast({
+            title: items.length > 0
+              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
+              : `No cloud providers are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
+            tone: "info",
+          });
         }
       } catch (error) {
         if (!quiet) {
@@ -783,78 +891,16 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setProvidersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props, tr],
+    [activeOrg, activeOrgId, authToken, props, syncCurrentDenSettings],
   );
 
-  useEffect(() => {
-    const token = authToken.trim();
-    if (!token) {
-      setSessionBusy(false);
-      clearSessionState();
-      setAuthError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setSessionBusy(true);
-    setAuthError(null);
-
-    void createDenClient({ baseUrl, token })
-      .getSession()
-      .then((nextUser) => {
-        if (cancelled) return;
-        setUser(nextUser);
-        setStatusMessage(tx("den.status_signed_in_as", { email: nextUser.email }));
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        if (error instanceof DenApiError && error.status === 401) {
-          clearSignedInState();
-        } else {
-          clearSessionState();
-        }
-        setAuthError(error instanceof Error ? error.message : tr("den.error_no_session"));
-      })
-      .finally(() => {
-        if (!cancelled) setSessionBusy(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authToken, baseUrl, clearSessionState, clearSignedInState, tr, tx]);
-
-  useEffect(() => {
-    if (!user) return;
-    void refreshOrgs(true);
-  }, [refreshOrgs, user]);
-
-  useEffect(() => {
-    if (!user || !activeOrgId.trim()) return;
-    void refreshWorkers(true);
-  }, [activeOrgId, refreshWorkers, user]);
-
-  useEffect(() => {
-    if (!user || !activeOrg?.slug?.trim()) return;
-    void refreshTemplates(true);
-  }, [activeOrg, refreshTemplates, user]);
-
-  useEffect(() => {
-    if (!user || !activeOrgId.trim()) return;
-    void refreshSkillHubs(true);
-  }, [activeOrgId, refreshSkillHubs, user]);
-
-  useEffect(() => {
-    if (!user || !activeOrgId.trim()) return;
-    void refreshSkills(true);
-  }, [activeOrgId, refreshSkills, user]);
-
-  useEffect(() => {
+  React.useEffect(() => {
     if (!user || !activeOrgId.trim()) return;
     void refreshProviders(true);
   }, [activeOrgId, refreshProviders, user]);
 
-  useEffect(() => {
+  // External auth handoff events
+  React.useEffect(() => {
     const handler = (event: Event) => {
       const customEvent = event as CustomEvent<DenSessionUpdatedDetail>;
       const nextSettings = readDenSettings();
@@ -875,34 +921,35 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSessionBusy(false);
         setStatusMessage(
           customEvent.detail.email?.trim()
-            ? tx("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
-            : tr("den.status_cloud_signin_done"),
+            ? t("den.status_cloud_signed_in_as", { email: customEvent.detail.email.trim() })
+            : t("den.status_cloud_signin_done"),
         );
       } else if (customEvent.detail?.status === "error") {
-        setAuthError(customEvent.detail.message?.trim() || tr("den.error_signin_failed"));
+        setAuthError(customEvent.detail.message?.trim() || t("den.error_signin_failed"));
       }
     };
 
     window.addEventListener(denSessionUpdatedEvent, handler as EventListener);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler as EventListener);
-  }, [clearSessionState, tr, tx]);
+  }, [clearSessionState]);
 
-  const submitManualAuth = useCallback(async () => {
-    const parsed = parseManualAuthInput(manualAuthInput);
+  // Auth mutations: manual sign-in and sign-out
+  const submitManualAuth = React.useCallback(async (input: string) => {
+    const parsed = parseManualAuthInput(input);
     if (!parsed || authBusy) {
-      if (!parsed) setAuthError(tr("den.error_paste_valid_code"));
-      return;
+      if (!parsed) setAuthError(t("den.error_paste_valid_code"));
+      return false;
     }
 
     const nextBaseUrl = parsed.baseUrl ?? baseUrl;
     setAuthBusy(true);
     setAuthError(null);
-    setStatusMessage(tr("den.signing_in"));
+    setStatusMessage(t("den.signing_in"));
 
     try {
       const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
-        throw new Error(tr("den.error_no_token"));
+        throw new Error(t("den.error_no_token"));
       }
 
       if (props.developerMode) {
@@ -918,8 +965,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         activeOrgName: null,
       });
 
-      setManualAuthInput("");
-      setManualAuthOpen(false);
       dispatchDenSessionUpdated({
         status: "success",
         baseUrl: nextBaseUrl,
@@ -927,17 +972,19 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         user: result.user,
         email: result.user?.email ?? null,
       });
+      return true;
     } catch (error) {
       dispatchDenSessionUpdated({
         status: "error",
-        message: error instanceof Error ? error.message : tr("den.error_signin_failed"),
+        message: error instanceof Error ? error.message : t("den.error_signin_failed"),
       });
+      return false;
     } finally {
       setAuthBusy(false);
     }
-  }, [authBusy, baseUrl, manualAuthInput, props.developerMode, tr]);
+  }, [authBusy, baseUrl, props.developerMode]);
 
-  const signOut = useCallback(async () => {
+  const signOut = React.useCallback(async () => {
     if (authBusy) return;
 
     setAuthBusy(true);
@@ -951,14 +998,41 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       setAuthBusy(false);
     }
 
-    clearSignedInState(tr("den.status_signed_out"));
-  }, [authBusy, authToken, clearSignedInState, client, tr]);
+    clearSignedInState(t("den.status_signed_out"));
+  }, [authBusy, authToken, clearSignedInState, client]);
 
-  const handleOpenWorker = useCallback(
+  // Organization mutation: active org switch
+  const handleActiveOrgChange = React.useCallback(
+    (nextId: string) => {
+      const nextOrg = orgs.find((org) => org.id === nextId) ?? null;
+      setActiveOrgId(nextId);
+      writeDenSettings({
+        baseUrl,
+        authToken: authToken ? authToken : null,
+        activeOrgId: nextId ? nextId : null,
+        activeOrgSlug: nextOrg?.slug ?? null,
+        activeOrgName: nextOrg?.name ?? null,
+      });
+      // Sync Better-Auth's active org so the next request resolves against `nextId`.
+      if (nextId) {
+        void ensureDenActiveOrganization({
+          forceServerSync: true,
+        }).catch(() => null);
+      }
+      showToast({
+        title: t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
+        tone: "success",
+      });
+    },
+    [authToken, baseUrl, orgs, showToast],
+  );
+
+  // Worker mutation: open remote workspace
+  const handleOpenWorker = React.useCallback(
     async (workerId: string, workerName: string) => {
       const orgId = activeOrgId.trim();
       if (!orgId) {
-        setWorkersError(tr("den.error_choose_org"));
+        setWorkersError(t("den.error_choose_org"));
         return;
       }
 
@@ -970,7 +1044,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         const openworkUrl = tokens.openworkUrl?.trim() ?? "";
         const accessToken = tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
         if (!openworkUrl || !accessToken) {
-          throw new Error(tr("den.error_worker_not_ready"));
+          throw new Error(t("den.error_worker_not_ready"));
         }
 
         const ok = await props.connectRemoteWorkspace({
@@ -980,55 +1054,28 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
           displayName: workerName,
         });
         if (!ok) {
-          throw new Error(tx("den.error_open_worker", { name: workerName }));
+          throw new Error(t("den.error_open_worker", { name: workerName }));
         }
 
-        setStatusMessage(tx("den.status_opened_worker", { name: workerName }));
+        showToast({
+          title: t("den.status_opened_worker", { name: workerName }),
+          tone: "success",
+        });
       } catch (error) {
         setWorkersError(
           error instanceof Error
             ? error.message
-            : tx("den.error_open_worker_fallback", { name: workerName }),
+            : t("den.error_open_worker_fallback", { name: workerName }),
         );
       } finally {
         setOpeningWorkerId(null);
       }
     },
-    [activeOrgId, client, props, tr, tx],
+    [activeOrgId, client, props, showToast],
   );
 
-  const handleOpenTemplate = useCallback(
-    async (template: DenTemplate) => {
-      if (openingTemplateId) return;
-
-      setOpeningTemplateId(template.id);
-      setTemplateError(null);
-
-      try {
-        await props.openTeamBundle({
-          templateId: template.id,
-          name: template.name,
-          templateData: template.templateData,
-          organizationName: activeOrg?.name ?? null,
-        });
-        const orgName = activeOrg?.name;
-        setStatusMessage(
-          orgName
-            ? tx("den.status_opened_template", { name: template.name, org: orgName })
-            : tx("den.status_opened_template_fallback", { name: template.name }),
-        );
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error ? error.message : tx("den.error_open_template", { name: template.name }),
-        );
-      } finally {
-        setOpeningTemplateId(null);
-      }
-    },
-    [activeOrg, openingTemplateId, props, tx],
-  );
-
-  const handleImportSkillHub = useCallback(
+  // Skill hub mutations
+  const handleImportSkillHub = React.useCallback(
     async (hubId: string) => {
       const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
       if (!hub || skillHubActionId) return;
@@ -1040,7 +1087,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.importCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
       } finally {
@@ -1048,10 +1095,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
-  const handleRemoveSkillHub = useCallback(
+  const handleRemoveSkillHub = React.useCallback(
     async (hubId: string) => {
       const imported = props.extensions.importedCloudSkillHubs()[hubId];
       if (!imported || skillHubActionId) return;
@@ -1063,7 +1110,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkillHub(hubId);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
       } finally {
@@ -1071,10 +1118,10 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
-  const handleSyncSkillHub = useCallback(
+  const handleSyncSkillHub = React.useCallback(
     async (hubId: string) => {
       const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
       if (!hub || skillHubActionId) return;
@@ -1086,7 +1133,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkillHub(hub);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
       } finally {
@@ -1094,10 +1141,11 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setSkillHubActionKind(null);
       }
     },
-    [props.extensions, skillHubActionId, tr],
+    [props.extensions, showToast, skillHubActionId],
   );
 
-  const handleImportSkill = useCallback(
+  // Skill mutations
+  const handleImportSkill = React.useCallback(
     async (cloudSkillId: string, title: string) => {
       const skill = props.extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
       if (!skill || skillActionId) return;
@@ -1109,20 +1157,20 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.installCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.import_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.import_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
-  const handleRemoveSkill = useCallback(
+  const handleRemoveSkill = React.useCallback(
     async (cloudSkillId: string, title: string) => {
       if (skillActionId) return;
 
@@ -1133,20 +1181,20 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.removeCloudOrgSkill(cloudSkillId);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.remove_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.remove_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
-  const handleSyncSkill = useCallback(
+  const handleSyncSkill = React.useCallback(
     async (cloudSkillId: string, title: string) => {
       const skill = props.extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
       if (!skill || skillActionId) return;
@@ -1158,20 +1206,42 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       try {
         const result = await props.extensions.syncCloudOrgSkill(skill);
         if (!result.ok) throw new Error(result.message);
-        setStatusMessage(`${result.message} ${tr("den.reload_workspace")}`);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
       } catch (error) {
         setSkillActionError(
-          error instanceof Error ? error.message : tx("den.sync_skill_failed", { name: title }),
+          error instanceof Error ? error.message : t("den.sync_skill_failed", { name: title }),
         );
       } finally {
         setSkillActionId(null);
         setSkillActionKind(null);
       }
     },
-    [props.extensions, skillActionId, tr, tx],
+    [props.extensions, showToast, skillActionId],
   );
 
-  const handleImportProvider = useCallback(
+  // Marketplace plugin mutations
+  const handleImportPlugin = React.useCallback(
+    async (marketplaceId: string | null, plugin: DenOrgPlugin) => {
+      if (pluginActionId) return;
+
+      setPluginActionId(plugin.id);
+      setPluginActionError(null);
+
+      try {
+        const result = await props.extensions.importCloudOrgPlugin(marketplaceId, plugin);
+        if (!result.ok) throw new Error(result.message);
+        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
+      } catch (error) {
+        setPluginActionError(error instanceof Error ? error.message : `Failed to import ${plugin.name}.`);
+      } finally {
+        setPluginActionId(null);
+      }
+    },
+    [pluginActionId, props.extensions, showToast],
+  );
+
+  // Provider mutations
+  const handleImportProvider = React.useCallback(
     async (cloudProviderId: string, providerName: string) => {
       if (providerActionId) return;
 
@@ -1181,20 +1251,23 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         const message = await props.connectCloudProvider(cloudProviderId);
-        setStatusMessage(`${message || tx("den.imported_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        showToast({
+          title: `${message || t("den.imported_provider", { name: providerName })} ${t("den.reload_workspace")}`,
+          tone: "success",
+        });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.import_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId, showToast],
   );
 
-  const handleRemoveProvider = useCallback(
+  const handleRemoveProvider = React.useCallback(
     async (cloudProviderId: string, providerName: string) => {
       if (providerActionId) return;
 
@@ -1204,20 +1277,23 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         const message = await props.removeCloudProvider(cloudProviderId);
-        setStatusMessage(`${message || tx("den.removed_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        showToast({
+          title: `${message || t("den.removed_provider", { name: providerName })} ${t("den.reload_workspace")}`,
+          tone: "success",
+        });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.remove_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId, showToast],
   );
 
-  const handleSyncProvider = useCallback(
+  const handleSyncProvider = React.useCallback(
     async (cloudProviderId: string, providerName: string) => {
       if (providerActionId) return;
 
@@ -1227,728 +1303,175 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
 
       try {
         await props.connectCloudProvider(cloudProviderId);
-        setStatusMessage(`${tx("den.synced_provider", { name: providerName })} ${tr("den.reload_workspace")}`);
+        showToast({
+          title: `${t("den.synced_provider", { name: providerName })} ${t("den.reload_workspace")}`,
+          tone: "success",
+        });
       } catch (error) {
         setProviderActionError(
-          error instanceof Error ? error.message : tx("den.sync_provider_failed", { name: providerName }),
+          error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
         );
       } finally {
         setProviderActionId(null);
         setProviderActionKind(null);
       }
     },
-    [props, providerActionId, tr, tx],
+    [props, providerActionId, showToast],
   );
 
   return (
-    <div className="space-y-6">
-      <div className={`${settingsPanelClass} space-y-4`}>
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <div className={headerBadgeClass}>
-              <Cloud size={13} className="text-dls-secondary" />
-              {tr("den.cloud_section_title")}
-            </div>
-            <div>
-              <div className="text-sm font-medium text-dls-text">
-                {tr("den.cloud_section_desc")}
-              </div>
-              <div className="mt-1 max-w-[60ch] text-xs text-dls-secondary">
-                {tr("den.cloud_sleep_hint")}
-              </div>
-            </div>
-          </div>
-          <div className={headerStatusBadgeClass}>
-            <span
-              className={`h-2 w-2 rounded-full ${
-                summaryTone === "ready"
-                  ? "bg-green-500"
-                  : summaryTone === "warning"
-                    ? "bg-amber-500"
-                    : summaryTone === "error"
-                      ? "bg-red-500"
-                      : "bg-gray-400"
-              }`}
-            />
-            {summaryLabel}
-          </div>
-        </div>
+    <SettingsStack>
+      <Separator />
+
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <SettingsSectionHeaderContent>
+            <SettingsSectionHeaderTitle>{t("den.cloud_section_title")}
+
+            <SettingsStatusBadge tone={summaryTone} label={summaryLabel} />
+
+            </SettingsSectionHeaderTitle>
+            <SettingsSectionHeaderDescription className="">
+              {t(isSignedIn ? "den.cloud_signed_in_desc" : "den.cloud_section_desc")}
+            </SettingsSectionHeaderDescription>
+            {!isSignedIn ? (
+              <SettingsSectionHeaderDescription className="text-xs">
+                {t("den.cloud_sleep_hint")}
+              </SettingsSectionHeaderDescription>
+            ) : null}
+          </SettingsSectionHeaderContent>
+        </SettingsSectionHeader>
 
         {props.developerMode ? (
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <TextInput
-              label={tr("den.cloud_control_plane_url_label")}
-              value={baseUrlDraft}
-              onChange={(event) => setBaseUrlDraft(event.currentTarget.value)}
-              placeholder={DEFAULT_DEN_BASE_URL}
-              hint={tr("den.cloud_control_plane_url_hint")}
-              disabled={authBusy || sessionBusy}
+          <CloudDevMode
+            authBusy={authBusy}
+            baseUrlDraft={baseUrlDraft}
+            onApplyBaseUrl={applyBaseUrl}
+            onBaseUrlDraftChange={setBaseUrlDraft}
+            onOpenControlPlane={openControlPlane}
+            onResetBaseUrl={() => setBaseUrlDraft(baseUrl)}
+            sessionBusy={sessionBusy}
+          />
+        ) : null}
+
+        {baseUrlError ? <SettingsNotice tone="error">{baseUrlError}</SettingsNotice> : null}
+
+        {statusMessage && !authError && !workersError && !orgsError && !pluginActionError ? (
+          <SettingsNotice>{statusMessage}</SettingsNotice>
+        ) : null}
+
+        {isSignedIn ? (
+          <>
+            <CloudAccountSection
+              activeOrgId={activeOrgId}
+              authBusy={authBusy}
+              orgs={orgs}
+              orgsBusy={orgsBusy}
+              orgsError={orgsError}
+              sessionBusy={sessionBusy}
+              user={user}
+              onActiveOrgChange={handleActiveOrgChange}
+              onRefreshOrgs={refreshOrgs}
+              onSignOut={signOut}
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                className="h-9 px-3 text-xs"
-                onClick={() => setBaseUrlDraft(baseUrl)}
-                disabled={authBusy || sessionBusy}
-              >
-                {tr("den.cloud_control_plane_reset")}
-              </Button>
-              <Button
-                variant="secondary"
-                className="h-9 px-3 text-xs"
-                onClick={applyBaseUrl}
-                disabled={authBusy || sessionBusy}
-              >
-                {tr("den.cloud_control_plane_save")}
-              </Button>
-              <Button variant="outline" className="h-9 px-3 text-xs" onClick={openControlPlane}>
-                {tr("den.cloud_control_plane_open")}
-                <ArrowUpRight size={13} />
-              </Button>
-            </div>
-          </div>
+          </>
         ) : null}
+      </SettingsSection>
 
-        {baseUrlError ? <div className={errorBannerClass}>{baseUrlError}</div> : null}
+      <Separator />
 
-        {statusMessage && !authError && !workersError && !orgsError && !templateError ? (
-          <div className={softNoticeClass}>{statusMessage}</div>
-        ) : null}
-      </div>
 
       {!isSignedIn ? (
-        <div className={`${settingsPanelClass} space-y-4`}>
-          <div className="space-y-2">
-            <div className="text-sm font-medium text-dls-text">{tr("den.signin_title")}</div>
-            <div className="max-w-[54ch] text-sm text-dls-secondary">
-              {tr("den.cloud_sleep_hint")}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => openBrowserAuth("sign-in")}>
-              {tr("den.signin_button")}
-              <ArrowUpRight size={13} />
-            </Button>
-            <Button
-              variant="outline"
-              className="h-9 px-3 text-xs"
-              onClick={() => openBrowserAuth("sign-up")}
-            >
-              {tr("den.create_account")}
-              <ArrowUpRight size={13} />
-            </Button>
-            <Button
-              variant="outline"
-              className="h-9 px-3 text-xs"
-              onClick={() => {
-                setManualAuthOpen((value) => !value);
-                setAuthError(null);
-              }}
-              disabled={authBusy || sessionBusy}
-            >
-              {manualAuthOpen ? tr("den.hide_signin_code") : tr("den.paste_signin_code")}
-            </Button>
-          </div>
-
-          {manualAuthOpen ? (
-            <div className={`${settingsPanelSoftClass} space-y-3`}>
-              <TextInput
-                label={tr("den.signin_link_label")}
-                value={manualAuthInput}
-                onChange={(event) => setManualAuthInput(event.currentTarget.value)}
-                placeholder={tr("den.signin_link_placeholder")}
-                disabled={authBusy || sessionBusy}
-                hint={tr("den.signin_link_hint")}
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  className="h-9 px-3 text-xs"
-                  onClick={() => void submitManualAuth()}
-                  disabled={authBusy || sessionBusy || !manualAuthInput.trim()}
-                >
-                  {authBusy ? tr("den.finishing") : tr("den.finish_signin")}
-                </Button>
-                <div className="text-[11px] text-dls-secondary">{tr("den.signin_code_note")}</div>
-              </div>
-            </div>
-          ) : null}
-
-          {authError ? <div className={errorBannerClass}>{authError}</div> : null}
-
-          <div className={`${settingsPanelSoftClass} text-sm text-gray-10`}>
-            {tr("den.auto_reconnect_hint")}
-          </div>
-        </div>
+        <DenSignedOutPanel
+          authBusy={authBusy}
+          authError={authError}
+          onClearAuthError={() => setAuthError(null)}
+          onOpenBrowserAuth={openBrowserAuth}
+          onSubmitManualAuth={submitManualAuth}
+          sessionBusy={sessionBusy}
+        />
       ) : (
-        <div className="space-y-6">
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div>
-              <div className="text-sm font-medium text-dls-text">{tr("den.cloud_account_title")}</div>
-              <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_account_hint")}</div>
-            </div>
+        <div className="flex flex-col gap-y-8">
+          <CloudSkillsSection
+            actionError={skillActionError}
+            actionId={skillActionId}
+            actionKind={skillActionKind}
+            activeOrgName={activeOrgName}
+            busy={skillsBusy}
+            hasActiveOrg={Boolean(activeOrgId.trim())}
+            rows={skillRows}
+            statusError={props.extensions.cloudOrgSkillsStatus()}
+            onImportSkill={handleImportSkill}
+            onRefresh={refreshSkills}
+            onRemoveSkill={handleRemoveSkill}
+            onSyncSkill={handleSyncSkill}
+          />
 
-            <div className="flex flex-col gap-3">
-              <div className="ow-soft-card-quiet flex flex-col gap-3 rounded-xl p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-dls-text">{user?.name || user?.email}</div>
-                  <div className="truncate text-xs text-dls-secondary">{user?.email}</div>
-                </div>
-                <Button
-                  variant="outline"
-                  className={`h-10 shrink-0 px-4 text-sm ${quietControlClass}`}
-                  onClick={() => void signOut()}
-                  disabled={authBusy || sessionBusy}
-                >
-                  <LogOut size={13} className="mr-1.5" />
-                  {authBusy ? tr("den.signing_out") : tr("den.sign_out")}
-                </Button>
-              </div>
+          <Separator />
 
-              <div className="ow-soft-card-quiet flex flex-col gap-3 rounded-xl p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-dls-text">{tr("den.active_org_title")}</div>
-                  <div className="truncate text-xs text-dls-secondary">{tr("den.active_org_hint")}</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <select
-                    className={`ow-input h-10 max-w-[260px] rounded-xl px-4 py-2 text-sm font-medium text-dls-text ${quietControlClass}`}
-                    value={activeOrgId}
-                    onChange={(event) => {
-                      const nextId = event.currentTarget.value;
-                      const nextOrg = orgs.find((org) => org.id === nextId) ?? null;
-                      setActiveOrgId(nextId);
-                      writeDenSettings({
-                        baseUrl,
-                        authToken: authToken || null,
-                        activeOrgId: nextId || null,
-                        activeOrgSlug: nextOrg?.slug ?? null,
-                        activeOrgName: nextOrg?.name ?? null,
-                      });
-                      // Sync Better-Auth's active org so the next request
-                      // resolves against `nextId` (mirrors Solid ac41d58b).
-                      if (nextId) {
-                        void ensureDenActiveOrganization({
-                          forceServerSync: true,
-                        }).catch(() => null);
-                      }
-                      setStatusMessage(tx("den.org_switched", { name: nextOrg?.name ?? tr("den.active_org_title") }));
-                    }}
-                    disabled={orgsBusy || orgs.length === 0}
-                  >
-                    {orgs.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name} {org.role === "owner" ? tr("den.org_owner_suffix") : tr("den.org_member_suffix")}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    variant="outline"
-                    className={`h-10 px-4 text-sm ${quietControlClass}`}
-                    onClick={() => void refreshOrgs()}
-                    disabled={orgsBusy}
-                  >
-                    <RefreshCcw size={13} className={orgsBusy ? "animate-spin" : ""} />
-                  </Button>
-                </div>
-              </div>
-            </div>
+          <MarketplacePluginsSection
+            actionError={pluginActionError}
+            actionId={pluginActionId}
+            activeMarketplaceId={activeMarketplaceId}
+            activeOrgName={activeOrgName}
+            busy={marketplacesBusy}
+            hasActiveOrg={Boolean(activeOrgId.trim())}
+            marketplaces={liveMarketplaces}
+            rowsByMarketplace={marketplacePluginRows}
+            statusError={props.extensions.cloudOrgMarketplacesStatus()}
+            onImportPlugin={handleImportPlugin}
+            onRefresh={refreshMarketplaces}
+            onSelectMarketplace={setActiveMarketplaceId}
+          />
 
-            {orgsError ? <div className={errorBannerClass}>{orgsError}</div> : null}
-          </div>
+          <Separator />
 
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Package size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_skills_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_skills_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshSkills()}
-                  disabled={skillsBusy || !activeOrgId.trim()}
-                >
-                  <RefreshCcw size={13} className={skillsBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
+          <CloudWorkersSection
+            activeOrgName={activeOrgName}
+            openingWorkerId={openingWorkerId}
+            refreshDisabled={[workersBusy, !activeOrgId.trim()].some(Boolean)}
+            workers={workers}
+            workersBusy={workersBusy}
+            workersError={workersError}
+            onOpenWorker={handleOpenWorker}
+            onRefreshWorkers={refreshWorkers}
+          />
 
-            {skillActionError || props.extensions.cloudOrgSkillsStatus() ? (
-              <div className={errorBannerClass}>{skillActionError || props.extensions.cloudOrgSkillsStatus()}</div>
-            ) : null}
+          <Separator />
 
-            {!skillsBusy && skillRows.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_cloud_skills") : tr("den.choose_org_for_skills")}
-              </div>
-            ) : null}
+          <SkillHubsSection
+            actionError={skillHubActionError}
+            actionId={skillHubActionId}
+            actionKind={skillHubActionKind}
+            activeOrgName={activeOrgName}
+            busy={skillHubsBusy}
+            hasActiveOrg={Boolean(activeOrgId.trim())}
+            rows={skillHubRows}
+            statusError={props.extensions.cloudOrgSkillHubsStatus()}
+            onImport={handleImportSkillHub}
+            onRefresh={refreshSkillHubs}
+            onRemove={handleRemoveSkillHub}
+            onSync={handleSyncSkillHub}
+          />
 
-            <div className="space-y-1">
-              {skillRows.map((row) => {
-                const actionBusy = skillActionId === row.cloudSkillId;
-                const actionLabel = !actionBusy
-                  ? null
-                  : skillActionKind === "import"
-                    ? tr("den.importing")
-                    : skillActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
+          <Separator />
 
-                return (
-                  <div
-                    key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{row.title}</span>
-                        {row.skill?.hubName ? (
-                          <span className={sectionPillClass}>{tx("skills.cloud_hub_label", { name: row.skill.hubName })}</span>
-                        ) : null}
-                        {row.skill?.shared === "org" ? <span className={sectionPillClass}>{tr("skills.cloud_shared_org")}</span> : null}
-                        {row.skill?.shared === "public" ? <span className={sectionPillClass}>{tr("skills.cloud_shared_public")}</span> : null}
-                        {row.skill?.shared === null && !row.skill?.hubName ? <span className={sectionPillClass}>{tr("den.private_badge")}</span> : null}
-                        {row.installedName ? (
-                          <span className={sectionPillClass}>{tx("den.installed_name_badge", { name: row.installedName })}</span>
-                        ) : null}
-                        {row.status !== "available" ? (
-                          <span className={sectionPillClass}>
-                            {row.status === "installed"
-                              ? tr("den.imported_badge")
-                              : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        {row.status === "available"
-                          ? tx("den.cloud_skill_detail", { title: row.title })
-                          : row.status === "installed"
-                            ? tx("den.cloud_skill_imported_detail", { name: row.installedName ?? row.title })
-                            : row.status === "out_of_sync"
-                              ? tx("den.cloud_skill_sync_detail", { name: row.installedName ?? row.title })
-                              : tx("den.cloud_skill_removed_detail", { name: row.installedName ?? row.title })}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {row.status === "out_of_sync" && row.skill ? (
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-4 text-xs"
-                          onClick={() => void handleSyncSkill(row.cloudSkillId, row.title)}
-                          disabled={skillActionId !== null}
-                        >
-                          {actionBusy && skillActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant={row.status === "available" ? "secondary" : "outline"}
-                        className="h-8 px-4 text-xs"
-                        onClick={() => {
-                          if (row.status === "available" && row.skill) {
-                            return void handleImportSkill(row.cloudSkillId, row.title);
-                          }
-                          return void handleRemoveSkill(row.cloudSkillId, row.title);
-                        }}
-                        disabled={skillActionId !== null}
-                      >
-                        {actionBusy ? actionLabel : row.status === "available" ? tr("den.import_skill") : tr("den.uninstall")}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Server size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_workers_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_workers_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshWorkers()}
-                  disabled={workersBusy || !activeOrgId.trim()}
-                >
-                  <RefreshCcw size={13} className={workersBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {workersError ? <div className={errorBannerClass}>{workersError}</div> : null}
-
-            {!workersBusy && workers.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {tr("den.no_cloud_workers")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {workers.map((worker) => {
-                const status = workerStatusMeta(worker.status, tr);
-                return (
-                  <div
-                    key={worker.workerId}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{worker.workerName}</span>
-                        <span
-                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusBadgeClass(status.tone)}`}
-                        >
-                          {status.label}
-                        </span>
-                        {worker.isMine ? <span className={sectionPillClass}>{tr("den.worker_mine_badge")}</span> : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        {worker.provider ? tx("den.worker_provider_label", { provider: worker.provider }) : tr("den.worker_secondary_cloud")}
-                        {worker.instanceUrl ? <span> · {worker.instanceUrl}</span> : null}
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      className="h-8 shrink-0 px-4 text-xs"
-                      onClick={() => void handleOpenWorker(worker.workerId, worker.workerName)}
-                      disabled={openingWorkerId !== null || !status.canOpen}
-                      title={!status.canOpen ? tr("den.worker_not_ready_title") : undefined}
-                    >
-                      {openingWorkerId === worker.workerId ? tr("den.opening") : tr("den.open")}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Boxes size={15} className="text-dls-secondary" />
-                  {tr("den.team_templates_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.team_templates_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshTemplates()}
-                  disabled={templatesBusy || !activeOrg?.slug?.trim()}
-                >
-                  <RefreshCcw size={13} className={templatesBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {templateError ? <div className={errorBannerClass}>{templateError}</div> : null}
-
-            {!templatesBusy && templates.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrg?.slug?.trim() ? tr("den.no_team_templates") : tr("den.choose_org_for_templates")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {templates.map((template) => {
-                const isMine = template.creator?.userId === user?.id;
-                const opening = openingTemplateId === template.id;
-                return (
-                  <div
-                    key={template.id}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{template.name}</span>
-                        <span className={sectionPillClass}>{tr("den.team_template_badge")}</span>
-                        {isMine ? <span className={sectionPillClass}>{tr("den.worker_mine_badge")}</span> : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        by {templateCreatorLabel(template, tr)} · {formatTemplateTimestamp(template.createdAt, tr)}
-                      </div>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      className="h-8 shrink-0 px-4 text-xs"
-                      onClick={() => void handleOpenTemplate(template)}
-                      disabled={openingTemplateId !== null}
-                    >
-                      {opening ? tr("den.opening") : tr("den.open")}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Boxes size={15} className="text-dls-secondary" />
-                  {tr("den.skill_hubs_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.skill_hubs_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshSkillHubs()}
-                  disabled={skillHubsBusy || !activeOrgId.trim()}
-                >
-                  <RefreshCcw size={13} className={skillHubsBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {skillHubActionError || props.extensions.cloudOrgSkillHubsStatus() ? (
-              <div className={errorBannerClass}>{skillHubActionError || props.extensions.cloudOrgSkillHubsStatus()}</div>
-            ) : null}
-
-            {!skillHubsBusy && skillHubRows.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_skill_hubs") : tr("den.choose_org_for_skill_hubs")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {skillHubRows.map((row) => {
-                const actionBusy = skillHubActionId === row.hubId;
-                const actionLabel = !actionBusy
-                  ? null
-                  : skillHubActionKind === "import"
-                    ? tr("den.importing")
-                    : skillHubActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
-
-                return (
-                  <div
-                    key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{row.name}</span>
-                        <span className={sectionPillClass}>
-                          {tx("den.skill_hub_skills_badge", { count: row.hub?.skills.length ?? row.importedSkillCount })}
-                        </span>
-                        {row.status !== "available" ? (
-                          <span className={sectionPillClass}>
-                            {row.status === "imported"
-                              ? tr("den.imported_badge")
-                              : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        {row.status === "available"
-                          ? tx("den.skill_hub_detail", { count: row.liveSkillCount })
-                          : row.status === "imported"
-                            ? tx("den.skill_hub_imported_detail", { count: row.importedSkillCount })
-                            : row.status === "out_of_sync"
-                              ? tx("den.skill_hub_sync_detail", {
-                                  liveCount: row.liveSkillCount,
-                                  importedCount: row.importedSkillCount,
-                                })
-                              : tx("den.skill_hub_removed_detail", { importedCount: row.importedSkillCount })}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {row.status === "out_of_sync" && row.hub ? (
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-4 text-xs"
-                          onClick={() => void handleSyncSkillHub(row.hubId)}
-                          disabled={skillHubActionId !== null}
-                        >
-                          {actionBusy && skillHubActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant={row.status === "available" ? "secondary" : "outline"}
-                        className="h-8 px-4 text-xs"
-                        onClick={() => {
-                          if (row.status === "available" && row.hub) return void handleImportSkillHub(row.hubId);
-                          return void handleRemoveSkillHub(row.hubId);
-                        }}
-                        disabled={skillHubActionId !== null}
-                      >
-                        {actionBusy
-                          ? actionLabel
-                          : row.status === "available"
-                            ? tr("den.import_all")
-                            : row.status === "removed_from_cloud"
-                              ? tr("den.uninstall")
-                              : tr("common.remove")}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className={`${settingsPanelClass} space-y-4`}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
-                  <Brain size={15} className="text-dls-secondary" />
-                  {tr("den.cloud_providers_title")}
-                </div>
-                <div className="mt-1 text-xs text-dls-secondary">{tr("den.cloud_providers_hint")}</div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className={sectionPillClass}>
-                  <Users size={12} />
-                  {activeOrgName}
-                </div>
-                <Button
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshProviders()}
-                  disabled={providersBusy || !activeOrgId.trim()}
-                >
-                  <RefreshCcw size={13} className={providersBusy ? "animate-spin" : ""} />
-                  {tr("den.refresh")}
-                </Button>
-              </div>
-            </div>
-
-            {providerActionError ? <div className={errorBannerClass}>{providerActionError}</div> : null}
-
-            {!providersBusy && providerRows.length === 0 ? (
-              <div className={`${settingsPanelSoftClass} border-dashed py-6 text-center text-sm text-dls-secondary`}>
-                {activeOrgId.trim() ? tr("den.no_cloud_providers") : tr("den.choose_org_for_providers")}
-              </div>
-            ) : null}
-
-            <div className="space-y-1">
-              {providerRows.map((row) => {
-                const actionBusy = providerActionId === row.cloudProviderId;
-                const actionLabel = !actionBusy
-                  ? null
-                  : providerActionKind === "import"
-                    ? tr("den.importing")
-                    : providerActionKind === "sync"
-                      ? tr("den.syncing")
-                      : tr("den.removing");
-
-                return (
-                  <div
-                    key={row.key}
-                    className="flex items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] transition-colors hover:bg-[#f8fafc]"
-                  >
-                    <div className="min-w-0 pr-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-dls-text">{row.name}</span>
-                        <span className={sectionPillClass}>
-                          <KeyRound size={12} />
-                          {row.provider?.providerId ?? row.imported?.providerId}
-                        </span>
-                        {row.provider?.hasApiKey ? <span className={sectionPillClass}>{tr("den.credentials_ready_badge")}</span> : null}
-                        {row.status !== "available" ? (
-                          <span className={sectionPillClass}>
-                            {row.status === "imported"
-                              ? tr("den.imported_badge")
-                              : row.status === "out_of_sync"
-                                ? tr("den.out_of_sync_badge")
-                                : tr("den.removed_from_cloud_badge")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 truncate text-[11px] text-dls-secondary">
-                        {row.status === "removed_from_cloud"
-                          ? tx("den.cloud_provider_removed_detail", { providerId: row.imported?.providerId ?? row.name })
-                          : row.status === "out_of_sync"
-                            ? tx("den.cloud_provider_sync_detail", {
-                                count: row.provider?.models.length ?? 0,
-                                source: row.provider?.source === "custom" ? "custom" : "managed",
-                              })
-                            : tx("den.cloud_provider_detail", {
-                                count: row.provider?.models.length ?? 0,
-                                source: row.provider?.source === "custom" ? "custom" : "managed",
-                              })}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {row.status === "out_of_sync" && row.provider ? (
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-4 text-xs"
-                          onClick={() => void handleSyncProvider(row.cloudProviderId, row.name)}
-                          disabled={providerActionId !== null}
-                        >
-                          {actionBusy && providerActionKind === "sync" ? tr("den.syncing") : tr("den.sync")}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant={row.status === "available" ? "secondary" : "outline"}
-                        className="h-8 px-4 text-xs"
-                        onClick={() => {
-                          if (row.status === "available" && row.provider) {
-                            return void handleImportProvider(row.cloudProviderId, row.name);
-                          }
-                          return void handleRemoveProvider(row.cloudProviderId, row.name);
-                        }}
-                        disabled={providerActionId !== null}
-                      >
-                        {actionBusy
-                          ? actionLabel
-                          : row.status === "available"
-                            ? tr("den.import_provider")
-                            : row.status === "removed_from_cloud"
-                              ? tr("den.uninstall")
-                              : tr("common.remove")}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <CloudProvidersSection
+            actionError={providerActionError}
+            actionId={providerActionId}
+            actionKind={providerActionKind}
+            activeOrgName={activeOrgName}
+            busy={providersBusy}
+            hasActiveOrg={Boolean(activeOrgId.trim())}
+            rows={providerRows}
+            onImport={handleImportProvider}
+            onRefresh={refreshProviders}
+            onRemove={handleRemoveProvider}
+            onSync={handleSyncProvider}
+          />
         </div>
       )}
-    </div>
+    </SettingsStack>
   );
 }
 

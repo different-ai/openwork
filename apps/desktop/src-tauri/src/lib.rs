@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod desktop_bootstrap;
 mod engine;
+mod env_file;
 mod fs;
 mod openwork_server;
 mod orchestrator;

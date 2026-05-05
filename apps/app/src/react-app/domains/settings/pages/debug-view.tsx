@@ -17,6 +17,7 @@ import type {
 import type { SandboxDebugProbeResult } from "../../../../app/lib/desktop";
 import type {
   OpencodeConnectStatus,
+  ReleaseChannel,
   StartupPreference,
 } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
@@ -84,14 +85,25 @@ export type DebugViewProps = {
   electronMigrationAvailable: boolean;
   electronMigrationUrl: string;
   electronMigrationSha256: string;
+  electronMigrationSha512: string;
+  electronMigrationArtifactLabel: string | null;
   electronMigrationBusy: boolean;
   electronMigrationStatus: string | null;
   electronPreviewReleaseUrl: string;
   onSetElectronMigrationUrl: (value: string) => void;
   onSetElectronMigrationSha256: (value: string) => void;
+  onSetElectronMigrationSha512: (value: string) => void;
   onOpenElectronPreviewRelease: () => void | Promise<void>;
+  onResolveElectronAlphaArtifact: () => void | Promise<void>;
+  onRevealElectronMigrationBackup: () => void | Promise<void>;
   onPrepareElectronMigrationSnapshot: () => void | Promise<void>;
   onInstallElectronPreviewFromTauri: () => void | Promise<void>;
+  electronAlphaUpdaterAvailable: boolean;
+  electronAlphaUpdaterBusy: boolean;
+  electronAlphaUpdaterStatus: string | null;
+  electronAlphaUpdaterChannel: ReleaseChannel;
+  onSetElectronAlphaUpdaterChannel: (channel: ReleaseChannel) => void | Promise<void>;
+  onCheckElectronAlphaUpdates: () => void | Promise<void>;
   sandboxProbeBusy: boolean;
   sandboxProbeResult: SandboxDebugProbeResult | null;
   sandboxProbeStatus: string | null;
@@ -842,12 +854,12 @@ export function DebugView(props: DebugViewProps) {
         {props.resetStatus ? <StatusBanner tone="info" message={props.resetStatus} /> : null}
       </div>
 
-      {/* Section: Electron preview migration (debug only) */}
+      {/* Section: Electron alpha migration (debug only) */}
       {props.electronMigrationAvailable ? (
         <div className={cardClass}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className={sectionTitleClass}>Electron preview migration</div>
+              <div className={sectionTitleClass}>Electron alpha migration</div>
               <div className={sectionDescClass}>
                 Debug-only Tauri controls. Preparing migration data is non-destructive; installing requires a URL and two
                 confirmations.
@@ -859,37 +871,71 @@ export function DebugView(props: DebugViewProps) {
               onClick={() => void props.onOpenElectronPreviewRelease()}
             >
               <ExternalLink size={13} className="mr-1.5" />
-              Preview release
+              Alpha release
             </Button>
           </div>
 
           <div className="rounded-xl border border-green-7/25 bg-green-3/10 px-3 py-2 text-[12px] leading-relaxed text-green-11">
             Safe default: use <strong>Prepare migration data</strong> first. It writes the Electron snapshot only and does
-            not replace, quit, or delete the Tauri app.
+            not replace, quit, or delete the Tauri app. The install handoff keeps rollback backup at{" "}
+            <code className="font-mono">OpenWork.app.migrate-bak</code>.
           </div>
 
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
-            <label className="space-y-1 text-[12px] text-dls-secondary">
-              <span>Electron artifact URL</span>
-              <input
-                type="url"
-                value={props.electronMigrationUrl}
-                onChange={(event) => props.onSetElectronMigrationUrl(event.currentTarget.value)}
-                placeholder="Paste a trusted Electron .zip/.exe/AppImage URL"
-                className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface px-3 font-mono text-[11px] text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
-              />
-            </label>
-            <label className="space-y-1 text-[12px] text-dls-secondary">
-              <span>sha256 (optional)</span>
-              <input
-                type="text"
-                value={props.electronMigrationSha256}
-                onChange={(event) => props.onSetElectronMigrationSha256(event.currentTarget.value)}
-                placeholder="recommended"
-                className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface px-3 font-mono text-[11px] text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
-              />
-            </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              className="h-9 px-3 py-0 text-xs"
+              onClick={() => void props.onResolveElectronAlphaArtifact()}
+              disabled={props.electronMigrationBusy}
+            >
+              {props.electronMigrationBusy ? "Resolving…" : "Resolve latest Electron alpha"}
+            </Button>
+            {props.electronMigrationArtifactLabel ? (
+              <div className="min-w-0 flex-1 truncate text-[11px] text-dls-secondary">
+                {props.electronMigrationArtifactLabel}
+              </div>
+            ) : (
+              <div className="text-[11px] text-dls-secondary">Uses latest-mac.yml from the rolling alpha release.</div>
+            )}
           </div>
+
+          <details className="rounded-xl border border-dls-border bg-dls-sidebar/30 p-3">
+            <summary className="cursor-pointer select-none text-[11px] font-medium uppercase tracking-wider text-dls-secondary">
+              Advanced manual artifact override
+            </summary>
+            <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <label className="space-y-1 text-[12px] text-dls-secondary">
+                <span>Electron artifact URL</span>
+                <input
+                  type="url"
+                  value={props.electronMigrationUrl}
+                  onChange={(event) => props.onSetElectronMigrationUrl(event.currentTarget.value)}
+                  placeholder="Paste a trusted Electron .zip/.exe/AppImage URL"
+                  className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface px-3 font-mono text-[11px] text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
+                />
+              </label>
+              <label className="space-y-1 text-[12px] text-dls-secondary">
+                <span>sha512 from latest-mac.yml</span>
+                <input
+                  type="text"
+                  value={props.electronMigrationSha512}
+                  onChange={(event) => props.onSetElectronMigrationSha512(event.currentTarget.value)}
+                  placeholder="recommended"
+                  className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface px-3 font-mono text-[11px] text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
+                />
+              </label>
+              <label className="space-y-1 text-[12px] text-dls-secondary md:col-span-2">
+                <span>sha256 override (legacy optional)</span>
+                <input
+                  type="text"
+                  value={props.electronMigrationSha256}
+                  onChange={(event) => props.onSetElectronMigrationSha256(event.currentTarget.value)}
+                  placeholder="Only needed when the artifact provider gives sha256 instead of latest-mac.yml sha512"
+                  className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface px-3 font-mono text-[11px] text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
+                />
+              </label>
+            </div>
+          </details>
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -909,6 +955,14 @@ export function DebugView(props: DebugViewProps) {
             >
               Start install handoff…
             </Button>
+            <Button
+              variant="outline"
+              className="h-9 px-3 py-0 text-xs"
+              onClick={() => void props.onRevealElectronMigrationBackup()}
+              disabled={props.electronMigrationBusy}
+            >
+              Open backup in Finder
+            </Button>
             <div className="text-[11px] text-dls-secondary">
               Release page: <span className="font-mono">{props.electronPreviewReleaseUrl}</span>
             </div>
@@ -916,6 +970,59 @@ export function DebugView(props: DebugViewProps) {
 
           {props.electronMigrationStatus ? (
             <StatusBanner tone="info" message={props.electronMigrationStatus} />
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Section: Electron alpha updater (debug only) */}
+      {props.electronAlphaUpdaterAvailable ? (
+        <div className={cardClass}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className={sectionTitleClass}>Electron alpha channel</div>
+              <div className={sectionDescClass}>
+                Debug-only controls for migrated Electron users. Stable updates remain the default in Settings → Updates.
+              </div>
+            </div>
+            <div className="rounded-full border border-dls-border bg-dls-sidebar/50 px-2.5 py-1 text-[11px] font-medium text-dls-secondary">
+              {props.electronAlphaUpdaterChannel === "alpha" ? "Alpha" : "Stable"}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant={props.electronAlphaUpdaterChannel === "alpha" ? "secondary" : "outline"}
+              className="h-9 px-3 py-0 text-xs"
+              onClick={() => void props.onSetElectronAlphaUpdaterChannel("alpha")}
+              disabled={props.electronAlphaUpdaterBusy}
+            >
+              Use alpha feed
+            </Button>
+            <Button
+              variant={props.electronAlphaUpdaterChannel === "stable" ? "secondary" : "outline"}
+              className="h-9 px-3 py-0 text-xs"
+              onClick={() => void props.onSetElectronAlphaUpdaterChannel("stable")}
+              disabled={props.electronAlphaUpdaterBusy}
+            >
+              Return to stable
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 px-3 py-0 text-xs"
+              onClick={() => void props.onCheckElectronAlphaUpdates()}
+              disabled={props.electronAlphaUpdaterBusy}
+            >
+              {props.electronAlphaUpdaterBusy ? "Checking…" : "Check selected feed"}
+            </Button>
+          </div>
+
+          <div className="text-[11px] text-dls-secondary">
+            Alpha feed: <span className="font-mono">alpha-macos-latest/latest-mac.yml</span>. Stable feed:{" "}
+            <span className="font-mono">releases/latest/download/latest-mac.yml</span>.
+          </div>
+
+          {props.electronAlphaUpdaterStatus ? (
+            <StatusBanner tone="info" message={props.electronAlphaUpdaterStatus} />
           ) : null}
         </div>
       ) : null}

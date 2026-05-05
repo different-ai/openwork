@@ -835,8 +835,11 @@ pub fn orchestrator_start_detached(
             }),
         );
 
+        let mut command = command.args(str_args);
+        for (key, value) in crate::env_file::load_user_env_file() {
+            command = command.env(key, value);
+        }
         if let Err(err) = command
-            .args(str_args)
             .env("OPENWORK_TOKEN", token.clone())
             .env("OPENWORK_HOST_TOKEN", host_token.clone())
             .spawn()

@@ -85,6 +85,8 @@ export type EngineInfo = {
   port: number | null;
   opencodeUsername: string | null;
   opencodePassword: string | null;
+  opencodeBinPath: string | null;
+  opencodeBinSource: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
@@ -102,6 +104,8 @@ export type OpenworkServerInfo = {
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
+  managedOpencodeBinPath: string | null;
+  managedOpencodeBinSource: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
@@ -111,6 +115,7 @@ export type EngineDoctorResult = {
   found: boolean;
   inPath: boolean;
   resolvedPath: string | null;
+  resolvedSource: string | null;
   version: string | null;
   supportsServe: boolean;
   notes: string[];
@@ -177,7 +182,7 @@ export async function engineStart(
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
     projectDir,
-    preferSidecar: options?.preferSidecar ?? false,
+    preferSidecar: options?.preferSidecar ?? true,
     opencodeBinPath: options?.opencodeBinPath ?? null,
     opencodeEnableExa: options?.opencodeEnableExa ?? null,
     openworkRemoteAccess: options?.openworkRemoteAccess ?? null,
@@ -420,6 +425,8 @@ export type AppBuildInfo = {
   gitSha?: string | null;
   buildEpoch?: string | null;
   openworkDevMode?: boolean;
+  os?: string | null;
+  arch?: string | null;
 };
 
 export type DesktopBootstrapConfig = {
@@ -582,7 +589,7 @@ export async function engineDoctor(options?: {
   opencodeBinPath?: string | null;
 }): Promise<EngineDoctorResult> {
   return invoke<EngineDoctorResult>("engine_doctor", {
-    preferSidecar: options?.preferSidecar ?? false,
+    preferSidecar: options?.preferSidecar ?? true,
     opencodeBinPath: options?.opencodeBinPath ?? null,
   });
 }

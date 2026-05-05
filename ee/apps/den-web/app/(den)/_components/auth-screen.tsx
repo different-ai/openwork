@@ -5,6 +5,7 @@ import { Dithering } from "@paper-design/shaders-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { isSamePathname } from "../_lib/client-route";
+import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 
@@ -41,6 +42,12 @@ export function AuthScreen() {
 
   useEffect(() => {
     if (!hasResolvedSession || routingRef.current) {
+      return;
+    }
+
+    const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
+    if (oauthRoute && !isSamePathname(pathname, oauthRoute)) {
+      router.replace(oauthRoute);
       return;
     }
 

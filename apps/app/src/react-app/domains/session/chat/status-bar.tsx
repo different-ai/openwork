@@ -1,9 +1,10 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, MessageCircle, Settings } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { usePlatform } from "../../../kernel/platform";
+import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 
 const DOCS_URL = "https://openworklabs.com/docs";
@@ -103,6 +104,9 @@ function deriveStatusCopy(props: StatusBarProps): StatusCopy {
 
 export function StatusBar(props: StatusBarProps) {
   const platform = usePlatform();
+  const docsButtonRef = useRef<HTMLButtonElement>(null);
+  const feedbackButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const [initializing, setInitializing] = useState(
     () => Date.now() - STATUS_BAR_BOOT_STARTED_AT < STATUS_BAR_INITIALIZING_MS,
   );
@@ -118,6 +122,36 @@ export function StatusBar(props: StatusBarProps) {
   }, [initializing]);
 
   const statusCopy = deriveStatusCopy({ ...props, initializing });
+  const docsControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "status.docs.open",
+    label: "Open OpenWork docs",
+    description: "Open the documentation from the status bar.",
+    sideEffect: "external",
+    targetRef: docsButtonRef,
+    execute: () => platform.openLink(DOCS_URL),
+  }), [platform]);
+  useControlAction(docsControlAction);
+
+  const feedbackControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "status.feedback.open",
+    label: "Send feedback",
+    description: "Open the OpenWork feedback surface from the status bar.",
+    sideEffect: "external",
+    targetRef: feedbackButtonRef,
+    execute: props.onSendFeedback,
+  }), [props.onSendFeedback]);
+  useControlAction(feedbackControlAction);
+
+  const settingsControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "status.settings.open",
+    label: props.settingsOpen ? "Go back from settings" : "Open settings from the status bar",
+    description: "Use the visible settings button in the status bar.",
+    sideEffect: "navigation",
+    disabled: props.showSettingsButton === false,
+    targetRef: settingsButtonRef,
+    execute: props.onOpenSettings,
+  }), [props.onOpenSettings, props.settingsOpen, props.showSettingsButton]);
+  useControlAction(settingsControlAction);
 
   return (
     <div className="border-t border-dls-border bg-dls-surface">
@@ -143,6 +177,7 @@ export function StatusBar(props: StatusBarProps) {
 
         <div className="flex items-center gap-1.5">
           <button
+            ref={docsButtonRef}
             type="button"
             className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
             onClick={() => platform.openLink(DOCS_URL)}
@@ -153,6 +188,7 @@ export function StatusBar(props: StatusBarProps) {
             <span className="text-[11px] font-medium">{t("status.docs")}</span>
           </button>
           <button
+            ref={feedbackButtonRef}
             type="button"
             className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
             onClick={props.onSendFeedback}
@@ -166,6 +202,7 @@ export function StatusBar(props: StatusBarProps) {
           </button>
           {props.showSettingsButton !== false ? (
             <button
+              ref={settingsButtonRef}
               type="button"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               onClick={props.onOpenSettings}

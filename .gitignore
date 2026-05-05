@@ -22,6 +22,7 @@ packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/sidecars/
+apps/desktop/resources/sidecars/
 
 # Env
 .env

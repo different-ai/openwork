@@ -8,21 +8,16 @@ import {
 } from "react";
 import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-react";
 
-import { currentLocale, t } from "../../../i18n";
+import { t } from "../../../i18n";
 import {
   buildDenAuthUrl,
   createDenClient,
   type DenOrgSummary,
-  type DenTemplate,
   type DenWorkerSummary,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
-import {
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../app/lib/den-template-cache";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
@@ -47,35 +42,32 @@ import type {
   RemoteWorkspaceInput,
 } from "./types";
 
-function workerStatusMeta(
-  status: string,
-  translate: (key: string) => string,
-) {
+function workerStatusMeta(status: string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
       return {
-        label: translate("dashboard.worker_status_ready"),
+        label: t("dashboard.worker_status_ready"),
         tone: "ready" as const,
         canOpen: true,
       };
     case "provisioning":
     case "starting":
       return {
-        label: translate("dashboard.worker_status_starting"),
+        label: t("dashboard.worker_status_starting"),
         tone: "warning" as const,
         canOpen: false,
       };
     case "failed":
     case "error":
       return {
-        label: translate("dashboard.worker_status_attention"),
+        label: t("dashboard.worker_status_attention"),
         tone: "error" as const,
         canOpen: false,
       };
     case "stopped":
       return {
-        label: translate("dashboard.worker_status_stopped"),
+        label: t("dashboard.worker_status_stopped"),
         tone: "neutral" as const,
         canOpen: false,
       };
@@ -83,57 +75,21 @@ function workerStatusMeta(
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : translate("common.unknown"),
+          : t("common.unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
   }
 }
 
-function formatTemplateTimestamp(
-  value: string | null,
-  translate: (key: string) => string,
-) {
-  if (!value) return translate("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return translate("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function templateCreatorLabel(
-  template: DenTemplate,
-  translate: (key: string) => string,
-) {
-  const creator = template.creator;
-  if (!creator) return translate("dashboard.unknown_creator");
-  return (
-    creator.name?.trim() ||
-    creator.email?.trim() ||
-    translate("dashboard.unknown_creator")
-  );
-}
-
-function workerSecondaryLine(
-  worker: DenWorkerSummary,
-  translate: (key: string) => string,
-) {
-  const parts = [worker.provider?.trim() || translate("dashboard.cloud_worker")];
+function workerSecondaryLine(worker: DenWorkerSummary) {
+  const parts = [worker.provider?.trim() || t("dashboard.cloud_worker")];
   if (worker.instanceUrl?.trim()) parts.push(worker.instanceUrl.trim());
   return parts.join(" · ");
 }
 
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteUrlRef = useRef<HTMLInputElement | null>(null);
-  const translate = useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, currentLocale(), params),
-    [],
-  );
   const platform = usePlatform();
 
   const [screen, setScreen] = useState<CreateWorkspaceScreen>("chooser");
@@ -143,10 +99,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const [showProgressDetails, setShowProgressDetails] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [cloudSettings, setCloudSettings] = useState(() => readDenSettings());
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    null,
-  );
-  const [templateError, setTemplateError] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteToken, setRemoteToken] = useState("");
   const [remoteDisplayName, setRemoteDisplayName] = useState("");
@@ -174,6 +126,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     [props.workerDebugLines],
   );
   const hasSelectedFolder = Boolean(selectedFolder?.trim());
+  const localError = (props.localError ?? "").trim() || null;
   const remoteError = (props.remoteError ?? "").trim() || null;
   const isSignedIn = Boolean(cloudSettings.authToken?.trim());
   const denClient = useMemo(
@@ -183,43 +136,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         token: cloudSettings.authToken ?? "",
       }),
     [cloudSettings.authToken, cloudSettings.baseUrl],
-  );
-  const templateCacheSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      }),
-    [
-      cloudSettings.activeOrgSlug,
-      cloudSettings.authToken,
-      cloudSettings.baseUrl,
-    ],
-  );
-  const cloudWorkspaceTemplates = useMemo(
-    () =>
-      templateCacheSnapshot.templates.filter((template) => {
-        const payload = template.templateData;
-        return Boolean(
-          payload &&
-            typeof payload === "object" &&
-            (payload as { type?: unknown }).type === "workspace-profile",
-        );
-      }),
-    [templateCacheSnapshot.templates],
-  );
-  const showTemplateSection = Boolean(
-    props.onConfirmTemplate &&
-      cloudSettings.authToken?.trim() &&
-      cloudSettings.activeOrgSlug?.trim(),
-  );
-  const selectedTemplate = useMemo(
-    () =>
-      cloudWorkspaceTemplates.find(
-        (template) => template.id === selectedTemplateId,
-      ) ?? null,
-    [cloudWorkspaceTemplates, selectedTemplateId],
   );
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
@@ -248,28 +164,28 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const headerTitle = (() => {
     switch (screen) {
       case "local":
-        return translate("dashboard.create_local_workspace_title");
+        return t("dashboard.create_local_workspace_title");
       case "remote":
-        return translate("dashboard.create_remote_custom_title");
+        return t("dashboard.create_remote_custom_title");
       case "shared":
-        return translate("dashboard.create_shared_title");
+        return t("dashboard.create_shared_title");
       default:
-        return props.title ?? translate("dashboard.create_workspace_title");
+        return props.title ?? t("dashboard.create_workspace_title");
     }
   })();
 
   const headerSubtitle = (() => {
     switch (screen) {
       case "local":
-        return translate("dashboard.create_local_workspace_subtitle");
+        return t("dashboard.create_local_workspace_subtitle");
       case "remote":
-        return translate("dashboard.create_remote_custom_subtitle");
+        return t("dashboard.create_remote_custom_subtitle");
       case "shared":
         return isSignedIn
-          ? translate("dashboard.create_shared_subtitle_signed_in")
-          : translate("dashboard.create_shared_subtitle_signed_out");
+          ? t("dashboard.create_shared_subtitle_signed_in")
+          : t("dashboard.create_shared_subtitle_signed_out");
       default:
-        return props.subtitle ?? translate("dashboard.create_workspace_subtitle");
+        return props.subtitle ?? t("dashboard.create_workspace_subtitle");
     }
   })();
 
@@ -279,8 +195,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     const settings = readDenSettings();
     setScreen("chooser");
     setCloudSettings(settings);
-    setSelectedTemplateId(null);
-    setTemplateError(null);
     setRemoteUrl("");
     setRemoteToken("");
     setRemoteDisplayName("");
@@ -311,26 +225,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         handler as EventListener,
       );
   }, [isInline, props.open]);
-
-  // Prime the template cache when the shared tab first becomes available.
-  useEffect(() => {
-    if (!showTemplateSection || (!props.open && !isInline)) return;
-    void loadDenTemplateCache(
-      {
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      },
-      { force: true },
-    ).catch(() => undefined);
-  }, [
-    cloudSettings.activeOrgSlug,
-    cloudSettings.authToken,
-    cloudSettings.baseUrl,
-    isInline,
-    props.open,
-    showTemplateSection,
-  ]);
 
   // Tick the "elapsed" clock while submitting.
   useEffect(() => {
@@ -383,7 +277,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setOrgsError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_load_orgs"),
+          : t("dashboard.error_load_orgs"),
       );
     } finally {
       setOrgsBusy(false);
@@ -393,7 +287,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     cloudSettings.activeOrgId,
     denClient,
     isSignedIn,
-    translate,
   ]);
 
   const refreshWorkers = useCallback(
@@ -408,13 +301,13 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         setWorkersError(
           error instanceof Error
             ? error.message
-            : translate("dashboard.error_load_shared_workspaces"),
+            : t("dashboard.error_load_shared_workspaces"),
         );
       } finally {
         setWorkersBusy(false);
       }
     },
-    [activeOrgId, denClient, isSignedIn, translate],
+    [activeOrgId, denClient, isSignedIn],
   );
 
   // Load orgs/workers when the shared tab is active and signed in.
@@ -469,7 +362,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     if (!props.onConfirmRemote) return;
     const orgId = activeOrgId.trim();
     if (!orgId) {
-      setWorkersError(translate("dashboard.error_choose_org"));
+      setWorkersError(t("dashboard.error_choose_org"));
       return;
     }
     setOpeningWorkerId(worker.workerId);
@@ -480,7 +373,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(translate("dashboard.error_workspace_not_ready"));
+        throw new Error(t("dashboard.error_workspace_not_ready"));
       }
       const ok = await Promise.resolve(
         props.onConfirmRemote({
@@ -495,7 +388,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       );
       if (ok === false) {
         throw new Error(
-          translate("dashboard.error_connect_worker", {
+          t("dashboard.error_connect_worker", {
             name: worker.workerName,
           }),
         );
@@ -504,7 +397,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setWorkersError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_connect_worker", {
+          : t("dashboard.error_connect_worker", {
               name: worker.workerName,
             }),
       );
@@ -514,21 +407,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    if (selectedTemplate && props.onConfirmTemplate) {
-      try {
-        setTemplateError(null);
-        await props.onConfirmTemplate(selectedTemplate, preset, selectedFolder);
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error
-            ? error.message
-            : translate("dashboard.error_create_template", {
-                name: selectedTemplate.name,
-              }),
-        );
-      }
-      return;
-    }
     props.onConfirm(preset, selectedFolder);
   };
 
@@ -546,7 +424,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onClick={() => setScreen("chooser")}
               disabled={submitting || remoteSubmitting}
               className={modalHeaderButtonClass}
-              aria-label={translate("dashboard.modal_back")}
+              aria-label={t("dashboard.modal_back")}
             >
               <ArrowLeft size={18} />
             </button>
@@ -562,7 +440,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             onClick={props.onClose}
             disabled={submitting || remoteSubmitting}
             className={modalHeaderButtonClass}
-            aria-label={translate("dashboard.modal_close")}
+            aria-label={t("dashboard.modal_close")}
           >
             <X size={18} />
           </button>
@@ -573,12 +451,12 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         <div className={modalBodyClass}>
           <div className="space-y-3">
             <WorkspaceOptionCard
-              title={translate("dashboard.create_local_workspace_title")}
+              title={t("dashboard.create_local_workspace_title")}
               description={
                 props.localDisabled
                   ? props.localDisabledReason?.trim() ||
-                    translate("dashboard.chooser_local_desc")
-                  : translate("dashboard.chooser_local_desc")
+                    t("dashboard.chooser_local_desc")
+                  : t("dashboard.chooser_local_desc")
               }
               icon={FolderPlus}
               onClick={() => setScreen("local")}
@@ -586,20 +464,20 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               endAdornment={
                 props.localDisabled ? (
                   <span className={tagClass}>
-                    {translate("dashboard.desktop_badge")}
+                    {t("dashboard.desktop_badge")}
                   </span>
                 ) : undefined
               }
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_remote_custom_title")}
-              description={translate("dashboard.chooser_remote_desc")}
+              title={t("dashboard.create_remote_custom_title")}
+              description={t("dashboard.chooser_remote_desc")}
               icon={Globe}
               onClick={() => setScreen("remote")}
             />
             <WorkspaceOptionCard
-              title={translate("dashboard.create_shared_title")}
-              description={translate("dashboard.chooser_shared_desc")}
+              title={t("dashboard.create_shared_title")}
+              description={t("dashboard.chooser_shared_desc")}
               icon={Cloud}
               onClick={() => setScreen("shared")}
             />
@@ -615,10 +493,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   {props.importingConfig ? (
                     <span className="inline-flex items-center gap-2">
                       <Loader2 size={14} className="animate-spin" />
-                      {translate("dashboard.importing")}
+                      {t("dashboard.importing")}
                     </span>
                   ) : (
-                    translate("dashboard.import_config")
+                    t("dashboard.import_config")
                   )}
                 </button>
               </div>
@@ -629,25 +507,12 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
 
       {screen === "local" ? (
         <CreateWorkspaceLocalPanel
-          translate={translate}
           selectedFolder={selectedFolder}
           hasSelectedFolder={hasSelectedFolder}
           pickingFolder={pickingFolder}
           onPickFolder={() => void handlePickFolder()}
           submitting={submitting}
-          selectedTemplateId={selectedTemplateId}
-          setSelectedTemplateId={setSelectedTemplateId}
-          showTemplateSection={showTemplateSection}
-          cloudWorkspaceTemplates={cloudWorkspaceTemplates}
-          templateCreatorLabel={(template) =>
-            templateCreatorLabel(template, translate)
-          }
-          formatTemplateTimestamp={(value) =>
-            formatTemplateTimestamp(value, translate)
-          }
-          templateError={templateError}
-          templateCacheBusy={templateCacheSnapshot.busy}
-          templateCacheError={templateCacheSnapshot.error}
+          localError={localError}
           onClose={props.onClose}
           onSubmit={() => void handleLocalSubmit()}
           confirmLabel={props.confirmLabel}
@@ -688,8 +553,8 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               onDisplayNameInput={setRemoteDisplayName}
               submitting={remoteSubmitting}
               hostInputRef={remoteUrlRef}
-              title={translate("dashboard.remote_server_details_title")}
-              description={translate("dashboard.remote_server_details_hint")}
+              title={t("dashboard.remote_server_details_title")}
+              description={t("dashboard.remote_server_details_hint")}
             />
           </div>
           <div className="space-y-3 border-t border-dls-border px-6 py-5">
@@ -705,7 +570,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 onClick={props.onClose}
                 disabled={remoteSubmitting}
               >
-                {translate("common.cancel")}
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -716,10 +581,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 {remoteSubmitting ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 size={16} className="animate-spin" />
-                    {translate("dashboard.connecting")}
+                    {t("dashboard.connecting")}
                   </span>
                 ) : (
-                  translate("dashboard.connect_remote_button")
+                  t("dashboard.connect_remote_button")
                 )}
               </button>
             </div>
@@ -745,8 +610,8 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           onWorkerSearchInput={setWorkerSearch}
           filteredWorkers={filteredWorkers}
           openingWorkerId={openingWorkerId}
-          workerStatusMeta={(status) => workerStatusMeta(status, translate)}
-          workerSecondaryLine={(worker) => workerSecondaryLine(worker, translate)}
+          workerStatusMeta={(status) => workerStatusMeta(status)}
+          workerSecondaryLine={(worker) => workerSecondaryLine(worker)}
           onOpenWorker={(worker) => void handleOpenWorker(worker)}
           onOpenCloudSignIn={openCloudSignIn}
           onRefreshWorkers={() => void refreshWorkers()}

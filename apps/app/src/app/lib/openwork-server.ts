@@ -88,6 +88,7 @@ export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
+  hostToken?: string;
   remoteAccessEnabled?: boolean;
 };
 
@@ -201,6 +202,26 @@ export type OpenworkWorkspaceExport = {
   files?: Array<{ path: string; content: string }>;
 };
 
+export type OpenworkWorkspaceImportChange = {
+  kind: "opencode" | "openwork" | "skill" | "command" | "file";
+  action: "create" | "update" | "replace" | "delete" | "unchanged";
+  label: string;
+  path: string;
+};
+
+export type OpenworkWorkspaceImportPreview = {
+  fingerprint: string;
+  summary: {
+    total: number;
+    create: number;
+    update: number;
+    replace: number;
+    delete: number;
+    unchanged: number;
+  };
+  changes: OpenworkWorkspaceImportChange[];
+};
+
 export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
 
 export type OpenworkWorkspaceExportWarning = {
@@ -287,6 +308,7 @@ export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
+const STORAGE_HOST_TOKEN = "openwork.server.hostToken";
 const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
@@ -294,6 +316,17 @@ export function normalizeOpenworkServerUrl(input: string) {
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
   return withProtocol.replace(/\/+$/, "");
+}
+
+export function isLoopbackOpenworkServerUrl(input: string) {
+  const normalized = normalizeOpenworkServerUrl(input) ?? "";
+  if (!normalized) return false;
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 export function parseOpenworkWorkspaceIdFromUrl(input: string) {
@@ -402,11 +435,13 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
+    const hostToken = window.localStorage.getItem(STORAGE_HOST_TOKEN) ?? undefined;
     const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
+      hostToken: hostToken?.trim() || undefined,
       remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
@@ -420,6 +455,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
+    const hostToken = next.hostToken?.trim() || undefined;
     const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
@@ -438,6 +474,12 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.setItem(STORAGE_TOKEN, token);
     } else {
       window.localStorage.removeItem(STORAGE_TOKEN);
+    }
+
+    if (hostToken) {
+      window.localStorage.setItem(STORAGE_HOST_TOKEN, hostToken);
+    } else {
+      window.localStorage.removeItem(STORAGE_HOST_TOKEN);
     }
 
     if (remoteAccessEnabled) {
@@ -464,8 +506,11 @@ export function hydrateOpenworkServerSettingsFromEnv() {
   const envToken = typeof import.meta.env?.VITE_OPENWORK_TOKEN === "string"
     ? import.meta.env.VITE_OPENWORK_TOKEN.trim()
     : "";
+  const envHostToken = typeof import.meta.env?.VITE_OPENWORK_HOST_TOKEN === "string"
+    ? import.meta.env.VITE_OPENWORK_HOST_TOKEN.trim()
+    : "";
 
-  if (!envUrl && !envPort && !envToken) return;
+  if (!envUrl && !envPort && !envToken && !envHostToken) return;
 
   try {
     const current = readOpenworkServerSettings();
@@ -490,6 +535,11 @@ export function hydrateOpenworkServerSettingsFromEnv() {
       changed = true;
     }
 
+    if (!current.hostToken && envHostToken) {
+      next.hostToken = envHostToken;
+      changed = true;
+    }
+
     if (changed) {
       writeOpenworkServerSettings(next);
     }
@@ -504,6 +554,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
+    window.localStorage.removeItem(STORAGE_HOST_TOKEN);
     window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
@@ -828,13 +879,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       });
     },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
-      requestJson<{ ok: boolean }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
+      requestJson<{ ok: boolean; preview?: OpenworkWorkspaceImportPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
         timeoutMs: timeouts.workspaceImport,
       }),
+    previewWorkspaceImport: (workspaceId: string, payload: Record<string, unknown>) =>
+      requestJson<OpenworkWorkspaceImportPreview>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/import/preview`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+          timeoutMs: timeouts.workspaceImport,
+        },
+      ),
     materializeBlueprintSessions: (workspaceId: string) =>
       requestJson<OpenworkBlueprintSessionsMaterializeResult>(
         baseUrl,
@@ -846,7 +909,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
+    publishBundle: (payload: unknown, bundleType: "skill" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
       requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
         token,
         hostToken,
@@ -1011,6 +1074,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
+      requestJson<{ items: OpenworkMcpItem[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/enabled`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { enabled },
+        },
+      ),
 
     logoutMcpAuth: (workspaceId: string, name: string) =>
       requestJson<{ ok: true }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/auth`, {
@@ -1152,6 +1226,39 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
+
+    // User-level env vars (host-auth only — desktop shell is the sole caller).
+    // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
+    listUserEnvKeys: () =>
+      requestJson<{ keys: string[] }>(
+        baseUrl,
+        "/env/keys",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    listUserEnv: () =>
+      requestJson<{ items: Array<{ key: string; value: string; updatedAt: number }> }>(
+        baseUrl,
+        "/env",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    upsertUserEnv: (entries: Array<{ key: string; value: string }>) =>
+      requestJson<{ ok: true; count: number }>(baseUrl, "/env", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: { entries },
+        timeoutMs: timeouts.config,
+      }),
+
+    deleteUserEnv: (key: string) =>
+      requestJson<{ ok: true }>(baseUrl, `/env/${encodeURIComponent(key)}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.config,
+      }),
   };
 }
 

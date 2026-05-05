@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { proxyUpstream } from "../../_lib/upstream-proxy";
+import { buildCorsPreflightResponse, proxyUpstream } from "../../_lib/upstream-proxy";
 
 export const dynamic = "force-dynamic";
 
@@ -27,4 +27,8 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   return proxy(request);
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return buildCorsPreflightResponse(request);
 }

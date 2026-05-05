@@ -18,11 +18,13 @@ import {
   $isElementNode,
   $isRangeSelection,
   $isTextNode,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   type SerializedTextNode,
   type Spread,
   TextNode,
@@ -40,6 +42,7 @@ type EditorProps = {
   onChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+  onPasteText?: (text: string) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
@@ -399,24 +402,35 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
   }, [editor, props.disabled]);
 
   useEffect(() => {
-    if (valueRef.current === props.value) return;
+    // When the external value is cleared (e.g. after sending a message),
+    // always force-rebuild the editor to remove any stale chip nodes.
+    // The valueRef check can false-positive when both refs converge to ""
+    // through different paths (SyncPlugin vs OnChange).
+    //
+    // NOTE: serializePromptFromRoot() calls $getRoot() which requires an
+    // active editor state. Outside of editor.update()/editor.read() we
+    // must wrap it in editor.getEditorState().read().
+    const currentText = editor.getEditorState().read(() => serializePromptFromRoot());
+    const forceRebuild = !props.value.trim() && currentText.trim() !== "";
+    if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
     editor.update(() => {
-      // Use the same single-newline serializer we write out so we don't
-      // rebuild the editor on every keystroke when the user typed only a
-      // plain newline (Lexical's root.getTextContent() uses "\n\n" which
-      // never matches what we stored).
-      if (serializePromptFromRoot() === props.value) return;
+      if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText);
       $getRoot().selectEnd();
     });
-  }, [editor, props.mentions, props.value]);
+  }, [editor, props.mentions, props.pastedText, props.value]);
 
   return null;
 }
 
 function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: boolean }) {
   const [editor] = useLexicalComposerContext();
+  const onSubmitRef = useRef(props.onSubmit);
+
+  useEffect(() => {
+    onSubmitRef.current = props.onSubmit;
+  }, [props.onSubmit]);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -435,12 +449,49 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
         // Plain Enter submits. Cmd/Ctrl+Enter also submits for muscle
         // memory compatibility.
         event?.preventDefault();
-        void props.onSubmit();
+        void onSubmitRef.current();
         return true;
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, props.disabled, props.onSubmit]);
+  }, [editor, props.disabled]);
+
+  return null;
+}
+
+const PASTE_CHIP_LINE_THRESHOLD = 3;
+const PASTE_CHIP_CHAR_THRESHOLD = 200;
+
+function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const onPasteTextRef = useRef(props.onPasteText);
+
+  useEffect(() => {
+    onPasteTextRef.current = props.onPasteText;
+  }, [props.onPasteText]);
+
+  useEffect(() => {
+    return editor.registerCommand(
+      PASTE_COMMAND,
+      (event: ClipboardEvent) => {
+        if (!onPasteTextRef.current) return false;
+        // Only handle plain-text pastes; files are handled in the React onPaste.
+        const files = event.clipboardData?.files;
+        if (files && files.length > 0) return false;
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!text.trim()) return false;
+        const lineCount = text.split(/\r?\n/).length;
+        if (lineCount < PASTE_CHIP_LINE_THRESHOLD && text.length < PASTE_CHIP_CHAR_THRESHOLD) {
+          return false;
+        }
+        // Collapse into a paste chip.
+        event.preventDefault();
+        onPasteTextRef.current(text);
+        return true;
+      },
+      COMMAND_PRIORITY_CRITICAL,
+    );
+  }, [editor]);
 
   return null;
 }
@@ -456,9 +507,39 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
+        // --- Slash command chip: atomic delete ---
+        // When cursor is in the text node right after a slash chip,
+        // remove the chip (and any trailing whitespace text) in one action.
+        if ($isTextNode(anchorNode)) {
+          const previous = anchorNode.getPreviousSibling();
+          if (previous instanceof ComposerSlashCommandNode) {
+            // At offset 0: cursor is right after the chip -> remove chip
+            // At offset > 0 but text is only whitespace: also remove chip
+            const textBefore = anchorNode.getTextContent().slice(0, selection.anchor.offset);
+            if (selection.anchor.offset === 0 || textBefore.trim() === "") {
+              previous.remove();
+              // Also remove the whitespace-only prefix
+              if (selection.anchor.offset > 0) {
+                const remaining = anchorNode.getTextContent().slice(selection.anchor.offset);
+                if (remaining) {
+                  anchorNode.setTextContent(remaining);
+                  const sel = $createRangeSelection();
+                  sel.anchor.set(anchorNode.getKey(), 0, "text");
+                  sel.focus.set(anchorNode.getKey(), 0, "text");
+                  $setSelection(sel);
+                } else {
+                  anchorNode.remove();
+                }
+              }
+              return true;
+            }
+          }
+        }
+
+        // --- Mention / pasted-text chips: atomic delete (same as before) ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
@@ -466,7 +547,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isElementNode(anchorNode)) {
           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerSlashCommandNode || previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
@@ -533,6 +614,17 @@ function MentionChipNavigationPlugin() {
 }
 
 export function LexicalPromptEditor(props: EditorProps) {
+  const valueRef = useRef(props.value);
+  const onChangeRef = useRef(props.onChange);
+
+  useEffect(() => {
+    valueRef.current = props.value;
+  }, [props.value]);
+
+  useEffect(() => {
+    onChangeRef.current = props.onChange;
+  }, [props.onChange]);
+
   const initialConfig = useMemo(
     () => ({
       namespace: "openwork-react-session-composer",
@@ -551,10 +643,13 @@ export function LexicalPromptEditor(props: EditorProps) {
   const handleChange = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
-        props.onChange(serializePromptFromRoot());
+        const next = serializePromptFromRoot();
+        if (next === valueRef.current) return;
+        valueRef.current = next;
+        onChangeRef.current(next);
       });
     },
-    [props],
+    [],
   );
 
   return (
@@ -589,6 +684,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        <PasteChipPlugin onPasteText={props.onPasteText} />
         <MentionChipNavigationPlugin />
       </div>
     </LexicalComposer>

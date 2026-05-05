@@ -63,6 +63,10 @@ function comparePrereleaseIdentifiers(left: string[], right: string[]): number {
   return 0;
 }
 
+function releasePart(value: string): number[] | null {
+  return parseComparableVersion(value)?.release ?? null;
+}
+
 /**
  * Compare two version strings. Returns -1 / 0 / 1 as usual, or null if
  * either side fails to parse. Accepts an optional leading `v` and handles
@@ -103,6 +107,72 @@ export function isUpdateAllowedByDesktopConfig(
   );
 }
 
+function maxAllowedDesktopVersion(desktopConfig: DenDesktopConfig | null | undefined): string | null {
+  if (!Array.isArray(desktopConfig?.allowedDesktopVersions)) {
+    return null;
+  }
+
+  let maxVersion: string | null = null;
+  for (const version of desktopConfig.allowedDesktopVersions) {
+    if (parseComparableVersion(version) === null) continue;
+    if (maxVersion === null) {
+      maxVersion = version;
+      continue;
+    }
+    const comparison = compareVersions(version, maxVersion);
+    if (comparison !== null && comparison > 0) {
+      maxVersion = version;
+    }
+  }
+  return maxVersion;
+}
+
+function effectiveMaxDesktopVersion(
+  denLatestAppVersion: string,
+  desktopConfig: DenDesktopConfig | null | undefined,
+): string {
+  const orgMaxVersion = maxAllowedDesktopVersion(desktopConfig);
+  if (!orgMaxVersion) return denLatestAppVersion;
+  const comparison = compareVersions(orgMaxVersion, denLatestAppVersion);
+  return comparison !== null && comparison < 0 ? orgMaxVersion : denLatestAppVersion;
+}
+
+function isWithinOnePatchAhead(updateVersion: string, maxVersion: string): boolean {
+  const directComparison = compareVersions(updateVersion, maxVersion);
+  if (directComparison !== null && directComparison <= 0) {
+    return true;
+  }
+
+  const updateRelease = releasePart(updateVersion);
+  const maxRelease = releasePart(maxVersion);
+  if (!updateRelease || !maxRelease) return false;
+
+  const updateMajor = updateRelease[0] ?? 0;
+  const updateMinor = updateRelease[1] ?? 0;
+  const updatePatch = updateRelease[2] ?? 0;
+  const maxMajor = maxRelease[0] ?? 0;
+  const maxMinor = maxRelease[1] ?? 0;
+  const maxPatch = maxRelease[2] ?? 0;
+
+  return updateMajor === maxMajor && updateMinor === maxMinor && updatePatch <= maxPatch + 1;
+}
+
+async function readDenLatestAppVersion(): Promise<string | null> {
+  try {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const client = createDenClient({
+      baseUrl: settings.baseUrl,
+      apiBaseUrl: settings.apiBaseUrl,
+      ...(token ? { token } : {}),
+    });
+    const metadata = await client.getAppVersionMetadata();
+    return metadata.latestAppVersion;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ask Den for the currently-supported latest app version (dev #1476) and
  * return true only when the candidate update version is the latest
@@ -114,20 +184,25 @@ export function isUpdateAllowedByDesktopConfig(
  * will omit the token when none is persisted.
  */
 export async function isUpdateSupportedByDen(updateVersion: string): Promise<boolean> {
-  try {
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const client = createDenClient({
-      baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
-      ...(token ? { token } : {}),
-    });
-    const metadata = await client.getAppVersionMetadata();
-    const comparison = compareVersions(updateVersion, metadata.latestAppVersion);
-    return comparison !== null && comparison <= 0;
-  } catch {
-    return false;
-  }
+  const latestAppVersion = await readDenLatestAppVersion();
+  if (!latestAppVersion) return false;
+  const comparison = compareVersions(updateVersion, latestAppVersion);
+  return comparison !== null && comparison <= 0;
+}
+
+/**
+ * Alpha channel builds may run one patch ahead of the current Den/org maximum
+ * (e.g. Den allows 0.13.3, alpha 0.13.4-alpha.N is allowed). Larger jumps are
+ * still blocked so alpha cannot bypass staged rollout ceilings entirely.
+ */
+export async function isAlphaUpdateAllowed(
+  updateVersion: string,
+  desktopConfig: DenDesktopConfig | null | undefined,
+): Promise<boolean> {
+  const latestAppVersion = await readDenLatestAppVersion();
+  if (!latestAppVersion) return false;
+  const effectiveMaxVersion = effectiveMaxDesktopVersion(latestAppVersion, desktopConfig);
+  return isWithinOnePatchAhead(updateVersion, effectiveMaxVersion);
 }
 
 /**

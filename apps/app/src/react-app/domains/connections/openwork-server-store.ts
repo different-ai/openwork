@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import { t, currentLocale } from "../../../i18n";
+import { t } from "../../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../../../app/types";
 import { isDesktopRuntime } from "../../../app/utils";
 import {
@@ -11,6 +11,7 @@ import {
 import {
   clearOpenworkServerSettings,
   createOpenworkServerClient,
+  isLoopbackOpenworkServerUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
@@ -132,6 +133,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
 
     if (pref === "local") return hostInfo?.baseUrl ?? "";
+    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+      return hostInfo.baseUrl;
+    }
     if (pref === "server") return settingsUrl;
     return hostInfo?.baseUrl ?? settingsUrl;
   };
@@ -139,20 +143,34 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   const getAuth = () => {
     const pref = options.startupPreference();
     const hostInfo = state.openworkServerHostInfo;
+    const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
     const settingsToken = state.openworkServerSettings.token?.trim() ?? "";
+    const settingsHostToken = state.openworkServerSettings.hostToken?.trim() ?? "";
     const clientToken = hostInfo?.clientToken?.trim() ?? "";
     const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
     if (pref === "local") {
       return { token: clientToken || undefined, hostToken: hostToken || undefined };
     }
+    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+      return {
+        token: clientToken || settingsToken || undefined,
+        hostToken: hostToken || settingsHostToken || undefined,
+      };
+    }
     if (pref === "server") {
-      return { token: settingsToken || undefined, hostToken: undefined };
+      return {
+        token: settingsToken || undefined,
+        hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+      };
     }
     if (hostInfo?.baseUrl) {
       return { token: clientToken || undefined, hostToken: hostToken || undefined };
     }
-    return { token: settingsToken || undefined, hostToken: undefined };
+    return {
+      token: settingsToken || undefined,
+      hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+    };
   };
 
   const getClient = () => {
@@ -209,11 +227,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       resolvedOpenworkCapabilities,
       openworkServerCanWriteSkills:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.skills?.write ?? false),
       openworkServerCanWritePlugins:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.plugins?.write ?? false),
       openworkServerHostInfo: state.openworkServerHostInfo,
       openworkServerDiagnostics: state.openworkServerDiagnostics,
@@ -549,7 +565,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
             openworkAuditError:
               error instanceof Error
                 ? error.message
-                : t("app.error_audit_load", currentLocale()),
+                : t("app.error_audit_load"),
           }));
         }
       })();
@@ -718,7 +734,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
         const restarted = await options.restartLocalServer();
         if (!restarted) {
-          throw new Error(t("app.error_restart_local_worker", currentLocale()));
+          throw new Error(t("app.error_restart_local_worker"));
         }
         await reconnectOpenworkServer();
       }
@@ -729,7 +745,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         shareRemoteAccessError:
           error instanceof Error
             ? error.message
-            : t("app.error_remote_access", currentLocale()),
+            : t("app.error_remote_access"),
       }));
       return;
     } finally {

@@ -7,33 +7,50 @@ import th from "./locales/th";
 import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
+import ru from "./locales/ru";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru"];
 
 /**
  * Language options for UI - single source of truth
  */
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
-  { value: "ja" as Language, label: "日本語", nativeName: "日本語" },
-  { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
+  { value: "ja" as Language, label: "Japanese", nativeName: "日本語" },
+  { value: "zh" as Language, label: "Chinese (Simplified)", nativeName: "简体中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
-  { value: "th" as Language, label: "ไทย", nativeName: "ไทย" },
+  { value: "th" as Language, label: "Thai", nativeName: "ไทย" },
   { value: "fr" as Language, label: "French", nativeName: "Français" },
-  { value: "ca" as Language, label: "Català", nativeName: "Català" },
-  { value: "es" as Language, label: "Español", nativeName: "Español" },
+  { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
+  { value: "es" as Language, label: "Spanish", nativeName: "Español" },
+  { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
 ] as const;
+
+const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
+
+/**
+ * Current translation strings use an English-style plural suffix placeholder.
+ * Some locales render the noun without a visible plural marker, so we keep
+ * that suffix empty for them.
+ */
+export const pluralSuffix = (locale: Language, count: number): string => {
+  if (PLURAL_SUFFIX_EMPTY_LANGUAGES.has(locale)) {
+    return "";
+  }
+
+  return count === 1 ? "" : "s";
+};
 
 /**
  * Translation maps
@@ -48,6 +65,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   fr,
   ca,
   es,
+  ru,
 };
 
 /**
@@ -94,36 +112,66 @@ export const setLocale = (newLocale: Language) => {
 };
 
 /**
- * Translation function with fallback behavior
- * Fallback chain: target language → English → key itself
- *
- * @param key - Translation key
- * @param localeOverride - Optional locale override (defaults to current locale)
- * @returns Translated string or fallback
+ * Resolve a translation entry with the locale → English → null fallback chain.
  */
-export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
-  const loc = localeOverride ?? locale();
+const lookupEntry = (loc: Language, candidateKey: string): string | null => {
+  if (TRANSLATIONS[loc]?.[candidateKey]) return TRANSLATIONS[loc][candidateKey];
+  if (loc !== "en" && TRANSLATIONS.en?.[candidateKey]) return TRANSLATIONS.en[candidateKey];
+  return null;
+};
 
-  // Try target language first
-  let result: string;
-  if (TRANSLATIONS[loc]?.[key]) {
-    result = TRANSLATIONS[loc][key];
-  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    // Fallback to English
-    result = TRANSLATIONS.en[key];
-  } else {
-    // Final fallback to key itself (prevents raw keys from showing in UI)
-    return key;
+const pluralRulesCache = new Map<Language, Intl.PluralRules>();
+const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
+  let rules = pluralRulesCache.get(loc);
+  if (!rules) {
+    rules = new Intl.PluralRules(loc);
+    pluralRulesCache.set(loc, rules);
   }
+  return rules.select(count);
+};
 
-  // Replace params if provided
-  if (params) {
-    for (const [k, v] of Object.entries(params)) {
-      result = result.replace(`{${k}}`, String(v));
-    }
+/**
+ * Pick the right key variant for a count. Tries `${key}_zero` (only when count === 0),
+ * then `${key}_${rule}` (e.g. `_one` / `_other`), then `${key}_other`, then the bare
+ * key. Asian locales (no grammatical plural) define only the bare key and hit the
+ * final step. Each candidate runs through the locale → English fallback so an
+ * untranslated key still resolves to the English `_one` / `_other` variant.
+ */
+const resolvePluralKey = (loc: Language, key: string, count: number): string => {
+  const candidates: string[] = [];
+  if (count === 0) candidates.push(`${key}_zero`);
+  candidates.push(`${key}_${pluralRule(loc, count)}`, `${key}_other`, key);
+
+  for (const candidate of candidates) {
+    if (lookupEntry(loc, candidate) !== null) return candidate;
   }
+  return key;
+};
 
-  return result;
+/**
+ * Translation function with fallback behavior.
+ * - Locale fallback: target language → English → key itself.
+ * - Plural fallback: when params include a numeric `count`, the lookup picks
+ *   `${key}_one` / `${key}_other` (or `${key}_zero` when count === 0) per
+ *   `Intl.PluralRules`, and falls back to the bare key when no variants exist.
+ */
+export const t = (key: string, params?: Record<string, string | number> & { lng?: Language }): string => {
+  const loc = params?.lng ?? locale();
+
+  const lookupKey =
+    typeof params?.count === "number" ? resolvePluralKey(loc, key, params.count) : key;
+
+  const result = lookupEntry(loc, lookupKey);
+  if (result === null) return key;
+
+  if (!params) return result;
+
+  let out = result;
+  for (const [k, v] of Object.entries(params)) {
+    if (k === "lng") continue;
+    out = out.replace(`{${k}}`, String(v));
+  }
+  return out;
 };
 
 /**

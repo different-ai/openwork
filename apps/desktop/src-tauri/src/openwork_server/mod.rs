@@ -416,6 +416,7 @@ pub fn start_openwork_server(
     remote_access_enabled: bool,
     manage_opencode: bool,
     opencode_bin_path: Option<&str>,
+    opencode_bin_source: Option<&str>,
 ) -> Result<OpenworkServerInfo, String> {
     let mut state = manager
         .inner
@@ -478,6 +479,16 @@ pub fn start_openwork_server(
     state.mdns_url = mdns_url;
     state.lan_url = lan_url;
     state.client_token = Some(client_token);
+    state.managed_opencode_bin_path = if manage_opencode {
+        opencode_bin_path.map(|value| value.to_string())
+    } else {
+        None
+    };
+    state.managed_opencode_bin_source = if manage_opencode {
+        opencode_bin_source.map(|value| value.to_string())
+    } else {
+        None
+    };
     if let Err(error) = wait_for_openwork_health(&base_url, Duration::from_secs(10)) {
         OpenworkServerManager::stop_locked(&mut state);
         return Err(error);

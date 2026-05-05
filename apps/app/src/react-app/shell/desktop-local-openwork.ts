@@ -3,7 +3,7 @@ import {
   engineStart,
   openworkServerInfo,
 } from "../../app/lib/desktop";
-import { writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "./app-inspector";
 
@@ -68,6 +68,7 @@ export async function ensureDesktopLocalOpenworkConnection(
       await engineStart(workspaceRoot, {
         runtime: "direct",
         workspacePaths,
+        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
       });
     }
 
@@ -79,6 +80,7 @@ export async function ensureDesktopLocalOpenworkConnection(
     writeOpenworkServerSettings({
       urlOverride: info.baseUrl,
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
+      hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
       remoteAccessEnabled: info.remoteAccessEnabled === true,
     });

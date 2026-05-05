@@ -1,10 +1,12 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
+import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
+import { readWorkspaceCloudImports, type CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
@@ -21,6 +23,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "../../../shell/app-inspector";
+import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
@@ -28,16 +31,28 @@ import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import type { ReactComposerNotice } from "./composer/notice";
 import { SessionDebugPanel } from "./debug-panel";
+import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { SessionTranscript } from "./message-list";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
-  todoKey as reactTodoKey,
   transcriptKey as reactTranscriptKey,
 } from "../sync/session-sync";
-import { snapshotToUIMessages } from "../sync/usechat-adapter";
+
+const EMPTY_TRANSCRIPT: UIMessage[] = [];
+const IDLE_STATUS: SessionStatus = { type: "idle" };
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
+
+type SessionError = {
+  message: string;
+  kind?: "model-not-found" | "generic";
+  /** For model-not-found: the model that failed. */
+  failedModel?: { providerID: string; modelID: string };
+  /** For model-not-found: suggested replacements from the backend. */
+  suggestions?: Array<{ providerID: string; modelID: string }>;
+};
 
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
@@ -66,28 +81,31 @@ export type SessionSurfaceProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
-  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps") => void) | undefined;
+  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
 };
+
+function messageToReadableText(message: UIMessage) {
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+  const body = message.parts
+    .flatMap((part) => {
+      if (part.type === "text") return [part.text];
+      if (part.type === "reasoning") return [part.text];
+      if (part.type === "dynamic-tool") {
+        if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
+        if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
+        return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
+      }
+      return [];
+    })
+    .join("\n\n");
+  return `${header}\n${body}`.trim();
+}
 
 function transcriptToText(messages: UIMessage[]) {
   return messages
-    .map((message) => {
-      const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
-      const body = message.parts
-        .flatMap((part) => {
-          if (part.type === "text") return [part.text];
-          if (part.type === "reasoning") return [part.text];
-          if (part.type === "dynamic-tool") {
-            if (part.state === "output-error") return [`[tool:${part.toolName}] ${part.errorText}`];
-            if (part.state === "output-available") return [`[tool:${part.toolName}] ${JSON.stringify(part.output)}`];
-            return [`[tool:${part.toolName}] ${JSON.stringify(part.input)}`];
-          }
-          return [];
-        })
-        .join("\n\n");
-      return `${header}\n${body}`.trim();
-    })
+    .map(messageToReadableText)
     .filter(Boolean)
     .join("\n\n---\n\n");
 }
@@ -99,8 +117,22 @@ function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolea
   return "Ready";
 }
 
+function controlTextArgument(args: unknown) {
+  if (typeof args === "string") return args;
+  if (args && typeof args === "object" && "text" in args) {
+    const text = (args as { text?: unknown }).text;
+    if (typeof text === "string") return text;
+  }
+  return DEFAULT_COMPOSER_CONTROL_TEXT;
+}
+
+const waitForControl = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 function useSharedQueryState<T>(queryKey: readonly unknown[], fallback: T) {
   const queryClient = getReactQueryClient();
+  // useSyncExternalStore requires getSnapshot to return the same reference
+  // while the external store has not changed. Callers must pass stable
+  // fallbacks for empty cache states.
   return useSyncExternalStore(
     (callback) => queryClient.getQueryCache().subscribe(callback),
     () => (queryClient.getQueryData<T>(queryKey) ?? fallback),
@@ -119,9 +151,90 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
 function AssistantWaitingCard() {
   return (
     <div className="flex justify-start py-2" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-3 rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-[12px] text-dls-secondary">
+      <div className="inline-flex items-center gap-3 rounded-full px-3 py-1.5 text-[12px] text-dls-secondary">
         <OwDotTicker size="sm" />
         <span>Thinking</span>
+      </div>
+    </div>
+  );
+}
+
+function parseSessionError(thrown: unknown): SessionError {
+  const raw = thrown instanceof Error ? thrown.message : String(thrown);
+  // Try to detect ProviderModelNotFoundError from the SDK error shape.
+  // The error message may be a JSON string from our serializer in session-route.
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.name === "ProviderModelNotFoundError" && parsed?.data) {
+      const { providerID, modelID, suggestions } = parsed.data;
+      return {
+        message: `Model ${providerID}/${modelID} is not available.`,
+        kind: "model-not-found",
+        failedModel: { providerID, modelID },
+        suggestions: Array.isArray(suggestions) ? suggestions : [],
+      };
+    }
+  } catch {
+    // Not JSON — fall through to plain message
+  }
+  // Check if the raw string mentions model-not-found patterns
+  if (/ProviderModelNotFoundError/i.test(raw) || /model.*not found/i.test(raw)) {
+    return { message: raw, kind: "model-not-found" };
+  }
+  return { message: raw || "Failed to send prompt." };
+}
+
+function SessionErrorCard({ error, onDismiss, onChangeModel, onOpenModelPicker }: {
+  error: SessionError;
+  onDismiss: () => void;
+  onChangeModel?: (model: { providerID: string; modelID: string }) => void;
+  onOpenModelPicker?: () => void;
+}) {
+  return (
+    <div className="mx-auto max-w-[720px] px-3 py-3 sm:px-5">
+      <div className="rounded-2xl border border-red-6/30 bg-red-3/15 px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-red-11">{error.message}</div>
+            {error.kind === "model-not-found" ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {error.suggestions && error.suggestions.length > 0 ? (
+                  error.suggestions.map((s) => (
+                    <button
+                      key={`${s.providerID}/${s.modelID}`}
+                      type="button"
+                      className="rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                      onClick={() => {
+                        onChangeModel?.(s);
+                        onDismiss();
+                      }}
+                    >
+                      Use {s.providerID}/{s.modelID}
+                    </button>
+                  ))
+                ) : null}
+                <button
+                  type="button"
+                  className="rounded-full border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover"
+                  onClick={() => {
+                    onOpenModelPicker?.();
+                    onDismiss();
+                  }}
+                >
+                  Change model
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-full p-1 text-red-10 transition-colors hover:bg-red-3 hover:text-red-11"
+            onClick={onDismiss}
+            aria-label="Dismiss error"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -138,7 +251,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [mentions, setMentions] = useState<Record<string, "agent" | "file">>({});
   const [pasteParts, setPasteParts] = useState<Array<{ id: string; label: string; text: string; lines: number }>>([]);
   const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SessionError | null>(null);
   const [sending, setSending] = useState(false);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
@@ -147,6 +260,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
+  const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   attachmentsRef.current = attachments;
@@ -167,21 +282,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
-  const todoQueryKey = useMemo(
-    () => reactTodoKey(props.workspaceId, props.sessionId),
-    [props.workspaceId, props.sessionId],
-  );
-
-  useEffect(() => {
-    return () => {
-      const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: snapshotQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: transcriptQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: statusQueryKey, exact: true });
-      queryClient.removeQueries({ queryKey: todoQueryKey, exact: true });
-    };
-  }, [snapshotQueryKey, transcriptQueryKey, statusQueryKey, todoQueryKey]);
-
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
@@ -189,9 +289,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
-  const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, []);
-  const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? { type: "idle" as const });
-  useSharedQueryState(todoQueryKey, currentSnapshot?.todos ?? []);
+  const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
+  const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -288,10 +387,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     seedSessionState(props.workspaceId, currentSnapshot);
   }, [props.sessionId, currentSnapshot, props.workspaceId]);
 
-  const snapshot = currentSnapshot ?? rendered?.snapshot ?? null;
-  const liveStatus = statusState ?? snapshot?.status ?? { type: "idle" as const };
+  const snapshot = resolveRenderedSessionSnapshot({
+    sessionId: props.sessionId,
+    currentSnapshot,
+    cachedRendered: rendered,
+  });
+  const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
-  const renderedMessages = transcriptState ?? [];
+  const renderedMessages = useMemo(
+    () => deriveRenderedSessionMessages({ transcriptState, snapshot, includeLiveOnlyMessages: chatStreaming }),
+    [chatStreaming, snapshot, transcriptState],
+  );
   const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
@@ -333,13 +439,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
-    renderedSessionId: renderedMessages.length > 0 || snapshotQuery.data ? props.sessionId : rendered?.sessionId ?? null,
+    renderedSessionId: renderedMessages.length > 0 || snapshot ? props.sessionId : null,
     hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
 
-  const buildDraft = (text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
+  const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const trimmed = text.trim();
     const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
     const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
@@ -359,25 +465,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
     });
+    // Expand paste placeholders in resolvedText so the model receives
+    // the actual pasted content instead of "[pasted text <label>]".
+    let resolved = text;
+    for (const part of pasteParts) {
+      resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
+    }
     return {
       mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
-      resolvedText: text,
+      resolvedText: resolved,
       command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
     };
-  };
+  }, [mentions, pasteParts]);
 
   const handleCopyTranscript = async () => {
     try {
       await navigator.clipboard.writeText(transcriptToText(renderedMessages));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to copy transcript.");
+      setError({ message: nextError instanceof Error ? nextError.message : "Failed to copy transcript." });
     }
   };
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     // Intentionally allow sending while the assistant is still streaming.
@@ -397,22 +509,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
       props.onDraftChange(buildDraft("", []));
       setSending(false);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to send prompt.");
+      const parsed = parseSessionError(nextError);
+      setError(parsed);
+      setDraft("");
       setAwaitingAssistantBaseline(null);
       setSending(false);
     }
-  };
+  }, [attachments, buildDraft, draft, props.onDraftChange, props.onSendDraft, renderedMessages.length]);
 
-  const handleAbort = async () => {
+  const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
     try {
       await abortSessionSafe(opencodeClient, props.sessionId);
       await snapshotQuery.refetch();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Failed to stop run.");
+      setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
     }
-  };
+  }, [chatStreaming, opencodeClient, props.sessionId, snapshotQuery.refetch]);
 
   useEffect(() => {
     if (liveStatus.type === "idle") {
@@ -422,7 +536,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));
-  }, [draft, attachments, pasteParts, props]);
+  }, [attachments, buildDraft, draft, props.onDraftChange]);
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
@@ -501,6 +615,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setDraft((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
+  const typeComposerText = useCallback(async (text: string) => {
+    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    setDraft(text);
+    await waitForControl(40);
+  }, []);
+
+  const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.set_text",
+    label: "Type into the composer",
+    description: "Replace the current session draft and type the supplied text visibly.",
+    sideEffect: "none",
+    requiresArgs: true,
+    args: [{ name: "text", type: "string", required: true, description: "Prompt text to place in the composer." }],
+    previewArgs: { text: DEFAULT_COMPOSER_CONTROL_TEXT },
+    targetRef: composerShellRef,
+    execute: async (args, helpers) => {
+      const text = controlTextArgument(args);
+      helpers.setNarration(`Typing ${text.length.toLocaleString()} characters into the composer…`);
+      await typeComposerText(text);
+      props.onDraftChange(buildDraft(text, attachments));
+      return { draftLength: text.length };
+    },
+  }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
+  useControlAction(composerSetTextControlAction);
+
+  const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.send",
+    label: "Send the composer prompt",
+    description: "Send the currently visible composer draft to the active session.",
+    sideEffect: "mutation",
+    disabled: (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleSend();
+      return true;
+    },
+  }), [attachments.length, draft, handleSend, model.transitionState]);
+  useControlAction(composerSendControlAction);
+
+  const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "composer.stop",
+    label: "Stop the current run",
+    description: "Stop the current streaming session run.",
+    sideEffect: "mutation",
+    disabled: !chatStreaming,
+    targetRef: composerShellRef,
+    execute: async () => {
+      await handleAbort();
+      return true;
+    },
+  }), [chatStreaming, handleAbort]);
+  useControlAction(composerStopControlAction);
+
   const listSkills = async (): Promise<SkillCard[]> => {
     const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
     const next = (response.items ?? []).map((skill) => ({
@@ -536,6 +703,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return { servers, statuses, status };
   };
 
+  const listImportedPlugins = async (): Promise<CloudImportedPlugin[]> => {
+    const response = await props.client.getConfig(props.workspaceId);
+    const plugins = Object.values(readWorkspaceCloudImports(response.openwork).plugins)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    setToolImportedPlugins(plugins);
+    return plugins;
+  };
+
   const handleUploadInboxFiles = async (files: File[], options?: { notify?: boolean }) => {
     const input = files.filter(Boolean);
     if (!input.length) return;
@@ -567,6 +742,79 @@ export function SessionSurface(props: SessionSurfaceProps) {
     containerRef: scrollRef,
     contentRef,
   });
+
+  const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_top",
+    label: "Go to the top of the session",
+    description: "Scroll the visible session transcript to the first messages.",
+    sideEffect: "none",
+    execute: () => {
+      const container = scrollRef.current;
+      if (!container) return { ok: false, error: "Session transcript is not mounted" };
+      container.scrollTo({ top: 0, behavior: "smooth" });
+      return { ok: true, position: "top" };
+    },
+  }), []);
+  useControlAction(sessionScrollTopControlAction);
+
+  const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.scroll_bottom",
+    label: "Go to the bottom of the session",
+    description: "Scroll the visible session transcript to the newest messages and composer area.",
+    sideEffect: "none",
+    execute: () => {
+      sessionScroll.jumpToLatest("smooth");
+      return { ok: true, position: "bottom" };
+    },
+  }), [sessionScroll.jumpToLatest]);
+  useControlAction(sessionScrollBottomControlAction);
+
+  const sessionLatestMessageControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.latest_message",
+    label: "Read the latest session message",
+    description: "Return the latest visible message in the current session transcript.",
+    sideEffect: "none",
+    execute: () => {
+      const message = renderedMessages[renderedMessages.length - 1];
+      if (!message) return { ok: false, error: "No messages are visible in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        index: renderedMessages.length - 1,
+        role: message.role,
+        text: messageToReadableText(message),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionLatestMessageControlAction);
+
+  const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.read_transcript",
+    label: "Read the current session transcript",
+    description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
+    sideEffect: "none",
+    args: [{ name: "count", type: "number", required: false, description: "Number of recent messages to return, from 1 to 30. Defaults to 10." }],
+    execute: (args) => {
+      const count = typeof args === "object" && args !== null && "count" in args && typeof (args as { count?: unknown }).count === "number"
+        ? Math.min(Math.max(1, (args as { count: number }).count), 30)
+        : 10;
+      const total = renderedMessages.length;
+      const slice = renderedMessages.slice(-count);
+      if (!slice.length) return { ok: false, error: "No messages in this session" };
+      return {
+        ok: true,
+        sessionId: props.sessionId,
+        messageCount: total,
+        returned: slice.length,
+        messages: slice.map((message, index) => ({
+          index: total - slice.length + index,
+          role: message.role,
+          text: messageToReadableText(message),
+        })),
+      };
+    },
+  }), [props.sessionId, renderedMessages]);
+  useControlAction(sessionReadTranscriptControlAction);
 
   return (
     <DevProfiler id="SessionSurface">
@@ -608,17 +856,33 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 </div>
               </div>
             ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
-              <div className="px-6 py-16">
-                <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-                  {error || (snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load session.")}
-                </div>
+              <div className="px-6 py-8">
+                {error ? (
+                  <SessionErrorCard
+                    error={error}
+                    onDismiss={() => setError(null)}
+                    onChangeModel={props.onChangeModel}
+                    onOpenModelPicker={props.onModelClick}
+                  />
+                ) : (
+                  <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
+                    {snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load session."}
+                  </div>
+                )}
               </div>
             ) : renderedMessages.length === 0 && showAssistantWaitState ? (
               <div className="px-6 py-12">
                 <AssistantWaitingCard />
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
-              null
+              error ? (
+                <SessionErrorCard
+                  error={error}
+                  onDismiss={() => setError(null)}
+                  onChangeModel={props.onChangeModel}
+                  onOpenModelPicker={props.onModelClick}
+                />
+              ) : null
             ) : (
               <DevProfiler id="SessionTranscript">
                 <>
@@ -628,6 +892,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     developerMode={props.developerMode}
                     scrollElement={() => scrollRef.current}
                   />
+                  {error ? (
+                    <SessionErrorCard
+                      error={error}
+                      onDismiss={() => setError(null)}
+                      onChangeModel={props.onChangeModel}
+                      onOpenModelPicker={props.onModelClick}
+                    />
+                  ) : null}
                   {showAssistantWaitState ? <AssistantWaitingCard /> : null}
                 </>
               </DevProfiler>
@@ -664,7 +936,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+      <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <DevProfiler id="SessionComposer">
         <ReactSessionComposer
           draft={draft}
@@ -697,6 +969,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         mcpServers={toolMcpServers}
         mcpStatus={toolMcpStatus}
         mcpStatuses={toolMcpStatuses}
+        listImportedPlugins={listImportedPlugins}
+        importedPlugins={toolImportedPlugins}
         onOpenSettingsSection={props.onOpenSettingsSection}
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
@@ -714,11 +988,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         />
         </DevProfiler>
       </div>
-      {error ? (
-        <div className="mx-auto w-full max-w-[800px] px-4">
-          <div className="rounded-b-[20px] border border-t-0 border-red-6/30 px-4 py-3 text-sm text-red-11">{error}</div>
-        </div>
-      ) : null}
+      {/* Error display moved inline into the session conversation area */}
       {props.developerMode ? <SessionDebugPanel model={model} snapshot={snapshot} /> : null}
     </div>
     </DevProfiler>

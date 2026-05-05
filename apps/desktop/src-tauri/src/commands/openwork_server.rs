@@ -67,5 +67,6 @@ pub fn openwork_server_restart(
         remote_access_enabled.unwrap_or(false),
         false,
         None,
+        None,
     )
 }

@@ -2,7 +2,7 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 
-import { currentLocale, t } from "../../../../i18n";
+import { t } from "../../../../i18n";
 import {
   inputClass,
   pillGhostClass,
@@ -22,7 +22,6 @@ export type RenameSessionModalProps = {
 
 export function RenameSessionModal(props: RenameSessionModalProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const translate = (key: string) => t(key, currentLocale());
 
   useEffect(() => {
     if (!props.open) return;
@@ -42,10 +41,10 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-gray-12">
-                {translate("session.rename_title")}
+                {t("session.rename_title")}
               </h3>
               <p className="text-sm text-gray-11 mt-1">
-                {translate("session.rename_description")}
+                {t("session.rename_description")}
               </p>
             </div>
             <button
@@ -59,7 +58,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 
           <div className="mt-6">
             <label className="mb-1.5 block text-[13px] font-medium text-dls-text">
-              {translate("session.rename_label")}
+              {t("session.rename_label")}
             </label>
             <input
               ref={inputRef}
@@ -76,7 +75,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
                 event.preventDefault();
                 if (props.canSave) props.onSave();
               }}
-              placeholder={translate("session.rename_placeholder")}
+              placeholder={t("session.rename_placeholder")}
               className={`${inputClass} bg-gray-3`}
             />
           </div>
@@ -88,7 +87,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
               onClick={props.onClose}
               disabled={props.busy}
             >
-              {translate("common.cancel")}
+              {t("common.cancel")}
             </button>
             <button
               type="button"
@@ -96,7 +95,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
               onClick={props.onSave}
               disabled={!props.canSave}
             >
-              {translate("common.save")}
+              {t("common.save")}
             </button>
           </div>
         </div>

@@ -99,13 +99,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
               <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
                 <div className="w-2 h-2 rounded-full bg-green-9" />
                 <span className="text-xs font-medium text-green-11">
-                  {t(
-                    props.mcpConnectedAppsCount === 1
-                      ? "extensions.app_count_one"
-                      : "extensions.app_count_many",
-                    undefined,
-                    { count: props.mcpConnectedAppsCount },
-                  )}
+                  {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
                 </span>
               </div>
             ) : null}
@@ -113,13 +107,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
               <div className="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
                 <Cpu size={14} className="text-gray-11" />
                 <span className="text-xs font-medium text-gray-11">
-                  {t(
-                    pluginCount === 1
-                      ? "extensions.plugin_count_one"
-                      : "extensions.plugin_count_many",
-                    undefined,
-                    { count: pluginCount },
-                  )}
+                  {t("extensions.plugin_count", { count: pluginCount })}
                 </span>
               </div>
             ) : null}

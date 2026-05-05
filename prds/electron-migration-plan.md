@@ -296,4 +296,6 @@ final PR below.
 
 After (3) rolls out, flip the default `apps/desktop/package.json`
 scripts so `dev` / `build` / `package` use Electron, and delete
-`src-tauri/`.
+`src-tauri/`. Electron packaging should keep using `apps/desktop/resources/`
+for icons and generated sidecars so deleting `src-tauri/` is not a packaging
+dependency cutover at the same time.

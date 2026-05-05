@@ -6,7 +6,7 @@ import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor,
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
-import { addMcp, listMcp, removeMcp } from "./mcp.js";
+import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
@@ -15,13 +15,13 @@ import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } f
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { startReloadWatchers } from "./reload-watcher.js";
-import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
+import { EnvService, EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey } from "./env-file.js";
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import {
@@ -33,7 +33,16 @@ import {
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
-import { listPortableFiles, planPortableFiles, writePortableFiles } from "./portable-files.js";
+import { listPortableFiles } from "./portable-files.js";
+import {
+  buildWorkspaceImportPreview,
+  normalizeWorkspaceImportPayload,
+  publicWorkspaceImportPreview,
+  summarizeWorkspaceImportApplied,
+  summarizeWorkspaceImportPreview,
+  type WorkspaceImportPlan,
+  workspaceImportPreviewApprovalPaths,
+} from "./workspace-import-preview.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot, buildSessionStatuses, buildSessionTodos } from "./session-read-model.js";
 import {
   collectWorkspaceExportWarnings,
@@ -140,7 +149,7 @@ function logRequest(input: {
   logger.log(level, message, attributes);
 }
 
-type AuthMode = "none" | "client" | "host";
+type AuthMode = "none" | "client" | "host" | "host-token";
 
 function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath: string } | null {
   if (!pathname.startsWith("/w/")) return null;
@@ -181,6 +190,10 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
   }
 }
 
+function isSessionCommandProxyRequest(method: string, proxyPath: string) {
+  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
+}
+
 interface Route {
   method: string;
   regex: RegExp;
@@ -204,13 +217,14 @@ export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
+  const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const restartReloadWatchers = () => {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
-  const routes = createRoutes(config, approvals, tokens, restartReloadWatchers);
+  const routes = createRoutes(config, approvals, tokens, env, restartReloadWatchers);
 
   const serverOptions: {
     hostname: string;
@@ -311,11 +325,14 @@ export function startServer(config: ServerConfig) {
 
       authMode = route.auth;
       try {
-        const actor = route.auth === "host"
-          ? await requireHost(request, config, tokens)
-          : route.auth === "client"
-            ? await requireClient(request, config, tokens)
-            : undefined;
+        const actor =
+          route.auth === "host-token"
+            ? requireHostToken(request, config)
+            : route.auth === "host"
+              ? await requireHost(request, config, tokens)
+              : route.auth === "client"
+                ? await requireClient(request, config, tokens)
+                : undefined;
         const response = await route.handler({
           request,
           url,
@@ -484,6 +501,17 @@ async function proxyOpencodeRequest(input: {
 
   const method = input.request.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  if (isSessionCommandProxyRequest(method, proxyPath)) {
+    const bufferedBody = body ? await input.request.arrayBuffer() : undefined;
+    void fetch(targetUrl, {
+      method,
+      headers,
+      body: bufferedBody,
+    }).catch(() => {
+      // Command failures are surfaced through the OpenCode event stream.
+    });
+    return jsonResponse({ ok: true, accepted: true });
+  }
   const response = await fetch(targetUrl, {
     method,
     headers,
@@ -536,7 +564,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
     "Access-Control-Allow-Headers",
     "Authorization, Content-Type, X-OpenWork-Host-Token, X-OpenWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
-  headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }
@@ -554,6 +582,14 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   }
   const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
+}
+
+function requireHostToken(request: Request, config: ServerConfig): Actor {
+  const hostToken = request.headers.get("x-openwork-host-token");
+  if (hostToken && hostToken === config.hostToken) {
+    return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
+  }
+  throw new ApiError(401, "unauthorized", "Invalid host token");
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
@@ -726,6 +762,13 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
     }
   }
   return parts.join("/");
+}
+
+export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
+  const lowered = relativePath.toLowerCase();
+  return [".md", ".mdx", ".markdown", ".json", ".jsonc", ".ts", ".js", ".mjs", ".cjs", ".txt"].some((ext) =>
+    lowered.endsWith(ext),
+  );
 }
 
 function resolveSafeChildPath(root: string, child: string): string {
@@ -1007,6 +1050,7 @@ function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
   tokens: TokenService,
+  env: EnvService,
   onWorkspacesChanged: () => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1261,6 +1305,87 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  function rethrowEnvStoreReadError(error: unknown): never {
+    if (error instanceof EnvStoreReadError) {
+      throw new ApiError(
+        409,
+        error.code,
+        "Environment variable store is invalid. Fix or remove the local env file before editing.",
+      );
+    }
+    throw error;
+  }
+
+  // User-level env vars (see apps/app/pr/environment-variables.md). All routes
+  // require the desktop host token (not owner bearer tokens) because values are
+  // returned raw; the React pane masks them only for display. Reload semantics
+  // are driven from the UI after a write; this surface is user-scoped, not
+  // workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host-token", async () => {
+    const items = await env.list().catch(rethrowEnvStoreReadError);
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/env/keys", "host-token", async () => {
+    const items = await env.list().catch(rethrowEnvStoreReadError);
+    return jsonResponse({ keys: items.map((item) => item.key) });
+  });
+
+  addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const rawEntries = Array.isArray(body.entries)
+      ? body.entries
+      : [{ key: body.key, value: body.value }];
+    const entries: Array<{ key: string; value: string }> = [];
+    for (const raw of rawEntries) {
+      if (!raw || typeof raw !== "object") {
+        throw new ApiError(400, "invalid_entry", "Each entry must be an object");
+      }
+      const candidate = raw as { key?: unknown; value?: unknown };
+      const key = typeof candidate.key === "string" ? candidate.key.trim() : "";
+      const value = typeof candidate.value === "string" ? candidate.value : "";
+      if (!isValidEnvKey(key)) {
+        throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+      }
+      entries.push({ key, value });
+    }
+    if (entries.length === 0) {
+      throw new ApiError(400, "no_entries", "No entries provided");
+    }
+    try {
+      await env.upsertMany(entries);
+    } catch (error) {
+      if (error instanceof EnvStoreReadError) {
+        rethrowEnvStoreReadError(error);
+      }
+      if (error instanceof InvalidEnvKeyError) {
+        throw new ApiError(
+          400,
+          error.code,
+          error.code === "reserved_env_key"
+            ? "Environment variable name is reserved for OpenWork internals"
+            : "Invalid environment variable name",
+        );
+      }
+      throw error;
+    }
+    return jsonResponse({ ok: true, count: entries.length });
+  });
+
+  addRoute(routes, "DELETE", "/env/:key", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const key = ctx.params.key;
+    if (!isValidEnvKey(key)) {
+      throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+    }
+    const removed = await env.delete(key).catch(rethrowEnvStoreReadError);
+    if (!removed) {
+      throw new ApiError(404, "env_not_found", "Environment variable not found");
+    }
+    return jsonResponse({ ok: true });
+  });
+
   addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
@@ -1362,6 +1487,10 @@ function createRoutes(
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
+    const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+    if (connection.baseUrl?.trim()) {
+      await reloadOpencodeEngine(config, workspace);
+    }
     return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted: false });
   });
 
@@ -2108,10 +2237,8 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = (ctx.url.searchParams.get("path") ?? "").trim();
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     const absPath = resolveSafeChildPath(workspace.path, relativePath);
@@ -2140,10 +2267,8 @@ function createRoutes(
 
     const requestedPath = String(body.path ?? "");
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
-    const lowered = relativePath.toLowerCase();
-    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
-    if (!isMarkdown) {
-      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    if (!isSupportedWorkspaceTextFilePath(relativePath)) {
+      throw new ApiError(400, "invalid_path", "Only Markdown and OpenCode plugin text files are supported");
     }
 
     if (typeof body.content !== "string") {
@@ -2502,6 +2627,49 @@ function createRoutes(
     return jsonResponse({ items });
   });
 
+  // Toggle `enabled` on a workspace MCP. Strict body validation — `Boolean(body.enabled)`
+  // would silently disable on `{}` or coerce `"false"` to true.
+  addRoute(routes, "POST", "/workspace/:id/mcp/:name/enabled", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = ctx.params.name ?? "";
+    const body = await readJsonBody(ctx.request);
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+    }
+    const enabled = body.enabled;
+    const action = enabled ? "mcp.enable" : "mcp.disable";
+    const summary = `${enabled ? "Enable" : "Disable"} MCP ${name}`;
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action,
+      summary,
+      paths: [opencodeConfigPath(workspace.path)],
+    });
+    const updated = await setMcpEnabled(workspace.path, name, enabled);
+    if (!updated) {
+      throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
+    }
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action,
+      target: "opencode.json",
+      summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
+      timestamp: Date.now(),
+    });
+    // ReloadTrigger.action only allows added/removed/updated, so toggle => "updated".
+    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+      type: "mcp",
+      name,
+      action: "updated",
+    });
+    const items = await listMcp(workspace.path);
+    return jsonResponse({ items });
+  });
+
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name/auth", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -2644,34 +2812,77 @@ function createRoutes(
     return jsonResponse(exportPayload);
   });
 
+  addRoute(routes, "POST", "/workspace/:id/import/preview", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    return jsonResponse(publicWorkspaceImportPreview(preview));
+  });
+
   addRoute(routes, "POST", "/workspace/:id/import", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const portableFiles = planPortableFiles(workspace.path, body.files);
+    const expectedFingerprint = parseWorkspaceImportPreviewFingerprint(body);
+    const preview = await buildWorkspaceImportPreview(workspace.path, body);
+    if (expectedFingerprint && expectedFingerprint !== preview.fingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_stale",
+          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
+          preview: publicWorkspaceImportPreview(preview),
+        },
+        409,
+      );
+    }
+    const approvalPaths = workspaceImportPreviewApprovalPaths(preview);
+    if (approvalPaths.length === 0) {
+      return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(preview) });
+    }
+    if (!expectedFingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_required",
+          message: "Review this import preview before applying workspace changes.",
+          preview: publicWorkspaceImportPreview(preview),
+        },
+        409,
+      );
+    }
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.import",
-      summary: "Import workspace config",
-      paths: [
-        opencodeConfigPath(workspace.path),
-        openworkConfigPath(workspace.path),
-        ...portableFiles.map((file) => file.absolutePath),
-      ],
+      summary: summarizeWorkspaceImportPreview(preview),
+      paths: approvalPaths,
     });
-    await importWorkspace(workspace, body);
+    const latestPreview = await buildWorkspaceImportPreview(workspace.path, body);
+    if (latestPreview.fingerprint !== expectedFingerprint) {
+      return jsonResponse(
+        {
+          ok: false,
+          code: "workspace_import_preview_stale",
+          message: "Workspace changed after this import was previewed. Review the latest preview before importing.",
+          preview: publicWorkspaceImportPreview(latestPreview),
+        },
+        409,
+      );
+    }
+    await importWorkspace(workspace, body, latestPreview);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "config.import",
       target: "workspace",
-      summary: "Imported workspace config",
+      summary: summarizeWorkspaceImportApplied(latestPreview),
       timestamp: Date.now(),
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
-    return jsonResponse({ ok: true });
+    return jsonResponse({ ok: true, preview: publicWorkspaceImportPreview(latestPreview) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/blueprint/sessions/materialize", "client", async (ctx) => {
@@ -3220,79 +3431,98 @@ function parseWorkspaceExportSensitiveMode(input: string | null): WorkspaceExpor
   throw new ApiError(400, "invalid_workspace_export_sensitive_mode", `Invalid workspace export sensitive mode: ${trimmed}`);
 }
 
-async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
-  const modes = (payload.mode as Record<string, string> | undefined) ?? {};
-  const opencode = payload.opencode as Record<string, unknown> | undefined;
-  const openwork = payload.openwork as Record<string, unknown> | undefined;
-  const skills = (payload.skills as { name: string; content: string; description?: string }[] | undefined) ?? [];
-  const commands = (payload.commands as { name: string; content?: string; description?: string; template?: string; agent?: string; model?: string | null; subtask?: boolean }[] | undefined) ?? [];
-  const files = payload.files;
+function parseWorkspaceImportPreviewFingerprint(payload: Record<string, unknown>): string | null {
+  const value = payload.previewFingerprint;
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") {
+    throw new ApiError(
+      400,
+      "invalid_workspace_import_preview_fingerprint",
+      "Workspace import preview fingerprint must be a string",
+    );
+  }
+  return value;
+}
 
-  if (opencode) {
-    const sanitizedOpencode = sanitizePortableOpencodeConfig(opencode);
-    if (modes.opencode === "replace") {
-      await writeJsoncFile(opencodeConfigPath(workspace.path), sanitizedOpencode);
+function workspaceImportRelativePath(workspace: WorkspaceInfo, path: string): string {
+  return relative(workspace.path, path).replaceAll("\\", "/");
+}
+
+async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>, preview: WorkspaceImportPlan): Promise<void> {
+  const input = normalizeWorkspaceImportPayload(workspace.path, payload);
+  const changed = new Set(
+    preview.changes
+      .filter((change) => change.action !== "unchanged")
+      .map((change) => `${change.kind}:${change.path}`),
+  );
+  const changedPath = (kind: string, path: string) => changed.has(`${kind}:${path}`);
+
+  if (
+    input.opencode !== undefined &&
+    changedPath("opencode", workspaceImportRelativePath(workspace, opencodeConfigPath(workspace.path)))
+  ) {
+    if (input.modes.opencode === "replace") {
+      await writeJsoncFile(opencodeConfigPath(workspace.path), input.opencode);
     } else {
-      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), sanitizedOpencode);
+      await updateJsoncTopLevel(opencodeConfigPath(workspace.path), input.opencode);
     }
   }
 
-  if (openwork) {
-    const sanitizedOpenwork = sanitizeOpenworkTemplateConfig(openwork);
-    if (modes.openwork === "replace") {
-      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, false);
+  if (
+    input.openwork !== undefined &&
+    changedPath("openwork", workspaceImportRelativePath(workspace, openworkConfigPath(workspace.path)))
+  ) {
+    if (input.modes.openwork === "replace") {
+      await writeOpenworkConfig(workspace.path, input.openwork, false);
     } else {
-      await writeOpenworkConfig(workspace.path, sanitizedOpenwork, true);
+      await writeOpenworkConfig(workspace.path, input.openwork, true);
     }
   }
 
-  if (skills.length > 0) {
-    if (modes.skills === "replace") {
-      await rm(projectSkillsDir(workspace.path), { recursive: true, force: true });
-    }
-    for (const skill of skills) {
+  if (input.sections.skills) {
+    for (const skill of input.skills) {
+      const path = workspaceImportRelativePath(workspace, join(projectSkillsDir(workspace.path), skill.name, "SKILL.md"));
+      if (!changedPath("skill", path)) continue;
       await upsertSkill(workspace.path, skill);
     }
-  }
-
-  if (commands.length > 0) {
-    if (modes.commands === "replace") {
-      await rm(projectCommandsDir(workspace.path), { recursive: true, force: true });
-    }
-    for (const command of commands) {
-      if (command.content) {
-        const parsed = parseFrontmatter(command.content);
-        const name = command.name || (typeof parsed.data.name === "string" ? parsed.data.name : "");
-        const description = command.description || (typeof parsed.data.description === "string" ? parsed.data.description : undefined);
-        if (!name) {
-          throw new ApiError(400, "invalid_command", "Command name is required");
+    if (input.modes.skills === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "skill" && change.action === "delete") {
+          await rm(change.absolutePath, { recursive: true, force: true });
         }
-        const template = parsed.body.trim();
-        await upsertCommand(workspace.path, {
-          name,
-          description,
-          template,
-          agent: typeof parsed.data.agent === "string" ? parsed.data.agent : undefined,
-          model: typeof parsed.data.model === "string" ? parsed.data.model : undefined,
-          subtask: typeof parsed.data.subtask === "boolean" ? parsed.data.subtask : undefined,
-        });
-      } else {
-        const name = command.name ?? "";
-        const template = command.template ?? "";
-        await upsertCommand(workspace.path, {
-          name,
-          description: command.description,
-          template,
-          agent: command.agent,
-          model: command.model,
-          subtask: command.subtask,
-        });
       }
     }
   }
 
-  if (Array.isArray(files) && files.length > 0) {
-    await writePortableFiles(workspace.path, files, { replace: modes.files === "replace" });
+  if (input.sections.commands) {
+    for (const command of input.commands) {
+      const path = workspaceImportRelativePath(workspace, join(projectCommandsDir(workspace.path), `${command.name}.md`));
+      if (!changedPath("command", path)) continue;
+      await upsertCommand(workspace.path, command);
+    }
+    if (input.modes.commands === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "command" && change.action === "delete") {
+          await rm(change.absolutePath, { force: true });
+        }
+      }
+    }
+  }
+
+  if (input.sections.files) {
+    for (const file of input.files) {
+      if (!changedPath("file", file.path)) continue;
+      const path = join(workspace.path, file.path);
+      await ensureDir(dirname(path));
+      await writeFile(path, file.content, "utf8");
+    }
+    if (input.modes.files === "replace") {
+      for (const change of preview.changes) {
+        if (change.kind === "file" && change.action === "delete") {
+          await rm(change.absolutePath, { force: true });
+        }
+      }
+    }
   }
 }
 

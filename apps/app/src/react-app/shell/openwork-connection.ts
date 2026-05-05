@@ -1,4 +1,5 @@
 import {
+  isLoopbackOpenworkServerUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
 } from "../../app/lib/openwork-server";
@@ -10,6 +11,7 @@ export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "
 export type ResolvedOpenworkConnection = {
   normalizedBaseUrl: string;
   resolvedToken: string;
+  resolvedHostToken: string;
   hostInfo: OpenworkServerInfo | null;
   source: OpenworkConnectionSource;
 };
@@ -40,6 +42,7 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
         return {
           normalizedBaseUrl,
           resolvedToken,
+          resolvedHostToken: info.hostToken?.trim() || "",
           hostInfo: info,
           source: "desktop-runtime",
         };
@@ -53,6 +56,10 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
   const settings = readOpenworkServerSettings();
   const normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
   const resolvedToken = settings.token?.trim() ?? "";
+  const resolvedHostToken =
+    normalizedBaseUrl && isLoopbackOpenworkServerUrl(normalizedBaseUrl)
+      ? settings.hostToken?.trim() ?? ""
+      : "";
   const storedConnectionIsStaleDesktopRuntime = Boolean(
     isDesktopRuntime() &&
       staleDesktopRuntimeBaseUrl &&
@@ -66,6 +73,7 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
   return {
     normalizedBaseUrl: source === "empty" ? "" : normalizedBaseUrl,
     resolvedToken: source === "empty" ? "" : resolvedToken,
+    resolvedHostToken: source === "empty" ? "" : resolvedHostToken,
     hostInfo: null,
     source,
   };
