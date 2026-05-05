@@ -403,7 +403,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true),
   );
   const [updateAutoDownload, setUpdateAutoDownload] = useState(() =>
-    readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false),
+    readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, true),
   );
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
