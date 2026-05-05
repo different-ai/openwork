@@ -644,7 +644,6 @@ function StepsContainer(props: {
   isUser: boolean;
   isInline?: boolean;
   isNestedVariant: boolean;
-  isStreaming: boolean;
   expandedStepIds: Set<string>;
   onExpandedStepIdsChange: (updater: (current: Set<string>) => Set<string>) => void;
 }) {
@@ -660,14 +659,12 @@ function StepsContainer(props: {
     });
   };
 
-  const useInnerTimelineScroll = !props.isStreaming;
-
   return (
     <div className={props.isInline ? (props.isUser ? "mt-3" : "mt-4") : ""}>
       <div
-        data-scrollable={useInnerTimelineScroll && !props.isNestedVariant ? "true" : undefined}
+        data-scrollable={!props.isNestedVariant ? "true" : undefined}
         className={
-          !props.isNestedVariant && useInnerTimelineScroll
+          !props.isNestedVariant
             ? "max-h-[420px] overflow-y-auto pr-3"
             : ""
         }
@@ -956,7 +953,6 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
               stepGroups={block.stepGroups}
               isUser={block.isUser}
               isNestedVariant={isNestedVariant}
-              isStreaming={props.isStreaming}
               expandedStepIds={expandedStepIds}
               onExpandedStepIdsChange={onExpandedStepIdsChange}
             />
@@ -1089,7 +1085,6 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
                     isUser={block.isUser}
                     isInline={true}
                     isNestedVariant={isNestedVariant}
-                    isStreaming={props.isStreaming}
                     expandedStepIds={expandedStepIds}
                     onExpandedStepIdsChange={onExpandedStepIdsChange}
                   />
