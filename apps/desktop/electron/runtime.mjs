@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -200,10 +200,100 @@ function binaryFileNames(baseName) {
   ].filter(Boolean);
 }
 
-function prependedPath(sidecarDirs) {
-  const filtered = sidecarDirs.filter((dir) => existsSync(dir));
-  if (filtered.length === 0) return null;
-  return `${filtered.join(path.delimiter)}${path.delimiter}${process.env.PATH ?? ""}`;
+function isDirectory(targetPath) {
+  try {
+    return statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function nvmVersionBinPaths(home) {
+  const base = path.join(home, ".nvm", "versions", "node");
+  try {
+    return readdirSync(base, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(base, entry.name, "bin"))
+      .filter(isDirectory)
+      .sort()
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
+function pathHelperEntries() {
+  if (process.platform !== "darwin") return [];
+  const result = spawnSync("/usr/libexec/path_helper", ["-s"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return [];
+  const stdout = String(result.stdout ?? "");
+  const match = stdout.match(/PATH="([^"]+)"/) ?? stdout.match(/PATH=([^;\n]+)/);
+  return match?.[1]?.split(path.delimiter).filter(Boolean) ?? [];
+}
+
+function extraPathEntries() {
+  const home = os.homedir();
+  const candidates = [];
+
+  if (process.platform === "darwin") {
+    candidates.push(
+      ...pathHelperEntries(),
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      path.join(home, ".nvm", "current", "bin"),
+      ...nvmVersionBinPaths(home),
+      path.join(home, ".fnm", "current", "bin"),
+      path.join(home, ".volta", "bin"),
+      path.join(home, "Library", "pnpm"),
+      path.join(home, ".bun", "bin"),
+      path.join(home, ".cargo", "bin"),
+      path.join(home, ".pyenv", "shims"),
+      path.join(home, ".local", "bin"),
+    );
+  }
+
+  if (process.platform === "linux") {
+    candidates.push(
+      "/usr/local/bin",
+      "/usr/local/sbin",
+      path.join(home, ".nvm", "current", "bin"),
+      ...nvmVersionBinPaths(home),
+      path.join(home, ".fnm", "current", "bin"),
+      path.join(home, ".volta", "bin"),
+      path.join(home, ".local", "share", "pnpm"),
+      path.join(home, ".bun", "bin"),
+      path.join(home, ".cargo", "bin"),
+      path.join(home, ".pyenv", "shims"),
+      path.join(home, ".local", "bin"),
+    );
+  }
+
+  if (process.platform === "win32") {
+    candidates.push(
+      path.join(home, ".volta", "bin"),
+      path.join(home, ".bun", "bin"),
+      path.join(home, ".cargo", "bin"),
+      process.env.APPDATA ? path.join(process.env.APPDATA, "npm") : null,
+      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "pnpm") : null,
+    );
+  }
+
+  return candidates.filter((entry) => entry && isDirectory(entry));
+}
+
+function enrichedPath(sidecarDirs, currentPath) {
+  const entries = [
+    ...sidecarDirs.filter(isDirectory),
+    ...extraPathEntries(),
+    ...String(currentPath ?? "").split(path.delimiter).filter(Boolean),
+  ];
+  const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
+  return deduped.length > 0 ? deduped.join(path.delimiter) : null;
 }
 
 async function portAvailable(host, port) {
@@ -507,9 +597,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
       ...extra,
     };
-    const pathEnv = prependedPath(sidecarDirs);
+    const pathKey =
+      Object.prototype.hasOwnProperty.call(env, "PATH") ||
+      !Object.prototype.hasOwnProperty.call(env, "Path")
+        ? "PATH"
+        : "Path";
+    const pathEnv = enrichedPath(sidecarDirs, env[pathKey]);
     if (pathEnv) {
-      env.PATH = pathEnv;
+      env[pathKey] = pathEnv;
     }
     if (process.env.OPENWORK_DEV_MODE === "1") {
       const devPaths = await ensureDevModePaths();
@@ -536,7 +631,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       }
     }
 
-    const pathEntries = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
+    const pathEntries = (enrichedPath([], process.env.PATH) ?? "")
+      .split(path.delimiter)
+      .filter(Boolean);
     for (const entry of pathEntries) {
       for (const fileName of binaryFileNames(baseName)) {
         const candidate = path.join(entry, fileName);
