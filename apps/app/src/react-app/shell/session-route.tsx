@@ -297,6 +297,10 @@ export function SessionRoute() {
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const refreshInFlightRef = useRef(false);
+  // Dedicated guard for the lightweight session-list poller so a slow
+  // listSessions call (or a visibility-triggered refresh during an active
+  // poll) cannot overlap with itself.
+  const pollSessionsInFlightRef = useRef(false);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const sessionsByWorkspaceIdRef = useRef<Record<string, any[]>>({});
@@ -563,26 +567,31 @@ export function SessionRoute() {
   // re-resolving connections, etc.) and only re-fetches the session lists so
   // that externally created sessions appear in the sidebar.
   const refreshSessionLists = useCallback(async () => {
-    if (refreshInFlightRef.current) return;
+    if (refreshInFlightRef.current || pollSessionsInFlightRef.current) return;
     const owClient = clientRef.current;
     const wsList = workspacesRef.current;
     if (!owClient || wsList.length === 0) return;
 
-    for (const workspace of wsList) {
-      try {
-        const response = await owClient.listSessions(workspace.id, { limit: 200 });
-        const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-        const items = workspaceRoot
-          ? (response.items ?? []).filter((session: any) =>
-              normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-            )
-          : (response.items ?? []);
-        setSessionsByWorkspaceId((current) => ({ ...current, [workspace.id]: items }));
-        cacheSessionList(workspace.id, items);
-        setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
-      } catch {
-        // Best-effort; transient failures are retried on the next tick.
+    pollSessionsInFlightRef.current = true;
+    try {
+      for (const workspace of wsList) {
+        try {
+          const response = await owClient.listSessions(workspace.id, { limit: 200 });
+          const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
+          const items = workspaceRoot
+            ? (response.items ?? []).filter((session: any) =>
+                normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
+              )
+            : (response.items ?? []);
+          setSessionsByWorkspaceId((current) => ({ ...current, [workspace.id]: items }));
+          cacheSessionList(workspace.id, items);
+          setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
+        } catch {
+          // Best-effort; transient failures are retried on the next tick.
+        }
       }
+    } finally {
+      pollSessionsInFlightRef.current = false;
     }
   }, []);
 

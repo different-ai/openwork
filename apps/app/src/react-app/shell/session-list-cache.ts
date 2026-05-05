@@ -32,8 +32,14 @@ export function isTabVisible(): boolean {
  *
  * The `refetch` callback is responsible for performing the actual fetch and
  * writing results into both the TanStack Query cache and the imperative state
- * used by the sidebar.  The existing `refreshInFlightRef` guard in the caller
- * prevents overlapping fetches.
+ * used by the sidebar.  The caller is responsible for providing its own
+ * in-flight guard so two ticks (or a tick that races with another refresh
+ * path) cannot overlap.
+ *
+ * Visibility restore is intentionally NOT handled here: callers in this
+ * codebase already wire up a `visibilitychange` listener that runs a heavier
+ * route-level refresh, and firing `refetch` from here as well caused two
+ * concurrent session-list refreshes on every tab focus.
  *
  * Fixes [#1262]{@link https://github.com/different-ai/openwork/issues/1262}
  */
@@ -51,18 +57,8 @@ export function useSessionListPolling(
 
     const id = window.setInterval(tick, intervalMs);
 
-    // Listen for visibility changes so we can fire an immediate fetch when
-    // the tab comes back into view, instead of waiting for the next interval.
-    const onVisibility = () => {
-      if (isTabVisible()) {
-        void refetch();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
     return () => {
       window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refetch, intervalMs]);
 }
