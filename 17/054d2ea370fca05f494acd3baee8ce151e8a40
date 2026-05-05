@@ -1,0 +1,325 @@
+apps/app/src/components/ui/sidebar.tsx
+  h_e2431fa0952ce3 470,636,674
+apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+  h_e2431fa0952ce3 878
+  a0da9d20fa5a8467 772
+apps/desktop/electron/main.mjs
+  h_e2431fa0952ce3 19,191,896-909,1347-1348,1499-1508,1514
+apps/app/index.html
+  be36073c57daf80b 27
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  h_e2431fa0952ce3 25,27-31,171,179-182,239,242-245,250,252,263,280-282,298-301,312-314,316,337,376,526-527,536,550-551
+apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+  h_e2431fa0952ce3 1-732
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "17054d2ea370fca05f494acd3baee8ce151e8a40",
+  "prompts": {
+    "02debc53343b953c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6970fdea-9363-4184-9a3f-d865d5ccd672",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 37,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "09bfedbed72136b9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c8e3cdd7-324a-44a7-98a0-d939c6d91d5a",
+        "model": "composer-2"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 93,
+      "total_deletions": 22,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "0c5de60e8344e847": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "96734e20-67d8-400c-bb8c-97e15da7442f",
+        "model": "claude-opus-4-5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 142,
+      "total_deletions": 133,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "18542dfc805222a6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a225a5ca-2cc8-4e72-9d21-bda7a93fbb9e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 228,
+      "total_deletions": 103,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "1b2d48508e0b868f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cc9e54b8-d1c8-4029-ae8f-41b29f9a6ba7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 56,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "1d223c58e18b6302": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c37b093a-f710-434c-9586-c03833893481",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 182,
+      "total_deletions": 176,
+      "accepted_lines": 103,
+      "overriden_lines": 5
+    },
+    "393edbd309243dae": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7d9164d2-1532-4135-8222-ead7c33f12a8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 534,
+      "total_deletions": 251,
+      "accepted_lines": 4,
+      "overriden_lines": 10
+    },
+    "3a1b966b280b6b1f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6b0d25a4-718c-4f83-9118-f7c6ffc959fc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 134,
+      "total_deletions": 200,
+      "accepted_lines": 2,
+      "overriden_lines": 6
+    },
+    "49d25429207d7ea0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f1abfba6-e47d-4454-911a-aca5c01dc6f5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 25,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "589682bd3732c27b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e145a4b2-9fda-4f9b-8023-b4bf16400ae6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 159,
+      "total_deletions": 146,
+      "accepted_lines": 0,
+      "overriden_lines": 15
+    },
+    "66f9bd8ff514e57b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5aa9f9b9-a63e-4486-bcb2-d76f4830d37c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 65,
+      "total_deletions": 79,
+      "accepted_lines": 0,
+      "overriden_lines": 1
+    },
+    "777a0e1bc5f99548": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cdb35f63-95c5-4c8c-9b23-3eb21ff36576",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 431,
+      "total_deletions": 13,
+      "accepted_lines": 2,
+      "overriden_lines": 3
+    },
+    "783d2c3a6f00f603": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5d7d6fa1-1c95-4ecc-8586-8823486c09ad",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 207,
+      "total_deletions": 8,
+      "accepted_lines": 5,
+      "overriden_lines": 10
+    },
+    "8b1e351c46d4d9b2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7b463193-58c1-4c5a-bd39-bee759868517",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 300,
+      "total_deletions": 97,
+      "accepted_lines": 25,
+      "overriden_lines": 9
+    },
+    "98b2a7b6637f9dbf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "74660fc5-f18d-4ad0-ab5e-98149a7d62dc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 8,
+      "accepted_lines": 0,
+      "overriden_lines": 2
+    },
+    "a0da9d20fa5a8467": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "33293903-0bad-49a5-9f59-581d70b99da5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "b8a087976e69bcc9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5b28c510-2904-4986-aba9-c5f05f9c31f5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 164,
+      "total_deletions": 154,
+      "accepted_lines": 14,
+      "overriden_lines": 14
+    },
+    "be36073c57daf80b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "66329d70-c1c6-46ee-9883-fd022b11d18e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 11,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "c2c98142ad03bbb4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "14a74121-68a0-4422-a107-0c0bb8ac46b3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 115,
+      "total_deletions": 98,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "c90c0e96c3580ca9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e9932b5b-991e-439b-a4ab-52d1814ba04e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 55,
+      "total_deletions": 58,
+      "accepted_lines": 7,
+      "overriden_lines": 35
+    },
+    "e85f520d1866ddb1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "93c19034-5a0a-4203-8032-fe275889a886",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 148,
+      "total_deletions": 102,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "e97930facb2d7306": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1940c7a4-de4b-437a-b6e1-7f1fbfd17111",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fc9ec7f6755e837d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0ef70f33-a318-4179-8c20-c9231afd0f50",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 172,
+      "total_deletions": 53,
+      "accepted_lines": 30,
+      "overriden_lines": 14
+    }
+  },
+  "humans": {
+    "h_e2431fa0952ce3": {
+      "author": "Jean P.D. Meijer"
+    }
+  }
+}
