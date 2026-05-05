@@ -1,0 +1,14 @@
+apps/app/src/components/ui/sidebar.tsx
+  h_e2431fa0952ce3 636,674
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f9d7cf95908e9981e72bdb57118099ce8c5576f0",
+  "prompts": {},
+  "humans": {
+    "h_e2431fa0952ce3": {
+      "author": "Jean P.D. Meijer"
+    }
+  }
+}
