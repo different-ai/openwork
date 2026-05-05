@@ -30,6 +30,7 @@ type TauriUpdate = {
 type UseElectronUpdaterStateOptions = {
   releaseChannel: ReleaseChannel;
   onReleaseChannelChange: (next: ReleaseChannel) => void;
+  updateAutoCheck: boolean;
   updateAutoDownload: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   setError: (message: string | null) => void;
@@ -75,11 +76,12 @@ function updateProgress(event: unknown): { downloaded?: number; total?: number }
 }
 
 export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions) {
-  const { releaseChannel, onReleaseChannelChange, updateAutoDownload, desktopConfig, setError } = options;
+  const { releaseChannel, onReleaseChannelChange, updateAutoCheck, updateAutoDownload, desktopConfig, setError } = options;
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateEnv, setUpdateEnv] = useState<{ supported?: boolean; reason?: string | null } | null>(null);
   const tauriUpdateRef = useRef<TauriUpdate | null>(null);
+  const autoCheckKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (isTauriRuntime()) {
@@ -310,6 +312,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       setUpdateStatus({ state: "error", message: describeError(error) });
     }
   }, [desktopConfig, downloadUpdate, onReleaseChannelChange, releaseChannel, setError, updateAutoDownload]);
+
+  useEffect(() => {
+    if (!updateAutoCheck || updateEnv?.supported === false) return;
+    const key = `${releaseChannel}:${appVersion ?? "unknown"}`;
+    if (autoCheckKeyRef.current === key) return;
+    autoCheckKeyRef.current = key;
+    void checkForUpdates();
+  }, [appVersion, checkForUpdates, releaseChannel, updateAutoCheck, updateEnv?.supported]);
 
   const installUpdateAndRestart = useCallback(async () => {
     if (isTauriRuntime()) {

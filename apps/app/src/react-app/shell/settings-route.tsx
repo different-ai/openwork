@@ -666,6 +666,7 @@ export function SettingsRoute() {
   const electronUpdaterState = useElectronUpdaterState({
     releaseChannel: local.prefs.releaseChannel ?? "stable",
     onReleaseChannelChange,
+    updateAutoCheck,
     updateAutoDownload,
     desktopConfig: desktopConfig.config,
     setError: setRouteError,

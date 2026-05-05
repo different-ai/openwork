@@ -68,6 +68,78 @@ function electronUpdaterFeedUrl(channel) {
   return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel)];
 }
 
+function parseComparableVersion(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().replace(/^v/i, "");
+  if (!normalized) return null;
+
+  const [versionCore] = normalized.split("+", 1);
+  if (!versionCore) return null;
+
+  const [releasePart, prereleasePart = ""] = versionCore.split("-", 2);
+  const release = releasePart.split(".").map((segment) => Number(segment));
+  if (!release.length || release.some((segment) => !Number.isInteger(segment) || segment < 0)) {
+    return null;
+  }
+
+  const prerelease = prereleasePart
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return { release, prerelease };
+}
+
+function comparePrereleaseIdentifiers(left, right) {
+  if (!left.length && !right.length) return 0;
+  if (!left.length) return 1;
+  if (!right.length) return -1;
+
+  const count = Math.max(left.length, right.length);
+  for (let index = 0; index < count; index += 1) {
+    const leftPart = left[index];
+    const rightPart = right[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+
+    const leftNumeric = /^\d+$/.test(leftPart) ? Number(leftPart) : null;
+    const rightNumeric = /^\d+$/.test(rightPart) ? Number(rightPart) : null;
+
+    if (leftNumeric !== null && rightNumeric !== null) {
+      if (leftNumeric !== rightNumeric) return leftNumeric < rightNumeric ? -1 : 1;
+      continue;
+    }
+
+    if (leftNumeric !== null) return -1;
+    if (rightNumeric !== null) return 1;
+
+    const comparison = leftPart.localeCompare(rightPart);
+    if (comparison !== 0) return comparison < 0 ? -1 : 1;
+  }
+
+  return 0;
+}
+
+function compareVersions(left, right) {
+  const parsedLeft = parseComparableVersion(left);
+  const parsedRight = parseComparableVersion(right);
+  if (!parsedLeft || !parsedRight) return null;
+
+  const count = Math.max(parsedLeft.release.length, parsedRight.release.length);
+  for (let index = 0; index < count; index += 1) {
+    const leftPart = parsedLeft.release[index] ?? 0;
+    const rightPart = parsedRight.release[index] ?? 0;
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1;
+  }
+
+  return comparePrereleaseIdentifiers(parsedLeft.prerelease, parsedRight.prerelease);
+}
+
+function isVersionNewer(candidate, current) {
+  const comparison = compareVersions(candidate, current);
+  return comparison === null ? candidate !== current : comparison > 0;
+}
+
 function updaterChannelState(app, channel) {
   const normalized = normalizeElectronUpdaterChannel(channel);
   return {
@@ -92,6 +164,7 @@ async function applyElectronUpdaterFeed(app, updater) {
 export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
+  let checkedUpdateVersion = null;
 
   function sendToRenderer(channel, data) {
     try {
@@ -144,6 +217,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
 
   ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
     const channel = await writeElectronUpdaterChannel(app, rawChannel);
+    checkedUpdateVersion = null;
     const updater = await ensureAutoUpdater();
     if (updater) {
       return applyElectronUpdaterFeed(app, updater);
@@ -160,15 +234,19 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     try {
       const result = await updater.checkForUpdates();
       const info = result?.updateInfo ?? null;
+      const currentVersion = resolveAppVersion(app);
+      const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
+      checkedUpdateVersion = available ? info.version : null;
       return {
-        available: Boolean(info && info.version && info.version !== resolveAppVersion(app)),
-        currentVersion: resolveAppVersion(app),
+        available,
+        currentVersion,
         latestVersion: info?.version ?? null,
         releaseDate: info?.releaseDate ?? null,
         releaseNotes: info?.releaseNotes ?? null,
         ...channelState,
       };
     } catch (error) {
+      checkedUpdateVersion = null;
       return { available: false, reason: String(error?.message ?? error), ...channelState };
     }
   });
@@ -177,6 +255,18 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
+      await applyElectronUpdaterFeed(app, updater);
+      const currentVersion = resolveAppVersion(app);
+      if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
+        const result = await updater.checkForUpdates();
+        const info = result?.updateInfo ?? null;
+        checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
+          ? info.version
+          : null;
+      }
+      if (!checkedUpdateVersion) {
+        return { ok: false, reason: "No update available." };
+      }
       await updater.downloadUpdate();
       return { ok: true };
     } catch (error) {

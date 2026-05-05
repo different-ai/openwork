@@ -917,7 +917,7 @@ export default {
   "settings.auto_compact_desc": "Controls OpenCode compaction.auto for this workspace. Reload the engine after changing it.",
   "settings.auto_update_desc": "Download updates automatically (prompts to",
   "settings.auto_update_title": "Auto-update",
-  "settings.background_checks_desc": "OpenWork always checks on launch. Also checks once",
+  "settings.background_checks_desc": "OpenWork checks on launch and when this page opens.",
   "settings.background_checks_title": "Background checks",
   "settings.cache_repair_requires_desktop": "Cache repair requires the desktop app",
   "settings.cap_browser_tools": "Browser tools: {value}",
