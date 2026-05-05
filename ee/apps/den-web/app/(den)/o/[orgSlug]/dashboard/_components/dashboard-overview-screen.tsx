@@ -120,12 +120,6 @@ function AreaChart({ values }: { values: number[] }) {
       <path d={area} fill="#07192C" fillOpacity="0.06" />
       <path d={line} fill="none" stroke="#07192C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       <circle cx={last[0]} cy={last[1]} r="3" fill="#07192C" />
-      {/* X labels */}
-      {pts.map(([x], i) => (
-        <text key={i} x={x} y={h - 1} textAnchor="middle" className="fill-[#9AA5BA] text-[9px]">
-          {i + 1}
-        </text>
-      ))}
     </svg>
   );
 }
@@ -146,6 +140,14 @@ function StatCard({ icon, title, value, sub, tone }: {
         </div>
       </div>
     </div>
+  );
+}
+
+function EnterpriseBadge() {
+  return (
+    <span className="inline-flex rounded-full border border-[#d9ddeb] bg-[#F8E8D7] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#E56A17]">
+      Enterprise only
+    </span>
   );
 }
 
@@ -235,6 +237,7 @@ export function DashboardOverviewScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
   const [tab, setTab] = useState<TabId>("plugins");
+  const [showEnterprisePreview, setShowEnterprisePreview] = useState(true);
 
   const members = orgContext?.members.length ?? 0;
   const pending = (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
@@ -252,46 +255,78 @@ export function DashboardOverviewScreen() {
 
       {/* Greeting */}
       <h1 className="mt-4 text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">{getGreeting(user?.name)}</h1>
-      <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">Adoption and capability usage across your workspace.</p>
+      <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">Live workspace adoption now, advanced usage insights for enterprise deployments.</p>
 
-      {/* Stat cards */}
-      <div className="mt-5 grid gap-3.5 md:grid-cols-3">
-        <StatCard icon={<Users className="h-5 w-5 text-[#6F3DFF]" />} title="OpenWork users" value={`${members}`} sub={`${pending} pending invites`} tone="violet" />
-        <StatCard icon={<Activity className="h-5 w-5 text-[#18A34A]" />} title="Active this week" value={`${weeklyActive}`} sub="Based on sessions" tone="green" />
-        <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Tasks completed" value="1,284" sub="Last 30 days" tone="blue" />
+      {/* Live org data */}
+      <div className="mt-5 grid gap-3.5 md:grid-cols-2">
+        <StatCard icon={<Users className="h-5 w-5 text-[#6F3DFF]" />} title="OpenWork users" value={`${members}`} sub="Current workspace members" tone="violet" />
+        <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Pending invites" value={`${pending}`} sub="Awaiting activation" tone="blue" />
       </div>
 
-      {/* Chart + settings row */}
-      <div className="mt-5 grid gap-3.5 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-5 py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C]">Weekly active users</span>
-            <span className="text-[12px] text-[#637291]">Last 12 weeks</span>
+      {/* Enterprise analytics preview */}
+      <section className="mt-5 overflow-hidden rounded-[18px] border border-[#e3e7ee] bg-white/90">
+        <div className="flex flex-col gap-3 border-b border-[#e9edf3] px-5 py-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">Usage insights</span>
+              <EnterpriseBadge />
+            </div>
+            <p className="mt-1 text-[13px] leading-5 text-[#5A6886]">
+              Optional telemetry for customer-owned analytics. Hidden by default in non-enterprise rollouts.
+            </p>
           </div>
-          <div className="h-[110px]">
-            <AreaChart values={weeklyTrend} />
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowEnterprisePreview((value) => !value)}
+            className="w-fit rounded-full border border-[#d9ddeb] bg-white px-3 py-1 text-[12px] font-medium text-[#30405F] transition-colors hover:bg-[#F4F6FB] hover:text-[#07192C]"
+          >
+            {showEnterprisePreview ? "Hide preview" : "Show preview"}
+          </button>
         </div>
 
-        <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-5 py-4">
-          <span className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C]">Telemetry settings</span>
-          <div className="mt-3 grid gap-2.5 text-[13px]">
-            <div className="flex items-center justify-between"><span className="text-[#5A6886]">Collection</span><span className="font-medium text-[#07192C]">Usage</span></div>
-            <div className="flex items-center justify-between"><span className="text-[#5A6886]">Identity</span><span className="font-medium text-[#07192C]">Anonymized</span></div>
-            <div className="flex items-center justify-between"><span className="text-[#5A6886]">Retention</span><span className="font-medium text-[#07192C]">90 days</span></div>
-            <div className="flex items-center justify-between"><span className="text-[#5A6886]">Prompt data</span><span className="font-medium text-[#07192C]">Never collected</span></div>
+        {!showEnterprisePreview ? (
+          <div className="px-5 py-5 text-[13px] leading-6 text-[#5A6886]">
+            Enterprise usage analytics are hidden. Live workspace membership remains visible above.
           </div>
-        </div>
-      </div>
+        ) : (
+          <div className="p-5">
+            <div className="grid gap-3.5 md:grid-cols-2">
+              <StatCard icon={<Activity className="h-5 w-5 text-[#18A34A]" />} title="Active this week" value={`${weeklyActive}`} sub="Preview signal" tone="green" />
+              <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Tasks completed" value="1,284" sub="Preview signal" tone="blue" />
+            </div>
 
-      {/* Capability tabs */}
-      <div className="mt-5">
-        <TabBar active={tab} onChange={setTab} />
-      </div>
-      <div className="mt-3">
-        {tab === "plugins" ? <CapTable rows={pluginRows} kind="plugin" /> : null}
-        {tab === "skills" ? <CapTable rows={skillRows} kind="skill" /> : null}
-      </div>
+            <div className="mt-4 grid gap-3.5 xl:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-5 py-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C]">Weekly active users</span>
+                  <span className="text-[12px] text-[#637291]">Trend preview</span>
+                </div>
+                <div className="h-[110px]">
+                  <AreaChart values={weeklyTrend} />
+                </div>
+              </div>
+
+              <div className="rounded-[16px] border border-[#e3e7ee] bg-white/90 px-5 py-4">
+                <span className="text-[13px] font-medium tracking-[-0.01em] text-[#07192C]">Telemetry settings</span>
+                <div className="mt-3 grid gap-2.5 text-[13px]">
+                  <div className="flex items-center justify-between"><span className="text-[#5A6886]">Collection</span><span className="font-medium text-[#07192C]">Usage</span></div>
+                  <div className="flex items-center justify-between"><span className="text-[#5A6886]">Identity</span><span className="font-medium text-[#07192C]">Anonymized</span></div>
+                  <div className="flex items-center justify-between"><span className="text-[#5A6886]">Retention</span><span className="font-medium text-[#07192C]">90 days</span></div>
+                  <div className="flex items-center justify-between"><span className="text-[#5A6886]">Prompt data</span><span className="font-medium text-[#07192C]">Never collected</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <TabBar active={tab} onChange={setTab} />
+            </div>
+            <div className="mt-3">
+              {tab === "plugins" ? <CapTable rows={pluginRows} kind="plugin" /> : null}
+              {tab === "skills" ? <CapTable rows={skillRows} kind="skill" /> : null}
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Download CTA */}
       <div className="mt-6 flex items-center justify-between gap-6 rounded-[16px] border border-[#e3e7ee] bg-[#07192C] px-6 py-5">
