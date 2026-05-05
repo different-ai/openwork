@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const bunRuntime = (globalThis as typeof globalThis & {
@@ -88,6 +88,43 @@ function outputName(filename: string, target?: string) {
   return `${filename}${suffix}${ext}`;
 }
 
+function targetMatchesHost(target?: string): boolean {
+  if (!target) return true;
+  const isWindowsTarget = target.includes("windows");
+  const isLinuxTarget = target.includes("linux");
+  const isDarwinTarget = target.includes("darwin");
+  if (process.platform === "win32") return isWindowsTarget;
+  if (process.platform === "linux") return isLinuxTarget;
+  if (process.platform === "darwin") return isDarwinTarget;
+  return false;
+}
+
+function readPackageVersion(): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function verifyBuiltBinary(outfile: string, expectedVersion: string | null) {
+  if (!expectedVersion) return;
+  const result = spawnSync(outfile, ["--version"], { encoding: "utf8" });
+  const stdout = (result.stdout ?? "").trim();
+  if (result.status === 0 && stdout === expectedVersion) return;
+  console.error(
+    [
+      `openwork-server build verification failed for ${outfile}.`,
+      `  expected --version: ${expectedVersion}`,
+      `  actual exit status: ${result.status ?? "unknown"}`,
+      `  actual stdout:      ${stdout || "(empty)"}`,
+      "  the binary may be a bare Bun runtime instead of a compiled openwork-server.",
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
 async function buildOnce(entrypoint: string, outdir: string, filename: string, target?: string) {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, outputName(filename, target));
@@ -100,6 +137,10 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   const result = spawnSync("bun", args, { stdio: "inherit" });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
+  }
+
+  if (targetMatchesHost(target)) {
+    verifyBuiltBinary(outfile, readPackageVersion());
   }
 }
 
