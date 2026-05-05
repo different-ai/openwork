@@ -360,7 +360,7 @@ async function revealFileInFinder(path: string) {
   }
 }
 
-function CopyButton(props: { text: string }) {
+function CopyButton(props: { getText: () => string }) {
   const [copied, setCopied] = useState(false);
 
   return (
@@ -369,7 +369,7 @@ function CopyButton(props: { text: string }) {
       className="inline-flex items-center justify-center rounded-lg border border-dls-border bg-dls-surface p-1.5 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
       title="Copy message"
       onClick={async () => {
-        await navigator.clipboard.writeText(props.text);
+        await navigator.clipboard.writeText(props.getText());
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1200);
       }}
@@ -379,10 +379,42 @@ function CopyButton(props: { text: string }) {
   );
 }
 
+/** Expandable chip for collapsed pasted text in sent messages. */
+function PastedTextChip(props: { label: string; text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lineCount = props.text.split(/\r?\n/).length;
+
+  return (
+    <span className="inline">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-0.5 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3/30"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "Collapse pasted text" : "Expand pasted text"}
+      >
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+        <span>Pasted · {lineCount} line{lineCount === 1 ? "" : "s"}</span>
+      </button>
+      {expanded ? (
+        <div className="mt-1.5 mb-1.5 rounded-xl border border-amber-6/20 bg-amber-3/10 px-4 py-3 text-xs leading-5 text-dls-text">
+          <pre className="whitespace-pre-wrap break-words font-mono">{props.text}</pre>
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
+const PASTE_TOKEN_RE = /(\[pasted text [^\]]+\])/;
+
 function HighlightedPlainText(props: {
   text: string;
   className: string;
   highlightQuery?: string;
+  /** Map of paste label -> full text for expandable chips */
+  pastedTextMap?: Map<string, string>;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -396,9 +428,29 @@ function HighlightedPlainText(props: {
     });
   }, [props.highlightQuery, props.text]);
 
+  // If no paste tokens present, render as plain text (fast path).
+  if (!props.pastedTextMap?.size || !PASTE_TOKEN_RE.test(props.text)) {
+    return (
+      <div ref={rootRef} className={props.className}>
+        {props.text}
+      </div>
+    );
+  }
+
+  // Split on paste tokens and render chips inline.
+  const segments = props.text.split(PASTE_TOKEN_RE);
   return (
     <div ref={rootRef} className={props.className}>
-      {props.text}
+      {segments.map((segment, index) => {
+        const match = segment.match(/^\[pasted text (.+)\]$/);
+        if (match?.[1]) {
+          const pastedBody = props.pastedTextMap?.get(match[1]);
+          if (pastedBody) {
+            return <PastedTextChip key={index} label={match[1]} text={pastedBody} />;
+          }
+        }
+        return <span key={index}>{segment}</span>;
+      })}
     </div>
   );
 }
@@ -1048,7 +1100,7 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
 
           {!isNestedVariant ? (
             <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-              <CopyButton text={messageToText(block.message)} />
+              <CopyButton getText={() => messageToText(block.message)} />
             </div>
           ) : null}
         </div>

@@ -130,13 +130,7 @@ Record:
 
 ## End-to-End Product Validation
 
-Preferred flow:
-
-```bash
-packaging/docker/dev-up.sh
-```
-
-Then validate a real UI flow with Chrome MCP:
+Validate a real UI flow with Chrome MCP against the narrowest supported local app/server stack:
 
 - open the printed web URL
 - navigate to the session surface
@@ -144,11 +138,11 @@ Then validate a real UI flow with Chrome MCP:
 - confirm the response renders
 - save screenshot evidence
 
-If Chrome MCP is unavailable in the current environment, record that explicitly and include the exact command above plus the expected manual reviewer steps.
+If Chrome MCP is unavailable in the current environment, record that explicitly and include the expected manual reviewer steps.
 
 Current state from this worktree:
 
-- `packaging/docker/dev-up.sh` now reaches healthy `server`, `web`, and `share` containers on the Server V2 path.
+- The legacy Docker dev stack reached healthy `server`, `web`, and `share` containers on the Server V2 path.
 - Docker API smoke including session creation now succeeds:
 
 ```bash
@@ -160,7 +154,6 @@ curl -X POST -H "Authorization: Bearer $OPENWORK_TOKEN" -H "Content-Type: applic
 - Remaining manual reviewer work:
 
 ```bash
-packaging/docker/dev-up.sh
 source tmp/.dev-env-<id>
 curl -H "Authorization: Bearer $OPENWORK_TOKEN" http://127.0.0.1:<OPENWORK_PORT>/workspaces
 curl -X POST -H "Authorization: Bearer $OPENWORK_TOKEN" -H "Content-Type: application/json" --data '{"title":"Docker E2E"}' http://127.0.0.1:<OPENWORK_PORT>/workspaces/<WORKSPACE_ID>/sessions

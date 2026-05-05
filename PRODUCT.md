@@ -56,5 +56,5 @@ Constraints:
 
 How to decide if OpenWork should do something:
 - Does it help Bob share config more easily?
-- Does it help Susan consume automations more easily?
+- Does it help Susan consume shared workflows more easily?
 - Is this something that is coding specific?

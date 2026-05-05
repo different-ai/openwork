@@ -14,12 +14,8 @@ types — get caught.
 
 ## How to run
 
-1. Start the Docker dev stack:
-   ```bash
-   packaging/docker/dev-up.sh
-   ```
-   Use the printed web URL (e.g. `http://localhost:50423`). The port is
-   random; never hard-code `5173`/`8787`.
+1. Start the narrowest supported local app/server stack for the flow under test.
+   Use its web URL and avoid hard-coding default ports unless that stack documents them.
 
 2. Pick a runner:
    - **Chrome DevTools MCP** (recommended). The tool names referenced in each
@@ -32,8 +28,7 @@ types — get caught.
    visible. Capture a screenshot with `chrome-devtools_take_screenshot` if you
    want evidence.
 
-4. Stop the stack with the exact `docker compose -p openwork-dev-... down`
-   line printed by `dev-up.sh`.
+4. Stop the stack using the teardown command for the stack you started.
 
 ## Conventions
 
@@ -48,3 +43,6 @@ types — get caught.
 
 - [`react-session-flows.md`](./react-session-flows.md) — the 9 core
   session/settings flows verified during the React port cutover.
+- [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the 7
+  onboarding/welcome flows covering first-run experience and folder
+  explanation.

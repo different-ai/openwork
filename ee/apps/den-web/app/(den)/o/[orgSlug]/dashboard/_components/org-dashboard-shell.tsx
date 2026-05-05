@@ -15,7 +15,6 @@ import {
   LogOut,
   MessageSquare,
   Puzzle,
-  Share2,
   SlidersHorizontal,
   Store,
   Users,
@@ -34,11 +33,12 @@ import {
   getOrgSettingsRoute,
   getMarketplacesRoute,
   getPluginsRoute,
-  getSharedSetupsRoute,
   getSkillHubsRoute,
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { OPENWORK_DOCS_URL, buildDenFeedbackUrl } from "./shared-setup-data";
+import { buildDenFeedbackUrl } from "../../../../_lib/feedback";
+
+const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -99,9 +99,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
   if (pathname === dashboardRoot) {
     return "Home";
-  }
-  if (pathname.startsWith(getSharedSetupsRoute(orgSlug))) {
-    return "Team Templates";
   }
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
@@ -166,11 +163,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
       label: "Dashboard",
       icon: Home,
-    },
-    {
-      href: activeOrg ? getSharedSetupsRoute(activeOrg.slug) : "#",
-      label: "Team Templates",
-      icon: Share2,
     },
     {
       href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",

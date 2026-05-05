@@ -14,6 +14,34 @@ declare global {
         openExternal?: (url: string) => Promise<void>;
         relaunch?: () => Promise<void>;
       };
+      migration?: {
+        readSnapshot?: () => Promise<unknown>;
+        ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;
+      };
+      updater?: {
+        getChannel?: () => Promise<{
+          channel: "stable" | "alpha";
+          feedUrl: string;
+          currentVersion: string;
+        }>;
+        setChannel?: (channel: "stable" | "alpha") => Promise<{
+          channel: "stable" | "alpha";
+          feedUrl: string;
+          currentVersion: string;
+        }>;
+        check?: () => Promise<{
+          available: boolean;
+          currentVersion?: string;
+          latestVersion?: string | null;
+          releaseDate?: string | null;
+          releaseNotes?: unknown;
+          channel?: "stable" | "alpha";
+          feedUrl?: string;
+          reason?: string;
+        }>;
+        download?: () => Promise<{ ok: boolean; reason?: string }>;
+        installAndRestart?: () => Promise<{ ok: boolean; reason?: string }>;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
@@ -125,8 +153,11 @@ export const desktopFetch: typeof globalThis.fetch = (input, init) => {
 
 export async function openDesktopUrl(url: string): Promise<void> {
   if (isElectronDesktopRuntime()) {
-    await window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(url);
-    return;
+    const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
+    if (openExternal) {
+      await openExternal(url);
+      return;
+    }
   }
   if (isTauriDesktopRuntime()) {
     await tauriBridge.openDesktopUrl(url);
@@ -229,9 +260,6 @@ const {
   opencodeCommandDelete,
   engineStop,
   engineRestart,
-  orchestratorStatus,
-  orchestratorWorkspaceActivate,
-  orchestratorInstanceDispose,
   appBuildInfo,
   getDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
@@ -261,17 +289,7 @@ const {
   writeOpencodeConfig,
   resetOpenworkState,
   resetOpencodeCache,
-  schedulerListJobs,
-  schedulerDeleteJob,
-  getOpenCodeRouterStatus,
-  getOpenCodeRouterStatusDetailed,
-  opencodeRouterInfo,
-  getOpenCodeRouterGroupsEnabled,
-  setOpenCodeRouterGroupsEnabled,
   opencodeMcpAuth,
-  opencodeRouterStop,
-  opencodeRouterStart,
-  opencodeRouterRestart,
   setWindowDecorations,
 } = desktopBridge;
 
@@ -296,9 +314,6 @@ export {
   opencodeCommandDelete,
   engineStop,
   engineRestart,
-  orchestratorStatus,
-  orchestratorWorkspaceActivate,
-  orchestratorInstanceDispose,
   appBuildInfo,
   getDesktopBootstrapConfig,
   setDesktopBootstrapConfig,
@@ -328,16 +343,6 @@ export {
   writeOpencodeConfig,
   resetOpenworkState,
   resetOpencodeCache,
-  schedulerListJobs,
-  schedulerDeleteJob,
-  getOpenCodeRouterStatus,
-  getOpenCodeRouterStatusDetailed,
-  opencodeRouterInfo,
-  getOpenCodeRouterGroupsEnabled,
-  setOpenCodeRouterGroupsEnabled,
   opencodeMcpAuth,
-  opencodeRouterStop,
-  opencodeRouterStart,
-  opencodeRouterRestart,
   setWindowDecorations,
 };

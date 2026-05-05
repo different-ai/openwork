@@ -22,7 +22,7 @@ const WARN_COOLDOWN_MS = 5_000;
 const statsByName = new Map<string, RenderWatchdogStats>();
 let inspectorInstalled = false;
 
-function compactStats() {
+export function readReactRenderWatchdogSnapshot() {
   return Array.from(statsByName.values())
     .map((stats) => ({
       name: stats.name,
@@ -36,13 +36,17 @@ function compactStats() {
     .sort((a, b) => b.windowCommits - a.windowCommits || b.totalCommits - a.totalCommits);
 }
 
+export function resetReactRenderWatchdogStats() {
+  statsByName.clear();
+}
+
 function installInspectorSlice() {
   if (inspectorInstalled) return;
   inspectorInstalled = true;
   publishInspectorSlice("reactRenderWatchdog", () => ({
     windowMs: WINDOW_MS,
     warnCommitThreshold: WARN_COMMIT_THRESHOLD,
-    components: compactStats(),
+    components: readReactRenderWatchdogSnapshot(),
   }));
 }
 

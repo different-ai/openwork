@@ -63,7 +63,13 @@ export function createDefaultPlatform(): Platform {
     platform: isDesktopRuntime() ? "desktop" : "web",
     openLink(url: string) {
       if (isDesktopRuntime()) {
-        void openDesktopUrl(url).catch(() => undefined);
+        void openDesktopUrl(url).catch(() => {
+          if (shouldOpenInCurrentTab(url)) {
+            window.location.href = url;
+            return;
+          }
+          window.open(url, "_blank");
+        });
         return;
       }
 

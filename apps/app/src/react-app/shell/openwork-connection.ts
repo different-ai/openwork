@@ -1,4 +1,5 @@
 import {
+  isLoopbackOpenworkServerUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
 } from "../../app/lib/openwork-server";
@@ -10,9 +11,14 @@ export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "
 export type ResolvedOpenworkConnection = {
   normalizedBaseUrl: string;
   resolvedToken: string;
+  resolvedHostToken: string;
   hostInfo: OpenworkServerInfo | null;
   source: OpenworkConnectionSource;
 };
+
+function hasUsableConnection(url: string, token: string) {
+  return url.trim().length > 0 && token.trim().length > 0;
+}
 
 /**
  * Resolve the OpenWork server connection for routes that consume the server API.
@@ -23,6 +29,8 @@ export type ResolvedOpenworkConnection = {
  * connections and for desktop cases where the runtime bridge is unavailable.
  */
 export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConnection> {
+  let staleDesktopRuntimeBaseUrl = "";
+
   if (isDesktopRuntime()) {
     try {
       const info = await openworkServerInfo();
@@ -30,14 +38,16 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
         normalizeOpenworkServerUrl(info.connectUrl ?? info.baseUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
         "";
       const resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || "";
-      if (normalizedBaseUrl || resolvedToken) {
+      if (info.running === true && hasUsableConnection(normalizedBaseUrl, resolvedToken)) {
         return {
           normalizedBaseUrl,
           resolvedToken,
+          resolvedHostToken: info.hostToken?.trim() || "",
           hostInfo: info,
           source: "desktop-runtime",
         };
       }
+      staleDesktopRuntimeBaseUrl = normalizedBaseUrl;
     } catch {
       // Fall through to stored settings for remote/manual connections.
     }
@@ -46,11 +56,25 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
   const settings = readOpenworkServerSettings();
   const normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
   const resolvedToken = settings.token?.trim() ?? "";
+  const resolvedHostToken =
+    normalizedBaseUrl && isLoopbackOpenworkServerUrl(normalizedBaseUrl)
+      ? settings.hostToken?.trim() ?? ""
+      : "";
+  const storedConnectionIsStaleDesktopRuntime = Boolean(
+    isDesktopRuntime() &&
+      staleDesktopRuntimeBaseUrl &&
+      normalizedBaseUrl === staleDesktopRuntimeBaseUrl,
+  );
+  const source =
+    !storedConnectionIsStaleDesktopRuntime && hasUsableConnection(normalizedBaseUrl, resolvedToken)
+      ? "stored-settings"
+      : "empty";
 
   return {
-    normalizedBaseUrl,
-    resolvedToken,
+    normalizedBaseUrl: source === "empty" ? "" : normalizedBaseUrl,
+    resolvedToken: source === "empty" ? "" : resolvedToken,
+    resolvedHostToken: source === "empty" ? "" : resolvedHostToken,
     hostInfo: null,
-    source: normalizedBaseUrl || resolvedToken ? "stored-settings" : "empty",
+    source,
   };
 }

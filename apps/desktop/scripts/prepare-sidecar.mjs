@@ -32,7 +32,6 @@ const hasFlag = (name) => process.argv.slice(2).includes(name);
 const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
-const packageJsonPath = resolve(__dirname, "..", "package.json");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
 
 const opencodeGithubRepo = (() => {
@@ -67,17 +66,6 @@ const normalizeVersion = (value) => {
 };
 
 const opencodeAssetOverride = process.env.OPENCODE_ASSET?.trim() || null;
-const opencodeRouterVersion = (() => {
-  if (process.env.OPENCODE_ROUTER_VERSION?.trim()) return process.env.OPENCODE_ROUTER_VERSION.trim();
-  try {
-    const raw = readFileSync(packageJsonPath, "utf8");
-    const pkg = JSON.parse(raw);
-    if (pkg.opencodeRouterVersion) return String(pkg.opencodeRouterVersion).trim();
-  } catch {
-    // ignore
-  }
-  return null;
-})();
 const chromeDevtoolsMcpVersion =
   process.env.CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
   process.env.OPENWORK_CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
@@ -101,6 +89,7 @@ const resolvedTargetTriple = (() => {
   }
   return null;
 })();
+const isWindowsTarget = process.platform === "win32" || resolvedTargetTriple?.includes("windows") === true;
 
 const bunTarget = (() => {
   switch (resolvedTargetTriple) {
@@ -116,15 +105,17 @@ const bunTarget = (() => {
     // with Bun 1.3.6. Use the stable x64 target here for now.
     case "x86_64-pc-windows-msvc":
       return "bun-windows-x64";
+    case "aarch64-pc-windows-msvc":
+      return "bun-windows-arm64";
     default:
       return null;
   }
 })();
 
-const opencodeBaseName = process.platform === "win32" ? "opencode.exe" : "opencode";
+const opencodeBaseName = isWindowsTarget ? "opencode.exe" : "opencode";
 const opencodePath = join(sidecarDir, opencodeBaseName);
 const opencodeTargetName = resolvedTargetTriple
-  ? `opencode-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`
+  ? `opencode-${resolvedTargetTriple}${isWindowsTarget ? ".exe" : ""}`
   : null;
 const opencodeTargetPath = opencodeTargetName ? join(sidecarDir, opencodeTargetName) : null;
 
@@ -133,7 +124,7 @@ let existingOpencodeVersion = null;
 
 // openwork-server paths
 const openworkServerBaseName = "openwork-server";
-const openworkServerName = process.platform === "win32" ? `${openworkServerBaseName}.exe` : openworkServerBaseName;
+const openworkServerName = isWindowsTarget ? `${openworkServerBaseName}.exe` : openworkServerBaseName;
 const openworkServerPath = join(sidecarDir, openworkServerName);
 const openworkServerBuildName = bunTarget
   ? `${openworkServerBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
@@ -155,25 +146,10 @@ const resolveBuildScript = (dir) => {
   return scriptPath;
 };
 
-// opencode-router paths
-const opencodeRouterBaseName = "opencode-router";
-const opencodeRouterName = process.platform === "win32" ? `${opencodeRouterBaseName}.exe` : opencodeRouterBaseName;
-const opencodeRouterPath = join(sidecarDir, opencodeRouterName);
-const opencodeRouterBuildName = bunTarget
-  ? `${opencodeRouterBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : opencodeRouterName;
-const opencodeRouterBuildPath = join(sidecarDir, opencodeRouterBuildName);
-const opencodeRouterTargetTriple = resolvedTargetTriple;
-const opencodeRouterTargetName = opencodeRouterTargetTriple
-  ? `${opencodeRouterBaseName}-${opencodeRouterTargetTriple}${opencodeRouterTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const opencodeRouterTargetPath = opencodeRouterTargetName ? join(sidecarDir, opencodeRouterTargetName) : null;
-const opencodeRouterDir = resolve(__dirname, "..", "..", "opencode-router");
-
 // orchestrator paths
 const orchestratorBaseName = "openwork-orchestrator";
 const orchestratorName =
-  process.platform === "win32" ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
+  isWindowsTarget ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
 const orchestratorPath = join(sidecarDir, orchestratorName);
 const orchestratorBuildName = bunTarget
   ? `${orchestratorBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
@@ -188,7 +164,7 @@ const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
 
 // chrome-devtools-mcp shim sidecar
 const chromeDevtoolsBaseName = "chrome-devtools-mcp";
-const chromeDevtoolsName = process.platform === "win32" ? `${chromeDevtoolsBaseName}.exe` : chromeDevtoolsBaseName;
+const chromeDevtoolsName = isWindowsTarget ? `${chromeDevtoolsBaseName}.exe` : chromeDevtoolsBaseName;
 const chromeDevtoolsPath = join(sidecarDir, chromeDevtoolsName);
 const chromeDevtoolsBuildName = bunTarget
   ? `${chromeDevtoolsBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
@@ -250,16 +226,8 @@ const findOpencodeBinary = (dir) => {
   const candidates = readDirectory(dir);
   return (
     candidates.find((file) => file.endsWith(`/${opencodeBaseName}`) || file.endsWith(`\\${opencodeBaseName}`)) ??
+    candidates.find((file) => file.endsWith("/opencode.exe") || file.endsWith("\\opencode.exe")) ??
     candidates.find((file) => file.endsWith("/opencode") || file.endsWith("\\opencode")) ??
-    null
-  );
-};
-
-const findOpenCodeRouterBinary = (dir) => {
-  const candidates = readDirectory(dir);
-  return (
-    candidates.find((file) => file.endsWith(`/${opencodeRouterName}`) || file.endsWith(`\\${opencodeRouterName}`)) ??
-    candidates.find((file) => file.endsWith("/opencode-router") || file.endsWith("\\opencodeRouter")) ??
     null
   );
 };
@@ -278,6 +246,37 @@ const sha256File = (filePath) => {
   const hash = createHash("sha256");
   hash.update(readFileSync(filePath));
   return hash.digest("hex");
+};
+
+const adHocSignDarwin = (filePath) => {
+  if (process.platform !== "darwin" || !filePath || !existsSync(filePath)) return;
+  const remove = spawnSync("codesign", ["--remove-signature", filePath], {
+    encoding: "utf8",
+  });
+  if (remove.error && remove.error.code === "ENOENT") {
+    throw new Error("codesign is required to prepare runnable macOS sidecars");
+  }
+
+  const sign = spawnSync("codesign", ["--force", "--sign", "-", filePath], {
+    encoding: "utf8",
+  });
+  if (sign.error) {
+    if (sign.error.code === "ENOENT") {
+      throw new Error("codesign is required to prepare runnable macOS sidecars");
+    }
+    throw sign.error;
+  }
+  if (sign.status !== 0) {
+    const stderr = sign.stderr?.trim();
+    throw new Error(`Failed to codesign ${filePath}${stderr ? `: ${stderr}` : ""}`);
+  }
+};
+
+const adHocSignDarwinSidecars = (paths) => {
+  if (process.platform !== "darwin") return;
+  for (const filePath of [...new Set(paths.filter(Boolean))]) {
+    adHocSignDarwin(filePath);
+  }
 };
 
 const parseChecksum = (content, assetName) => {
@@ -488,76 +487,6 @@ if (shouldDownloadOpencode) {
   console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
 }
 
-const opencodeRouterPkgRaw = readFileSync(resolve(opencodeRouterDir, "package.json"), "utf8");
-const opencodeRouterPkg = JSON.parse(opencodeRouterPkgRaw);
-const opencodeRouterPkgVersion = String(opencodeRouterPkg.version ?? "").trim();
-const normalizedOpenCodeRouterVersion = opencodeRouterVersion?.startsWith("v")
-  ? opencodeRouterVersion.slice(1)
-  : opencodeRouterVersion;
-const expectedOpenCodeRouterVersion = normalizedOpenCodeRouterVersion || opencodeRouterPkgVersion;
-
-if (!expectedOpenCodeRouterVersion) {
-  console.error("OpenCodeRouter version missing. Set opencodeRouterVersion or ensure package.json has version.");
-  process.exit(1);
-}
-
-if (normalizedOpenCodeRouterVersion && opencodeRouterPkgVersion && normalizedOpenCodeRouterVersion !== opencodeRouterPkgVersion) {
-  console.error(`OpenCodeRouter version mismatch: desktop=${normalizedOpenCodeRouterVersion}, package=${opencodeRouterPkgVersion}`);
-  process.exit(1);
-}
-
-let didBuildOpenCodeRouter = false;
-const shouldBuildOpenCodeRouter = forceBuild || !existsSync(opencodeRouterBuildPath) || isStubBinary(opencodeRouterBuildPath);
-if (shouldBuildOpenCodeRouter) {
-  mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(opencodeRouterBuildPath)) {
-    try {
-      unlinkSync(opencodeRouterBuildPath);
-    } catch {
-      // ignore
-    }
-  }
-  const opencodeRouterScript = resolveBuildScript(opencodeRouterDir);
-  if (!existsSync(opencodeRouterScript)) {
-    console.error(`OpenCodeRouter build script not found at ${opencodeRouterScript}`);
-    process.exit(1);
-  }
-  const opencodeRouterArgs = [opencodeRouterScript, "--outdir", sidecarDir, "--filename", "opencode-router"];
-  if (bunTarget) {
-    opencodeRouterArgs.push("--target", bunTarget);
-  }
-  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit", shell: true });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-
-  didBuildOpenCodeRouter = true;
-}
-
-if (existsSync(opencodeRouterBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenCodeRouter || !existsSync(opencodeRouterPath) || isStubBinary(opencodeRouterPath);
-  if (shouldCopyCanonical && opencodeRouterBuildPath !== opencodeRouterPath) {
-    try {
-      if (existsSync(opencodeRouterPath)) unlinkSync(opencodeRouterPath);
-    } catch {
-      // ignore
-    }
-    copyFileSync(opencodeRouterBuildPath, opencodeRouterPath);
-  }
-
-  if (opencodeRouterTargetPath) {
-    const shouldCopyTarget = didBuildOpenCodeRouter || !existsSync(opencodeRouterTargetPath) || isStubBinary(opencodeRouterTargetPath);
-    if (shouldCopyTarget && opencodeRouterBuildPath !== opencodeRouterTargetPath) {
-      try {
-        if (existsSync(opencodeRouterTargetPath)) unlinkSync(opencodeRouterTargetPath);
-      } catch {
-        // ignore
-      }
-      copyFileSync(opencodeRouterBuildPath, opencodeRouterTargetPath);
-    }
-  }
-}
-
 // Build orchestrator sidecar
 let didBuildOrchestrator = false;
 const shouldBuildOrchestrator =
@@ -706,6 +635,20 @@ if (existsSync(chromeDevtoolsBuildPath)) {
   }
 }
 
+adHocSignDarwinSidecars([
+  opencodePath,
+  opencodeTargetPath,
+  openworkServerBuildPath,
+  openworkServerPath,
+  openworkServerTargetPath,
+  orchestratorBuildPath,
+  orchestratorPath,
+  orchestratorTargetPath,
+  chromeDevtoolsBuildPath,
+  chromeDevtoolsPath,
+  chromeDevtoolsTargetPath,
+]);
+
 const openworkServerVersion = (() => {
   try {
     const raw = readFileSync(resolve(openworkServerDir, "package.json"), "utf8");
@@ -733,10 +676,6 @@ const versions = {
     version: openworkServerVersion,
     sha256: existsSync(openworkServerPath) ? sha256File(openworkServerPath) : null,
   },
-  opencodeRouter: {
-    version: expectedOpenCodeRouterVersion,
-    sha256: existsSync(opencodeRouterPath) ? sha256File(opencodeRouterPath) : null,
-  },
   "openwork-orchestrator": {
     version: orchestratorVersion,
     sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
@@ -762,7 +701,7 @@ try {
   const content = JSON.stringify(versions, null, 2) + "\n";
   writeFileSync(versionsPath, content, "utf8");
   if (resolvedTargetTriple) {
-    const targetSuffix = process.platform === "win32" ? ".exe" : "";
+    const targetSuffix = isWindowsTarget ? ".exe" : "";
     const targetVersionsPath = join(sidecarDir, `versions.json-${resolvedTargetTriple}${targetSuffix}`);
     writeFileSync(targetVersionsPath, content, "utf8");
   }

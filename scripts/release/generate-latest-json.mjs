@@ -16,6 +16,7 @@ function parseArgs(argv) {
     tag: process.env.RELEASE_TAG || "",
     repo: process.env.GITHUB_REPOSITORY || "different-ai/openwork",
     output: "latest.json",
+    version: process.env.RELEASE_VERSION || "",
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -32,6 +33,11 @@ function parseArgs(argv) {
     }
     if (arg === "--output") {
       options.output = argv[i + 1] || options.output;
+      i += 1;
+      continue;
+    }
+    if (arg === "--version") {
+      options.version = argv[i + 1] || options.version;
       i += 1;
       continue;
     }
@@ -172,7 +178,7 @@ function sortObjectEntries(input) {
 }
 
 async function main() {
-  const { tag, repo, output } = parseArgs(process.argv);
+  const { tag, repo, output, version } = parseArgs(process.argv);
   const release = await fetchReleaseByTag(repo, tag);
 
   const assets = Array.isArray(release.assets) ? release.assets : [];
@@ -214,9 +220,8 @@ async function main() {
     throw new Error(`No updater platforms were resolved for ${repo}@${tag}.`);
   }
 
-  const version = String(release.tag_name || tag).replace(/^v/, "");
   const latest = {
-    version,
+    version: version || String(release.tag_name || tag).replace(/^v/, ""),
     notes:
       typeof release.body === "string" && release.body.trim()
         ? release.body

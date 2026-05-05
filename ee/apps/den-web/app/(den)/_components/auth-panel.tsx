@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { isSamePathname } from "../_lib/client-route";
 import type { AuthMode } from "../_lib/den-flow";
+import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type PanelContent = {
@@ -230,6 +231,11 @@ export function AuthPanel({
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
+          const oauthRoute = typeof window === "undefined" ? null : getMcpOAuthSelectOrganizationRoute(window.location.search);
+          if (next && oauthRoute) {
+            router.replace(oauthRoute);
+            return;
+          }
           if (next === "dashboard" || next === "join-org") {
             const target = await resolveUserLandingRoute();
             if (target && !isSamePathname(pathname, target)) {

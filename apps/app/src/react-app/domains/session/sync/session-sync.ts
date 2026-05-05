@@ -1,12 +1,13 @@
 import type { UIMessage } from "ai";
-import type { Part, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { Part, PermissionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { createClient } from "../../../../app/lib/opencode";
 import { normalizeEvent } from "../../../../app/utils";
-import type { OpencodeEvent } from "../../../../app/types";
+import type { OpencodeEvent, PendingPermission } from "../../../../app/types";
 import { snapshotToUIMessages } from "./usechat-adapter";
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import { mergeSnapshotIntoCachedMessages } from "./message-merge";
 
 type SyncOptions = {
   workspaceId: string;
@@ -45,13 +46,67 @@ export const statusKey = (workspaceId: string, sessionId: string) =>
   ["react-session-status", workspaceId, sessionId] as const;
 export const todoKey = (workspaceId: string, sessionId: string) =>
   ["react-session-todos", workspaceId, sessionId] as const;
+export const permissionKey = (workspaceId: string, sessionId: string) =>
+  ["react-session-permissions", workspaceId, sessionId] as const;
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
 }
 
+function getErrorStatus(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const record = error as {
+    status?: unknown;
+    response?: { status?: unknown };
+    cause?: { status?: unknown };
+  };
+  const status = record.status ?? record.response?.status ?? record.cause?.status;
+  return typeof status === "number" ? status : null;
+}
+
+function shouldRetrySyncSubscribe(error: unknown) {
+  const status = getErrorStatus(error);
+  return status !== 401 && status !== 403 && status !== 404;
+}
+
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
+}
+
+function withReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
+  return { ...permission, receivedAt };
+}
+
+function sortPermissions(a: PendingPermission, b: PendingPermission) {
+  return a.receivedAt - b.receivedAt || a.id.localeCompare(b.id);
+}
+
+export function seedPermissionState(
+  workspaceId: string,
+  sessionId: string,
+  permissions: PermissionRequest[],
+  options: { snapshotStartedAt?: number } = {},
+) {
+  const queryClient = getReactQueryClient();
+  const now = Date.now();
+  queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
+    const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
+    const seeded = permissions
+      .filter((permission) => permission.sessionID === sessionId)
+      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now));
+    const seededIds = new Set(seeded.map((permission) => permission.id));
+    const snapshotStartedAt = options.snapshotStartedAt;
+    const liveAfterSnapshot =
+      typeof snapshotStartedAt === "number"
+        ? current.filter(
+            (permission) =>
+              permission.sessionID === sessionId &&
+              permission.receivedAt > snapshotStartedAt &&
+              !seededIds.has(permission.id),
+          )
+        : [];
+    return [...seeded, ...liveAfterSnapshot].sort(sortPermissions);
+  });
 }
 
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
@@ -266,6 +321,32 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
+  if (event.type === "permission.asked") {
+    const permission = event.properties as PermissionRequest;
+    if (!permission?.id || !permission.sessionID) return;
+    if (!isTrackedSession(entry, permission.sessionID)) return;
+    const receivedAt = Date.now();
+    queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
+      const existing = current.find((item) => item.id === permission.id);
+      const next = withReceivedAt(permission, existing?.receivedAt ?? receivedAt);
+      if (existing) {
+        return current.map((item) => (item.id === permission.id ? next : item)).sort(sortPermissions);
+      }
+      return [...current, next].sort(sortPermissions);
+    });
+    return;
+  }
+
+  if (event.type === "permission.replied") {
+    const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
+    if (!props.sessionID || !props.requestID) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
+    queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, props.sessionID), (current = []) =>
+      current.filter((permission) => permission.id !== props.requestID),
+    );
+    return;
+  }
+
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as { info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string } };
     const info = props.info;
@@ -414,9 +495,23 @@ function startSync(input: SyncOptions) {
   const client = createClient(input.baseUrl, undefined, { token: input.openworkToken, mode: "openwork" });
   const controller = new AbortController();
   const entry = syncs.get(syncKey(input));
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelayMs = 1_000;
 
-  void client.event.subscribe(undefined, { signal: controller.signal }).then((sub) => {
-    void (async () => {
+  const scheduleRetry = () => {
+    if (disposed || controller.signal.aborted || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void connect();
+    }, retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, 10_000);
+  };
+
+  const connect = async () => {
+    try {
+      const sub = await client.event.subscribe(undefined, { signal: controller.signal });
+      retryDelayMs = 1_000;
       for await (const raw of sub.stream) {
         if (controller.signal.aborted) return;
         const event = normalizeEvent(raw);
@@ -424,10 +519,19 @@ function startSync(input: SyncOptions) {
         if (!entry) continue;
         applyEvent(entry, input.workspaceId, event);
       }
-    })();
-  });
+      if (!controller.signal.aborted) scheduleRetry();
+    } catch (error) {
+      if (!controller.signal.aborted && shouldRetrySyncSubscribe(error)) scheduleRetry();
+    }
+  };
 
-  return () => controller.abort();
+  void connect();
+
+  return () => {
+    disposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    controller.abort();
+  };
 }
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
@@ -479,29 +583,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
     // for in-progress parts while the cache already accumulated text via
     // deltas.  Merge so we never overwrite longer cached text with shorter
     // server text.
-    const merged = incoming.map((incomingMsg) => {
-      const cachedMsg = existing.find((m) => m.id === incomingMsg.id);
-      if (!cachedMsg) return incomingMsg;
-      const parts = incomingMsg.parts.map((inPart, index) => {
-        const cachedPart = cachedMsg.parts[index];
-        if (!cachedPart) return inPart;
-        if (
-          (inPart.type === "text" || inPart.type === "reasoning") &&
-          (cachedPart.type === "text" || cachedPart.type === "reasoning") &&
-          cachedPart.text.length > inPart.text.length
-        ) {
-          return { ...inPart, text: cachedPart.text };
-        }
-        return inPart;
-      });
-      // Keep any extra cached parts the server doesn't know about yet
-      if (cachedMsg.parts.length > incomingMsg.parts.length) {
-        for (let i = incomingMsg.parts.length; i < cachedMsg.parts.length; i++) {
-          parts.push(cachedMsg.parts[i]);
-        }
-      }
-      return { ...incomingMsg, parts };
-    });
+    const merged = mergeSnapshotIntoCachedMessages(incoming, existing);
     queryClient.setQueryData(key, merged);
   } else {
     queryClient.setQueryData(key, incoming);
@@ -531,9 +613,7 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
         (item) => item.sessionId !== normalizedSessionId,
       );
       const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, normalizedSessionId), exact: true });
-      queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, normalizedSessionId), exact: true });
-      queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, normalizedSessionId), exact: true });
+      queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, normalizedSessionId), exact: true });
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);

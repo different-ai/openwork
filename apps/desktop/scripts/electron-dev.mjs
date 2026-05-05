@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
+const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
+const defaultDevDataDir = resolve(
+  process.env.HOME ?? process.env.USERPROFILE ?? repoRoot,
+  ".openwork",
+  "openwork-orchestrator-dev",
+);
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -23,7 +29,7 @@ const viteProbeUrls = explicitStartUrl
 
 function run(command, args, options = {}) {
   return spawn(command, args, {
-    stdio: "inherit",
+    stdio: ["ignore", "inherit", "inherit"],
     shell: process.platform === "win32",
     ...options,
   });
@@ -106,7 +112,7 @@ async function waitForVite(url, timeoutMs = 60_000) {
   throw new Error(`Timed out waiting for Vite dev server at ${viteProbeUrls.join(", ")}`);
 }
 
-function killTree(child) {
+function signalTree(child, signal) {
   if (!child?.pid) return;
   if (process.platform === "win32") {
     try {
@@ -118,32 +124,74 @@ function killTree(child) {
   }
 
   try {
-    process.kill(-child.pid, "SIGTERM");
+    process.kill(-child.pid, signal);
   } catch {
     try {
-      child.kill("SIGTERM");
+      child.kill(signal);
     } catch {
       // ignore
     }
   }
 }
 
+function restoreTerminal() {
+  try {
+    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(false);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function waitForExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolveWait) => {
+    let settled = false;
+    const finish = (clean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolveWait(clean);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+async function waitForChildren(children, timeoutMs) {
+  const results = await Promise.all(children.map((child) => waitForExit(child, timeoutMs)));
+  return results.every(Boolean);
+}
+
 let uiChild = null;
 let electronChild = null;
 let stopping = false;
 
-function stopAll(exitCode = 0) {
+async function stopAll(exitCode = 0) {
   if (stopping) return;
   stopping = true;
-  killTree(electronChild);
-  killTree(uiChild);
+  restoreTerminal();
+
+  const children = [electronChild, uiChild].filter(Boolean);
+  for (const child of children) signalTree(child, "SIGINT");
+
+  const stoppedCleanly = await waitForChildren(children, 2_000);
+  if (!stoppedCleanly) {
+    for (const child of children) signalTree(child, "SIGTERM");
+    await waitForChildren(children, 1_000);
+  }
+
+  restoreTerminal();
   process.exit(exitCode);
 }
 
-process.once("SIGINT", () => stopAll(0));
-process.once("SIGTERM", () => stopAll(0));
+process.once("SIGINT", () => void stopAll(130));
+process.once("SIGTERM", () => void stopAll(143));
 
-runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force"], { cwd: desktopRoot });
+runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;
@@ -171,6 +219,7 @@ if (!viteReady) {
       ...process.env,
       PORT: String(devPort),
       OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
+      OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
     },
   });
 }
@@ -190,6 +239,7 @@ electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
   env: {
     ...process.env,
     OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
+    OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
     OPENWORK_ELECTRON_START_URL: resolvedStartUrl,
     ...(cdpPort ? { OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
   },
@@ -200,5 +250,6 @@ if (cdpPort) {
 }
 
 electronChild.on("exit", (code) => {
-  stopAll(code ?? 0);
+  if (stopping) return;
+  void stopAll(code ?? 0);
 });

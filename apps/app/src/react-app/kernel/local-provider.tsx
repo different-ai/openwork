@@ -33,6 +33,12 @@ export type LocalPreferences = {
   featureFlags: {
     microsandboxCreateSandbox: boolean;
   };
+  /**
+   * Set to true after the user completes the welcome/onboarding flow
+   * (creates or connects their first workspace). When false and the
+   * workspace list is empty, the app redirects to /welcome.
+   */
+  hasCompletedOnboarding: boolean;
 };
 
 type LocalContextValue = {
@@ -55,6 +61,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: false },
+  hasCompletedOnboarding: false,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {

@@ -4,10 +4,10 @@
   "identifier": "com.differentai.openwork.dev",
   "bundle": {
     "icon": [
-      "icons/dev/32x32.png",
-      "icons/dev/128x128.png",
-      "icons/dev/128x128@2x.png",
-      "icons/icon-dev.icns"
+      "../resources/icons/dev/32x32.png",
+      "../resources/icons/dev/128x128.png",
+      "../resources/icons/dev/128x128@2x.png",
+      "../resources/icons/dev/icon-dev.icns"
     ],
     "macOS": {
       "bundleName": "OpenWork - Dev",

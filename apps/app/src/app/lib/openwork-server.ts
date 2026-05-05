@@ -1,7 +1,7 @@
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "../utils";
-import type { ExecResult, OpencodeConfigFile, ScheduledJob, WorkspaceInfo, WorkspaceList } from "./desktop";
+import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -17,7 +17,7 @@ export type OpenworkServerCapabilities = {
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
-  proxy?: { opencode: boolean; opencodeRouter: boolean };
+  proxy?: { opencode: boolean };
   toolProviders?: {
     browser?: {
       enabled: boolean;
@@ -52,7 +52,7 @@ export type OpenworkServerDiagnostics = {
   tokenSource: { client: string; host: string };
 };
 
-export type OpenworkRuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+export type OpenworkRuntimeServiceName = "openwork-server" | "opencode";
 
 export type OpenworkRuntimeServiceSnapshot = {
   name: OpenworkRuntimeServiceName;
@@ -88,6 +88,7 @@ export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
+  hostToken?: string;
   remoteAccessEnabled?: boolean;
 };
 
@@ -191,196 +192,6 @@ export type OpenworkMcpItem = {
   disabledByTools?: boolean;
 };
 
-export type OpenworkOpenCodeRouterTelegramResult = {
-  ok: boolean;
-  persisted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  telegram?: {
-    configured: boolean;
-    enabled: boolean;
-    applied?: boolean;
-    starting?: boolean;
-    error?: string;
-  };
-};
-
-export type OpenworkOpenCodeRouterSlackResult = {
-  ok: boolean;
-  persisted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  slack?: {
-    configured: boolean;
-    enabled: boolean;
-    applied?: boolean;
-    starting?: boolean;
-    error?: string;
-  };
-};
-
-export type OpenworkOpenCodeRouterTelegramBotInfo = {
-  id: number;
-  username?: string;
-  name?: string;
-};
-
-export type OpenworkOpenCodeRouterTelegramInfo = {
-  ok: boolean;
-  configured: boolean;
-  enabled: boolean;
-  bot: OpenworkOpenCodeRouterTelegramBotInfo | null;
-};
-
-export type OpenworkOpenCodeRouterTelegramEnabledResult = {
-  ok: boolean;
-  persisted?: boolean;
-  enabled: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-};
-
-export type OpenworkOpenCodeRouterHealthSnapshot = {
-  ok: boolean;
-  opencode: {
-    url: string;
-    healthy: boolean;
-    version?: string;
-  };
-  channels: {
-    telegram: boolean;
-    whatsapp: boolean;
-    slack: boolean;
-  };
-  config: {
-    groupsEnabled: boolean;
-  };
-  activity?: {
-    dayStart: number;
-    inboundToday: number;
-    outboundToday: number;
-    lastInboundAt?: number;
-    lastOutboundAt?: number;
-    lastMessageAt?: number;
-  };
-  agent?: {
-    scope: "workspace";
-    path: string;
-    loaded: boolean;
-    selected?: string;
-  };
-};
-
-export type OpenworkOpenCodeRouterBindingItem = {
-  channel: string;
-  identityId: string;
-  peerId: string;
-  directory: string;
-  updatedAt?: number;
-};
-
-export type OpenworkOpenCodeRouterBindingsResult = {
-  ok: boolean;
-  items: OpenworkOpenCodeRouterBindingItem[];
-};
-
-export type OpenworkOpenCodeRouterBindingUpdateResult = {
-  ok: boolean;
-};
-
-export type OpenworkOpenCodeRouterSendResult = {
-  ok: boolean;
-  channel: string;
-  identityId?: string;
-  directory: string;
-  peerId?: string;
-  attempted: number;
-  sent: number;
-  failures?: Array<{ identityId: string; peerId: string; error: string }>;
-  reason?: string;
-};
-
-export type OpenworkOpenCodeRouterIdentityItem = {
-  id: string;
-  enabled: boolean;
-  running: boolean;
-  access?: "public" | "private";
-  pairingRequired?: boolean;
-};
-
-export type OpenworkOpenCodeRouterTelegramIdentitiesResult = {
-  ok: boolean;
-  items: OpenworkOpenCodeRouterIdentityItem[];
-};
-
-export type OpenworkOpenCodeRouterSlackIdentitiesResult = {
-  ok: boolean;
-  items: OpenworkOpenCodeRouterIdentityItem[];
-};
-
-export type OpenworkOpenCodeRouterTelegramIdentityUpsertResult = {
-  ok: boolean;
-  persisted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  telegram?: {
-    id: string;
-    enabled: boolean;
-    access?: "public" | "private";
-    pairingRequired?: boolean;
-    pairingCode?: string;
-    applied?: boolean;
-    starting?: boolean;
-    error?: string;
-    bot?: OpenworkOpenCodeRouterTelegramBotInfo | null;
-  };
-};
-
-export type OpenworkOpenCodeRouterSlackIdentityUpsertResult = {
-  ok: boolean;
-  persisted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  slack?: {
-    id: string;
-    enabled: boolean;
-    applied?: boolean;
-    starting?: boolean;
-    error?: string;
-  };
-};
-
-export type OpenworkOpenCodeRouterTelegramIdentityDeleteResult = {
-  ok: boolean;
-  persisted?: boolean;
-  deleted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  telegram?: {
-    id: string;
-    deleted: boolean;
-  };
-};
-
-export type OpenworkOpenCodeRouterSlackIdentityDeleteResult = {
-  ok: boolean;
-  persisted?: boolean;
-  deleted?: boolean;
-  applied?: boolean;
-  applyError?: string;
-  applyStatus?: number;
-  slack?: {
-    id: string;
-    deleted: boolean;
-  };
-};
-
 export type OpenworkWorkspaceExport = {
   workspaceId: string;
   exportedAt: number;
@@ -438,12 +249,6 @@ export type OpenworkInboxUploadResult = {
   bytes: number;
 };
 
-type RawJsonResponse<T> = {
-  ok: boolean;
-  status: number;
-  json: T | null;
-};
-
 export type OpenworkActor = {
   type: "remote" | "host";
   clientId?: string;
@@ -483,6 +288,7 @@ export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
+const STORAGE_HOST_TOKEN = "openwork.server.hostToken";
 const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
@@ -490,6 +296,17 @@ export function normalizeOpenworkServerUrl(input: string) {
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
   return withProtocol.replace(/\/+$/, "");
+}
+
+export function isLoopbackOpenworkServerUrl(input: string) {
+  const normalized = normalizeOpenworkServerUrl(input) ?? "";
+  if (!normalized) return false;
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
 }
 
 export function parseOpenworkWorkspaceIdFromUrl(input: string) {
@@ -598,11 +415,13 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
+    const hostToken = window.localStorage.getItem(STORAGE_HOST_TOKEN) ?? undefined;
     const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
+      hostToken: hostToken?.trim() || undefined,
       remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
@@ -616,6 +435,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
+    const hostToken = next.hostToken?.trim() || undefined;
     const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
@@ -634,6 +454,12 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.setItem(STORAGE_TOKEN, token);
     } else {
       window.localStorage.removeItem(STORAGE_TOKEN);
+    }
+
+    if (hostToken) {
+      window.localStorage.setItem(STORAGE_HOST_TOKEN, hostToken);
+    } else {
+      window.localStorage.removeItem(STORAGE_HOST_TOKEN);
     }
 
     if (remoteAccessEnabled) {
@@ -660,8 +486,11 @@ export function hydrateOpenworkServerSettingsFromEnv() {
   const envToken = typeof import.meta.env?.VITE_OPENWORK_TOKEN === "string"
     ? import.meta.env.VITE_OPENWORK_TOKEN.trim()
     : "";
+  const envHostToken = typeof import.meta.env?.VITE_OPENWORK_HOST_TOKEN === "string"
+    ? import.meta.env.VITE_OPENWORK_HOST_TOKEN.trim()
+    : "";
 
-  if (!envUrl && !envPort && !envToken) return;
+  if (!envUrl && !envPort && !envToken && !envHostToken) return;
 
   try {
     const current = readOpenworkServerSettings();
@@ -686,6 +515,11 @@ export function hydrateOpenworkServerSettingsFromEnv() {
       changed = true;
     }
 
+    if (!current.hostToken && envHostToken) {
+      next.hostToken = envHostToken;
+      changed = true;
+    }
+
     if (changed) {
       writeOpenworkServerSettings(next);
     }
@@ -700,6 +534,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
+    window.localStorage.removeItem(STORAGE_HOST_TOKEN);
     window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
@@ -841,35 +676,6 @@ async function requestJson<T>(
   return json as T;
 }
 
-async function requestJsonRaw<T>(
-  baseUrl: string,
-  path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
-): Promise<RawJsonResponse<T>> {
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken),
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
-  );
-
-  const text = await response.text();
-  let json: T | null = null;
-  try {
-    json = text ? (JSON.parse(text) as T) : null;
-  } catch {
-    json = null;
-  }
-
-  return { ok: response.ok, status: response.status, json };
-}
-
 async function requestMultipartRaw(
   baseUrl: string,
   path: string,
@@ -945,7 +751,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     sessionRead: 12_000,
     status: 6_000,
     config: 10_000,
-    opencodeRouter: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
     shareBundle: 20_000,
@@ -961,26 +766,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
-    opencodeRouterHealth: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(baseUrl, "/opencode-router/health", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    getOpenCodeRouterHealth: (workspaceId: string) =>
-      requestJsonRaw<OpenworkOpenCodeRouterHealthSnapshot>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/health`,
-        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      ),
-    opencodeRouterBindings: (filters?: { channel?: string; identityId?: string }) => {
-      const search = new URLSearchParams();
-      if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
-      if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      const suffix = search.toString();
-      const path = suffix ? `/opencode-router/bindings?${suffix}` : "/opencode-router/bindings";
-      return requestJsonRaw<OpenworkOpenCodeRouterBindingsResult>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.opencodeRouter });
-    },
-    opencodeRouterTelegramIdentities: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterTelegramIdentitiesResult>(baseUrl, "/opencode-router/identities/telegram", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
-    opencodeRouterSlackIdentities: () =>
-      requestJsonRaw<OpenworkOpenCodeRouterSlackIdentitiesResult>(baseUrl, "/opencode-router/identities/slack", { token, hostToken, timeoutMs: timeouts.opencodeRouter }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
@@ -1092,7 +877,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "workspace-profile" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
+    publishBundle: (payload: unknown, bundleType: "skill" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
       requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
         token,
         hostToken,
@@ -1121,200 +906,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
-      ),
-    setOpenCodeRouterTelegramToken: (
-      workspaceId: string,
-      tokenValue: string,
-    ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-token`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { token: tokenValue },
-          timeoutMs: timeouts.opencodeRouter,
-        },
-      ),
-    setOpenCodeRouterSlackTokens: (
-      workspaceId: string,
-      botToken: string,
-      appToken: string,
-    ) =>
-      requestJson<OpenworkOpenCodeRouterSlackResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/slack-tokens`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { botToken, appToken },
-          timeoutMs: timeouts.opencodeRouter,
-        },
-      ),
-    getOpenCodeRouterTelegram: (workspaceId: string) =>
-      requestJson<OpenworkOpenCodeRouterTelegramInfo>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram`,
-        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      ),
-    getOpenCodeRouterTelegramIdentities: (workspaceId: string) =>
-      requestJson<OpenworkOpenCodeRouterTelegramIdentitiesResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
-        { token, hostToken, timeoutMs: timeouts.opencodeRouter },
-      ),
-    upsertOpenCodeRouterTelegramIdentity: (
-      workspaceId: string,
-      input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
-    ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            ...(input.id?.trim() ? { id: input.id.trim() } : {}),
-            token: input.token,
-            ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-            ...(input.access ? { access: input.access } : {}),
-            ...(input.pairingCode?.trim() ? { pairingCode: input.pairingCode.trim() } : {}),
-          },
-        },
-      ),
-    deleteOpenCodeRouterTelegramIdentity: (workspaceId: string, identityId: string) =>
-      requestJson<OpenworkOpenCodeRouterTelegramIdentityDeleteResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/telegram/${encodeURIComponent(identityId)}`,
-        { token, hostToken, method: "DELETE" },
-      ),
-    getOpenCodeRouterSlackIdentities: (workspaceId: string) =>
-      requestJson<OpenworkOpenCodeRouterSlackIdentitiesResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
-        { token, hostToken },
-      ),
-    upsertOpenCodeRouterSlackIdentity: (
-      workspaceId: string,
-      input: { id?: string; botToken: string; appToken: string; enabled?: boolean },
-    ) =>
-      requestJson<OpenworkOpenCodeRouterSlackIdentityUpsertResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            ...(input.id?.trim() ? { id: input.id.trim() } : {}),
-            botToken: input.botToken,
-            appToken: input.appToken,
-            ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
-          },
-        },
-      ),
-    deleteOpenCodeRouterSlackIdentity: (workspaceId: string, identityId: string) =>
-      requestJson<OpenworkOpenCodeRouterSlackIdentityDeleteResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/identities/slack/${encodeURIComponent(identityId)}`,
-        { token, hostToken, method: "DELETE" },
-      ),
-    getOpenCodeRouterBindings: (
-      workspaceId: string,
-      filters?: { channel?: string; identityId?: string },
-    ) => {
-      const search = new URLSearchParams();
-      if (filters?.channel?.trim()) search.set("channel", filters.channel.trim());
-      if (filters?.identityId?.trim()) search.set("identityId", filters.identityId.trim());
-      const suffix = search.toString();
-      return requestJson<OpenworkOpenCodeRouterBindingsResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings${suffix ? `?${suffix}` : ""}`,
-        { token, hostToken },
-      );
-    },
-    setOpenCodeRouterBinding: (
-      workspaceId: string,
-      input: { channel: string; identityId?: string; peerId: string; directory?: string },
-    ) =>
-      requestJson<OpenworkOpenCodeRouterBindingUpdateResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/bindings`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: {
-            channel: input.channel,
-            ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
-            peerId: input.peerId,
-            ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-          },
-        },
-      ),
-    sendOpenCodeRouterMessage: (
-      workspaceId: string,
-      input: {
-        channel: "telegram" | "slack";
-        text: string;
-        identityId?: string;
-        directory?: string;
-        peerId?: string;
-        autoBind?: boolean;
-      },
-    ) => {
-      const payload = {
-        channel: input.channel,
-        text: input.text,
-        ...(input.identityId?.trim() ? { identityId: input.identityId.trim() } : {}),
-        ...(input.directory?.trim() ? { directory: input.directory.trim() } : {}),
-        ...(input.peerId?.trim() ? { peerId: input.peerId.trim() } : {}),
-        ...(input.autoBind === true ? { autoBind: true } : {}),
-      };
-
-      const primaryPath = `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/send`;
-      const mountedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(baseUrl);
-      const fallbackPath =
-        mountedWorkspaceId && mountedWorkspaceId === workspaceId
-          ? `/opencode-router/send`
-          : `/w/${encodeURIComponent(workspaceId)}/opencode-router/send`;
-
-      return requestJson<OpenworkOpenCodeRouterSendResult>(baseUrl, primaryPath, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.opencodeRouter,
-      }).catch(async (error) => {
-        if (!(error instanceof OpenworkServerError) || error.status !== 404) {
-          throw error;
-        }
-        return requestJson<OpenworkOpenCodeRouterSendResult>(baseUrl, fallbackPath, {
-          token,
-          hostToken,
-          method: "POST",
-          body: payload,
-          timeoutMs: timeouts.opencodeRouter,
-        });
-      });
-    },
-    setOpenCodeRouterTelegramEnabled: (
-      workspaceId: string,
-      enabled: boolean,
-      options?: { clearToken?: boolean },
-    ) =>
-      requestJson<OpenworkOpenCodeRouterTelegramEnabledResult>(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/opencode-router/telegram-enabled`,
-        {
-          token,
-          hostToken,
-          method: "POST",
-          body: { enabled, clearToken: options?.clearToken ?? false },
-        },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
@@ -1451,6 +1042,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
+      requestJson<{ items: OpenworkMcpItem[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/enabled`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { enabled },
+        },
+      ),
 
     logoutMcpAuth: (workspaceId: string, name: string) =>
       requestJson<{ ok: true }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/auth`, {
@@ -1487,17 +1089,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
-    listScheduledJobs: (workspaceId: string) =>
-      requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),
-    deleteScheduledJob: (workspaceId: string, name: string) =>
-      requestJson<{ job: ScheduledJob }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs/${encodeURIComponent(name)}`,
-        {
-          token,
-          hostToken,
-          method: "DELETE",
-        },
-      ),
-
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");
@@ -1603,6 +1194,39 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
+
+    // User-level env vars (host-auth only — desktop shell is the sole caller).
+    // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
+    listUserEnvKeys: () =>
+      requestJson<{ keys: string[] }>(
+        baseUrl,
+        "/env/keys",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    listUserEnv: () =>
+      requestJson<{ items: Array<{ key: string; value: string; updatedAt: number }> }>(
+        baseUrl,
+        "/env",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    upsertUserEnv: (entries: Array<{ key: string; value: string }>) =>
+      requestJson<{ ok: true; count: number }>(baseUrl, "/env", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: { entries },
+        timeoutMs: timeouts.config,
+      }),
+
+    deleteUserEnv: (key: string) =>
+      requestJson<{ ok: true }>(baseUrl, `/env/${encodeURIComponent(key)}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.config,
+      }),
   };
 }
 

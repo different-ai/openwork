@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import { Check, HardDrive, Loader2, Minimize2, RefreshCcw, Redo2, Shield, Undo2, Zap } from "lucide-react";
+import { Check, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -19,6 +19,7 @@ import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
+import { PermissionApprovalModal } from "./permission-approval-modal";
 import { QuestionModal } from "../modals/question-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { WorkspaceSessionList } from "../sidebar/workspace-session-list";
@@ -116,7 +117,6 @@ export type SessionPageProps = {
   activePermission?: PendingPermission | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
-  respondPermissionAndRemember?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
@@ -125,47 +125,6 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
 };
-
-function describePermissionRequest(permission: PendingPermission | null | undefined) {
-  if (!permission) {
-    return {
-      title: t("session.permission_required"),
-      message: t("session.permission_message"),
-      permissionLabel: "",
-      scopeLabel: t("session.scope_label"),
-      scopeValue: "",
-      isDoomLoop: false,
-      note: null as string | null,
-    };
-  }
-
-  const patterns = permission.patterns.filter((pattern) => pattern.trim().length > 0);
-  if (permission.permission === "doom_loop") {
-    const tool =
-      permission.metadata && typeof permission.metadata === "object" && typeof permission.metadata.tool === "string"
-        ? permission.metadata.tool
-        : null;
-    return {
-      title: t("session.doom_loop_title"),
-      message: t("session.doom_loop_message"),
-      permissionLabel: t("session.doom_loop_label"),
-      scopeLabel: tool ? t("session.doom_loop_tool_label") : t("session.doom_loop_repeated_call_label"),
-      scopeValue: tool ?? (patterns.length ? patterns.join(", ") : t("session.doom_loop_repeated_tool_call")),
-      isDoomLoop: true,
-      note: t("session.doom_loop_note"),
-    };
-  }
-
-  return {
-    title: t("session.permission_required"),
-    message: t("session.permission_message"),
-    permissionLabel: permission.permission,
-    scopeLabel: t("session.scope_label"),
-    scopeValue: patterns.join(", "),
-    isDoomLoop: false,
-    note: null as string | null,
-  };
-}
 
 function getSidebarInitialLoading(props: SessionPageSidebarProps) {
   if (props.workspaceSessionGroups.some((group) => group.sessions.length > 0)) {
@@ -234,10 +193,6 @@ export function SessionPage(props: SessionPageProps) {
     props.startupPhase !== "ready";
   const showSessionLoadingState =
     Boolean(props.selectedSessionId) && props.sessionLoadingById(props.selectedSessionId) && !showWorkspaceSetupEmptyState;
-  const permissionPresentation = useMemo(
-    () => describePermissionRequest(props.activePermission),
-    [props.activePermission],
-  );
   const todos = useMemo(() => props.todos.filter((todo) => todo.content.trim()), [props.todos]);
   const completedTodos = useMemo(
     () => todos.filter((todo) => todo.status === "completed").length,
@@ -612,78 +567,12 @@ export function SessionPage(props: SessionPageProps) {
       {props.shareWorkspaceModal ? <ShareWorkspaceModal {...props.shareWorkspaceModal} /> : null}
 
       {props.activePermission ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-1/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-amber-7/30 bg-gray-2 shadow-2xl">
-            <div className="p-6">
-              <div className="mb-4 flex items-start gap-4">
-                <div className="rounded-full bg-amber-7/10 p-3 text-amber-6">
-                  {permissionPresentation.isDoomLoop ? <RefreshCcw size={24} /> : <Shield size={24} />}
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-12">{permissionPresentation.title}</h3>
-                  <p className="mt-1 text-sm text-gray-11">{permissionPresentation.message}</p>
-                </div>
-              </div>
-
-              <div className="mb-6 rounded-xl border border-gray-6 bg-gray-1/50 p-4">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-10">
-                  {t("session.permission_label")}
-                </div>
-                <div className="font-mono text-sm text-gray-12">{permissionPresentation.permissionLabel}</div>
-
-                {permissionPresentation.note ? (
-                  <p className="mt-2 text-sm text-gray-11">{permissionPresentation.note}</p>
-                ) : null}
-
-                <div className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-gray-10">
-                  {permissionPresentation.scopeLabel}
-                </div>
-                <div className="flex items-center gap-2 rounded border border-amber-7/20 bg-amber-1/30 px-2 py-1 font-mono text-sm text-amber-12">
-                  <HardDrive size={12} />
-                  {permissionPresentation.scopeValue}
-                </div>
-
-                {Object.keys(props.activePermission.metadata ?? {}).length > 0 ? (
-                  <details className="mt-4 rounded-lg bg-gray-1/20 p-2">
-                    <summary className="cursor-pointer text-xs text-gray-11">{t("session.details_label")}</summary>
-                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-gray-12">
-                      {(props.safeStringify ?? JSON.stringify)(props.activePermission.metadata, null, 2)}
-                    </pre>
-                  </details>
-                ) : null}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  variant="outline"
-                  className="w-full border-red-7/20 text-red-11 hover:bg-red-1/30"
-                  onClick={() => props.respondPermission?.(props.activePermission!.id, "reject")}
-                  disabled={props.permissionReplyBusy}
-                >
-                  {t("session.deny")}
-                </Button>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="secondary"
-                    className="text-xs"
-                    onClick={() => props.respondPermission?.(props.activePermission!.id, "once")}
-                    disabled={props.permissionReplyBusy}
-                  >
-                    {t("session.allow_once")}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    className="border-none bg-amber-7 text-xs font-bold text-gray-12 shadow-amber-6/20 hover:bg-amber-8"
-                    onClick={() => props.respondPermissionAndRemember?.(props.activePermission!.id, "always")}
-                    disabled={props.permissionReplyBusy}
-                  >
-                    {t("session.allow_for_session")}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PermissionApprovalModal
+          permission={props.activePermission}
+          busy={props.permissionReplyBusy}
+          respondPermission={props.respondPermission}
+          safeStringify={props.safeStringify}
+        />
       ) : null}
 
       <QuestionModal

@@ -581,7 +581,7 @@ Docker dev prints LAN-ready OpenWork URLs
 Makes local Docker testing easier from phones and other devices by printing public URLs and deriving Den auth and CORS defaults from the detected host.
 
 #### Main changes
-- `dev-up.sh` now prints localhost, hostname, and LAN IP URLs for the app, server, and share service.
+- The legacy Docker dev stack now prints localhost, hostname, and LAN IP URLs for the app, server, and share service.
 - `den-dev-up.sh` derives auth URLs and trusted origins for cross-device testing.
 - Added `OPENWORK_PUBLIC_HOST` and `DEN_PUBLIC_HOST` overrides when auto-detection is wrong.
 

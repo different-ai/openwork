@@ -70,41 +70,14 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       title: pageTitle,
       description: pageDescription,
       url: props.canonicalUrl,
-      images: props.ogImageUrls
-        ? [
-            {
-              url: props.ogImageUrls.byVariant.facebook,
-              width: 1200,
-              height: 630,
-              alt: `${pageTitle} bundle preview`
-            },
-            {
-              url: props.ogImageUrls.byVariant.linkedin,
-              width: 1200,
-              height: 627,
-              alt: `${pageTitle} bundle preview`
-            },
-            {
-              url: props.ogImageUrls.byVariant.slack,
-              width: 1200,
-              height: 630,
-              alt: `${pageTitle} bundle preview`
-            },
-            {
-              url: props.ogImageUrls.byVariant.whatsapp,
-              width: 1200,
-              height: 630,
-              alt: `${pageTitle} bundle preview`
-            }
-          ]
-        : [
-            {
-              url: props.ogImageUrl,
-              width: 1200,
-              height: 630,
-              alt: `${pageTitle} bundle preview`
-            }
-          ]
+      images: [
+        {
+          url: props.ogImageUrls?.byVariant.facebook || props.ogImageUrl,
+          width: 1200,
+          height: 630,
+          alt: `${pageTitle} bundle preview`
+        }
+      ]
     },
     twitter: {
       card: "summary_large_image",

@@ -15,7 +15,7 @@
 OpenWork is designed around the idea that you can easily ship your agentic workflows for your team as a repeatable, productized process.
 
 > [!TIP]
-> **Looking for an [Enterprise Plan](https://openworklabs.com/enterprise)?** [Speak with our Sales Team today](https://cal.com/team/openwork/enterprise)
+> **Looking for an [Enterprise Plan](https://openworklabs.com/enterprise)?** [Speak with our Sales Team today](https://calendar.app.google/86QpCENvhfEzDFLu5)
 >
 > Get enhanced capabilities including feature prioritization, SSO, SLA support, LTS versions, and more.
 

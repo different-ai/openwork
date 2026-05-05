@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -42,6 +42,8 @@ function createEngineState() {
     baseUrl: null,
     opencodeUsername: null,
     opencodePassword: null,
+    opencodeBinPath: null,
+    opencodeBinSource: null,
     lastStdout: null,
     lastStderr: null,
   };
@@ -58,6 +60,8 @@ function snapshotEngineState(state) {
     port: state.port,
     opencodeUsername: state.opencodeUsername,
     opencodePassword: state.opencodePassword,
+    opencodeBinPath: state.opencodeBinPath,
+    opencodeBinSource: state.opencodeBinSource,
     pid: child?.pid ?? null,
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
@@ -78,6 +82,8 @@ function createOpenworkServerState() {
     clientToken: null,
     ownerToken: null,
     hostToken: null,
+    managedOpencodeBinPath: null,
+    managedOpencodeBinSource: null,
     lastStdout: null,
     lastStderr: null,
   };
@@ -97,10 +103,25 @@ function snapshotOpenworkServerState(state) {
     clientToken: state.clientToken,
     ownerToken: state.ownerToken,
     hostToken: state.hostToken,
+    managedOpencodeBinPath: state.managedOpencodeBinPath,
+    managedOpencodeBinSource: state.managedOpencodeBinSource,
     pid: child?.pid ?? null,
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
   };
+}
+
+function assertOpenworkServerReady(snapshot) {
+  if (!snapshot?.running) {
+    throw new Error("OpenWork server did not stay running after startup.");
+  }
+  if (!snapshot.baseUrl) {
+    throw new Error("OpenWork server did not report a base URL after startup.");
+  }
+  if (!snapshot.ownerToken && !snapshot.clientToken) {
+    throw new Error("OpenWork server did not report an access token after startup.");
+  }
+  return snapshot;
 }
 
 function createOrchestratorState() {
@@ -112,33 +133,6 @@ function createOrchestratorState() {
     daemonPort: null,
     lastStdout: null,
     lastStderr: null,
-  };
-}
-
-function createRouterState() {
-  return {
-    child: null,
-    childExited: true,
-    version: null,
-    workspacePath: null,
-    opencodeUrl: null,
-    healthPort: null,
-    lastStdout: null,
-    lastStderr: null,
-  };
-}
-
-function snapshotRouterState(state) {
-  const child = state.childExited ? null : state.child;
-  return {
-    running: Boolean(child && child.exitCode === null && !child.killed),
-    version: state.version,
-    workspacePath: state.workspacePath,
-    opencodeUrl: state.opencodeUrl,
-    healthPort: state.healthPort,
-    pid: child?.pid ?? null,
-    lastStdout: state.lastStdout,
-    lastStderr: state.lastStderr,
   };
 }
 
@@ -201,8 +195,8 @@ function binaryFileNames(baseName) {
   const ext = process.platform === "win32" ? ".exe" : "";
   const triple = targetTriple();
   return [
-    `${baseName}${ext}`,
     triple ? `${baseName}-${triple}${ext}` : null,
+    `${baseName}${ext}`,
   ].filter(Boolean);
 }
 
@@ -281,11 +275,49 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   }
 }
 
+// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
+// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+function resolveUserEnvFilePath() {
+  const override = String(process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return path.resolve(override);
+  if (process.platform === "win32") {
+    const appData = String(process.env.APPDATA ?? "").trim();
+    const root = appData || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(root, "openwork", "env.json");
+  }
+  return path.join(os.homedir(), ".config", "openwork", "env.json");
+}
+
+const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
+
+// Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
+// are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
+function loadUserEnvFile() {
+  try {
+    const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.variables)) return {};
+    const out = {};
+    for (const entry of parsed.variables) {
+      if (!entry || typeof entry !== "object") continue;
+      const { key, value } = entry;
+      if (typeof key !== "string" || typeof value !== "string") continue;
+      if (!USER_ENV_KEY_PATTERN.test(key)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
-  const routerState = createRouterState();
 
   // Serialize engine lifecycle operations. Without this, concurrent renderer
   // invocations of engineStart/engineStop/engineRestart race: each call's
@@ -301,7 +333,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   const userDataDir = app.getPath("userData");
   const sidecarDirs = [
-    path.join(desktopRoot, "src-tauri", "sidecars"),
+    path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     path.join(path.dirname(app.getPath("exe")), "sidecars"),
   ].filter(Boolean);
@@ -312,6 +344,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   function openworkServerStatePath() {
     return path.join(userDataDir, "openwork-server-state.json");
+  }
+
+  function managedOpencodeWorkdir() {
+    return path.join(userDataDir, "managed-opencode-workdir");
   }
 
   function orchestratorDataDir() {
@@ -461,7 +497,16 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function buildChildEnv(extra = {}) {
-    const env = { ...process.env, BUN_CONFIG_DNS_RESULT_ORDER: "verbatim", ...extra };
+    /** @type {NodeJS.ProcessEnv} */
+    // User env is layered first so process.env + any caller overrides always
+    // win. See apps/server/src/env-file.ts and src-tauri/src/env_file.rs —
+    // all three loaders must agree on path + reserved-keys policy.
+    const env = {
+      ...loadUserEnvFile(),
+      ...process.env,
+      BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
+      ...extra,
+    };
     const pathEnv = prependedPath(sidecarDirs);
     if (pathEnv) {
       env.PATH = pathEnv;
@@ -481,12 +526,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return env;
   }
 
-  function resolveBinary(baseName, extraPaths = []) {
+  function resolveBinaryInfo(baseName, extraPaths = []) {
     for (const directory of [...sidecarDirs, ...extraPaths]) {
       for (const fileName of binaryFileNames(baseName)) {
         const candidate = path.join(directory, fileName);
         if (existsSync(candidate)) {
-          return candidate;
+          return { path: candidate, source: "bundled" };
         }
       }
     }
@@ -496,7 +541,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       for (const fileName of binaryFileNames(baseName)) {
         const candidate = path.join(entry, fileName);
         if (existsSync(candidate)) {
-          return candidate;
+          return { path: candidate, source: "path" };
         }
       }
     }
@@ -509,12 +554,21 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         path.join("/usr/bin", process.platform === "win32" ? "opencode.exe" : "opencode"),
       ]) {
         if (existsSync(candidate)) {
-          return candidate;
+          return { path: candidate, source: "known-location" };
         }
       }
     }
 
     return null;
+  }
+
+  function resolveBinary(baseName, extraPaths = []) {
+    return resolveBinaryInfo(baseName, extraPaths)?.path ?? null;
+  }
+
+  function resolveOpencodeBinary(opencodeBinPath) {
+    const explicitPath = typeof opencodeBinPath === "string" ? opencodeBinPath.trim() : "";
+    return explicitPath ? { path: explicitPath, source: "custom" } : resolveBinaryInfo("opencode");
   }
 
   function resolveDockerCandidates() {
@@ -629,6 +683,47 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
+  function engineDoctor(options = {}) {
+    const resolved = resolveOpencodeBinary(options?.opencodeBinPath);
+    if (!resolved?.path) {
+      return {
+        found: false,
+        inPath: false,
+        resolvedPath: null,
+        resolvedSource: null,
+        version: null,
+        supportsServe: false,
+        notes: ["OpenCode binary not found in bundled sidecars or PATH."],
+        serveHelpStatus: null,
+        serveHelpStdout: null,
+        serveHelpStderr: null,
+      };
+    }
+
+    const versionResult = spawnSync(resolved.path, ["--version"], { encoding: "utf8" });
+    const helpResult = spawnSync(resolved.path, ["serve", "--help"], { encoding: "utf8" });
+    const notes = [`Using ${resolved.source}: ${resolved.path}`];
+    if (versionResult.status !== 0) {
+      notes.push("OpenCode version probe failed.");
+    }
+    if (helpResult.status !== 0) {
+      notes.push("OpenCode serve --help probe failed.");
+    }
+
+    return {
+      found: true,
+      inPath: resolved.source === "path",
+      resolvedPath: resolved.path,
+      resolvedSource: resolved.source,
+      version: versionResult.stdout?.trim() || versionResult.stderr?.trim() || null,
+      supportsServe: helpResult.status === 0,
+      notes,
+      serveHelpStatus: typeof helpResult.status === "number" ? helpResult.status : null,
+      serveHelpStdout: helpResult.stdout?.trim() || null,
+      serveHelpStderr: helpResult.stderr?.trim() || null,
+    };
+  }
+
   async function pinnedOpencodeInstallCommand() {
     const constantsPath = path.resolve(desktopRoot, "../../constants.json");
     const payload = JSON.parse(await readFile(constantsPath, "utf8"));
@@ -675,8 +770,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       (
         value.includes("openwork-orchestrator") ||
         value.includes("openwork-server") ||
-        value.includes("opencode serve") ||
-        value.includes("opencode-router")
+        value.includes("opencode serve")
       );
   }
 
@@ -804,12 +898,20 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       ...(activeWorkspace ? ["--opencode-directory", activeWorkspace] : []),
     ];
 
+    const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
+    openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
+    openworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
+    if (options.manageOpencode) {
+      engineState.opencodeBinPath = managedOpencode?.path ?? null;
+      engineState.opencodeBinSource = managedOpencode?.source ?? null;
+    }
+
     const env = await buildChildEnv({
       OPENWORK_TOKEN: tokens.clientToken,
       OPENWORK_HOST_TOKEN: tokens.hostToken,
       ...(options.manageOpencode ? { OPENWORK_MANAGE_OPENCODE: "1" } : {}),
-      ...(options.manageOpencode ? { OPENWORK_OPENCODE_BIN: options.opencodeBinPath || resolveBinary("opencode") || "" } : {}),
-      ...(options.routerHealthPort ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.routerHealthPort) } : {}),
+      ...(options.manageOpencode ? { OPENWORK_OPENCODE_BIN: managedOpencode?.path ?? "" } : {}),
+      ...(options.manageOpencode ? { OPENWORK_MANAGED_OPENCODE_CWD: managedOpencodeWorkdir() } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
     });
@@ -868,50 +970,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshotOpenworkServerState(openworkServerState);
   }
 
-  async function resolveRouterHealthPort() {
-    return findFreePort("127.0.0.1");
-  }
-
-  async function startRouter(options) {
-    await stopChild(routerState);
-    const healthPort = options.healthPort ?? (await resolveRouterHealthPort());
-    const program = resolveBinary("opencode-router");
-    if (!program) {
-      throw new Error("Failed to locate opencode-router.");
-    }
-
-    const env = await buildChildEnv({
-      OPENCODE_ROUTER_HEALTH_PORT: String(healthPort),
-      ...(options.opencodeUsername ? { OPENCODE_SERVER_USERNAME: options.opencodeUsername } : {}),
-      ...(options.opencodePassword ? { OPENCODE_SERVER_PASSWORD: options.opencodePassword } : {}),
-    });
-
-    const args = [
-      "serve",
-      options.workspacePath,
-      ...(options.opencodeUrl ? ["--opencode-url", options.opencodeUrl] : []),
-    ];
-
-    spawnManagedChild(routerState, program, args, {
-      cwd: options.workspacePath,
-      env,
-    });
-
-    routerState.workspacePath = options.workspacePath;
-    routerState.opencodeUrl = options.opencodeUrl ?? null;
-    routerState.healthPort = healthPort;
-
-    try {
-      const version = runProgram(program, ["--version"]);
-      routerState.version = version.stdout?.trim() || version.stderr?.trim() || null;
-    } catch {
-      routerState.version = null;
-    }
-
-    await waitForHttpOk(`http://127.0.0.1:${healthPort}/health`, 5000).catch(() => undefined);
-    return snapshotRouterState(routerState);
-  }
-
   async function resolveOrchestratorBaseUrl() {
     if (orchestratorState.baseUrl) {
       return orchestratorState.baseUrl;
@@ -936,10 +994,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       throw new Error("Failed to locate openwork-orchestrator.");
     }
 
-    const opencodeProgram = (typeof options.opencodeBinPath === "string" && options.opencodeBinPath.trim())
-      ? options.opencodeBinPath.trim()
-      : resolveBinary("opencode");
-    if (!opencodeProgram) {
+    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
+    if (!opencodeBinary?.path) {
       throw new Error("Failed to locate opencode.");
     }
 
@@ -960,7 +1016,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       "--daemon-port",
       String(daemonPort),
       "--opencode-bin",
-      opencodeProgram,
+      opencodeBinary.path,
       "--opencode-host",
       "127.0.0.1",
       "--opencode-workdir",
@@ -996,15 +1052,15 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.baseUrl = `http://127.0.0.1:${opencode.port}`;
     engineState.opencodeUsername = username;
     engineState.opencodePassword = password;
+    engineState.opencodeBinPath = opencodeBinary.path;
+    engineState.opencodeBinSource = opencodeBinary.source;
 
     return snapshotEngineState(engineState);
   }
 
   async function startDirectRuntime(projectDir, options = {}) {
-    const opencodeProgram = (typeof options.opencodeBinPath === "string" && options.opencodeBinPath.trim())
-      ? options.opencodeBinPath.trim()
-      : resolveBinary("opencode");
-    if (!opencodeProgram) {
+    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
+    if (!opencodeBinary?.path) {
       throw new Error("Failed to locate opencode.");
     }
 
@@ -1017,7 +1073,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     spawnManagedChild(
       engineState,
-      opencodeProgram,
+      opencodeBinary.path,
       ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--cors", "*"],
       {
         cwd: projectDir,
@@ -1032,13 +1088,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineState.baseUrl = `http://127.0.0.1:${port}`;
     engineState.opencodeUsername = username;
     engineState.opencodePassword = password;
+    engineState.opencodeBinPath = opencodeBinary.path;
+    engineState.opencodeBinSource = opencodeBinary.source;
 
     await waitForHttpOk(`${engineState.baseUrl}/health`, 10_000).catch(() => undefined);
     return snapshotEngineState(engineState);
   }
 
   async function stopAllRuntimeChildren() {
-    await stopChild(routerState);
     await stopChild(openworkServerState);
     await stopChild(orchestratorState, {
       requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
@@ -1049,7 +1106,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     Object.assign(engineState, createEngineState());
     Object.assign(openworkServerState, createOpenworkServerState());
     Object.assign(orchestratorState, createOrchestratorState());
-    Object.assign(routerState, createRouterState());
   }
 
   async function prepareFreshRuntime() {
@@ -1059,36 +1115,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     lifecycleState = "idle";
   }
 
-  async function ensureRouterAndOpenwork(options) {
-    const routerHealthPort = await resolveRouterHealthPort().catch(() => null);
+  async function ensureOpenwork(options) {
+    let openworkServer;
     try {
-      await startOpenworkServer({
+      openworkServer = await startOpenworkServer({
         workspacePaths: options.workspacePaths,
         opencodeBaseUrl: engineState.baseUrl,
         opencodeUsername: engineState.opencodeUsername,
         opencodePassword: engineState.opencodePassword,
-        routerHealthPort,
         remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
       });
     } catch (error) {
       appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
+      throw error;
     }
 
-    if (options.projectDir && engineState.baseUrl) {
-      try {
-        await startRouter({
-          workspacePath: options.projectDir,
-          opencodeUrl: engineState.baseUrl,
-          opencodeUsername: engineState.opencodeUsername,
-          opencodePassword: engineState.opencodePassword,
-          healthPort: routerHealthPort,
-        });
-      } catch (error) {
-        appendOutput(engineState, "lastStderr", `OpenCodeRouter: ${error instanceof Error ? error.message : String(error)}\n`);
-      }
-    }
+    assertOpenworkServerReady(openworkServer);
   }
 
   async function engineStart(projectDir, options = {}) {
@@ -1112,7 +1156,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.child = null;
       engineState.childExited = true;
 
-      await ensureRouterAndOpenwork({
+      await ensureOpenwork({
         projectDir: safeProjectDir,
         workspacePaths,
         remoteAccessEnabled: options.openworkRemoteAccess === true,
@@ -1157,7 +1201,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       lifecycleState,
       engine: await engineInfo(),
       openworkServer: snapshotOpenworkServerState(openworkServerState),
-      router: snapshotRouterState(routerState),
     };
   }
 
@@ -1172,7 +1215,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeBaseUrl: engineState.baseUrl,
       opencodeUsername: engineState.opencodeUsername,
       opencodePassword: engineState.opencodePassword,
-      routerHealthPort: routerState.healthPort,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
     });
   }
@@ -1226,24 +1268,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       return true;
     }
     return true;
-  }
-
-  async function opencodeRouterInfo() {
-    return snapshotRouterState(routerState);
-  }
-
-  async function opencodeRouterStart(options) {
-    return startRouter(options);
-  }
-
-  async function opencodeRouterStop() {
-    await stopChild(routerState);
-    Object.assign(routerState, createRouterState());
-    return snapshotRouterState(routerState);
-  }
-
-  async function opencodeRouterRestart(options) {
-    return opencodeRouterStart(options);
   }
 
   async function engineInstall() {
@@ -1468,8 +1492,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       workspacePath,
       "--approval",
       "auto",
-      "--opencode-router",
-      "true",
       "--detach",
       "--openwork-port",
       String(port),
@@ -1601,6 +1623,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     dispose: () => withRuntimeLifecycle(() => stopAllRuntimeChildren()),
     runtimeStatus,
     engineInfo,
+    engineDoctor,
     engineInstall,
     openworkServerInfo,
     openworkServerRestart,
@@ -1608,10 +1631,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     orchestratorWorkspaceActivate,
     orchestratorInstanceDispose,
     orchestratorStartDetached,
-    opencodeRouterInfo,
-    opencodeRouterStart,
-    opencodeRouterStop,
-    opencodeRouterRestart,
     opencodeMcpAuth,
     sandboxDoctor,
     sandboxStop,

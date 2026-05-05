@@ -180,9 +180,10 @@ autoUpdater.autoDownload = prefs.updateAutoDownload;
 autoUpdater.checkForUpdatesAndNotify();
 ```
 
-Alpha/beta channels reuse the existing alpha GitHub release (the current
-`alpha-macos-aarch64.yml` workflow publishes to `alpha-macos-latest`;
-switch its `generate-latest-json.mjs` step to emit `latest-mac.yml` instead).
+Alpha/beta channels reuse the existing alpha GitHub release. During the
+migration window, `.github/workflows/alpha-macos-aarch64.yml` publishes both
+notarized Tauri assets (`latest.json`) and notarized Electron assets
+(`latest-mac.yml`) to `alpha-macos-latest`.
 
 Delta updates: electron-updater's block-map diffs drop a typical mac update
 from ~120MB full bundle to ~5-20MB. A net win over Tauri's no-delta default.
@@ -295,4 +296,6 @@ final PR below.
 
 After (3) rolls out, flip the default `apps/desktop/package.json`
 scripts so `dev` / `build` / `package` use Electron, and delete
-`src-tauri/`.
+`src-tauri/`. Electron packaging should keep using `apps/desktop/resources/`
+for icons and generated sidecars so deleting `src-tauri/` is not a packaging
+dependency cutover at the same time.

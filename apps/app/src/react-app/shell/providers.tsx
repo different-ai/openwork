@@ -7,6 +7,7 @@ import { isDesktopRuntime } from "../../app/utils";
 import { DenAuthProvider } from "../domains/cloud/den-auth-provider";
 import { DesktopConfigProvider } from "../domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "../domains/cloud/restriction-notice-provider";
+import { StatusToastsProvider } from "../domains/shell-feedback/status-toasts";
 import { LocalProvider } from "../kernel/local-provider";
 import { ServerProvider } from "../kernel/server-provider";
 import { BootStateProvider } from "./boot-state";
@@ -66,7 +67,9 @@ export function AppProviders({ children }: AppProvidersProps) {
           <DesktopConfigProvider>
             <RestrictionNoticeProvider>
               <LocalProvider>
-                <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                <StatusToastsProvider>
+                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                </StatusToastsProvider>
               </LocalProvider>
             </RestrictionNoticeProvider>
           </DesktopConfigProvider>

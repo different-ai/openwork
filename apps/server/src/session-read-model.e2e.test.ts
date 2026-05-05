@@ -34,12 +34,12 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-function startMockOpencode(input?: { invalidList?: boolean }) {
+function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promise<void> }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
       requests.push({
         pathname: url.pathname,
@@ -108,6 +108,11 @@ function startMockOpencode(input?: { invalidList?: boolean }) {
         ]);
       }
 
+      if (url.pathname === "/session/ses_1/command" && request.method === "POST") {
+        await input?.holdCommand;
+        return Response.json({ ok: true });
+      }
+
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
     },
   }) as Served;
@@ -144,6 +149,22 @@ function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: st
   const server = startServer(config) as Served;
   stops.push(() => server.stop(true));
   return { server, token: config.token };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+async function waitUntil(predicate: () => boolean) {
+  for (let index = 0; index < 20; index++) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return predicate();
 }
 
 describe("workspace session read APIs", () => {
@@ -233,6 +254,32 @@ describe("workspace session read APIs", () => {
       message: "Session not found",
     });
 
+  });
+
+  test("acknowledges proxied session commands before upstream completion", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const command = deferred();
+    const mock = startMockOpencode({ holdCommand: command.promise });
+    const openwork = startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await Promise.race([
+      fetch(`http://127.0.0.1:${openwork.server.port}/w/ws_1/opencode/session/ses_1/command`, {
+        method: "POST",
+        headers: { ...auth(openwork.token), "Content-Type": "application/json" },
+        body: JSON.stringify({ command: "review", arguments: "" }),
+      }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+    ]);
+
+    expect(response).not.toBe("timeout");
+    expect(response instanceof Response ? response.status : 0).toBe(200);
+    await expect(response instanceof Response ? response.json() : null).resolves.toMatchObject({ accepted: true });
+    const sawCommand = await waitUntil(() => mock.requests.some((request) => request.pathname === "/session/ses_1/command"));
+    command.resolve();
+    expect(sawCommand).toBe(true);
   });
 
   test("returns 502 when OpenCode returns an invalid session list payload", async () => {

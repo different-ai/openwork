@@ -73,16 +73,15 @@ const downloadLinks = {
   platforms: {
     macos: {
       page: "https://openworklabs.com/download#macos",
-      note: "Apple Silicon (.dmg) and Intel (.dmg) builds resolved from the latest GitHub release.",
+      note: "Electron Apple Silicon (.dmg) and Intel (.dmg) builds resolved from the latest GitHub release.",
     },
     windows: {
       page: "https://openworklabs.com/download#windows",
-      note: "x64 MSI installer resolved from the latest GitHub release.",
+      note: "Electron x64 .exe installer resolved from the latest GitHub release.",
     },
     linux: {
       page: "https://openworklabs.com/download#linux",
-      aur: "yay -S openwork",
-      note: "AUR plus .deb and .rpm packages for x64 and arm64.",
+      note: "Electron AppImage and tar.gz builds for x64 and arm64.",
     },
   },
 }

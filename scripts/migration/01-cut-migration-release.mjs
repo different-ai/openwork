@@ -7,6 +7,8 @@
 //   node scripts/migration/01-cut-migration-release.mjs \
 //     --version 0.12.0 \
 //     --mac-url   'https://.../OpenWork-darwin-arm64-0.12.0-mac.zip' \
+//     --mac-arm64-url 'https://.../openwork-mac-arm64-0.12.0.zip' \
+//     --mac-x64-url   'https://.../openwork-mac-x64-0.12.0.zip' \
 //     --win-url   'https://.../OpenWork-Setup-0.12.0.exe'  (optional) \
 //     --linux-url 'https://.../OpenWork-0.12.0.AppImage'   (optional) \
 //     --dry-run
@@ -27,9 +29,14 @@ function parseArgs(argv) {
     if (arg === "--dry-run") out.dryRun = true;
     else if (arg === "--version") out.version = argv[++i];
     else if (arg === "--mac-url") out.macUrl = argv[++i];
+    else if (arg === "--mac-arm64-url") out.macArm64Url = argv[++i];
+    else if (arg === "--mac-x64-url") out.macX64Url = argv[++i];
     else if (arg === "--mac-sha256") out.macSha256 = argv[++i];
     else if (arg === "--win-url") out.winUrl = argv[++i];
+    else if (arg === "--win-x64-url") out.winX64Url = argv[++i];
     else if (arg === "--linux-url") out.linuxUrl = argv[++i];
+    else if (arg === "--linux-arm64-url") out.linuxArm64Url = argv[++i];
+    else if (arg === "--linux-x64-url") out.linuxX64Url = argv[++i];
     else if (arg === "--help" || arg === "-h") out.help = true;
     else {
       console.error(`unknown arg: ${arg}`);
@@ -95,15 +102,17 @@ async function main() {
       [
         "Cut the Tauri → Electron migration release.",
         "",
-        "Required: --version, --mac-url",
-        "Optional: --mac-sha256, --win-url, --linux-url, --dry-run",
+        "Required: --version, --mac-url (or --mac-arm64-url + --mac-x64-url)",
+        "Optional: --mac-sha256, --win-url, --win-x64-url, --linux-url, --linux-arm64-url, --linux-x64-url, --dry-run",
       ].join("\n"),
     );
     return;
   }
 
   if (!args.version) die("--version is required (e.g. --version 0.12.0)");
-  if (!args.macUrl) die("--mac-url is required");
+  if (!args.macUrl && (!args.macArm64Url || !args.macX64Url)) {
+    die("--mac-url or both --mac-arm64-url + --mac-x64-url are required");
+  }
   if (!/^\d+\.\d+\.\d+$/.test(args.version)) {
     die(`--version must look like X.Y.Z, got "${args.version}"`);
   }
@@ -126,6 +135,10 @@ async function main() {
   // 1. Bump all 5 sync files via the existing helper.
   run("pnpm", ["bump:set", "--", args.version], { dryRun: args.dryRun });
 
+  // Keep CI/release jobs using --frozen-lockfile green after bumping
+  // workspace package versions referenced by pnpm-lock.yaml.
+  run("pnpm", ["install", "--no-frozen-lockfile"], { dryRun: args.dryRun });
+
   // 2. Write the migration-release env fragment. Gets picked up by the
   //    app build step during `Release App` via --copy-config.
   const envFragment =
@@ -135,9 +148,14 @@ async function main() {
       "VITE_OPENWORK_MIGRATION_RELEASE=1",
       `VITE_OPENWORK_MIGRATION_VERSION=${args.version}`,
       args.macUrl ? `VITE_OPENWORK_MIGRATION_MAC_URL=${args.macUrl}` : "",
+      args.macArm64Url ? `VITE_OPENWORK_MIGRATION_MAC_ARM64_URL=${args.macArm64Url}` : "",
+      args.macX64Url ? `VITE_OPENWORK_MIGRATION_MAC_X64_URL=${args.macX64Url}` : "",
       args.macSha256 ? `VITE_OPENWORK_MIGRATION_MAC_SHA256=${args.macSha256}` : "",
       args.winUrl ? `VITE_OPENWORK_MIGRATION_WINDOWS_URL=${args.winUrl}` : "",
+      args.winX64Url ? `VITE_OPENWORK_MIGRATION_WINDOWS_X64_URL=${args.winX64Url}` : "",
       args.linuxUrl ? `VITE_OPENWORK_MIGRATION_LINUX_URL=${args.linuxUrl}` : "",
+      args.linuxArm64Url ? `VITE_OPENWORK_MIGRATION_LINUX_ARM64_URL=${args.linuxArm64Url}` : "",
+      args.linuxX64Url ? `VITE_OPENWORK_MIGRATION_LINUX_X64_URL=${args.linuxX64Url}` : "",
       "",
     ]
       .filter(Boolean)

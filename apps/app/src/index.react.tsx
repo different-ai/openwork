@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter } from "react-router-dom";
 
+import { initializeDenBootstrapConfig } from "./app/lib/den";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { bootstrapTheme } from "./app/theme";
 import { isDesktopRuntime } from "./app/utils";
@@ -21,6 +22,7 @@ import "./app/index.css";
 bootstrapTheme();
 initLocale();
 startDeepLinkBridge();
+await initializeDenBootstrapConfig();
 
 const root = document.getElementById("root");
 
