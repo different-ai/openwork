@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Activity,
   ChevronRight,
@@ -8,10 +8,13 @@ import {
   Gauge,
   Users,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import { requestJson } from "../../../../_lib/den-flow";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+
+/* ── Types ── */
 
 type AdoptionData = {
   members: number;
@@ -21,39 +24,6 @@ type AdoptionData = {
   weeklyTrend: number[];
 };
 
-function useAdoptionData(): AdoptionData | null {
-  const [data, setData] = useState<AdoptionData | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const { response, payload } = await requestJson("/v1/telemetry/adoption", { method: "GET" }, 12000);
-        if (!cancelled && response.ok && payload && typeof payload === "object") {
-          const p = payload as Record<string, unknown>;
-          setData({
-            members: typeof p.members === "number" ? p.members : 0,
-            pendingInvites: typeof p.pendingInvites === "number" ? p.pendingInvites : 0,
-            activeUsers7d: typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0,
-            activeUsers30d: typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0,
-            weeklyTrend: Array.isArray(p.weeklyTrend) ? p.weeklyTrend.map(Number) : [],
-          });
-        }
-      } catch {
-        // Adoption endpoint unavailable -- fall back to org context data
-      }
-    }
-
-    void load();
-    return () => { cancelled = true; };
-  }, []);
-
-  return data;
-}
-
-/* ── Mock data ── */
-
 type CapRow = {
   name: string;
   seed: string;
@@ -62,6 +32,30 @@ type CapRow = {
   successRate: string;
   trend: number[];
 };
+
+type TabId = "plugins" | "skills";
+
+/* ── Data ── */
+
+async function fetchAdoption(): Promise<AdoptionData | null> {
+  try {
+    const { response, payload } = await requestJson("/v1/telemetry/adoption", { method: "GET" }, 12000);
+    if (!response.ok || !payload || typeof payload !== "object") return null;
+    const p = payload as Record<string, unknown>;
+    return {
+      members: typeof p.members === "number" ? p.members : 0,
+      pendingInvites: typeof p.pendingInvites === "number" ? p.pendingInvites : 0,
+      activeUsers7d: typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0,
+      activeUsers30d: typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0,
+      weeklyTrend: Array.isArray(p.weeklyTrend) ? p.weeklyTrend.map(Number) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Static fallback used when the telemetry endpoint is unavailable. */
+const FALLBACK_WEEKLY_TREND = [32, 41, 39, 52, 61, 68, 74, 70, 82, 88, 91, 96];
 
 const pluginRows: CapRow[] = [
   { name: "Productivity", seed: "plg-productivity", invocations: "2.4K", users: "16", successRate: "98%", trend: [80, 90, 100, 110, 120, 130, 135, 140, 148, 155] },
@@ -79,8 +73,6 @@ const skillRows: CapRow[] = [
   { name: "Bug triage", seed: "sk-bug", invocations: "390", users: "6", successRate: "91%", trend: [10, 14, 16, 20, 22, 26, 30, 34, 36, 38] },
   { name: "Changelog draft", seed: "sk-changelog", invocations: "280", users: "5", successRate: "96%", trend: [5, 8, 10, 14, 16, 18, 22, 24, 26, 28] },
 ];
-
-const weeklyTrend = [32, 41, 39, 52, 61, 68, 74, 70, 82, 88, 91, 96];
 
 /* ── Helpers ── */
 
@@ -107,7 +99,7 @@ function trendColor(trend: number[]): string {
   return "#637291";
 }
 
-/* ── Sparkline ── */
+/* ── Small components ── */
 
 function Sparkline({ values, color, title }: { values: number[]; color: string; title?: string }) {
   const w = 80, h = 20, pad = 2;
@@ -132,8 +124,6 @@ function Sparkline({ values, color, title }: { values: number[]; color: string; 
   );
 }
 
-/* ── Area chart for overview ── */
-
 function AreaChart({ values }: { values: number[] }) {
   const w = 600, h = 120, padX = 24, padY = 12;
   if (values.length === 0) return null;
@@ -147,10 +137,8 @@ function AreaChart({ values }: { values: number[] }) {
   const line = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
   const area = `${line} L ${pts[pts.length - 1][0].toFixed(1)},${h - padY} L ${padX},${h - padY} Z`;
   const last = pts[pts.length - 1];
-
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="none" aria-label="Weekly active users trend">
-      {/* Grid lines */}
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" preserveAspectRatio="xMidYMid meet" aria-label="Weekly active users trend">
       {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
         const y = padY + (h - padY * 2) * (1 - pct);
         return <line key={pct} x1={padX} y1={y} x2={w - padX} y2={y} stroke="#eef1f5" strokeWidth="0.8" />;
@@ -161,8 +149,6 @@ function AreaChart({ values }: { values: number[] }) {
     </svg>
   );
 }
-
-/* ── Stat card ── */
 
 function StatCard({ icon, title, value, sub, tone }: {
   icon: React.ReactNode; title: string; value: string; sub?: string; tone: "violet" | "green" | "blue";
@@ -189,27 +175,13 @@ function EnterpriseBadge() {
   );
 }
 
-/* ── Plugin icon (matches Den plugin cards) ── */
-
-function PluginIcon({ seed }: { seed: string }) {
+function GradientTile({ seed }: { seed: string }) {
   return (
     <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px] border border-white/60 shadow-[0_6px_14px_-8px_rgba(15,23,42,0.45)]">
       <PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} />
     </div>
   );
 }
-
-function SkillIcon({ seed }: { seed: string }) {
-  return (
-    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px] border border-white/60 shadow-[0_6px_14px_-8px_rgba(15,23,42,0.45)]">
-      <PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} />
-    </div>
-  );
-}
-
-/* ── Pill tab bar ── */
-
-type TabId = "plugins" | "skills";
 
 function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const tabs: { id: TabId; label: string }[] = [
@@ -231,8 +203,6 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
   );
 }
 
-/* ── Table ── */
-
 function CapTable({ rows, kind }: { rows: CapRow[]; kind: "plugin" | "skill" }) {
   return (
     <div role="tabpanel" className="overflow-hidden rounded-[16px] border border-[#e3e7ee] bg-white/90">
@@ -246,7 +216,7 @@ function CapTable({ rows, kind }: { rows: CapRow[]; kind: "plugin" | "skill" }) 
       {rows.map((row) => (
         <div key={row.name} className="grid grid-cols-[1.6fr_0.7fr_0.5fr_0.6fr_0.8fr] items-center gap-3 border-b border-[#eef1f5] px-5 py-2.5 transition-colors last:border-b-0 hover:bg-[#F6F8FC]">
           <div className="flex items-center gap-3">
-            {kind === "plugin" ? <PluginIcon seed={row.seed} /> : <SkillIcon seed={row.seed} />}
+            <GradientTile seed={row.seed} />
             <span className="truncate text-[14px] font-medium tracking-[-0.01em] text-[#07192C]">{row.name}</span>
           </div>
           <div className="text-right text-[13px] tabular-nums text-[#30405F]">{row.invocations}</div>
@@ -266,12 +236,16 @@ export function DashboardOverviewScreen() {
   const { user } = useDenFlow();
   const [tab, setTab] = useState<TabId>("plugins");
   const [showEnterprisePreview, setShowEnterprisePreview] = useState(true);
-  const adoption = useAdoptionData();
+
+  const { data: adoption } = useQuery({
+    queryKey: ["telemetry", "adoption"],
+    queryFn: fetchAdoption,
+  });
 
   const members = adoption?.members ?? orgContext?.members.length ?? 0;
   const pending = adoption?.pendingInvites ?? (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
   const activeUsers7d = adoption?.activeUsers7d ?? 0;
-  const weeklyTrendData = adoption?.weeklyTrend ?? weeklyTrend;
+  const weeklyTrendData = adoption?.weeklyTrend ?? FALLBACK_WEEKLY_TREND;
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -307,7 +281,7 @@ export function DashboardOverviewScreen() {
           </div>
           <button
             type="button"
-            onClick={() => setShowEnterprisePreview((value) => !value)}
+            onClick={() => setShowEnterprisePreview((v) => !v)}
             className="w-fit rounded-full border border-[#d9ddeb] bg-white px-3 py-1 text-[12px] font-medium text-[#30405F] transition-colors hover:bg-[#F4F6FB] hover:text-[#07192C]"
           >
             {showEnterprisePreview ? "Hide preview" : "Show preview"}
@@ -332,7 +306,7 @@ export function DashboardOverviewScreen() {
                   <span className="text-[12px] text-[#637291]">Trend preview</span>
                 </div>
                 <div className="h-[110px]">
-                    <AreaChart values={weeklyTrendData} />
+                  <AreaChart values={weeklyTrendData} />
                 </div>
               </div>
 
