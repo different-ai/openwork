@@ -936,11 +936,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function ensureOpencodeConfig(projectDir) {
-    const configPath = path.join(projectDir, "opencode.json");
-    if (await fileExists(configPath)) return;
+    const jsoncPath = path.join(projectDir, "opencode.jsonc");
+    const jsonPath = path.join(projectDir, "opencode.json");
+    if ((await fileExists(jsoncPath)) || (await fileExists(jsonPath))) return;
     await mkdir(projectDir, { recursive: true });
     await writeFile(
-      configPath,
+      jsoncPath,
       `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
       "utf8",
     );
