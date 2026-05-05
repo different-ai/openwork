@@ -6,9 +6,7 @@ import {
   ChevronRight,
   Download,
   Gauge,
-  Puzzle,
   Users,
-  Zap,
 } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import { requestJson } from "../../../../_lib/den-flow";
@@ -195,26 +193,16 @@ function EnterpriseBadge() {
 
 function PluginIcon({ seed }: { seed: string }) {
   return (
-    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px]">
-      <div className="absolute inset-0"><PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} /></div>
-      <div className="relative flex h-full w-full items-center justify-center">
-        <div className="flex h-6 w-6 items-center justify-center rounded-[6px] border border-white/60 bg-white shadow-[0_4px_10px_-4px_rgba(15,23,42,0.3)]">
-          <Puzzle className="h-3 w-3 text-gray-700" aria-hidden />
-        </div>
-      </div>
+    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px] border border-white/60 shadow-[0_6px_14px_-8px_rgba(15,23,42,0.45)]">
+      <PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} />
     </div>
   );
 }
 
 function SkillIcon({ seed }: { seed: string }) {
   return (
-    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px]">
-      <div className="absolute inset-0"><PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} /></div>
-      <div className="relative flex h-full w-full items-center justify-center">
-        <div className="flex h-6 w-6 items-center justify-center rounded-[6px] border border-white/60 bg-white shadow-[0_4px_10px_-4px_rgba(15,23,42,0.3)]">
-          <Zap className="h-3 w-3 text-gray-700" aria-hidden />
-        </div>
-      </div>
+    <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-[10px] border border-white/60 shadow-[0_6px_14px_-8px_rgba(15,23,42,0.45)]">
+      <PaperMeshGradient seed={seed} speed={0} style={{ width: "100%", height: "100%" }} />
     </div>
   );
 }
