@@ -81,6 +81,9 @@ async function applyElectronUpdaterFeed(app, updater) {
   const channel = await readElectronUpdaterChannel(app);
   const state = updaterChannelState(app, channel);
   updater.allowPrerelease = state.channel === "alpha";
+  // Moving from alpha back to stable can be a semver downgrade; still show
+  // the latest stable so users can return to the stable channel deliberately.
+  updater.allowDowngrade = state.channel === "stable";
   if (updater?.setFeedURL) {
     updater.setFeedURL({ provider: "generic", url: state.feedUrl });
   }
