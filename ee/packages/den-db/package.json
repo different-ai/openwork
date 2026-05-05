@@ -46,6 +46,11 @@
       "development": "./src/schema/system.ts",
       "default": "./dist/schema/system.js"
     },
+    "./schema/telemetry": {
+      "types": "./src/schema/telemetry.ts",
+      "development": "./src/schema/telemetry.ts",
+      "default": "./dist/schema/telemetry.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",

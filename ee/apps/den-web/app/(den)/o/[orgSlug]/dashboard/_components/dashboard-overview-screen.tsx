@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   ChevronRight,
@@ -11,8 +11,48 @@ import {
   Zap,
 } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
+import { requestJson } from "../../../../_lib/den-flow";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+
+type AdoptionData = {
+  members: number;
+  pendingInvites: number;
+  activeUsers7d: number;
+  activeUsers30d: number;
+  weeklyTrend: number[];
+};
+
+function useAdoptionData(): AdoptionData | null {
+  const [data, setData] = useState<AdoptionData | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const { response, payload } = await requestJson("/v1/telemetry/adoption", { method: "GET" }, 12000);
+        if (!cancelled && response.ok && payload && typeof payload === "object") {
+          const p = payload as Record<string, unknown>;
+          setData({
+            members: typeof p.members === "number" ? p.members : 0,
+            pendingInvites: typeof p.pendingInvites === "number" ? p.pendingInvites : 0,
+            activeUsers7d: typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0,
+            activeUsers30d: typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0,
+            weeklyTrend: Array.isArray(p.weeklyTrend) ? p.weeklyTrend.map(Number) : [],
+          });
+        }
+      } catch {
+        // Adoption endpoint unavailable -- fall back to org context data
+      }
+    }
+
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  return data;
+}
 
 /* ── Mock data ── */
 
@@ -238,10 +278,12 @@ export function DashboardOverviewScreen() {
   const { user } = useDenFlow();
   const [tab, setTab] = useState<TabId>("plugins");
   const [showEnterprisePreview, setShowEnterprisePreview] = useState(true);
+  const adoption = useAdoptionData();
 
-  const members = orgContext?.members.length ?? 0;
-  const pending = (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
-  const weeklyActive = members > 0 ? Math.max(1, Math.round(members * 0.76)) : 0;
+  const members = adoption?.members ?? orgContext?.members.length ?? 0;
+  const pending = adoption?.pendingInvites ?? (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
+  const activeUsers7d = adoption?.activeUsers7d ?? 0;
+  const weeklyTrendData = adoption?.weeklyTrend ?? weeklyTrend;
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -291,7 +333,7 @@ export function DashboardOverviewScreen() {
         ) : (
           <div className="p-5">
             <div className="grid gap-3.5 md:grid-cols-2">
-              <StatCard icon={<Activity className="h-5 w-5 text-[#18A34A]" />} title="Active this week" value={`${weeklyActive}`} sub="Preview signal" tone="green" />
+              <StatCard icon={<Activity className="h-5 w-5 text-[#18A34A]" />} title="Active this week" value={`${activeUsers7d}`} sub={adoption ? "From telemetry" : "Preview signal"} tone="green" />
               <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Tasks completed" value="1,284" sub="Preview signal" tone="blue" />
             </div>
 
@@ -302,7 +344,7 @@ export function DashboardOverviewScreen() {
                   <span className="text-[12px] text-[#637291]">Trend preview</span>
                 </div>
                 <div className="h-[110px]">
-                  <AreaChart values={weeklyTrend} />
+                    <AreaChart values={weeklyTrendData} />
                 </div>
               </div>
 

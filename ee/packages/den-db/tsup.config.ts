@@ -10,6 +10,7 @@ export default defineConfig({
     "schema/teams": "src/schema/teams.ts",
     "schema/workers": "src/schema/workers.ts",
     "schema/system": "src/schema/system.ts",
+    "schema/telemetry": "src/schema/telemetry.ts",
     drizzle: "src/drizzle.ts",
   },
   format: ["esm"],

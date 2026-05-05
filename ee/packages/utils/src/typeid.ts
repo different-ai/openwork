@@ -58,6 +58,7 @@ export const idTypesMapNameToPrefix = {
   workerToken: "wkt",
   workerBundle: "wkb",
   auditEvent: "aev",
+  telemetryEvent: "tev",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

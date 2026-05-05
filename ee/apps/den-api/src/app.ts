@@ -19,6 +19,7 @@ import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerMcpRoutes } from "./mcp/index.js"
+import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 
@@ -113,6 +114,7 @@ registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpRoutes(app)
+registerTelemetryRoutes(app)
 
 app.get(
   "/openapi.json",
@@ -159,6 +161,7 @@ app.get(
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
         { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
+        { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
         { name: "Admin", description: "Administrative reporting routes." },
         { name: "Users", description: "Current user and membership routes." },
       ],
