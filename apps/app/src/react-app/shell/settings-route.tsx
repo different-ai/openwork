@@ -65,9 +65,13 @@ import {
   workspaceBootstrap,
   workspaceCreate,
   workspaceCreateRemote,
+  workspaceExportConfig,
+  workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  workspaceUpdateDisplayName,
   type WorkspaceInfo,
+  revealDesktopItemInDir,
 } from "../../app/lib/desktop";
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
@@ -75,6 +79,9 @@ import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-au
 import { isDesktopRuntime, isElectronRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
 import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
+import { ShareWorkspaceModal } from "../domains/workspace/share-workspace-modal";
+import { useShareWorkspaceState } from "../domains/workspace/share-workspace-state";
 import { useRemoteWorkspaceConnectionEditor } from "../domains/workspace/use-remote-workspace-connection-editor";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
@@ -374,6 +381,10 @@ export function SettingsRoute() {
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
   const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
+  const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
+  const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
+  const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
+  const [exportWorkspaceBusy, setExportWorkspaceBusy] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
@@ -627,6 +638,16 @@ export function SettingsRoute() {
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useExtensionsStoreSnapshot(extensionsStore);
+
+  const shareWorkspaceState = useShareWorkspaceState({
+    workspaces,
+    openworkServerHostInfo: openworkServerSnapshot.openworkServerHostInfo,
+    openworkServerSettings: openworkServerSnapshot.openworkServerSettings,
+    engineInfo: null,
+    exportWorkspaceBusy,
+    openLink: (url) => platform.openLink(url),
+    workspaceLabel,
+  });
 
   const debugViewProps = useDebugViewModel({
     developerMode,
@@ -1138,6 +1159,85 @@ export function SettingsRoute() {
     setCreateWorkspaceOpen(true);
   };
 
+  const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    setRenameWorkspaceId(workspaceId);
+    setRenameWorkspaceTitle(workspaceLabel(workspace));
+  }, [workspaces]);
+
+  const handleSaveRenameWorkspace = useCallback(async () => {
+    if (!renameWorkspaceId) return;
+    const trimmed = renameWorkspaceTitle.trim();
+    if (!trimmed) return;
+    setRenameWorkspaceBusy(true);
+    try {
+      if (isDesktopRuntime()) {
+        await workspaceUpdateDisplayName({
+          workspaceId: renameWorkspaceId,
+          displayName: trimmed,
+        }).catch(() => undefined);
+      }
+      if (openworkClient) {
+        await openworkClient
+          .updateWorkspaceDisplayName(renameWorkspaceId, trimmed)
+          .catch(() => undefined);
+      }
+      setRenameWorkspaceId(null);
+      setRenameWorkspaceTitle("");
+      await refreshRouteState();
+    } finally {
+      setRenameWorkspaceBusy(false);
+    }
+  }, [openworkClient, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
+
+  const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const path = workspace?.path?.trim();
+    if (!path || !isDesktopRuntime()) return;
+    await revealDesktopItemInDir(path).catch(() => undefined);
+  }, [workspaces]);
+
+  const handleExportWorkspaceConfig = useCallback(async (workspaceId: string) => {
+    if (!isDesktopRuntime()) return;
+    const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+    if (!workspace) return;
+    const outputPath = await pickDirectory({
+      title: `Choose where to export ${workspaceLabel(workspace)}`,
+    });
+    const targetPath = Array.isArray(outputPath) ? outputPath[0] : outputPath;
+    if (!targetPath) return;
+    setExportWorkspaceBusy(true);
+    try {
+      await workspaceExportConfig({ workspaceId, outputPath: targetPath });
+      await revealDesktopItemInDir(targetPath).catch(() => undefined);
+    } finally {
+      setExportWorkspaceBusy(false);
+    }
+  }, [workspaces]);
+
+  const handleForgetWorkspace = useCallback(async (workspaceId: string) => {
+    if (typeof window !== "undefined") {
+      const message = t("workspace_list.remove_confirm") || "Remove this workspace from the sidebar?";
+      if (!window.confirm(message)) return;
+    }
+    if (isDesktopRuntime()) {
+      await workspaceForget(workspaceId).catch(() => undefined);
+    }
+    if (openworkClient) {
+      await openworkClient.deleteWorkspace(workspaceId).catch(() => undefined);
+    }
+    if (selectedWorkspaceId === workspaceId) {
+      const nextWorkspace = workspaces.find((workspace) => workspace.id !== workspaceId);
+      const nextId = nextWorkspace?.id ?? "";
+      setSelectedWorkspaceId(nextId);
+      if (nextId) {
+        await workspaceSetSelected(nextId).catch(() => undefined);
+      }
+    }
+    await refreshRouteState();
+  }, [openworkClient, refreshRouteState, selectedWorkspaceId, workspaces]);
+
   const handleCreateWorkspace = async (preset: WorkspacePreset, folder: string | null) => {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
@@ -1586,13 +1686,13 @@ export function SettingsRoute() {
           },
           onOpenSession: (_workspaceId, sessionId) => navigate(`/session/${sessionId}`),
           onCreateTaskInWorkspace: () => navigate("/session"),
-          onOpenRenameWorkspace: () => {},
-          onShareWorkspace: () => {},
-          onRevealWorkspace: () => {},
+          onOpenRenameWorkspace: handleOpenRenameWorkspace,
+          onShareWorkspace: shareWorkspaceState.openShareWorkspace,
+          onRevealWorkspace: (id) => void handleRevealWorkspace(id),
           onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
           onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
           onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
-          onForgetWorkspace: () => {},
+          onForgetWorkspace: (id) => void handleForgetWorkspace(id),
           onOpenCreateWorkspace: handleOpenCreateWorkspace,
         }}
         onClose={() => navigate("/session")}
@@ -1643,6 +1743,39 @@ export function SettingsRoute() {
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
       />
+      <RenameWorkspaceModal
+        open={renameWorkspaceId !== null}
+        title={renameWorkspaceTitle}
+        busy={renameWorkspaceBusy}
+        canSave={!renameWorkspaceBusy && renameWorkspaceTitle.trim().length > 0}
+        onClose={() => {
+          if (renameWorkspaceBusy) return;
+          setRenameWorkspaceId(null);
+          setRenameWorkspaceTitle("");
+        }}
+        onSave={() => void handleSaveRenameWorkspace()}
+        onTitleChange={setRenameWorkspaceTitle}
+      />
+      {shareWorkspaceState.shareWorkspaceOpen ? (
+        <ShareWorkspaceModal
+          open
+          onClose={shareWorkspaceState.closeShareWorkspace}
+          workspaceName={shareWorkspaceState.shareWorkspaceName}
+          workspaceDetail={shareWorkspaceState.shareWorkspaceDetail}
+          fields={shareWorkspaceState.shareFields}
+          note={shareWorkspaceState.shareNote}
+          onExportConfig={
+            shareWorkspaceState.exportDisabledReason === null
+              ? () => {
+                  const id = shareWorkspaceState.shareWorkspaceId;
+                  if (!id) return;
+                  void handleExportWorkspaceConfig(id);
+                }
+              : undefined
+          }
+          exportDisabledReason={shareWorkspaceState.exportDisabledReason}
+        />
+      ) : null}
       <CreateRemoteWorkspaceModal
         open={remoteWorkspaceConnectionEditor.workspace !== null}
         onClose={remoteWorkspaceConnectionEditor.close}
