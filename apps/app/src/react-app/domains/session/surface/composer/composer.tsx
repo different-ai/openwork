@@ -268,6 +268,21 @@ export function ReactSessionComposer(props: ComposerProps) {
   const commandsCacheRef = useRef<SlashCommandOption[] | null>(null);
   const commandsRequestRef = useRef<Promise<SlashCommandOption[]> | null>(null);
   const commandsLoadVersionRef = useRef(0);
+  const listCommandsRef = useRef(props.listCommands);
+  const listSkillsRef = useRef(props.listSkills);
+  const listMcpRef = useRef(props.listMcp);
+  const listImportedPluginsRef = useRef(props.listImportedPlugins);
+  const toolMenuLoadRef = useRef({
+    openId: 0,
+    commands: false,
+    skills: false,
+    mcps: false,
+    plugins: false,
+  });
+  const [commandsLoaded, setCommandsLoaded] = useState(false);
+  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills));
+  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers));
+  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins));
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
@@ -322,6 +337,22 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [props.importedPlugins]);
 
   useEffect(() => {
+    listCommandsRef.current = props.listCommands;
+  }, [props.listCommands]);
+
+  useEffect(() => {
+    listSkillsRef.current = props.listSkills;
+  }, [props.listSkills]);
+
+  useEffect(() => {
+    listMcpRef.current = props.listMcp;
+  }, [props.listMcp]);
+
+  useEffect(() => {
+    listImportedPluginsRef.current = props.listImportedPlugins;
+  }, [props.listImportedPlugins]);
+
+  useEffect(() => {
     setAgentMenuIndex(0);
   }, [agentMenuOpen]);
 
@@ -344,7 +375,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       return commandsRequestRef.current;
     }
     const version = commandsLoadVersionRef.current;
-    const request = props.listCommands().then((next) => {
+    const request = listCommandsRef.current().then((next) => {
       if (commandsLoadVersionRef.current === version) {
         commandsCacheRef.current = next;
       }
@@ -356,15 +387,34 @@ export function ReactSessionComposer(props: ComposerProps) {
     });
     commandsRequestRef.current = request;
     return request;
-  }, [props.listCommands]);
+  }, []);
+
+  useEffect(() => {
+    if (!toolMenuOpen) return;
+    toolMenuLoadRef.current = {
+      openId: toolMenuLoadRef.current.openId + 1,
+      commands: false,
+      skills: false,
+      mcps: false,
+      plugins: false,
+    };
+    setCommandsLoaded(false);
+    setSkillsLoaded(Boolean(props.skills));
+    setMcpLoaded(Boolean(props.mcpServers));
+    setPluginsLoaded(Boolean(props.importedPlugins));
+  }, [toolMenuOpen]);
 
   useEffect(() => {
     if (!slashOpen && !toolMenuOpen) return;
+    const openId = toolMenuLoadRef.current.openId;
+    if (toolMenuOpen && toolMenuLoadRef.current.commands) return;
+    if (toolMenuOpen) toolMenuLoadRef.current.commands = true;
     let cancelled = false;
     const cached = commandsCacheRef.current;
     if (cached !== null) {
       setCommands(cached);
       setCommandsLoading(false);
+      if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
       return () => {
         cancelled = true;
       };
@@ -372,10 +422,16 @@ export function ReactSessionComposer(props: ComposerProps) {
     setCommandsLoading(true);
     void loadCommands()
       .then((next) => {
-        if (!cancelled) setCommands(next);
+        if (!cancelled) {
+          setCommands(next);
+          if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setCommands([]);
+        if (!cancelled) {
+          setCommands([]);
+          if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setCommandsLoading(false);
@@ -449,69 +505,91 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     if (!toolMenuOpen) return;
-    if (props.listImportedPlugins) {
+    const openId = toolMenuLoadRef.current.openId;
+    const listImportedPlugins = listImportedPluginsRef.current;
+    if (listImportedPlugins && !toolMenuLoadRef.current.plugins) {
       let cancelled = false;
+      toolMenuLoadRef.current.plugins = true;
       setPluginsLoading(true);
-      void props.listImportedPlugins()
+      void listImportedPlugins()
         .then((next) => {
-          if (!cancelled) setImportedPlugins(next);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+            setImportedPlugins(next);
+            setPluginsLoaded(true);
+          }
         })
         .catch(() => {
-          if (!cancelled) setImportedPlugins([]);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+            setImportedPlugins([]);
+            setPluginsLoaded(true);
+          }
         })
         .finally(() => {
-          if (!cancelled) setPluginsLoading(false);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) setPluginsLoading(false);
         });
       return () => {
         cancelled = true;
       };
     }
     return undefined;
-  }, [toolMenuOpen, props.listImportedPlugins]);
+  }, [toolMenuOpen]);
 
   useEffect(() => {
     if (!toolMenuOpen) return;
-    if (toolMenuSection === "skills" && props.listSkills) {
+    const openId = toolMenuLoadRef.current.openId;
+    const listSkills = listSkillsRef.current;
+    const listMcp = listMcpRef.current;
+    if (toolMenuSection === "skills" && listSkills && !toolMenuLoadRef.current.skills) {
       let cancelled = false;
+      toolMenuLoadRef.current.skills = true;
       setSkillsLoading(true);
-      void props.listSkills()
+      void listSkills()
         .then((next) => {
-          if (!cancelled) setSkills(next);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+            setSkills(next);
+            setSkillsLoaded(true);
+          }
         })
         .catch(() => {
-          if (!cancelled) setSkills([]);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
+            setSkills([]);
+            setSkillsLoaded(true);
+          }
         })
         .finally(() => {
-          if (!cancelled) setSkillsLoading(false);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) setSkillsLoading(false);
         });
       return () => {
         cancelled = true;
       };
     }
-    if (toolMenuSection === "mcps" && props.listMcp) {
+    if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
       let cancelled = false;
+      toolMenuLoadRef.current.mcps = true;
       setMcpLoading(true);
-      void props.listMcp()
+      void listMcp()
         .then((next) => {
-          if (cancelled) return;
+          if (cancelled || toolMenuLoadRef.current.openId !== openId) return;
           setMcpServers(next.servers);
           setMcpStatuses(next.statuses);
           setMcpStatus(next.status);
+          setMcpLoaded(true);
         })
         .catch(() => {
-          if (cancelled) return;
+          if (cancelled || toolMenuLoadRef.current.openId !== openId) return;
           setMcpServers([]);
           setMcpStatuses({});
+          setMcpLoaded(true);
         })
         .finally(() => {
-          if (!cancelled) setMcpLoading(false);
+          if (!cancelled && toolMenuLoadRef.current.openId === openId) setMcpLoading(false);
         });
       return () => {
         cancelled = true;
       };
     }
     return undefined;
-  }, [toolMenuOpen, toolMenuSection, props.listSkills, props.listMcp]);
+  }, [toolMenuOpen, toolMenuSection]);
 
   const slashFiltered = useMemo(() => {
     if (!slashOpen) return [];
@@ -817,7 +895,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : (
               <div className="px-3 py-2 text-xs text-gray-10">
-                {commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
               </div>
             )}
           </div>
@@ -875,7 +953,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 z-20 bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 md:px-8 pb-5 ${props.compactTopSpacing ? "pt-0" : "pt-3"}`}
+      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 md:px-8 pb-5 ${props.compactTopSpacing ? "pt-0" : "pt-3"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1153,7 +1231,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+                                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
                               </div>
                             )
                           ) : null}
@@ -1177,7 +1255,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {skillsLoading || commandsLoading ? t("composer.loading_commands") : t("context_panel.no_skills")}
+                                {(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}
                               </div>
                             )
                           ) : null}
@@ -1201,7 +1279,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
-                                {mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
+                                {!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
                               </div>
                             )
                           ) : null}
@@ -1232,7 +1310,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             )
                           ) : toolMenuSection.startsWith("plugin:") ? (
                             <div className="px-3 py-2 text-xs text-gray-10">
-                              {pluginsLoading ? t("composer.loading_commands") : "Plugin files are unavailable."}
+                              {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : "Plugin files are unavailable."}
                             </div>
                           ) : null}
                         </div>
