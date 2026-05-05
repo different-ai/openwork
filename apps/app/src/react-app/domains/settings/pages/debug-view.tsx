@@ -311,7 +311,7 @@ export function DebugView(props: DebugViewProps) {
       : "";
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-6 max-w-lg w-full">
       {/* Section: Runtime overview */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
