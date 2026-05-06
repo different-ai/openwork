@@ -1,14 +1,18 @@
 /** @jsxImportSource react */
-import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { useRef } from "react";
 
-import { t } from "../../../../i18n";
+import { Button } from "@/components/ui/button";
 import {
-  inputClass,
-  pillGhostClass,
-  pillPrimaryClass,
-  pillSecondaryClass,
-} from "../../workspace/modal-styles";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { t } from "../../../../i18n";
 
 export type RenameSessionModalProps = {
   open: boolean;
@@ -23,83 +27,50 @@ export type RenameSessionModalProps = {
 export function RenameSessionModal(props: RenameSessionModalProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    if (!props.open) return;
-    const frame = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [props.open]);
-
-  if (!props.open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-12">
-                {t("session.rename_title")}
-              </h3>
-              <p className="text-sm text-gray-11 mt-1">
-                {t("session.rename_description")}
-              </p>
-            </div>
-            <button
-              type="button"
-              className={`${pillGhostClass} !p-2 rounded-full`}
-              onClick={props.onClose}
-            >
-              <X size={16} />
-            </button>
-          </div>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-lg" initialFocus={inputRef}>
+        <DialogHeader>
+          <DialogTitle>{t("session.rename_title")}</DialogTitle>
+          <DialogDescription>{t("session.rename_description")}</DialogDescription>
+        </DialogHeader>
 
-          <div className="mt-6">
-            <label className="mb-1.5 block text-[13px] font-medium text-dls-text">
-              {t("session.rename_label")}
-            </label>
-            <input
-              ref={inputRef}
-              type="text"
-              value={props.title}
-              onChange={(event) => props.onTitleChange(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (
-                  event.key !== "Enter" ||
-                  event.nativeEvent.isComposing ||
-                  event.keyCode === 229
-                )
-                  return;
-                event.preventDefault();
-                if (props.canSave) props.onSave();
-              }}
-              placeholder={t("session.rename_placeholder")}
-              className={`${inputClass} bg-gray-3`}
-            />
-          </div>
+        <Field>
+          <FieldLabel htmlFor="rename-session-title">{t("session.rename_label")}</FieldLabel>
+          <Input
+            ref={inputRef}
+            id="rename-session-title"
+            type="text"
+            value={props.title}
+            onChange={(event) => props.onTitleChange(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.key === "Process") {
+                return;
+              }
+              if (event.key !== "Enter") {
+                return;
+              }
+              event.preventDefault();
+              if (props.canSave) props.onSave();
+            }}
+            placeholder={t("session.rename_placeholder")}
+          />
+        </Field>
 
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              className={pillSecondaryClass}
-              onClick={props.onClose}
-              disabled={props.busy}
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              className={pillPrimaryClass}
-              onClick={props.onSave}
-              disabled={!props.canSave}
-            >
-              {t("common.save")}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" type="button" onClick={props.onClose} disabled={props.busy}>
+            {t("common.cancel")}
+          </Button>
+          <Button type="button" onClick={props.onSave} disabled={!props.canSave}>
+            {t("common.save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

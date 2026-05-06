@@ -76,9 +76,9 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #262626;
-  --dls-accent: var(--blue-9);
-  --dls-accent-hover: var(--blue-10);
-  --dls-accent-rgb: 59 142 247;
+  --dls-accent: var(--blue-8);
+  --dls-accent-hover: var(--blue-9);
+  --dls-accent-rgb: 59 158 255;
   --dls-secondary-rgb: 176 180 186;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -375,7 +375,7 @@ select:disabled {
   --foreground: var(--slate-12);
   --card: var(--slate-2);
   --card-foreground: var(--slate-12);
-  --popover: var(--slate-2);
+  --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
   --primary-foreground: var(--slate-12);
   --secondary: var(--slate-3);
