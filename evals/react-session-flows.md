@@ -527,6 +527,46 @@ Pass criteria:
 
 ---
 
+## Flow 20 — Local workspace creation opens a new session
+
+**Why**: Creating a local workspace from the session sidebar is a task-starting
+flow. The user should land in that workspace's session surface, not in settings.
+
+Steps:
+1. From an existing session route, click "Add workspace" in the sidebar.
+2. Click "Local workspace".
+3. Select or inject a disposable test folder path.
+4. Click "Create Workspace".
+5. Expect: the modal closes and the URL changes to
+   `/workspace/<new-workspace-id>/session`.
+6. Expect: the new workspace is selected in the sidebar.
+7. Expect: the main area shows "New session" for that workspace.
+8. Expect: the app does not navigate to `/settings/general`.
+
+Tool recipe:
+```
+chrome-devtools_take_snapshot
+chrome-devtools_click { uid: <Add workspace> }
+chrome-devtools_click { uid: <Local workspace card> }
+-- select a disposable folder, or inject it when the native picker blocks automation --
+chrome-devtools_click { uid: <Create Workspace> }
+chrome-devtools_wait_for { text: ["New session"], timeout: 15000 }
+chrome-devtools_take_snapshot
+```
+
+Pass criteria:
+- URL contains `/workspace/` and ends with `/session`.
+- The selected sidebar workspace name matches the folder name.
+- Main panel heading is "New session".
+- Settings heading is not visible after creation.
+
+Known regressions this catches:
+- Local workspace creation calling `handleOpenSettings("/settings/general")`.
+- The selected workspace id being persisted but the route remaining on the
+  previous workspace.
+
+---
+
 ## Change log
 
 - 2026-04-16 — initial doc after the React port cutover fixed streaming,
@@ -538,3 +578,5 @@ Pass criteria:
 - 2026-04-28 — added Flows 13-19: slash command stability, error recovery
   with model change, paste chip collapse, user message display, single action
   button, skill lifecycle, and workspace button placement.
+- 2026-05-06 — added Flow 20 to ensure local workspace creation opens the
+  new workspace session surface instead of settings.

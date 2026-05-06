@@ -18,7 +18,7 @@ import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-moda
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { writeActiveWorkspaceId } from "./session-memory";
-import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { workspaceSessionRoute } from "./workspace-routes";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -70,6 +70,7 @@ export function WelcomeRoute() {
           resolveWorkspaceListSelectedId(list) ||
           list.workspaces[list.workspaces.length - 1]?.id ||
           "";
+        let targetWorkspaceId = createdId;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -85,20 +86,24 @@ export function WelcomeRoute() {
               token: resolvedToken,
               hostToken: resolvedHostToken || undefined,
             });
-            await openworkClient
+            const serverList = await openworkClient
               .createLocalWorkspace({
                 folderPath: folder,
                 name: workspaceName,
                 preset: "starter",
               })
-              .catch(() => undefined);
+              .catch(() => null);
+            targetWorkspaceId = serverList
+              ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
+              : targetWorkspaceId;
           }
         } catch {
           // Best-effort server registration.
         }
+        if (targetWorkspaceId) writeActiveWorkspaceId(targetWorkspaceId);
         markOnboardingComplete();
         setModalOpen(false);
-        navigate(createdId ? workspaceSettingsRoute(createdId, "general") : "/settings/general", { replace: true });
+        navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId) : "/session", { replace: true });
       } catch (error) {
         setCreateError(
           error instanceof Error ? error.message : "Failed to create workspace.",
