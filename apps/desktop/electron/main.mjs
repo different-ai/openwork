@@ -12,11 +12,12 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -184,6 +185,100 @@ const pendingDeepLinks = [];
 let uiControlServer = null;
 let uiControlDiscoveryPath = null;
 const uiControlToken = randomBytes(32).toString("hex");
+
+// ── Embedded browser panel ─────────────────────────────────────────────
+let browserView = null;
+let browserViewVisible = false;
+const BROWSER_DEFAULT_URL = "https://www.google.com";
+
+function createBrowserView() {
+  if (browserView) return browserView;
+  browserView = new WebContentsView({
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: "persist:openwork-browser",
+    },
+  });
+  browserView.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  browserView.webContents.on("did-navigate", () => sendBrowserState());
+  browserView.webContents.on("did-navigate-in-page", () => sendBrowserState());
+  browserView.webContents.on("page-title-updated", () => sendBrowserState());
+  browserView.webContents.on("did-start-loading", () => sendBrowserState());
+  browserView.webContents.on("did-stop-loading", () => sendBrowserState());
+  return browserView;
+}
+
+function sendBrowserState() {
+  if (!mainWindow || !browserView) return;
+  try {
+    mainWindow.webContents.send("openwork:browser:state", {
+      url: browserView.webContents.getURL(),
+      title: browserView.webContents.getTitle(),
+      canGoBack: browserView.webContents.canGoBack(),
+      canGoForward: browserView.webContents.canGoForward(),
+      isLoading: browserView.webContents.isLoading(),
+    });
+  } catch {
+    // window may be closing
+  }
+}
+
+function showBrowserView(bounds) {
+  if (!mainWindow) return;
+  const view = createBrowserView();
+  if (!mainWindow.contentView.children.includes(view)) {
+    mainWindow.contentView.addChildView(view);
+  }
+  if (bounds.width > 0 && bounds.height > 0) {
+    view.setBounds(bounds);
+  }
+  browserViewVisible = true;
+  if (!view.webContents.getURL()) {
+    view.webContents.loadURL(BROWSER_DEFAULT_URL);
+  }
+  sendBrowserState();
+}
+
+function hideBrowserView() {
+  if (!mainWindow || !browserView) return;
+  try {
+    mainWindow.contentView.removeChildView(browserView);
+  } catch {
+    // already removed
+  }
+  browserViewVisible = false;
+}
+
+function destroyBrowserView() {
+  hideBrowserView();
+  if (browserView) {
+    try { browserView.webContents.close(); } catch { /* already destroyed */ }
+    browserView = null;
+  }
+}
+
+// ── Resolve bundled chrome-devtools-mcp ────────────────────────────────
+// Returns ["node", "<abs-path-to-bin>"] or null.
+// Uses "node" (not process.execPath) because OpenCode spawns the command
+// and process.execPath in Electron is the Electron binary, not node.
+function resolveChromeDevtoolsMcpBin() {
+  try {
+    const require_ = createRequire(import.meta.url);
+    const pkgJsonPath = require_.resolve("chrome-devtools-mcp/package.json");
+    const binPath = path.join(path.dirname(pkgJsonPath), "build", "src", "index.js");
+    if (existsSync(binPath)) {
+      return ["node", binPath];
+    }
+  } catch {
+    // package not found
+  }
+  return null;
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -1330,6 +1425,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       window.webContents.setZoomFactor(factor);
       return true;
     }
+    case "resolveChromeDevtoolsMcpBin":
+      return resolveChromeDevtoolsMcpBin();
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
@@ -1511,6 +1608,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
+    destroyBrowserView();
     mainWindow = null;
   });
 
@@ -1548,6 +1646,39 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.exit(0);
 });
+
+// ── Embedded browser IPC ────────────────────────────────────────────────
+ipcMain.handle("openwork:browser:show", (_event, bounds) => showBrowserView(bounds));
+ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
+ipcMain.handle("openwork:browser:navigate", (_event, url) => {
+  if (!browserView) return;
+  const target = typeof url === "string" && url.trim() ? url.trim() : BROWSER_DEFAULT_URL;
+  const finalUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
+  browserView.webContents.loadURL(finalUrl);
+});
+ipcMain.handle("openwork:browser:back", () => {
+  if (browserView?.webContents.canGoBack()) browserView.webContents.goBack();
+});
+ipcMain.handle("openwork:browser:forward", () => {
+  if (browserView?.webContents.canGoForward()) browserView.webContents.goForward();
+});
+ipcMain.handle("openwork:browser:reload", () => browserView?.webContents.reload());
+ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
+  if (browserView && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
+    browserView.setBounds(bounds);
+  }
+});
+ipcMain.handle("openwork:browser:state", () => {
+  if (!browserView) return null;
+  return {
+    url: browserView.webContents.getURL(),
+    title: browserView.webContents.getTitle(),
+    canGoBack: browserView.webContents.canGoBack(),
+    canGoForward: browserView.webContents.canGoForward(),
+    isLoading: browserView.webContents.isLoading(),
+  };
+});
+ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
