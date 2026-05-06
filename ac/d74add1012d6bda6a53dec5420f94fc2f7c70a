@@ -1,0 +1,55 @@
+apps/app/src/react-app/domains/settings/pages/config-view.tsx
+  h_e2431fa0952ce3 303
+apps/app/src/react-app/domains/settings/pages/messaging-view.tsx
+  h_e2431fa0952ce3 205
+apps/app/src/react-app/domains/settings/pages/plugins-view.tsx
+  h_e2431fa0952ce3 64
+apps/app/src/react-app/domains/settings/pages/debug-view.tsx
+  h_e2431fa0952ce3 314
+apps/app/src/react-app/domains/settings/pages/extensions-view.tsx
+  h_e2431fa0952ce3 82
+apps/app/src/react-app/domains/settings/pages/updates-view.tsx
+  h_e2431fa0952ce3 56
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  h_e2431fa0952ce3 233
+apps/app/src/react-app/domains/settings/pages/advanced-view.tsx
+  h_e2431fa0952ce3 216
+apps/app/src/react-app/domains/settings/pages/recovery-view.tsx
+  h_e2431fa0952ce3 28
+apps/app/src/react-app/domains/settings/pages/den-view.tsx
+  h_e2431fa0952ce3 11
+  0e4665ee6fe1cb96 10,12-14
+apps/app/src/react-app/domains/settings/pages/general-view.tsx
+  h_e2431fa0952ce3 61
+apps/app/src/react-app/domains/settings/pages/appearance-view.tsx
+  h_e2431fa0952ce3 20
+apps/app/src/react-app/domains/settings/pages/mcp-view.tsx
+  h_e2431fa0952ce3 343
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  h_e2431fa0952ce3 719
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "acd74add1012d6bda6a53dec5420f94fc2f7c70a",
+  "prompts": {
+    "0e4665ee6fe1cb96": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "99596cfc-01d0-4ec8-8b28-9d4f93eb80bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 13,
+      "accepted_lines": 4,
+      "overriden_lines": 13
+    }
+  },
+  "humans": {
+    "h_e2431fa0952ce3": {
+      "author": "Jean P.D. Meijer"
+    }
+  }
+}
