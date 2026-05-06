@@ -2,21 +2,30 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 
-document.documentElement.dataset.openworkShell = "electron";
-document.documentElement.classList.add("openwork-electron");
-
-if (process.platform === "darwin") {
-  document.documentElement.classList.add("openwork-platform-mac");
-} else if (process.platform === "win32") {
-  document.documentElement.classList.add("openwork-platform-windows");
-} else if (process.platform === "linux") {
-  document.documentElement.classList.add("openwork-platform-linux");
-}
-
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";
   return "linux";
+}
+
+function applyShellDocumentMarkers() {
+  try {
+    const root = document?.documentElement;
+    if (!root) return false;
+
+    root.dataset.openworkShell = "electron";
+    root.classList.add("openwork-electron");
+    if (process.platform === "darwin") {
+      root.classList.add("openwork-platform-mac");
+    } else if (process.platform === "win32") {
+      root.classList.add("openwork-platform-windows");
+    } else if (process.platform === "linux") {
+      root.classList.add("openwork-platform-linux");
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
@@ -101,3 +110,7 @@ ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));
 });
+
+if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
+  document.addEventListener("DOMContentLoaded", applyShellDocumentMarkers, { once: true });
+}
