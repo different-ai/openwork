@@ -1,15 +1,24 @@
 /**
  * Library entry point for the OpenWork server.
  *
- * Use this to embed the server in-process (e.g. inside Electron)
- * instead of running it as a standalone binary.
- *
  * ```ts
- * import { startServer } from "@openwork/server";
+ * import { startEmbeddedServer } from "openwork-server";
  *
- * const server = await startServer(config);
- * console.log(`Listening on port ${server.port}`);
+ * const handle = await startEmbeddedServer({
+ *   host: "127.0.0.1",
+ *   port: 0,
+ *   workspaces: ["/path/to/workspace"],
+ *   token: clientToken,
+ *   hostToken: hostToken,
+ *   manageOpencode: true,
+ *   opencodeBin: "/path/to/opencode",
+ * });
+ *
+ * console.log(`Server at ${handle.url}`);
+ * handle.stop();
  * ```
  */
+export { startEmbeddedServer, type EmbeddedServerHandle, type EmbeddedServerOptions } from "./embedded.js";
 export { startServer } from "./server.js";
+export { resolveServerConfig } from "./config.js";
 export type { ServeResult } from "./serve-node.js";

@@ -995,30 +995,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
     }
 
-    // Inject env vars that the server reads (managed opencode, etc.)
-    const serverEnv = await buildChildEnv({
-      OPENWORK_TOKEN: tokens.clientToken,
-      OPENWORK_HOST_TOKEN: tokens.hostToken,
-      ...(options.manageOpencode ? { OPENWORK_MANAGE_OPENCODE: "1" } : {}),
-      ...(options.manageOpencode ? { OPENWORK_OPENCODE_BIN: managedOpencode?.path ?? "" } : {}),
-      ...(options.manageOpencode ? { OPENWORK_MANAGED_OPENCODE_CWD: managedOpencodeWorkdir() } : {}),
-      ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
-      ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
-    });
+    // Inject user env vars so the server and managed OpenCode inherit them.
+    const serverEnv = await buildChildEnv({});
     Object.assign(process.env, serverEnv);
 
-    // Import the server in-process (compiled TS → JS via tsc into dist/)
-    let startServer, resolveServerConfig;
-    try {
-      ({ startServer } = await import("../../server/dist/server.js"));
-      ({ resolveServerConfig } = await import("../../server/dist/config.js"));
-    } catch (importError) {
-      console.error("[openwork-server] Failed to import server library:", importError);
-      throw importError;
-    }
-
-    // Build CLI-style args for resolveServerConfig
-    const cliArgs = {
+    // One call: resolve config, spawn managed OpenCode, start HTTP server.
+    const { startEmbeddedServer } = await import("../../server/dist/embedded.js");
+    const handle = await startEmbeddedServer({
       host,
       port,
       corsOrigins: ["*"],
@@ -1028,26 +1011,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       hostToken: tokens.hostToken,
       opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
       opencodeDirectory: activeWorkspace || undefined,
-    };
-    let serverConfig;
-    try {
-      serverConfig = await resolveServerConfig(cliArgs);
-    } catch (configError) {
-      console.error("[openwork-server] Failed to resolve config:", configError);
-      throw configError;
-    }
+      manageOpencode: options.manageOpencode === true,
+      opencodeBin: managedOpencode?.path ?? undefined,
+      opencodeCwd: managedOpencodeWorkdir(),
+    });
+    inProcessServer = handle;
 
-    let server;
-    try {
-      server = await startServer(serverConfig);
-    } catch (startError) {
-      console.error("[openwork-server] Failed to start in-process server:", startError);
-      throw startError;
-    }
-    inProcessServer = server;
-
-    const boundPort = server.port;
-    const baseUrl = `http://127.0.0.1:${boundPort}`;
+    const boundPort = handle.port;
+    const baseUrl = handle.url;
 
     openworkServerState.inProcess = true;
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
@@ -1220,7 +1191,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function stopAllRuntimeChildren() {
-    // Stop the in-process server if running
+    // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
       try { inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
