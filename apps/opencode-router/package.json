@@ -41,7 +41,8 @@
     "test:unit": "pnpm build && bun test test/*.test.js",
     "test:smoke": "bun scripts/smoke.mjs",
     "test:cli": "pnpm build && bun scripts/test-cli.mjs",
-    "test:npx": "bun scripts/test-npx.mjs"
+    "test:npx": "bun scripts/test-npx.mjs",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.14.38",

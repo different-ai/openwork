@@ -7,7 +7,8 @@
     "dev:local": "sh -lc 'NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 PORT=${DEN_WORKER_PROXY_PORT:-8789} tsx watch src/server.ts'",
     "build": "npm run build:den-db && tsc -p tsconfig.json",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "@openwork-ee/den-db": "workspace:*",

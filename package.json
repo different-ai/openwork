@@ -52,9 +52,12 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
-    "tauri": "pnpm --filter @openwork/desktop exec tauri"
+    "tauri": "pnpm --filter @openwork/desktop exec tauri",
+    "lint": "turbo run lint:biome",
+    "lint:fix": "turbo run lint:biome -- --write"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.14",
     "turbo": "^2.5.5"
   },
   "pnpm": {

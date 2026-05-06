@@ -8,7 +8,8 @@
     "prebuild": "pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
-    "lint": "next lint"
+    "lint": "next lint",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "@openwork/types": "workspace:*",

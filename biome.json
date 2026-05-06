@@ -1,0 +1,54 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/build",
+      "!**/.next",
+      "!**/.turbo",
+      "!**/.tauri",
+      "!**/target",
+      "!**/coverage",
+      "!**/out",
+      "!vendor",
+      "!patches",
+      "!translated_readmes",
+      "!**/*.generated.ts",
+      "!**/*.gen.ts",
+      "!packages/openwork-server-sdk/src",
+      "!apps/server-v2/openapi.json",
+      "!pnpm-lock.yaml",
+      "!package-lock.json"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "css": {
+    "linter": {
+      "enabled": false
+    },
+    "parser": {
+      "cssModules": true
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "suspicious": {
+        "noDebugger": "error"
+      }
+    }
+  },
+  "assist": {
+    "enabled": false
+  }
+}

@@ -29,6 +29,14 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**"]
+    },
+    "lint:biome": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "../../biome.json",
+        "../../../biome.json"
+      ],
+      "outputs": []
     }
   }
 }

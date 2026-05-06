@@ -18,7 +18,8 @@
     }
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "luxon": "^3.6.1",

@@ -19,7 +19,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "zod": "^4.3.6"

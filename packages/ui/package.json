@@ -20,7 +20,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.react.ts && tsup --config tsup.config.solid.ts"
+    "build": "tsup --config tsup.config.react.ts && tsup --config tsup.config.solid.ts",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "@paper-design/shaders": "0.0.72",

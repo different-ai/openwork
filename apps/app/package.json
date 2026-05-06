@@ -33,7 +33,8 @@
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",
     "bump:major": "node scripts/bump-version.mjs major",
-    "bump:set": "node scripts/bump-version.mjs --set"
+    "bump:set": "node scripts/bump-version.mjs --set",
+    "lint:biome": "biome lint ."
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.148",

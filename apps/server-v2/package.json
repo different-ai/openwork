@@ -19,7 +19,8 @@
     "build:bin:embedded:windows": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --embed-runtime --target bun-windows-x64",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --target bun-darwin-arm64 --target bun-darwin-x64-baseline --target bun-linux-x64-baseline --target bun-linux-arm64 --target bun-windows-x64",
     "build:bin:embedded:all": "bun ./script/build.ts --outdir dist/bin --filename openwork-server-v2 --embed-runtime --target bun-darwin-arm64 --target bun-darwin-x64-baseline --target bun-linux-x64-baseline --target bun-linux-arm64 --target bun-windows-x64",
-    "prepublishOnly": "pnpm openapi:generate && pnpm build:bin"
+    "prepublishOnly": "pnpm openapi:generate && pnpm build:bin",
+    "lint:biome": "biome lint ."
   },
   "files": [
     "bin",
