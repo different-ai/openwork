@@ -175,6 +175,20 @@ export function SessionPage(props: SessionPageProps) {
   const [todoExpanded, setTodoExpanded] = useState(true);
   const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
   const toggleBrowserPanel = useCallback(() => setBrowserPanelOpen((p) => !p), []);
+
+  // Sync browser panel state with Electron main process IPC events.
+  // When the agent calls a built-in browser tool, the main process opens
+  // the WebContentsView and sends panel-opened; when hide_browser is called
+  // it sends panel-closed.  Without this listener the React UI never knows
+  // the panel opened and doesn't render the BrowserPanel toolbar.
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
+    if (!browser) return;
+    const unsubOpen = browser.onPanelOpened?.(() => setBrowserPanelOpen(true));
+    const unsubClose = browser.onPanelClosed?.(() => setBrowserPanelOpen(false));
+    return () => { unsubOpen?.(); unsubClose?.(); };
+  }, []);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(
