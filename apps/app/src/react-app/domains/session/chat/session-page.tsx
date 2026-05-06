@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, Globe, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -32,6 +32,8 @@ import {
 } from "../../../shell/workspace-shell-layout";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
+import { isElectronRuntime } from "../../../../app/utils";
+import { BrowserPanel } from "../browser/browser-panel";
 
 type StatusBarOverrides = Pick<
   StatusBarProps,
@@ -173,7 +175,12 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [todoExpanded, setTodoExpanded] = useState(true);
+  const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
+
+  const toggleBrowserPanel = useCallback(() => {
+    setBrowserPanelOpen((prev) => !prev);
+  }, []);
 
   const selectedSessionTitle = useMemo(
     () => sessionTitleForId(props.sidebar.workspaceSessionGroups, props.selectedSessionId),
@@ -340,6 +347,23 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             <div className="flex items-center gap-1.5 text-gray-10">
+              {isElectronRuntime() ? (
+                <button
+                  type="button"
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
+                    browserPanelOpen
+                      ? "bg-dls-accent/10 text-dls-accent"
+                      : "text-gray-10 hover:bg-gray-2/70 hover:text-dls-text"
+                  }`}
+                  onClick={toggleBrowserPanel}
+                  title="Toggle browser panel"
+                  aria-label="Toggle browser panel"
+                  aria-pressed={browserPanelOpen}
+                >
+                  <Globe size={16} />
+                  <span className="hidden lg:inline">Browser</span>
+                </button>
+              ) : null}
               {props.history ? (
                 <>
                   <button
@@ -535,6 +559,16 @@ export function SessionPage(props: SessionPageProps) {
             showSettingsButton={props.statusBar?.showSettingsButton}
           />
         </main>
+
+        {/* Embedded browser panel */}
+        {browserPanelOpen ? (
+          <aside
+            className="hidden min-h-0 shrink-0 overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] lg:flex lg:flex-col"
+            style={{ width: 520 }}
+          >
+            <BrowserPanel onClose={toggleBrowserPanel} />
+          </aside>
+        ) : null}
       </div>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}

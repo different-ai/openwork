@@ -42,6 +42,30 @@ declare global {
         download?: () => Promise<{ ok: boolean; reason?: string }>;
         installAndRestart?: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      browser?: {
+        show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+        hide?: () => Promise<void>;
+        navigate?: (url: string) => Promise<void>;
+        back?: () => Promise<void>;
+        forward?: () => Promise<void>;
+        reload?: () => Promise<void>;
+        setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+        getState?: () => Promise<{
+          url: string;
+          title: string;
+          canGoBack: boolean;
+          canGoForward: boolean;
+          isLoading: boolean;
+        } | null>;
+        destroy?: () => Promise<void>;
+        onStateChange?: (callback: (state: {
+          url: string;
+          title: string;
+          canGoBack: boolean;
+          canGoForward: boolean;
+          isLoading: boolean;
+        }) => void) => () => void;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";

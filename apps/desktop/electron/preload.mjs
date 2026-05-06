@@ -53,6 +53,42 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       };
     },
   },
+  browser: {
+    show(bounds) {
+      return ipcRenderer.invoke("openwork:browser:show", bounds);
+    },
+    hide() {
+      return ipcRenderer.invoke("openwork:browser:hide");
+    },
+    navigate(url) {
+      return ipcRenderer.invoke("openwork:browser:navigate", url);
+    },
+    back() {
+      return ipcRenderer.invoke("openwork:browser:back");
+    },
+    forward() {
+      return ipcRenderer.invoke("openwork:browser:forward");
+    },
+    reload() {
+      return ipcRenderer.invoke("openwork:browser:reload");
+    },
+    setBounds(bounds) {
+      return ipcRenderer.invoke("openwork:browser:bounds", bounds);
+    },
+    getState() {
+      return ipcRenderer.invoke("openwork:browser:state");
+    },
+    destroy() {
+      return ipcRenderer.invoke("openwork:browser:destroy");
+    },
+    onStateChange(callback) {
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on("openwork:browser:state", handler);
+      return () => {
+        ipcRenderer.removeListener("openwork:browser:state", handler);
+      };
+    },
+  },
   meta: {
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
