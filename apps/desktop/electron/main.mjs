@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -1041,6 +1041,20 @@ function activeWindowFromEvent(event) {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow ?? undefined;
 }
 
+function applyNativeTheme(mode) {
+  nativeTheme.themeSource = mode;
+
+  if (process.platform !== "darwin") {
+    return true;
+  }
+  // const isDark = nativeTheme.shouldUseDarkColors;
+
+  mainWindow?.setVibrancy("under-window");
+  mainWindow?.setBackgroundColor("#00000001");
+
+  return true;
+}
+
 async function handleDesktopInvoke(event, command, ...args) {
   switch (command) {
     case "workspaceBootstrap":
@@ -1482,6 +1496,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       window.webContents.setZoomFactor(factor);
       return true;
     }
+    case "__setNativeTheme":
+      return applyNativeTheme(String(args[0]));
     case "resolveChromeDevtoolsMcpBin":
       return resolveChromeDevtoolsMcpBin();
     default:
@@ -1634,11 +1650,22 @@ async function createMainWindow() {
   if (mainWindow) return mainWindow;
 
   const preloadPath = path.join(__dirname, "preload.mjs");
+  const windowAppearanceOptions = {};
+  if (process.platform === "darwin") {
+    Object.assign(windowAppearanceOptions, {
+      backgroundColor: "#00000001",
+      titleBarStyle: "hiddenInset",
+      vibrancy: "under-window",
+      visualEffectState: "active",
+    });
+  }
+
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
     title: APP_NAME,
     show: false,
+    ...windowAppearanceOptions,
     ...(APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty() ? { icon: APP_ICON_IMAGE } : {}),
     webPreferences: {
       preload: preloadPath,

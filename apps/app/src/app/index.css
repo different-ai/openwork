@@ -12,6 +12,35 @@
 @import "@fontsource-variable/ibm-plex-sans";
 
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+@custom-variant electron {
+  html.openwork-electron & {
+    @slot;
+  }
+}
+@custom-variant windows {
+  html.openwork-electron.openwork-platform-windows & {
+    @slot;
+  }
+}
+@custom-variant mac {
+  html.openwork-electron.openwork-platform-mac & {
+    @slot;
+  }
+}
+@custom-variant linux {
+  html.openwork-electron.openwork-platform-linux & {
+    @slot;
+  }
+}
+
+@utility titlebar-drag {
+  app-region: drag;
+  user-select: none;
+}
+
+@utility titlebar-no-drag {
+  app-region: no-drag;
+}
 
 :root {
   color-scheme: light;
@@ -124,7 +153,6 @@ body {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--dls-text-primary);
-  background-color: var(--dls-surface);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

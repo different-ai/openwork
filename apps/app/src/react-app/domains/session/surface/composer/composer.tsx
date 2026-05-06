@@ -847,7 +847,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const panelRoundedClass =
     mentionOpen || slashOpen
       ? "rounded-t-[18px] border-t-transparent"
-      : "shadow-[var(--dls-shell-shadow)]";
+      : "";
 
   const renderSlashMenu = () => {
     if (!slashOpen) return null;

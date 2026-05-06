@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 
+document.documentElement.dataset.openworkShell = "electron";
+document.documentElement.classList.add("openwork-electron");
+
+if (process.platform === "darwin") {
+  document.documentElement.classList.add("openwork-platform-mac");
+} else if (process.platform === "win32") {
+  document.documentElement.classList.add("openwork-platform-windows");
+} else if (process.platform === "linux") {
+  document.documentElement.classList.add("openwork-platform-linux");
+}
+
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";

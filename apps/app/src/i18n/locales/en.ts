@@ -191,6 +191,7 @@ export default {
   "dashboard.chooser_local_desc": "Create a workspace on this device.",
   "dashboard.chooser_remote_desc": "Attach to a self-hosted OpenWork worker using a URL and access token.",
   "dashboard.chooser_shared_desc": "Browse cloud workers shared with your organization and connect in one step.",
+  "dashboard.back_to_app": "Back to app",
   "dashboard.close_settings": "Close settings",
   "dashboard.cloud_worker": "Cloud worker",
   "dashboard.commands": "Commands",

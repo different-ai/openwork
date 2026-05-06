@@ -51,12 +51,6 @@ import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/se
 import { usePlatform } from "../kernel/platform";
 import { useLocal } from "../kernel/local-provider";
 import {
-  DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  useWorkspaceShellLayout,
-} from "./workspace-shell-layout";
-import {
   openworkServerInfo,
   openworkServerRestart,
   engineStart,
@@ -90,6 +84,7 @@ import {
 } from "../domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
 import type { ModelOption, ModelRef } from "../../app/types";
+import { workspaceSwatchColor } from "../domains/session/sidebar/utils";
 import { recordInspectorEvent } from "./app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
@@ -563,13 +558,6 @@ export function SettingsRoute() {
     selectedWorkspaceId,
   ]);
 
-  const shellLayout = useWorkspaceShellLayout({
-    expandedRightWidth: 320,
-    defaultLeftWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-    minLeftWidth: MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-    maxLeftWidth: MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  });
-
   const openworkServerStore = useMemo(
     () =>
       createOpenworkServerStore({
@@ -788,6 +776,7 @@ export function SettingsRoute() {
 
   useEffect(() => {
     applyThemeMode(themeMode);
+    void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", themeMode);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(SETTINGS_THEME_KEY, themeMode);
     }
@@ -1128,6 +1117,12 @@ export function SettingsRoute() {
   }, [activeClient, connectionsStore, providerAuthStore, selectedWorkspace?.id]);
 
   const selectedWorkspaceName = selectedWorkspace?.displayNameResolved ?? t("session.workspace_fallback");
+  const workspaceOptions = workspaces.map((workspace) => ({
+    id: workspace.id,
+    name: workspace.displayNameResolved,
+    color: workspaceSwatchColor(workspace.id),
+  }));
+  const selectedWorkspaceColor = workspaceSwatchColor(selectedWorkspaceId);
   const workspaceType = selectedWorkspace?.workspaceType ?? "local";
   const isRemoteWorkspace = workspaceType === "remote";
   const canWriteWorkspaceSkills =
@@ -1212,6 +1207,16 @@ export function SettingsRoute() {
     setCreateWorkspaceRemoteError(null);
     setCreateWorkspaceOpen(true);
   };
+
+  const handleSelectSettingsWorkspace = useCallback((workspaceId: string) => {
+    setLegacySelectedWorkspaceId(workspaceId);
+    writeActiveWorkspaceId(workspaceId);
+    if (isDesktopRuntime()) {
+      void workspaceSetSelected(workspaceId).catch(() => undefined);
+      void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
+    }
+    navigate(workspaceSettingsRoute(workspaceId, settingsPathForRoute(route)), { state: location.state });
+  }, [location.state, navigate, route]);
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -1733,40 +1738,14 @@ export function SettingsRoute() {
         activeTab={route.tab}
         onSelectTab={(tab) => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, tab) : `/settings/${tab}`)}
         developerMode={developerMode}
+        selectedWorkspaceId={selectedWorkspaceId}
         selectedWorkspaceName={selectedWorkspaceName}
+        selectedWorkspaceColor={selectedWorkspaceColor}
+        workspaces={workspaceOptions}
+        onSelectWorkspace={handleSelectSettingsWorkspace}
         headerStatus={routeOpenworkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
-        workspaceSessionListProps={{
-          workspaceSessionGroups,
-          selectedWorkspaceId,
-          developerMode,
-          selectedSessionId: null,
-          connectingWorkspaceId: null,
-          workspaceConnectionStateById,
-          newTaskDisabled: !opencodeClient,
-          onSelectWorkspace: async (workspaceId) => {
-            setLegacySelectedWorkspaceId(workspaceId);
-            writeActiveWorkspaceId(workspaceId || null);
-            if (isDesktopRuntime()) {
-              void workspaceSetSelected(workspaceId).catch(() => undefined);
-              void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
-            }
-            return true;
-          },
-          onOpenSession: (workspaceId, sessionId) => navigate(workspaceSessionRoute(workspaceId, sessionId)),
-          onCreateTaskInWorkspace: (workspaceId) => navigate(workspaceSessionRoute(workspaceId)),
-          onOpenRenameWorkspace: handleOpenRenameWorkspace,
-          onShareWorkspace: shareWorkspaceState.openShareWorkspace,
-          onRevealWorkspace: (id) => void handleRevealWorkspace(id),
-          onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
-          onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
-          onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
-          onForgetWorkspace: (id) => void handleForgetWorkspace(id),
-          onOpenCreateWorkspace: handleOpenCreateWorkspace,
-        }}
         onClose={() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session")}
-        sidebarWidth={shellLayout.leftSidebarWidth}
-        onSidebarResizeStart={shellLayout.startLeftSidebarResize}
         error={routeError ?? notFoundRouteError}
       >
         {settingsView}
