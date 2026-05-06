@@ -1,0 +1,108 @@
+apps/app/src/react-app/shell/app-root.tsx
+  b6b47d79c5bbfe6f 166
+  d423cb4a8ee3793e 109
+apps/app/src/react-app/shell/welcome-route.tsx
+  d423cb4a8ee3793e 3,15-17,19,41,47-51,112-125,127,137-138,167-175,177-187,189,191-199,201-205,207-215
+  b6b47d79c5bbfe6f 2,32-33
+apps/app/src/react-app/domains/onboarding/welcome-page.tsx
+  4b8765195460e226 3,15,18-19,39,41,60,65,70,75,80,85,99,102,109
+  d423cb4a8ee3793e 27-29,32-36,95,100,107
+  05ff559cc00ddb95 43-45,47
+apps/app/src/react-app/domains/onboarding/create-local-workspace-page.tsx
+  17aaacef38bf527f 3-17,38-39,45-50,70-83,85,87-134
+  d423cb4a8ee3793e 1,18-37,40-41,43,54-60,62-63,67-69,84,86,135-138
+apps/app/src/react-app/domains/onboarding/connect-self-hosted-workspace-page.tsx
+  d423cb4a8ee3793e 1-117
+apps/app/src/react-app/domains/onboarding/openwork-cloud-workspace-page.tsx
+  d423cb4a8ee3793e 1-312
+apps/app/public/openwork-logo-transparent.svg
+  05ff559cc00ddb95 1-12
+apps/app/src/react-app/domains/workspace/create-workspace-local-panel.tsx
+  efc916a8a9af85c2 2,6,67-79,94,103-138,140,143-144,153-154,160,167-169,189,201,219-221,456-460,462,464-475,549
+  17aaacef38bf527f 4,80-93,95-102,139,141-142,145-152,155-159,161-166,170-188,190-200,202-218,238-447,476-484,486-495,502-507,565-577
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "95bf5d0df37d5ec10898ceed0123d8ba3088f514",
+  "prompts": {
+    "05ff559cc00ddb95": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "89affdaf-4f7f-406f-a1e8-dcda58969f33",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 1,
+      "accepted_lines": 16,
+      "overriden_lines": 1
+    },
+    "17aaacef38bf527f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4e0032d0-94ed-41b1-8ffa-2206a278e7cc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 496,
+      "total_deletions": 296,
+      "accepted_lines": 429,
+      "overriden_lines": 0
+    },
+    "4b8765195460e226": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "96ab467a-87b2-4c6f-b636-e2cfb4f7a188",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 18,
+      "accepted_lines": 15,
+      "overriden_lines": 3
+    },
+    "b6b47d79c5bbfe6f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ffdbfc35-c7ba-4bba-8c1b-5000f4f72b0f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 11,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "d423cb4a8ee3793e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f128f671-5614-4fa3-804d-712cb9f992ac",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 642,
+      "total_deletions": 102,
+      "accepted_lines": 559,
+      "overriden_lines": 6
+    },
+    "efc916a8a9af85c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b336aedc-be6d-409d-bf50-2da96c8e9a07",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 180,
+      "total_deletions": 80,
+      "accepted_lines": 85,
+      "overriden_lines": 0
+    }
+  }
+}
