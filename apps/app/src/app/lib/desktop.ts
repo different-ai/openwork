@@ -1,14 +1,38 @@
-import * as tauriBridge from "./desktop-tauri";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
-export type * from "./desktop-tauri";
+export type * from "./desktop-types";
+export type {
+  EngineInfo,
+  OpenworkServerInfo,
+  EngineDoctorResult,
+  WorkspaceInfo,
+  WorkspaceList,
+  WorkspaceExportSummary,
+  OpencodeCommandDraft,
+  WorkspaceOpenworkConfig,
+  AppBuildInfo,
+  DesktopBootstrapConfig,
+  OrchestratorDetachedHost,
+  SandboxDoctorResult,
+  OpenworkDockerCleanupResult,
+  SandboxDebugProbeResult,
+  ExecResult,
+  LocalSkillCard,
+  LocalSkillContent,
+  OpencodeConfigFile,
+  UpdaterEnvironment,
+  CacheResetResult,
+} from "./desktop-types";
 
-export type DesktopBridge = typeof tauriBridge;
+import type { WorkspaceList } from "./desktop-types";
+
+// ---------------------------------------------------------------------------
+// Electron bridge surface
+// ---------------------------------------------------------------------------
 
 declare global {
   interface Window {
     __OPENWORK_ELECTRON__?: {
-      bridge?: Partial<DesktopBridge>;
       invokeDesktop?: (command: string, ...args: unknown[]) => Promise<unknown>;
       shell?: {
         openExternal?: (url: string) => Promise<void>;
@@ -75,17 +99,9 @@ declare global {
   }
 }
 
-function missingElectronMethod(method: string): never {
-  throw new Error(`Electron desktop bridge method is not implemented yet: ${method}`);
-}
-
-function isElectronDesktopRuntime() {
-  return typeof window !== "undefined" && window.__OPENWORK_ELECTRON__ != null;
-}
-
-function isTauriDesktopRuntime() {
-  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 async function invokeElectronHelper<T>(command: string, ...args: unknown[]): Promise<T> {
   const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
@@ -95,48 +111,46 @@ async function invokeElectronHelper<T>(command: string, ...args: unknown[]): Pro
   return (await invokeDesktop(command, ...args)) as T;
 }
 
-function resolveElectronBridge(): DesktopBridge {
-  const exposed = window.__OPENWORK_ELECTRON__?.bridge ?? {};
-  const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
-  return new Proxy(exposed as DesktopBridge, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (value != null) {
-        return value;
-      }
-
-      if (prop === "resolveWorkspaceListSelectedId") {
-        return tauriBridge.resolveWorkspaceListSelectedId;
-      }
-
-      if (typeof prop === "string" && invokeDesktop) {
-        return (...args: unknown[]) => invokeDesktop(prop, ...args);
-      }
-
-      if (typeof prop === "string") {
-        return (..._args: unknown[]) => missingElectronMethod(prop);
-      }
-
-      return value;
-    },
-  });
+// Pure utility — resolves the selected workspace ID from a workspace list
+// payload, handling legacy fields.
+export function resolveWorkspaceListSelectedId(
+  list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
+): string {
+  return list?.selectedId?.trim() || list?.activeId?.trim() || "";
 }
 
-function resolveDesktopBridge(): DesktopBridge {
-  if (
-    typeof window !== "undefined" &&
-    (window.__OPENWORK_ELECTRON__?.bridge || window.__OPENWORK_ELECTRON__?.invokeDesktop)
-  ) {
-    return resolveElectronBridge();
-  }
-  return tauriBridge;
-}
+// ---------------------------------------------------------------------------
+// Desktop bridge (Electron IPC proxy)
+// ---------------------------------------------------------------------------
 
-export const desktopBridge: DesktopBridge = new Proxy({} as DesktopBridge, {
-  get(_target, prop, receiver) {
-    return Reflect.get(resolveDesktopBridge(), prop, receiver);
+// All bridge methods are implemented via invokeDesktop IPC. The Proxy
+// automatically maps property access to `invokeDesktop(propertyName, ...args)`.
+
+type DesktopBridgeFn = (...args: unknown[]) => Promise<unknown>;
+
+const electronBridge: Record<string, DesktopBridgeFn> = {};
+
+export const desktopBridge = new Proxy(electronBridge, {
+  get(target, prop) {
+    if (typeof prop !== "string") return undefined;
+
+    // resolveWorkspaceListSelectedId is a pure function, not an IPC call
+    if (prop === "resolveWorkspaceListSelectedId") {
+      return resolveWorkspaceListSelectedId;
+    }
+
+    const cached = target[prop];
+    if (cached) return cached;
+
+    const fn = (...args: unknown[]) => invokeElectronHelper(prop, ...args);
+    target[prop] = fn;
+    return fn;
   },
 });
+
+// ---------------------------------------------------------------------------
+// desktopFetch — proxies non-loopback requests through Electron main process
+// ---------------------------------------------------------------------------
 
 function isLoopbackUrl(input: RequestInfo | URL): boolean {
   const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -149,42 +163,37 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
 }
 
 export const desktopFetch: typeof globalThis.fetch = (input, init) => {
-  if (isElectronDesktopRuntime()) {
-    if (isLoopbackUrl(input)) {
-      return globalThis.fetch(input, init);
-    }
-
-    return invokeElectronHelper<{
-      status: number;
-      statusText: string;
-      headers: [string, string][];
-      body: string;
-    }>("__fetch", typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url, {
-      method: init?.method,
-      headers: init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined,
-      body: typeof init?.body === "string" ? init.body : undefined,
-    }).then(
-      (result) =>
-        new Response(result.body, {
-          status: result.status,
-          statusText: result.statusText,
-          headers: result.headers,
-        }),
-    );
+  if (isLoopbackUrl(input)) {
+    return globalThis.fetch(input, init);
   }
-  return tauriBridge.desktopFetch(input, init);
+
+  return invokeElectronHelper<{
+    status: number;
+    statusText: string;
+    headers: [string, string][];
+    body: string;
+  }>("__fetch", typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url, {
+    method: init?.method,
+    headers: init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined,
+    body: typeof init?.body === "string" ? init.body : undefined,
+  }).then(
+    (result) =>
+      new Response(result.body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers: result.headers,
+      }),
+  );
 };
 
+// ---------------------------------------------------------------------------
+// Convenience wrappers
+// ---------------------------------------------------------------------------
+
 export async function openDesktopUrl(url: string): Promise<void> {
-  if (isElectronDesktopRuntime()) {
-    const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
-    if (openExternal) {
-      await openExternal(url);
-      return;
-    }
-  }
-  if (isTauriDesktopRuntime()) {
-    await tauriBridge.openDesktopUrl(url);
+  const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
+  if (openExternal) {
+    await openExternal(url);
     return;
   }
   if (typeof window !== "undefined") {
@@ -193,78 +202,56 @@ export async function openDesktopUrl(url: string): Promise<void> {
 }
 
 export async function openDesktopPath(target: string): Promise<void> {
-  if (isElectronDesktopRuntime()) {
-    const result = await invokeElectronHelper<string | null>("__openPath", target);
-    if (typeof result === "string" && result.trim()) {
-      throw new Error(result);
-    }
-    return;
+  const result = await invokeElectronHelper<string | null>("__openPath", target);
+  if (typeof result === "string" && result.trim()) {
+    throw new Error(result);
   }
-  await tauriBridge.openDesktopPath(target);
 }
 
 export async function revealDesktopItemInDir(target: string): Promise<void> {
-  if (isElectronDesktopRuntime()) {
-    await invokeElectronHelper<void>("__revealItemInDir", target);
-    return;
-  }
-  await tauriBridge.revealDesktopItemInDir(target);
+  await invokeElectronHelper<void>("__revealItemInDir", target);
 }
 
 export async function relaunchDesktopApp(): Promise<void> {
-  if (isElectronDesktopRuntime()) {
-    await window.__OPENWORK_ELECTRON__?.shell?.relaunch?.();
-    return;
-  }
-  await tauriBridge.relaunchDesktopApp();
+  await window.__OPENWORK_ELECTRON__?.shell?.relaunch?.();
 }
 
 export async function getDesktopHomeDir(): Promise<string> {
-  if (isElectronDesktopRuntime()) {
-    return invokeElectronHelper<string>("__homeDir");
-  }
-  return tauriBridge.getDesktopHomeDir();
+  return invokeElectronHelper<string>("__homeDir");
 }
 
 export async function joinDesktopPath(...parts: string[]): Promise<string> {
-  if (isElectronDesktopRuntime()) {
-    return invokeElectronHelper<string>("__joinPath", ...parts);
-  }
-  return tauriBridge.joinDesktopPath(...parts);
+  return invokeElectronHelper<string>("__joinPath", ...parts);
 }
 
 export async function setDesktopZoomFactor(value: number): Promise<boolean> {
-  if (isElectronDesktopRuntime()) {
-    return invokeElectronHelper<boolean>("__setZoomFactor", value);
-  }
-  return tauriBridge.setDesktopZoomFactor(value);
+  return invokeElectronHelper<boolean>("__setZoomFactor", value);
 }
 
 export async function subscribeDesktopDeepLinks(
   handler: (urls: string[]) => void,
 ): Promise<() => void> {
-  if (isElectronDesktopRuntime()) {
-    const listener = (event: Event) => {
-      const customEvent = event as CustomEvent<string[]>;
-      if (Array.isArray(customEvent.detail)) {
-        handler(customEvent.detail);
-      }
-    };
-    window.addEventListener(nativeDeepLinkEvent, listener as EventListener);
-    const initialUrls = window.__OPENWORK_ELECTRON__?.meta?.initialDeepLinks;
-    if (Array.isArray(initialUrls) && initialUrls.length > 0) {
-      handler(initialUrls);
+  const listener = (event: Event) => {
+    const customEvent = event as CustomEvent<string[]>;
+    if (Array.isArray(customEvent.detail)) {
+      handler(customEvent.detail);
     }
-    return () => {
-      window.removeEventListener(nativeDeepLinkEvent, listener as EventListener);
-    };
+  };
+  window.addEventListener(nativeDeepLinkEvent, listener as EventListener);
+  const initialUrls = window.__OPENWORK_ELECTRON__?.meta?.initialDeepLinks;
+  if (Array.isArray(initialUrls) && initialUrls.length > 0) {
+    handler(initialUrls);
   }
-
-  return tauriBridge.subscribeDesktopDeepLinks(handler);
+  return () => {
+    window.removeEventListener(nativeDeepLinkEvent, listener as EventListener);
+  };
 }
 
+// ---------------------------------------------------------------------------
+// Re-export bridge methods as named functions (preserves existing import API)
+// ---------------------------------------------------------------------------
+
 const {
-  resolveWorkspaceListSelectedId,
   engineStart,
   workspaceBootstrap,
   workspaceSetSelected,
@@ -318,7 +305,6 @@ const {
 } = desktopBridge;
 
 export {
-  resolveWorkspaceListSelectedId,
   engineStart,
   workspaceBootstrap,
   workspaceSetSelected,

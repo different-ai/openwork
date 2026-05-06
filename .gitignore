@@ -17,11 +17,7 @@ tmp/
 # Local git worktrees
 _worktrees/
 
-# Tauri/Rust
-packages/desktop/src-tauri/target/
-packages/desktop/src-tauri/sidecars/
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/sidecars/
+# Desktop sidecars
 apps/desktop/resources/sidecars/
 
 # Env

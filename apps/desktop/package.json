@@ -11,11 +11,10 @@
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/electron-dev.mjs",
-    "dev:tauri": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "dev:electron": "node ./scripts/electron-dev.mjs",
     "dev:windows": "node ./scripts/dev-windows.mjs",
     "dev:windows:x64": "node ./scripts/dev-windows.mjs x64",
-    "build": "tauri build",
+    "build": "node ./scripts/electron-build.mjs",
     "build:electron": "node ./scripts/electron-build.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
@@ -29,7 +28,6 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "electron-devtools-installer": "^4.0.0"

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { formatBytes, formatRelativeTime, isTauriRuntime } from "../../../../app/utils";
+import { formatBytes, formatRelativeTime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
 import { Button } from "../../../design-system/button";

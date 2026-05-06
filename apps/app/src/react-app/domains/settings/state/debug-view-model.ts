@@ -25,10 +25,7 @@ import {
   resolveElectronAlphaArtifact,
   type ElectronAlphaArtifact,
 } from "../../../../app/lib/electron-alpha";
-import {
-  migrateToElectron,
-  writeMigrationSnapshotFromTauri,
-} from "../../../../app/lib/migration";
+
 import {
   writeOpenworkServerSettings,
 } from "../../../../app/lib/openwork-server";
@@ -37,7 +34,6 @@ import {
   isDesktopRuntime,
   isElectronRuntime,
   isMacPlatform,
-  isTauriRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
