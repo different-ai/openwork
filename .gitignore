@@ -19,6 +19,7 @@ _worktrees/
 
 # Desktop sidecars
 apps/desktop/resources/sidecars/
+apps/desktop/server/
 
 # Env
 .env

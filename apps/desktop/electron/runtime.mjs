@@ -1005,11 +1005,20 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     Object.assign(process.env, serverEnv);
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
-    // Packaged: server/dist is a sibling of electron/ inside app.asar (../server/dist)
-    // Dev: server lives at ../../server/dist relative to apps/desktop/electron
-    const packagedPath = path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js");
+    // Dev must prefer apps/server/dist; build output also stages a packaged
+    // copy under apps/desktop/server for electron-builder.
     const devPath = path.resolve(__runtimeDir, "..", "..", "server", "dist", "embedded.js");
-    const embeddedPath = existsSync(packagedPath) ? packagedPath : devPath;
+    const packagedPaths = [
+      path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js"),
+      ...(process.resourcesPath ? [path.resolve(process.resourcesPath, "server", "dist", "embedded.js")] : []),
+    ];
+    const candidates = process.env.OPENWORK_DEV_MODE === "1"
+      ? [devPath, ...packagedPaths]
+      : [...packagedPaths, devPath];
+    const embeddedPath = candidates.find((candidate) => existsSync(candidate));
+    if (!embeddedPath) {
+      throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
+    }
     const { startEmbeddedServer } = await import(pathToFileURL(embeddedPath).href);
     const handle = await startEmbeddedServer({
       host,
