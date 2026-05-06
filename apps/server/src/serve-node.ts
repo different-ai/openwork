@@ -39,15 +39,18 @@ function toWebRequest(nodeReq: IncomingMessage, hostname: string, port: number):
   }
 
   const hasBody = method !== "GET" && method !== "HEAD";
+
+  // Readable.toWeb() returns a Node stream/web ReadableStream which is structurally
+  // compatible with the global ReadableStream but TypeScript treats them as distinct.
   const body = hasBody
-    ? (Readable.toWeb(nodeReq) as ReadableStream<Uint8Array>)
+    ? (Readable.toWeb(nodeReq) as unknown as ReadableStream<Uint8Array>)
     : null;
 
   return new Request(url, {
     method,
     headers,
     body,
-    // @ts-expect-error duplex is required for streaming request bodies
+    // @ts-expect-error duplex is required for streaming request bodies in Node
     duplex: hasBody ? "half" : undefined,
   });
 }

@@ -1005,9 +1005,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
     Object.assign(process.env, serverEnv);
 
-    // Import and start the server in-process (no child process, no health poll)
-    const { startServer } = await import("../../server/src/server.ts");
-    const { resolveServerConfig } = await import("../../server/src/config.js");
+    // Import the server in-process (compiled TS → JS via tsc into dist/)
+    const { startServer } = await import("../../server/dist/server.js");
+    const { resolveServerConfig } = await import("../../server/dist/config.js");
 
     // Build CLI-style args for resolveServerConfig
     const cliArgs = {

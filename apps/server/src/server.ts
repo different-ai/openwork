@@ -1796,7 +1796,7 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
-    const stream = Readable.toWeb(createReadStream(absPath)) as ReadableStream;
+    const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
 
@@ -1886,7 +1886,7 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
-    const stream = Readable.toWeb(createReadStream(absPath)) as ReadableStream;
+    const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
 

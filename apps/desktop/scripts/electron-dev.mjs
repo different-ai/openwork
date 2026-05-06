@@ -193,6 +193,10 @@ process.once("SIGTERM", () => void stopAll(143));
 
 runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
 
+// Build the server TS → JS so Electron can import it in-process
+console.log("[electron-dev] Building openwork-server (tsc)...");
+runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;
 for (const candidate of initialProbeUrls) {
