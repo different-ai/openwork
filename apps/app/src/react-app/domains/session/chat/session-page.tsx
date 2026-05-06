@@ -175,6 +175,21 @@ export function SessionPage(props: SessionPageProps) {
   const [todoExpanded, setTodoExpanded] = useState(true);
   const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
   const toggleBrowserPanel = useCallback(() => setBrowserPanelOpen((p) => !p), []);
+
+  // Listen for the main process opening/closing the browser panel
+  // (e.g. when an agent calls a built-in browser tool).
+  useEffect(() => {
+    const electron = (window as Window).__OPENWORK_ELECTRON__;
+    if (!electron) return;
+    const openHandler = () => setBrowserPanelOpen(true);
+    const closeHandler = () => setBrowserPanelOpen(false);
+    const unsubs = [
+      electron.browser?.onPanelOpened?.(openHandler),
+      electron.browser?.onPanelClosed?.(closeHandler),
+    ];
+    return () => { unsubs.forEach((u) => u?.()); };
+  }, []);
+
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(

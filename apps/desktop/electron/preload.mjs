@@ -79,6 +79,16 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       ipcRenderer.on("openwork:browser:state", handler);
       return () => ipcRenderer.removeListener("openwork:browser:state", handler);
     },
+    onPanelOpened(callback) {
+      const handler = () => callback();
+      ipcRenderer.on("openwork:browser:panel-opened", handler);
+      return () => ipcRenderer.removeListener("openwork:browser:panel-opened", handler);
+    },
+    onPanelClosed(callback) {
+      const handler = () => callback();
+      ipcRenderer.on("openwork:browser:panel-closed", handler);
+      return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
+    },
   },
   meta: {
     initialDeepLinks: [],

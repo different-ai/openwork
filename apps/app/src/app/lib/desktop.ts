@@ -77,6 +77,8 @@ declare global {
         getState?: () => Promise<{ url: string; title: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean } | null>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: { url: string; title: string; canGoBack: boolean; canGoForward: boolean; isLoading: boolean }) => void) => () => void;
+        onPanelOpened?: (callback: () => void) => () => void;
+        onPanelClosed?: (callback: () => void) => () => void;
       };
       meta?: {
         initialDeepLinks?: string[];
