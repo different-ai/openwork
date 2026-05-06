@@ -506,13 +506,17 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  // Buffer the request body so it can be forwarded reliably across Node.js
+  // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
+  // always accepted directly by Node's global fetch as a body).
+  const body = method === "GET" || method === "HEAD"
+    ? undefined
+    : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
   if (isSessionCommandProxyRequest(method, proxyPath)) {
-    const bufferedBody = body ? await input.request.arrayBuffer() : undefined;
     void fetch(targetUrl, {
       method,
       headers,
-      body: bufferedBody,
+      body,
     }).catch(() => {
       // Command failures are surfaced through the OpenCode event stream.
     });
