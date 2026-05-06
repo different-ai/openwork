@@ -61,7 +61,7 @@ export interface SettingsLayoutProps {
 }
 
 export function SettingsStack({ children, className }: SettingsLayoutProps) {
-  return <div className={cn("flex w-full max-w-3xl flex-col gap-y-6", className)}>{children}</div>;
+  return <div className={cn("@container/settings flex w-full max-w-3xl flex-col gap-y-6", className)}>{children}</div>;
 }
 
 export function SettingsSection({ children, className }: SettingsLayoutProps) {
