@@ -1,0 +1,9 @@
+apps/app/src/react-app/domains/settings/pages/debug-view.tsx
+  h_e2431fa0952ce3 314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c760999269a3a1dedcca2937922c2920aa41b1cf",
+  "prompts": {}
+}
