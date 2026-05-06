@@ -1,0 +1,47 @@
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  ce831b6e42d60c79 233
+apps/app/src/react-app/domains/settings/pages/updates-view.tsx
+  3ef96574836bf642 56
+apps/app/src/react-app/domains/settings/pages/advanced-view.tsx
+  h_e2431fa0952ce3 216
+apps/app/src/react-app/domains/settings/pages/debug-view.tsx
+  h_e2431fa0952ce3 314,369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "46d976f7728080a98b0d557cc9bf2cbec568eea4",
+  "prompts": {
+    "3ef96574836bf642": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6b3fa245-ba3d-4549-be23-5e13ed1032c6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 53,
+      "overriden_lines": 0
+    },
+    "ce831b6e42d60c79": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2187279a-57d1-43e5-a0bb-2911a714cf16",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 151,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e2431fa0952ce3": {
+      "author": "Jean P.D. Meijer"
+    }
+  }
+}
