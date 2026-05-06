@@ -293,8 +293,11 @@ async function ensureBrowserMcpServers() {
           const [w, h] = mainWindow.getContentSize();
           const panelWidth = Math.min(520, Math.floor(w * 0.4));
           showBrowserView({ x: w - panelWidth, y: 0, width: panelWidth, height: h });
-          mainWindow.webContents.send("openwork:browser:panel-opened");
         }
+        // Always notify the renderer so it can render the BrowserPanel
+        // toolbar.  The React component may have unmounted (session switch)
+        // while the WebContentsView stayed open, so we re-send every time.
+        mainWindow.webContents.send("openwork:browser:panel-opened");
         // Wait for the page to have a real URL (not about:blank)
         const url = view.webContents.getURL();
         if (!url || url === "about:blank") {
