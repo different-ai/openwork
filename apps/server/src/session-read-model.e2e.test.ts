@@ -266,7 +266,7 @@ describe("workspace session read APIs", () => {
     });
 
     const response = await Promise.race([
-      fetch(`http://127.0.0.1:${openwork.server.port}/w/ws_1/opencode/session/ses_1/command`, {
+      fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session/ses_1/command`, {
         method: "POST",
         headers: { ...auth(openwork.token), "Content-Type": "application/json" },
         body: JSON.stringify({ command: "review", arguments: "" }),
@@ -280,6 +280,24 @@ describe("workspace session read APIs", () => {
     const sawCommand = await waitUntil(() => mock.requests.some((request) => request.pathname === "/session/ses_1/command"));
     command.resolve();
     expect(sawCommand).toBe(true);
+  });
+
+  test("keeps legacy /w workspace opencode proxy alias", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/w/ws_1/opencode/session`, {
+      headers: auth(openwork.token),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body)).toBe(true);
+    expect(mock.requests.some((request) => request.pathname === "/session")).toBe(true);
   });
 
   test("returns 502 when OpenCode returns an invalid session list payload", async () => {

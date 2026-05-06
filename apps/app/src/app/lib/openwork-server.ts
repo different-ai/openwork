@@ -336,12 +336,17 @@ export function parseOpenworkWorkspaceIdFromUrl(input: string) {
   try {
     const url = new URL(normalized);
     const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] ?? "";
-    const prev = segments[segments.length - 2] ?? "";
-    if (prev !== "w" || !last) return null;
-    return decodeURIComponent(last);
+    const legacyIndex = segments.indexOf("w");
+    if (legacyIndex >= 0 && segments[legacyIndex + 1]) {
+      return decodeURIComponent(segments[legacyIndex + 1]);
+    }
+    const workspaceIndex = segments.indexOf("workspace");
+    if (workspaceIndex >= 0 && segments[workspaceIndex + 1]) {
+      return decodeURIComponent(segments[workspaceIndex + 1]);
+    }
+    return null;
   } catch {
-    const match = normalized.match(/\/w\/([^/?#]+)/);
+    const match = normalized.match(/\/(?:w|workspace)\/([^/?#]+)/);
     if (!match?.[1]) return null;
     try {
       return decodeURIComponent(match[1]);
@@ -358,10 +363,14 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   try {
     const url = new URL(normalized);
     const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] ?? "";
-    const prev = segments[segments.length - 2] ?? "";
-    const alreadyMounted = prev === "w" && Boolean(last);
-    if (alreadyMounted) {
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = `${prefix ? `/${prefix}` : ""}/workspace/${encodeURIComponent(
+        decodeURIComponent(segments[mountIndex + 1]),
+      )}`;
       return url.toString().replace(/\/+$/, "");
     }
 
@@ -369,12 +378,12 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
     if (!id) return url.toString().replace(/\/+$/, "");
 
     const basePath = url.pathname.replace(/\/+$/, "");
-    url.pathname = `${basePath}/w/${encodeURIComponent(id)}`;
+    url.pathname = `${basePath}/workspace/${encodeURIComponent(id)}`;
     return url.toString().replace(/\/+$/, "");
   } catch {
     const id = (workspaceId ?? "").trim();
     if (!id) return normalized;
-    return `${normalized.replace(/\/+$/, "")}/w/${encodeURIComponent(id)}`;
+    return `${normalized.replace(/\/+$/, "")}/workspace/${encodeURIComponent(id)}`;
   }
 }
 

@@ -170,6 +170,19 @@ function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath:
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
+function parseWorkspaceOpencodeMount(pathname: string): { workspaceId: string; restPath: string } | null {
+  if (!pathname.startsWith("/workspace/")) return null;
+  const remainder = pathname.slice("/workspace/".length);
+  if (!remainder) return null;
+  const slash = remainder.indexOf("/");
+  if (slash === -1) return null;
+  const workspaceId = remainder.slice(0, slash);
+  const restPath = remainder.slice(slash) || "/";
+  if (!workspaceId.trim()) return null;
+  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/")) return null;
+  return { workspaceId: decodeURIComponent(workspaceId), restPath };
+}
+
 function normalizeOpencodeProxyPath(proxyPath: string): string {
   const raw = (proxyPath ?? "").trim() || "/";
   const withoutPrefix = raw.startsWith("/opencode") ? raw.slice("/opencode".length) : raw;
@@ -263,12 +276,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         return wrapped;
       };
 
-      if (request.method === "OPTIONS") {
-        return finalize(new Response(null, { status: 204 }));
-      }
-
-      const mount = parseWorkspaceMount(url.pathname);
-      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+      const proxyWorkspaceOpencodeMount = async (mount: { workspaceId: string; restPath: string }) => {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
@@ -285,6 +293,20 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           errorMessage = apiError.message;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
+      };
+
+      if (request.method === "OPTIONS") {
+        return finalize(new Response(null, { status: 204 }));
+      }
+
+      const canonicalOpencodeMount = parseWorkspaceOpencodeMount(url.pathname);
+      if (canonicalOpencodeMount) {
+        return proxyWorkspaceOpencodeMount(canonicalOpencodeMount);
+      }
+
+      const mount = parseWorkspaceMount(url.pathname);
+      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+        return proxyWorkspaceOpencodeMount(mount);
       }
 
       // Allow clients to use a mounted base URL (e.g. http://host:8787/w/<id>) while
