@@ -1,0 +1,39 @@
+apps/app/src/components/ui/dialog.tsx
+  s_cf16c41dd88150::t_90aa209c5a7753 103
+  s_cf16c41dd88150::t_783694686344e3 54
+apps/app/src/app/index.css
+  s_95a861172cb405::t_b60d2127c5a931 81
+  s_f6c47325e8d626::t_7a7f5ed78831d6 378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "3efa30654a1c4abc4169f7248f32acf0308dd47f",
+  "prompts": {},
+  "sessions": {
+    "s_95a861172cb405": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c1bf3d4a-e102-4a45-89a6-f64ac4af743e",
+        "model": "composer-2"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_cf16c41dd88150": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "23876bcd-ed07-4e7d-9268-dfed8099f650",
+        "model": "composer-2"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_f6c47325e8d626": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cbfc9e78-a3d5-48c1-bce2-b62b0e8d9ee4",
+        "model": "composer-2"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
