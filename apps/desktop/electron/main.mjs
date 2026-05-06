@@ -280,6 +280,36 @@ function resolveChromeDevtoolsMcpBin() {
   return null;
 }
 
+/**
+ * Seed chrome-devtools MCP into a workspace's opencode config so Control
+ * Chrome works out of the box.  Reads the existing config (jsonc or json),
+ * injects `mcp.chrome-devtools` if missing, and writes back.
+ */
+async function seedChromeDevtoolsMcp(workspaceDir) {
+  const jsoncPath = path.join(workspaceDir, "opencode.jsonc");
+  const jsonPath = path.join(workspaceDir, "opencode.json");
+  const configPath = existsSync(jsoncPath) ? jsoncPath : existsSync(jsonPath) ? jsonPath : null;
+
+  let config;
+  if (configPath) {
+    try { config = JSON.parse(await readFile(configPath, "utf8")); } catch { return; }
+  } else {
+    config = { $schema: "https://opencode.ai/config.json" };
+  }
+
+  if (!config.mcp || typeof config.mcp !== "object") config.mcp = {};
+  if (config.mcp["chrome-devtools"]) return; // already present
+
+  const resolved = resolveChromeDevtoolsMcpBin();
+  config.mcp["chrome-devtools"] = {
+    type: "local",
+    command: resolved ?? ["npx", "-y", "chrome-devtools-mcp@latest"],
+  };
+
+  const targetPath = configPath || jsoncPath;
+  await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
   if (value === "win32") return "windows";
@@ -1021,6 +1051,10 @@ async function handleDesktopInvoke(event, command, ...args) {
       });
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+
+      // Seed opencode.json with chrome-devtools MCP so Control Chrome works
+      // out of the box — no manual "Add connector" step needed.
+      await seedChromeDevtoolsMcp(folderPath);
       return mutateWorkspaceState((state) => {
         const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
         state.workspaces = state.workspaces.filter(
