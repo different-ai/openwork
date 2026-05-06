@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -185,82 +185,6 @@ const pendingDeepLinks = [];
 let uiControlServer = null;
 let uiControlDiscoveryPath = null;
 const uiControlToken = randomBytes(32).toString("hex");
-
-// ── Embedded browser panel ─────────────────────────────────────────────
-let browserView = null;
-let browserViewVisible = false;
-const BROWSER_DEFAULT_URL = "https://www.google.com";
-
-function createBrowserView() {
-  if (browserView) return browserView;
-  browserView = new WebContentsView({
-    webPreferences: {
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      partition: "persist:openwork-browser",
-    },
-  });
-  // Open external links from the embedded browser in the system browser
-  browserView.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  // Notify renderer of navigation events
-  browserView.webContents.on("did-navigate", () => sendBrowserState());
-  browserView.webContents.on("did-navigate-in-page", () => sendBrowserState());
-  browserView.webContents.on("page-title-updated", () => sendBrowserState());
-  browserView.webContents.on("did-start-loading", () => sendBrowserState());
-  browserView.webContents.on("did-stop-loading", () => sendBrowserState());
-  return browserView;
-}
-
-function sendBrowserState() {
-  if (!mainWindow || !browserView) return;
-  try {
-    mainWindow.webContents.send("openwork:browser:state", {
-      url: browserView.webContents.getURL(),
-      title: browserView.webContents.getTitle(),
-      canGoBack: browserView.webContents.canGoBack(),
-      canGoForward: browserView.webContents.canGoForward(),
-      isLoading: browserView.webContents.isLoading(),
-    });
-  } catch {
-    // ignore — window may be closing
-  }
-}
-
-function showBrowserView(bounds) {
-  if (!mainWindow) return;
-  const view = createBrowserView();
-  if (!mainWindow.contentView.children.includes(view)) {
-    mainWindow.contentView.addChildView(view);
-  }
-  view.setBounds(bounds);
-  browserViewVisible = true;
-  if (!view.webContents.getURL()) {
-    view.webContents.loadURL(BROWSER_DEFAULT_URL);
-  }
-  sendBrowserState();
-}
-
-function hideBrowserView() {
-  if (!mainWindow || !browserView) return;
-  try {
-    mainWindow.contentView.removeChildView(browserView);
-  } catch {
-    // already removed
-  }
-  browserViewVisible = false;
-}
-
-function destroyBrowserView() {
-  hideBrowserView();
-  if (browserView) {
-    browserView.webContents.close();
-    browserView = null;
-  }
-}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -1603,7 +1527,6 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
-    destroyBrowserView();
     mainWindow = null;
   });
 
@@ -1640,48 +1563,6 @@ ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.exit(0);
-});
-
-// ── Embedded browser IPC ────────────────────────────────────────────────
-ipcMain.handle("openwork:browser:show", (_event, bounds) => {
-  showBrowserView(bounds);
-});
-ipcMain.handle("openwork:browser:hide", () => {
-  hideBrowserView();
-});
-ipcMain.handle("openwork:browser:navigate", (_event, url) => {
-  if (!browserView) return;
-  const target = typeof url === "string" && url.trim() ? url.trim() : BROWSER_DEFAULT_URL;
-  // Add protocol if missing
-  const finalUrl = /^https?:\/\//i.test(target) ? target : `https://${target}`;
-  browserView.webContents.loadURL(finalUrl);
-});
-ipcMain.handle("openwork:browser:back", () => {
-  if (browserView?.webContents.canGoBack()) browserView.webContents.goBack();
-});
-ipcMain.handle("openwork:browser:forward", () => {
-  if (browserView?.webContents.canGoForward()) browserView.webContents.goForward();
-});
-ipcMain.handle("openwork:browser:reload", () => {
-  browserView?.webContents.reload();
-});
-ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-  if (browserView && browserViewVisible) {
-    browserView.setBounds(bounds);
-  }
-});
-ipcMain.handle("openwork:browser:state", () => {
-  if (!browserView) return null;
-  return {
-    url: browserView.webContents.getURL(),
-    title: browserView.webContents.getTitle(),
-    canGoBack: browserView.webContents.canGoBack(),
-    canGoForward: browserView.webContents.canGoForward(),
-    isLoading: browserView.webContents.isLoading(),
-  };
-});
-ipcMain.handle("openwork:browser:destroy", () => {
-  destroyBrowserView();
 });
 
 registerMigrationIpc({ app, ipcMain });
