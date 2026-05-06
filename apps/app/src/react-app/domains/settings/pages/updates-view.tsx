@@ -53,7 +53,7 @@ export function UpdatesView(props: UpdatesViewProps) {
       : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="flex items-start justify-between gap-4">
           <div>

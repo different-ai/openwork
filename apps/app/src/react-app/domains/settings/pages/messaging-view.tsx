@@ -202,7 +202,7 @@ export function MessagingView(props: MessagingViewProps) {
       : t("identities.health_unknown");
 
   return (
-    <div className="w-full space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           {props.showHeader !== false ? (

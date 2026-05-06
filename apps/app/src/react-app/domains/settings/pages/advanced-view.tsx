@@ -213,7 +213,7 @@ export function AdvancedView(props: AdvancedViewProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div className={`${settingsPanelClass} space-y-4`}>
         <div>
           <div className="text-sm font-medium text-gray-12">{t("settings.runtime_title")}</div>

@@ -311,7 +311,7 @@ export function DebugView(props: DebugViewProps) {
       : "";
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-6 max-w-3xl w-full">
       {/* Section: Runtime overview */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
@@ -366,7 +366,7 @@ export function DebugView(props: DebugViewProps) {
           <div className={sectionDescClass}>{t("settings.services_section_desc")}</div>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
           <ServiceCard
             title={t("settings.openwork_server_label")}
             description={t("settings.openwork_config_sidecar_desc")}

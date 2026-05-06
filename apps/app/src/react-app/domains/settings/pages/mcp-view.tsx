@@ -340,7 +340,7 @@ export function McpView(props: McpViewProps) {
   };
 
   return (
-    <section className="space-y-8 animate-in fade-in duration-300">
+    <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
       {showHeader ? (
         <div>
           <h2 className="text-3xl font-bold text-dls-text">{t("mcp.apps_title")}</h2>

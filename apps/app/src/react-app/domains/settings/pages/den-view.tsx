@@ -7,5 +7,9 @@ import {
 export type DenViewProps = DenSettingsPanelProps;
 
 export function DenView(props: DenViewProps) {
-  return <DenSettingsPanel {...props} />;
+  return (
+    <section className="space-y-6 max-w-3xl w-full">
+      <DenSettingsPanel {...props} />
+    </section>
+  );
 }
