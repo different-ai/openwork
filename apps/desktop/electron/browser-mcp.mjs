@@ -313,8 +313,24 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
     return server;
   }
 
+  /**
+   * Probe whether an external Chrome is reachable on any known CDP port.
+   * Returns { connected, port } without storing state.
+   */
+  async function probeExternalChrome() {
+    for (const port of [9222, 9229]) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        if (res.ok) return { connected: true, port };
+      } catch { /* not available */ }
+    }
+    return { connected: false, port: null };
+  }
+
   function createExternalFactory() {
-    return createBrowserMcpServer({
+    const server = createBrowserMcpServer({
       name: "chrome",
       version: "0.1.0",
       getBrowser: async () => {
@@ -326,13 +342,56 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
             } catch { /* not available */ }
           }
           throw new Error(
-            "Chrome is not reachable. Start Chrome with --remote-debugging-port=9222 " +
-            "or enable remote debugging in chrome://inspect/#remote-debugging"
+            "Chrome is not reachable. " +
+            "Enable remote debugging in your Chrome: go to chrome://inspect/#remote-debugging and turn it on. " +
+            "No restart needed on Chrome 144+."
           );
         }
         return externalBrowser;
       },
     });
+
+    // Diagnostic tool — lets the agent check Chrome availability before
+    // attempting browsing, so it can guide the user instead of failing.
+    server.tool(
+      "chrome_status",
+      "Check whether the user's real Chrome browser is reachable via remote " +
+      "debugging. Call this BEFORE using any other chrome tool. If status is " +
+      "unavailable, tell the user to enable remote debugging in Chrome: " +
+      "chrome://inspect/#remote-debugging → enable → allow connections. " +
+      "No Chrome restart is needed on Chrome 144+.",
+      {},
+      async () => {
+        const probe = await probeExternalChrome();
+        if (probe.connected) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                connected: true,
+                port: probe.port,
+                hint: "Chrome is reachable. You can now use chrome tools to control the user's browser.",
+              }),
+            }],
+          };
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              connected: false,
+              port: null,
+              hint: "Chrome is not reachable. Ask the user to enable remote debugging: " +
+                "open chrome://inspect/#remote-debugging in Chrome, enable it, and allow " +
+                "incoming connections. No restart needed on Chrome 144+. " +
+                "Alternatively, offer to use the built-in openwork-browser instead.",
+            }),
+          }],
+        };
+      },
+    );
+
+    return server;
   }
 
   const builtin = await startMcpHttpServer(createBuiltinFactory);

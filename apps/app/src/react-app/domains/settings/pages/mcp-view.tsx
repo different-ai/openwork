@@ -4,6 +4,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  Chrome,
   CircleAlert,
   Code2,
   CreditCard,
@@ -37,6 +38,7 @@ import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
+import { ChromeConnectionSetupModal } from "../../connections/modals/chrome-connection-setup-modal";
 
 export type ReactMcpStatus =
   | "connected"
@@ -169,6 +171,7 @@ export function McpView(props: McpViewProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
   const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
+  const [chromeSetupOpen, setChromeSetupOpen] = useState(false);
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
@@ -325,6 +328,22 @@ export function McpView(props: McpViewProps) {
       {props.mcpStatus ? (
         <div className="whitespace-pre-wrap break-words rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
           {props.mcpStatus}
+        </div>
+      ) : null}
+
+      {/* Connect Chrome card */}
+      {isDesktopRuntime() ? (
+        <div className="rounded-2xl border border-amber-6/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.08),rgba(245,158,11,0.03))] px-5 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <div className="text-base font-semibold text-dls-text">{t("chrome_setup.title")}</div>
+              <div className="text-sm text-dls-secondary">{t("chrome_setup.subtitle")}</div>
+            </div>
+            <Button variant="outline" onClick={() => setChromeSetupOpen(true)}>
+              <Chrome size={14} />
+              {t("chrome_setup.test_connection")}
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -745,6 +764,11 @@ export function McpView(props: McpViewProps) {
         onAdd={(entry) => props.connectMcp(entry)}
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
+      />
+
+      <ChromeConnectionSetupModal
+        open={chromeSetupOpen}
+        onClose={() => setChromeSetupOpen(false)}
       />
     </section>
   );

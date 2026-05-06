@@ -36,12 +36,17 @@ Two MCP tool sets are available:
 2. **chrome** — The user's real Chrome browser (external).
    - Use this when the user needs their real cookies, sign-ins, or extensions
      ("check my gmail", "open my github notifications").
-   - Requires Chrome to be running with remote debugging enabled.
-   - If Chrome is not reachable, tell the user to enable remote debugging.
+   - **Always call \`chrome_chrome_status\` first** before using any other chrome tool.
+   - If status is unavailable, tell the user:
+     "Enable remote debugging in Chrome: go to chrome://inspect/#remote-debugging,
+     turn it on, and allow incoming connections. No restart needed on Chrome 144+."
+   - Do NOT attempt to kill, restart, or relaunch Chrome yourself.
+   - Do NOT run bash commands to start Chrome with --remote-debugging-port.
+   - If the user cannot enable debugging, offer the built-in browser as a fallback.
 
 Default to **openwork-browser** unless the user explicitly needs their real
-browser session. If the user says "go to X" without specifying, use the
-built-in browser.
+browser session (cookies, sign-ins, extensions). If the user says "go to X"
+without specifying, use the built-in browser.
 
 ## Memory
 
