@@ -12,12 +12,13 @@ import {
   workspaceSetSelected,
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
+import { createClient, unwrap } from "../../app/lib/opencode";
 import { useLocal } from "../kernel/local-provider";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { resolveOpenworkConnection } from "./openwork-connection";
-import { createOpenworkServerClient } from "../../app/lib/openwork-server";
-import { writeActiveWorkspaceId } from "./session-memory";
+import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 
 function folderNameFromPath(path: string) {
@@ -71,6 +72,8 @@ export function WelcomeRoute() {
           list.workspaces[list.workspaces.length - 1]?.id ||
           "";
         let targetWorkspaceId = createdId;
+        let targetWorkspace = list.workspaces.find((workspace) => workspace.id === createdId) ?? null;
+        let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -96,14 +99,27 @@ export function WelcomeRoute() {
             targetWorkspaceId = serverList
               ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
               : targetWorkspaceId;
+            targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
+            if (targetWorkspaceId) {
+              const workspacePath = targetWorkspace?.path?.trim() || folder;
+              const session = unwrap(await createClient(
+                `${(buildOpenworkWorkspaceBaseUrl(normalizedBaseUrl, targetWorkspaceId) ?? normalizedBaseUrl).replace(/\/+$/, "")}/opencode`,
+                workspacePath || undefined,
+                { token: resolvedToken, mode: "openwork" },
+              ).session.create({ directory: workspacePath || undefined }));
+              targetSessionId = session.id;
+            }
           }
         } catch {
           // Best-effort server registration.
         }
-        if (targetWorkspaceId) writeActiveWorkspaceId(targetWorkspaceId);
+        if (targetWorkspaceId) {
+          writeActiveWorkspaceId(targetWorkspaceId);
+          if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
+        }
         markOnboardingComplete();
         setModalOpen(false);
-        navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId) : "/session", { replace: true });
+        navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId, targetSessionId) : "/session", { replace: true });
       } catch (error) {
         setCreateError(
           error instanceof Error ? error.message : "Failed to create workspace.",

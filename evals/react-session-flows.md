@@ -538,9 +538,9 @@ Steps:
 3. Select or inject a disposable test folder path.
 4. Click "Create Workspace".
 5. Expect: the modal closes and the URL changes to
-   `/workspace/<new-workspace-id>/session`.
+   `/workspace/<new-workspace-id>/session/<new-session-id>`.
 6. Expect: the new workspace is selected in the sidebar.
-7. Expect: the main area shows "New session" for that workspace.
+7. Expect: the main area shows a ready empty chat session for that workspace.
 8. Expect: the app does not navigate to `/settings/general`.
 
 Tool recipe:
@@ -555,13 +555,17 @@ chrome-devtools_take_snapshot
 ```
 
 Pass criteria:
-- URL contains `/workspace/` and ends with `/session`.
+- URL contains `/workspace/` and `/session/ses_`.
 - The selected sidebar workspace name matches the folder name.
 - Main panel heading is "New session".
+- Composer is visible with the "Run task" action.
+- "Select or create a session to get started." is not visible.
 - Settings heading is not visible after creation.
 
 Known regressions this catches:
 - Local workspace creation calling `handleOpenSettings("/settings/general")`.
+- Local workspace creation stopping at the workspace session root instead of
+  creating a ready-to-chat empty session.
 - The selected workspace id being persisted but the route remaining on the
   previous workspace.
 

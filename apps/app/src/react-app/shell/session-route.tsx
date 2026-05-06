@@ -1869,6 +1869,7 @@ export function SessionRoute() {
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       let targetWorkspaceId = createdId;
+      let targetWorkspace = list.workspaces.find((workspace) => workspace.id === createdId) ?? null;
       if (createdId) {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -1885,15 +1886,31 @@ export function SessionRoute() {
         targetWorkspaceId = serverList
           ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
           : targetWorkspaceId;
+        targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
       }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
+        const workspacePath = targetWorkspace?.path?.trim() || folder;
+        const session = baseUrl && token
+          ? unwrap(await createClient(
+              `${(buildOpenworkWorkspaceBaseUrl(baseUrl, targetWorkspaceId) ?? baseUrl).replace(/\/+$/, "")}/opencode`,
+              workspacePath || undefined,
+              { token, mode: "openwork" },
+            ).session.create({ directory: workspacePath || undefined }))
+          : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
         writeActiveWorkspaceId(targetWorkspaceId);
-        navigateToWorkspaceSession(targetWorkspaceId, null, { replace: true });
+        if (session?.id) {
+          writeLastSessionFor(targetWorkspaceId, session.id);
+          setSessionsByWorkspaceId((current) => ({
+            ...current,
+            [targetWorkspaceId]: [session as any, ...(current[targetWorkspaceId] ?? [])],
+          }));
+        }
+        navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));

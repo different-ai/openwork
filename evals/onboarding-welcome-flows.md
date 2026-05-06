@@ -130,7 +130,7 @@ Steps:
 4. Click "Select folder" and choose a folder.
 5. Click "Create Workspace".
 6. Expect: workspace is created; URL changes to
-   `/workspace/<new-workspace-id>/session`.
+   `/workspace/<new-workspace-id>/session/<new-session-id>`.
 7. Navigate to `/welcome`.
 8. Expect: URL redirects back to `/session` (not `/welcome`), because
    `hasCompletedOnboarding` is now true.
@@ -151,8 +151,10 @@ chrome-devtools_take_snapshot
 
 Pass criteria:
 - Folder explanation (bullets, hint) is visible before picking.
-- After workspace creation, URL contains `/workspace/` and ends with `/session`.
+- After workspace creation, URL contains `/workspace/` and `/session/ses_`.
 - Main panel heading is "New session".
+- Composer is visible with the "Run task" action.
+- "Select or create a session to get started." is not visible.
 - Navigating to `/welcome` redirects away (onboarding flagged done).
 - `localStorage` contains `hasCompletedOnboarding: true` in
   `openwork.preferences`.
