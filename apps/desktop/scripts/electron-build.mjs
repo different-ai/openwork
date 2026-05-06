@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { copyFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +33,20 @@ run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/app", "build"], repoRoot, {
   OPENWORK_ELECTRON_BUILD: "1",
 });
+// Copy constants.json next to server dist so the packaged asar can resolve it.
+// Also patch the compiled import path so it works from both dev and packaged layouts.
+const serverDistDir = resolve(repoRoot, "apps", "server", "dist");
+const constantsSrc = resolve(repoRoot, "constants.json");
+copyFileSync(constantsSrc, resolve(serverDistDir, "constants.json"));
+const serverJsPath = resolve(serverDistDir, "server.js");
+const serverJsSrc = readFileSync(serverJsPath, "utf8");
+const patched = serverJsSrc.replace(
+  /from\s+["']\.\.\/\.\.\/\.\.\/constants\.json["']/,
+  'from "./constants.json"',
+);
+if (patched !== serverJsSrc) {
+  writeFileSync(serverJsPath, patched, "utf8");
+}
 for (const fileName of readdirSync(electronRoot).filter((name) => name.endsWith(".mjs")).sort()) {
   run(nodeCmd, ["--check", resolve(electronRoot, fileName)], repoRoot);
 }

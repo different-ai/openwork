@@ -152,12 +152,27 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
+      better-sqlite3:
+        specifier: ^11.10.0
+        version: 11.10.0
       chrome-devtools-mcp:
         specifier: 0.17.0
         version: 0.17.0
       electron-updater:
         specifier: ^6.3.9
         version: 6.8.3
+      jsonc-parser:
+        specifier: ^3.2.1
+        version: 3.3.1
+      minimatch:
+        specifier: ^10.0.1
+        version: 10.1.1
+      yaml:
+        specifier: ^2.6.1
+        version: 2.8.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       electron:
         specifier: ^35.0.0

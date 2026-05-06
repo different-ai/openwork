@@ -11,6 +11,11 @@ directories:
   output: dist-electron
 files:
   - electron/**/*
+  - from: ../server
+    to: server
+    filter:
+      - dist/**/*
+      - package.json
   - package.json
 extraResources:
   - from: ../app/dist

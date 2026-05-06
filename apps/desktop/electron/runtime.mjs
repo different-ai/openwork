@@ -5,6 +5,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+
+const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
@@ -1001,7 +1005,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     Object.assign(process.env, serverEnv);
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
-    const { startEmbeddedServer } = await import("../../server/dist/embedded.js");
+    // Packaged: server/dist is a sibling of electron/ inside app.asar (../server/dist)
+    // Dev: server lives at ../../server/dist relative to apps/desktop/electron
+    const packagedPath = path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js");
+    const devPath = path.resolve(__runtimeDir, "..", "..", "server", "dist", "embedded.js");
+    const embeddedPath = existsSync(packagedPath) ? packagedPath : devPath;
+    const { startEmbeddedServer } = await import(pathToFileURL(embeddedPath).href);
     const handle = await startEmbeddedServer({
       host,
       port,
