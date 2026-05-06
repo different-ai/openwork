@@ -8,13 +8,13 @@ export const TelemetryEventTable = mysqlTable(
   {
     id: denTypeIdColumn("telemetryEvent", "id").notNull().primaryKey(),
     org_id: denTypeIdColumn("organization", "org_id").notNull(),
-    user_id: denTypeIdColumn("user", "user_id").notNull(),
+    member_id: denTypeIdColumn("member", "member_id").notNull(),
     event_type: varchar("event_type", { length: 64 }).notNull(),
     event_timestamp: timestamp("event_timestamp", { fsp: 3 }).notNull(),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
     index("telemetry_event_org_id_type_ts").on(table.org_id, table.event_type, table.event_timestamp),
-    index("telemetry_event_org_id_user_id").on(table.org_id, table.user_id),
+    index("telemetry_event_org_id_member_id").on(table.org_id, table.member_id),
   ],
 )

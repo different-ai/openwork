@@ -1,18 +1,16 @@
 import { and, eq, gte, sql } from "@openwork-ee/den-db/drizzle"
-import { TelemetryEventTable } from "@openwork-ee/den-db/schema"
-import { MemberTable } from "@openwork-ee/den-db/schema"
-import { InvitationTable } from "@openwork-ee/den-db/schema"
+import { TelemetryEventTable, MemberTable, InvitationTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { requireUserMiddleware, resolveUserOrganizationsMiddleware, jsonValidator } from "../../middleware/index.js"
+import { requireUserMiddleware, resolveUserOrganizationsMiddleware, resolveOrganizationContextMiddleware, jsonValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
-import type { UserOrganizationsContext } from "../../middleware/index.js"
+import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
 
-type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext>
+type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
 
 const ingestBodySchema = z.object({
   type: z.string().min(1).max(64),
@@ -26,8 +24,8 @@ const ingestBatchSchema = z.object({
 const adoptionResponseSchema = z.object({
   members: z.number(),
   pendingInvites: z.number(),
-  activeUsers7d: z.number(),
-  activeUsers30d: z.number(),
+  activeMembers7d: z.number(),
+  activeMembers30d: z.number(),
   weeklyTrend: z.array(z.number()),
 }).meta({ ref: "TelemetryAdoptionResponse" })
 
@@ -38,7 +36,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Ingest telemetry events",
-      description: "Receives a batch of telemetry events from the OpenWork app. Auth provides org and user identity. Always returns 204.",
+      description: "Receives a batch of telemetry events from the OpenWork app. Auth provides org and member identity. Always returns 204.",
       responses: {
         204: emptyResponse("Events accepted."),
         400: jsonResponse("Invalid event payload.", invalidRequestSchema),
@@ -47,22 +45,24 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     }),
     requireUserMiddleware,
     resolveUserOrganizationsMiddleware,
+    resolveOrganizationContextMiddleware,
     jsonValidator(ingestBatchSchema),
     async (c) => {
-      const user = c.get("user")
+      const orgContext = c.get("organizationContext")
       const orgId = c.get("activeOrganizationId")
 
-      if (!user?.id || !orgId) {
+      if (!orgContext || !orgId) {
         return c.body(null, 204)
       }
 
+      const memberId = orgContext.currentMember.id
       const body = c.req.valid("json")
 
       try {
         const rows = body.events.map((event) => ({
           id: createDenTypeId("telemetryEvent"),
           org_id: orgId,
-          user_id: user.id,
+          member_id: memberId,
           event_type: event.type,
           event_timestamp: new Date(event.timestamp),
         }))
@@ -84,7 +84,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Get adoption metrics",
-      description: "Returns org adoption metrics: member count, pending invites, active users in 7d and 30d windows, and a 12-week weekly active user trend.",
+      description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
       responses: {
         200: jsonResponse("Adoption metrics returned.", adoptionResponseSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
@@ -96,7 +96,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const orgId = c.get("activeOrganizationId")
 
       if (!orgId) {
-        return c.json({ members: 0, pendingInvites: 0, activeUsers7d: 0, activeUsers30d: 0, weeklyTrend: [] })
+        return c.json({ members: 0, pendingInvites: 0, activeMembers7d: 0, activeMembers30d: 0, weeklyTrend: [] })
       }
 
       const now = new Date()
@@ -114,14 +114,14 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
         db
-          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.user_id})` })
+          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.member_id})` })
           .from(TelemetryEventTable)
           .where(and(
             eq(TelemetryEventTable.org_id, orgId),
             gte(TelemetryEventTable.event_timestamp, sevenDaysAgo),
           )),
         db
-          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.user_id})` })
+          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.member_id})` })
           .from(TelemetryEventTable)
           .where(and(
             eq(TelemetryEventTable.org_id, orgId),
@@ -130,7 +130,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         db
           .select({
             week: sql<number>`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${twelveWeeksAgo}) / 7)`,
-            count: sql<number>`count(distinct ${TelemetryEventTable.user_id})`,
+            count: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
           })
           .from(TelemetryEventTable)
           .where(and(
@@ -149,8 +149,8 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       return c.json({
         members: Number(memberRows[0]?.count ?? 0),
         pendingInvites: Number(inviteRows[0]?.count ?? 0),
-        activeUsers7d: Number(active7dRows[0]?.count ?? 0),
-        activeUsers30d: Number(active30dRows[0]?.count ?? 0),
+        activeMembers7d: Number(active7dRows[0]?.count ?? 0),
+        activeMembers30d: Number(active30dRows[0]?.count ?? 0),
         weeklyTrend,
       })
     },

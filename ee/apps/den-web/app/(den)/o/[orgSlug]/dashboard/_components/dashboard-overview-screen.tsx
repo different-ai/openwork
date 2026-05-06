@@ -45,8 +45,8 @@ async function fetchAdoption(): Promise<AdoptionData | null> {
     return {
       members: typeof p.members === "number" ? p.members : 0,
       pendingInvites: typeof p.pendingInvites === "number" ? p.pendingInvites : 0,
-      activeUsers7d: typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0,
-      activeUsers30d: typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0,
+    activeUsers7d: typeof p.activeMembers7d === "number" ? p.activeMembers7d : (typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0),
+    activeUsers30d: typeof p.activeMembers30d === "number" ? p.activeMembers30d : (typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0),
       weeklyTrend: Array.isArray(p.weeklyTrend) ? p.weeklyTrend.map(Number) : [],
     };
   } catch {
