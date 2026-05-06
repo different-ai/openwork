@@ -49,6 +49,9 @@ import {
   stripSensitiveWorkspaceExportData,
   type WorkspaceExportSensitiveMode,
 } from "./workspace-export-safety.js";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { serve, type ServeResult } from "./serve-node.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -215,7 +218,7 @@ interface RequestContext {
   actor?: Actor;
 }
 
-export function startServer(config: ServerConfig) {
+export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -359,9 +362,10 @@ export function startServer(config: ServerConfig) {
     },
   };
 
-  (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
-
-  const server = Bun.serve(serverOptions);
+  const server = await serve({
+    ...serverOptions,
+    idleTimeout: 120,
+  });
 
   return server;
 }
@@ -1792,7 +1796,8 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    const stream = Readable.toWeb(createReadStream(absPath)) as ReadableStream;
+    return new Response(stream, { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/inbox", "client", async (ctx) => {
@@ -1881,7 +1886,8 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    const stream = Readable.toWeb(createReadStream(absPath)) as ReadableStream;
+    return new Response(stream, { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/files/sessions", "client", async (ctx) => {

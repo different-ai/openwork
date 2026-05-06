@@ -968,33 +968,22 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return token || null;
   }
 
+  // In-process server handle. Kept alive across restarts so we can stop it.
+  let inProcessServer = null;
+
   async function startOpenworkServer(options) {
+    // Stop any previously running in-process server
+    if (inProcessServer) {
+      try { inProcessServer.stop(); } catch { /* ignore */ }
+      inProcessServer = null;
+    }
     await stopChild(openworkServerState);
 
     const workspacePaths = options.workspacePaths.filter((value) => value.trim().length > 0);
     const activeWorkspace = workspacePaths[0] ?? "";
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
     const port = await resolveOpenworkPort(host, activeWorkspace);
-    const baseUrl = `http://127.0.0.1:${port}`;
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
-    const program = resolveBinary("openwork-server");
-    if (!program) {
-      throw new Error("Failed to locate openwork-server.");
-    }
-
-    const args = [
-      "--host",
-      host,
-      "--port",
-      String(port),
-      "--cors",
-      "*",
-      "--approval",
-      "auto",
-      ...workspacePaths.flatMap((workspacePath) => ["--workspace", workspacePath]),
-      ...(options.opencodeBaseUrl ? ["--opencode-base-url", options.opencodeBaseUrl] : []),
-      ...(activeWorkspace ? ["--opencode-directory", activeWorkspace] : []),
-    ];
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
@@ -1004,7 +993,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
     }
 
-    const env = await buildChildEnv({
+    // Inject env vars that the server reads (managed opencode, etc.)
+    const serverEnv = await buildChildEnv({
       OPENWORK_TOKEN: tokens.clientToken,
       OPENWORK_HOST_TOKEN: tokens.hostToken,
       ...(options.manageOpencode ? { OPENWORK_MANAGE_OPENCODE: "1" } : {}),
@@ -1013,30 +1003,45 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
     });
+    Object.assign(process.env, serverEnv);
 
-    spawnManagedChild(openworkServerState, program, args, {
-      cwd: activeWorkspace || desktopRoot,
-      env,
-    });
+    // Import and start the server in-process (no child process, no health poll)
+    const { startServer } = await import("../../server/src/server.ts");
+    const { resolveServerConfig } = await import("../../server/src/config.js");
+
+    // Build CLI-style args for resolveServerConfig
+    const cliArgs = {
+      host,
+      port,
+      corsOrigins: ["*"],
+      approvalMode: "auto",
+      workspaces: workspacePaths,
+      token: tokens.clientToken,
+      hostToken: tokens.hostToken,
+      opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
+      opencodeDirectory: activeWorkspace || undefined,
+    };
+    const serverConfig = await resolveServerConfig(cliArgs);
+
+    const server = await startServer(serverConfig);
+    inProcessServer = server;
+
+    const boundPort = server.port;
+    const baseUrl = `http://127.0.0.1:${boundPort}`;
 
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
-    openworkServerState.port = port;
+    openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
     openworkServerState.clientToken = tokens.clientToken;
     openworkServerState.hostToken = tokens.hostToken;
 
-    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(port) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
+    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
     openworkServerState.connectUrl = connectUrls.connectUrl;
     openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
     openworkServerState.lanUrl = connectUrls.lanUrl;
 
-    await waitForHttpOk(`${baseUrl}/health`, 10_000);
-    // Owner tokens live in the OpenWork server token store, which can be reset
-    // independently from the desktop runtime token cache. Always mint a fresh
-    // owner token for the newly-started server instead of trusting the cached
-    // value; otherwise the renderer can receive a stale bearer token and all
-    // workspace calls fail with 401.
+    // No health check needed -- startServer() resolves only after the listener is bound.
     const ownerToken = await issueOwnerToken(baseUrl, tokens.hostToken);
     openworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
@@ -1064,7 +1069,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         appendOutput(openworkServerState, "lastStderr", `OpenWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
-    await persistPreferredOpenworkPort(activeWorkspace, port);
+    await persistPreferredOpenworkPort(activeWorkspace, boundPort);
     return snapshotOpenworkServerState(openworkServerState);
   }
 
@@ -1194,6 +1199,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function stopAllRuntimeChildren() {
+    // Stop the in-process server if running
+    if (inProcessServer) {
+      try { inProcessServer.stop(); } catch { /* ignore */ }
+      inProcessServer = null;
+    }
     await stopChild(openworkServerState);
     await stopChild(orchestratorState, {
       requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
