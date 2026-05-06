@@ -1,0 +1,225 @@
+apps/app/src/react-app/domains/settings/cloud/sections.tsx
+  8b1e351c46d4d9b2 18,185-186,188-190,192-195,411,413,712,714,718,721,770,779-781,797,804,815,839,857-861,863,865-873,875-895,897-898
+  h_e2431fa0952ce3 23,55,468,488,491,496,504,521,533-535,568-570,588-590,626-627,629,648-649,651,700-701,703,760,771-772,782,1244
+  49d25429207d7ea0 773-777,822-830,832-834,836-838
+  s_8beacbcbb905d5::t_92eaa4b83d1d92 831,835,874,896
+  1d223c58e18b6302 13,108-110,309,339,341,845-852,862,864,1211,1228-1232,1235-1236,1240-1243,1367,1389-1397,1399-1403
+  e85f520d1866ddb1 22,24-30,196,199-200,204-206,209-210,214,224-234,236-243,245,247,249-250,258-260,262-263,265-269,271-273,276,278-279,281-283,286,288-293,299,301-305
+  393edbd309243dae 4-5,9,59,184,187,191,514-515,524-529,538-548,551,575-584,596-606,609,634-644,657-676,678-679,708-711,722-723,725-759,761,763-767,783-796,798-803,805-814
+  s_8beacbcbb905d5::t_1747f3a444678a 319,349-352,356,358-359,365,367,369-370
+  s_8beacbcbb905d5::t_efad7ec7eea5be 15,197-198,201-203,207-208,211-213,215-223,244,246,248,251-255,274,277,284,287,295,300
+  e97930facb2d7306 425,458
+  s_8beacbcbb905d5::t_5df3fd973ec6bd 1233-1234,1237-1239
+  18542dfc805222a6 421-424,428-430,432-454,457,459-460,462-463,466,469-477,480-487,489-490,492-495,497-503,505-513,516-520,522-523,530-532,536-537,549-550,552-567,571-574,585-587,591-595,607-608,610-625,628,630-633,645-647,650,652-656,677,680-699,702,704-707
+  3a1b966b280b6b1f 294,296-297
+  b8a087976e69bcc9 32,337-338,340,342-348,353-355,357,360-364,366,368,371-374
+  589682bd3732c27b 235,256-257,261,264,270,275,280,285,298
+  0c5de60e8344e847 419-420,426-427,431,455-456,461,464-465,467,478-479,720,762,816-818,821
+  s_8beacbcbb905d5::t_e7004a4bd3b83b 416,717,724,1262,1277,1398
+apps/app/src/react-app/domains/settings/panels/den-settings-panel.tsx
+  s_c0eaff146759fb::t_5d24516af86818 13,89,1428
+  s_8beacbcbb905d5::t_3048f4c3c0dba6 555,559
+apps/app/src/app/cloud/import-state.ts
+  393edbd309243dae 1-2,35,37,62-77,180,189
+apps/app/src/react-app/domains/settings/cloud/utils.ts
+  h_e2431fa0952ce3 2,4,18,22-32,34-36,38
+  66f9bd8ff514e57b 1,3,5-17,19-21,33,37,39
+apps/app/src/app/lib/den.ts
+  393edbd309243dae 125,947-955
+apps/app/src/app/lib/skills.ts
+  h_e2431fa0952ce3 1-33
+apps/app/src/react-app/domains/settings/settings-list.tsx
+  777a0e1bc5f99548 70,75-76
+apps/app/src/react-app/domains/settings/state/extensions-store.ts
+  s_c0eaff146759fb::t_139b40ed6df0b4 1220-1228,2527
+apps/app/src/app/lib/frontmatter.ts
+  h_e2431fa0952ce3 1-19
+apps/app/src/components/ui/dialog.tsx
+  1d223c58e18b6302 8-10,14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c6851821d65b39295cefe5fd6af3ac48b947e889",
+  "prompts": {
+    "0c5de60e8344e847": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "96734e20-67d8-400c-bb8c-97e15da7442f",
+        "model": "claude-opus-4-5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    },
+    "18542dfc805222a6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a225a5ca-2cc8-4e72-9d21-bda7a93fbb9e",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 175,
+      "overriden_lines": 0
+    },
+    "1d223c58e18b6302": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c37b093a-f710-434c-9586-c03833893481",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 146,
+      "overriden_lines": 1
+    },
+    "393edbd309243dae": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7d9164d2-1532-4135-8222-ead7c33f12a8",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 192,
+      "overriden_lines": 3
+    },
+    "3a1b966b280b6b1f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6b0d25a4-718c-4f83-9118-f7c6ffc959fc",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 6,
+      "overriden_lines": 3
+    },
+    "49d25429207d7ea0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f1abfba6-e47d-4454-911a-aca5c01dc6f5",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    },
+    "589682bd3732c27b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e145a4b2-9fda-4f9b-8023-b4bf16400ae6",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 10,
+      "overriden_lines": 6
+    },
+    "66f9bd8ff514e57b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5aa9f9b9-a63e-4486-bcb2-d76f4830d37c",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    },
+    "777a0e1bc5f99548": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cdb35f63-95c5-4c8c-9b23-3eb21ff36576",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "8b1e351c46d4d9b2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7b463193-58c1-4c5a-bd39-bee759868517",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 77,
+      "overriden_lines": 0
+    },
+    "b8a087976e69bcc9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5b28c510-2904-4986-aba9-c5f05f9c31f5",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    },
+    "e85f520d1866ddb1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "93c19034-5a0a-4203-8032-fe275889a886",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 78,
+      "overriden_lines": 0
+    },
+    "e97930facb2d7306": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1940c7a4-de4b-437a-b6e1-7f1fbfd17111",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_e2431fa0952ce3": {
+      "author": "Jean P.D. Meijer"
+    }
+  },
+  "sessions": {
+    "s_8beacbcbb905d5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "df92bce8-9a2f-40c7-af7e-0578660fddf7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_c0eaff146759fb": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4f6f69cb-9889-48d2-a85c-413f2774eb6c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
