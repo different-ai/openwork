@@ -1,0 +1,270 @@
+/**
+ * In-process browser MCP servers.
+ *
+ * Imports chrome-devtools-mcp tools and runs them inside the Electron main
+ * process — no sidecar binary, no npx, no absolute paths.
+ *
+ * Two servers:
+ *   1. "openwork-browser" — controls the embedded WebContentsView
+ *   2. "chrome"           — connects to the user's external Chrome via CDP
+ *
+ * Both are exposed as HTTP MCP endpoints that OpenCode connects to as
+ * remote MCP servers.
+ */
+
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+
+// ── Chrome DevTools MCP internals (imported as library, NOT spawned) ──
+// IMPORTANT: never import main.js — it runs parseArguments at module load.
+import "chrome-devtools-mcp/build/src/polyfill.js";
+
+import {
+  McpServer,
+  SetLevelRequestSchema,
+  puppeteer,
+} from "chrome-devtools-mcp/build/src/third_party/index.js";
+
+import { tools as chromeDevtoolsTools } from "chrome-devtools-mcp/build/src/tools/tools.js";
+import { McpContext } from "chrome-devtools-mcp/build/src/McpContext.js";
+import { McpResponse } from "chrome-devtools-mcp/build/src/McpResponse.js";
+import { Mutex } from "chrome-devtools-mcp/build/src/Mutex.js";
+
+// MCP SDK HTTP transport — works with the same McpServer
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+function noop() {}
+
+const TARGET_FILTER = (target) => {
+  const url = target.url();
+  if (url === "chrome://newtab/") return true;
+  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return false;
+  return true;
+};
+
+async function connectBrowser(browserURL) {
+  return puppeteer.connect({
+    browserURL,
+    targetFilter: TARGET_FILTER,
+    defaultViewport: null,
+  });
+}
+
+/**
+ * Create an MCP server backed by chrome-devtools-mcp tools.
+ *
+ * @param {object}   opts
+ * @param {string}   opts.name       — server name (e.g. "openwork-browser")
+ * @param {string}   opts.version    — server version
+ * @param {Function} opts.getBrowser — async () => Puppeteer.Browser
+ * @param {Function} [opts.onToolCall] — called before each tool (e.g. to show browser panel)
+ * @returns {McpServer}
+ */
+function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
+  const server = new McpServer(
+    { name, version },
+    { capabilities: { logging: {} } },
+  );
+
+  server.server.setRequestHandler(SetLevelRequestSchema, () => ({}));
+
+  const mutex = new Mutex();
+  let context = null;
+  let lastBrowser = null;
+
+  async function getContext() {
+    const browser = await getBrowser();
+    if (!browser?.connected) {
+      throw new Error(`Browser not connected for ${name}`);
+    }
+    if (browser !== lastBrowser) {
+      lastBrowser = browser;
+      context = await McpContext.from(browser, noop, {
+        experimentalDevToolsDebugging: false,
+        experimentalIncludeAllPages: false,
+        performanceCrux: false,
+      });
+    }
+    return context;
+  }
+
+  // Skip performance / extension / emulation categories that don't make
+  // sense for the built-in browser.  Keep the full set for external Chrome.
+  const skipCategories = name === "openwork-browser"
+    ? new Set(["extensions", "performance"])
+    : new Set();
+
+  for (const tool of chromeDevtoolsTools) {
+    if (skipCategories.has(tool.annotations?.category)) continue;
+
+    server.tool(
+      tool.name,
+      tool.description,
+      tool.schema,
+      async (params) => {
+        const guard = await mutex.acquire();
+        try {
+          onToolCall?.(tool.name, params);
+          const ctx = await getContext();
+          const response = new McpResponse();
+          await tool.handler({ params }, response, ctx);
+          const { content } = await response.handle(tool.name, ctx);
+          return { content };
+        } finally {
+          guard.dispose();
+        }
+      },
+    );
+  }
+
+  return server;
+}
+
+// ── HTTP wrappers ──────────────────────────────────────────────────────
+
+/**
+ * Start an MCP-over-HTTP server on a random localhost port.
+ * Returns { port, close }.
+ */
+async function startMcpHttpServer(mcpServer) {
+  const sessions = new Map();
+
+  const httpServer = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", `http://127.0.0.1`);
+
+    if (req.method === "GET" && url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+
+    // Create or reuse transport per session
+    const sessionId = url.searchParams.get("sessionId") || req.headers["mcp-session-id"];
+
+    if (req.method === "POST") {
+      let transport = sessions.get(sessionId);
+      if (!transport) {
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id) => {
+            sessions.set(id, transport);
+          },
+        });
+        await mcpServer.connect(transport);
+      }
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    if (req.method === "GET") {
+      let transport = sessions.get(sessionId);
+      if (!transport) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "No session. Send a POST first." }));
+        return;
+      }
+      await transport.handleRequest(req, res);
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const transport = sessions.get(sessionId);
+      if (transport) {
+        sessions.delete(sessionId);
+        await transport.close();
+      }
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    res.writeHead(405);
+    res.end("Method not allowed");
+  });
+
+  const port = await new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(0, "127.0.0.1", () => {
+      resolve(httpServer.address().port);
+    });
+  });
+
+  return {
+    port,
+    close: () => new Promise((resolve) => httpServer.close(resolve)),
+  };
+}
+
+// ── Public API ─────────────────────────────────────────────────────────
+
+/**
+ * Boot both MCP servers.
+ *
+ * @param {object} opts
+ * @param {number} opts.electronCdpPort — Electron's remote debugging port (for built-in browser)
+ * @param {Function} opts.onBuiltinToolCall — called when a tool runs on the built-in browser
+ * @returns {{ builtinPort: number, externalPort: number | null, stop: () => Promise<void> }}
+ */
+export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall }) {
+  // ── Built-in browser server ──
+  let builtinBrowser = null;
+
+  const builtinServer = createBrowserMcpServer({
+    name: "openwork-browser",
+    version: "0.1.0",
+    getBrowser: async () => {
+      if (!builtinBrowser?.connected) {
+        builtinBrowser = await connectBrowser(`http://127.0.0.1:${electronCdpPort}`);
+      }
+      return builtinBrowser;
+    },
+    onToolCall: onBuiltinToolCall,
+  });
+
+  const builtin = await startMcpHttpServer(builtinServer);
+
+  // ── External Chrome server (optional — only starts if Chrome is reachable) ──
+  // For now, we expose the endpoint but lazy-connect when first tool is called.
+  let externalBrowser = null;
+
+  const externalServer = createBrowserMcpServer({
+    name: "chrome",
+    version: "0.1.0",
+    getBrowser: async () => {
+      if (!externalBrowser?.connected) {
+        // Try common Chrome debugging ports
+        for (const port of [9222, 9229]) {
+          try {
+            externalBrowser = await connectBrowser(`http://127.0.0.1:${port}`);
+            return externalBrowser;
+          } catch { /* not available */ }
+        }
+        throw new Error(
+          "External Chrome not reachable. Start Chrome with --remote-debugging-port=9222 " +
+          "or enable remote debugging via chrome://inspect/#remote-debugging"
+        );
+      }
+      return externalBrowser;
+    },
+  });
+
+  const external = await startMcpHttpServer(externalServer);
+
+  return {
+    builtinPort: builtin.port,
+    externalPort: external.port,
+    async stop() {
+      await Promise.all([builtin.close(), external.close()]);
+      try { builtinBrowser?.disconnect(); } catch {}
+      try { externalBrowser?.disconnect(); } catch {}
+    },
+  };
+}

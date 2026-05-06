@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
+import { startBrowserMcpServers } from "./browser-mcp.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
@@ -262,41 +263,55 @@ function destroyBrowserView() {
   }
 }
 
-// ── Resolve bundled chrome-devtools-mcp ────────────────────────────────
-// Returns ["node", "<abs-path-to-bin>"] or null.
-// Uses "node" (not process.execPath) because OpenCode spawns the command
-// and process.execPath in Electron is the Electron binary, not node.
-function resolveChromeDevtoolsMcpBin() {
-  try {
-    const require_ = createRequire(import.meta.url);
-    const pkgJsonPath = require_.resolve("chrome-devtools-mcp/package.json");
-    const binPath = path.join(path.dirname(pkgJsonPath), "build", "src", "index.js");
-    if (existsSync(binPath)) {
-      return ["node", binPath];
-    }
-  } catch {
-    // package not found
+// ── In-process browser MCP servers ─────────────────────────────────────
+// Two MCP servers run inside the Electron main process:
+//   "openwork-browser" — controls the embedded WebContentsView
+//   "chrome"           — connects to the user's external Chrome
+// Both are exposed as HTTP endpoints.  OpenCode connects as a remote client.
+let browserMcpPorts = null; // { builtinPort, externalPort, stop }
+
+async function ensureBrowserMcpServers() {
+  if (browserMcpPorts) return browserMcpPorts;
+
+  // CDP port for the Electron app itself (WebContentsView is a target on it)
+  const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
+  const cdpPort = Number.parseInt(cdpPortRaw, 10);
+  if (!Number.isFinite(cdpPort) || cdpPort <= 0) {
+    console.error("[browser-mcp] Cannot start — no Electron CDP port configured (OPENWORK_ELECTRON_REMOTE_DEBUG_PORT)");
+    return null;
   }
-  return null;
+
+  try {
+    browserMcpPorts = await startBrowserMcpServers({
+      electronCdpPort: cdpPort,
+      onBuiltinToolCall: (toolName) => {
+        // Auto-show the browser panel when an agent calls a tool
+        if (mainWindow && !browserViewVisible) {
+          const [w, h] = mainWindow.getContentSize();
+          const panelWidth = Math.min(520, Math.floor(w * 0.4));
+          showBrowserView({ x: w - panelWidth, y: 0, width: panelWidth, height: h });
+          // Tell the renderer the panel opened
+          mainWindow.webContents.send("openwork:browser:panel-opened");
+        }
+      },
+    });
+    console.log(`[browser-mcp] Built-in browser MCP at http://127.0.0.1:${browserMcpPorts.builtinPort}/mcp`);
+    console.log(`[browser-mcp] External Chrome MCP at http://127.0.0.1:${browserMcpPorts.externalPort}/mcp`);
+  } catch (err) {
+    console.error("[browser-mcp] Failed to start:", err);
+    return null;
+  }
+  return browserMcpPorts;
 }
 
 /**
- * Seed chrome-devtools MCP into a workspace's opencode config so Control
- * Chrome works out of the box.  Reads the existing config (jsonc or json),
- * injects `mcp.chrome-devtools` if missing, and writes back.
+ * Inject the in-process MCP servers as remote entries in opencode.json.
+ * Replaces any legacy local chrome-devtools entries.
  */
-/**
- * Returns true when the command looks like a generated npx/npm fallback
- * or a bare binary name — i.e. not a user-customised command.
- */
-function isLegacyChromeDevtoolsCommand(cmd) {
-  if (!Array.isArray(cmd) || cmd.length === 0) return true;
-  const first = String(cmd[0]);
-  // npx / npm exec path, or bare binary name without an absolute path
-  return first === "npx" || first === "npm" || first === "chrome-devtools-mcp" || first === "npm.cmd";
-}
+async function seedBrowserMcpConfig(workspaceDir) {
+  const ports = await ensureBrowserMcpServers();
+  if (!ports) return;
 
-async function seedChromeDevtoolsMcp(workspaceDir) {
   const jsoncPath = path.join(workspaceDir, "opencode.jsonc");
   const jsonPath = path.join(workspaceDir, "opencode.json");
   const configPath = existsSync(jsoncPath) ? jsoncPath : existsSync(jsonPath) ? jsonPath : null;
@@ -310,27 +325,36 @@ async function seedChromeDevtoolsMcp(workspaceDir) {
 
   if (!config.mcp || typeof config.mcp !== "object") config.mcp = {};
 
-  const resolved = resolveChromeDevtoolsMcpBin();
-  const bundledCommand = resolved ?? ["npx", "-y", "chrome-devtools-mcp@latest"];
+  let changed = !configPath;
 
-  // Inject if missing, or migrate if the existing entry uses a legacy
-  // npx / bare-binary command (not a user-customised path).
-  const existing = config.mcp["chrome-devtools"];
-  const needsInject = !existing;
-  const needsMigrate = existing && resolved && isLegacyChromeDevtoolsCommand(existing.command);
+  // Built-in browser (always inject / update)
+  const builtinUrl = `http://127.0.0.1:${ports.builtinPort}/mcp`;
+  if (config.mcp["openwork-browser"]?.url !== builtinUrl) {
+    config.mcp["openwork-browser"] = { type: "remote", url: builtinUrl };
+    changed = true;
+  }
 
-  if (!needsInject && !needsMigrate) return;
+  // External Chrome (always inject / update)
+  const externalUrl = `http://127.0.0.1:${ports.externalPort}/mcp`;
+  if (config.mcp["chrome"]?.url !== externalUrl) {
+    config.mcp["chrome"] = { type: "remote", url: externalUrl };
+    changed = true;
+  }
 
-  config.mcp["chrome-devtools"] = {
-    type: "local",
-    command: bundledCommand,
-    // Preserve extra fields (environment, enabled, etc.)
-    ...(existing && typeof existing === "object" ? existing : {}),
-    command: bundledCommand,
-  };
+  // Remove legacy local chrome-devtools entry if present
+  if (config.mcp["chrome-devtools"]) {
+    delete config.mcp["chrome-devtools"];
+    changed = true;
+  }
+  if (config.mcp["control-chrome"]) {
+    delete config.mcp["control-chrome"];
+    changed = true;
+  }
 
-  const targetPath = configPath || jsoncPath;
-  await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  if (changed) {
+    const targetPath = configPath || jsoncPath;
+    await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  }
 }
 
 function normalizePlatform(value) {
@@ -1089,9 +1113,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
 
-      // Seed opencode.json with chrome-devtools MCP so Control Chrome works
-      // out of the box — no manual "Add connector" step needed.
-      await seedChromeDevtoolsMcp(folderPath);
+      // Inject in-process browser MCP servers into opencode.json
+      await seedBrowserMcpConfig(folderPath);
       return mutateWorkspaceState((state) => {
         const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
         state.workspaces = state.workspaces.filter(
@@ -1499,7 +1522,12 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "__setNativeTheme":
       return applyNativeTheme(String(args[0]));
     case "resolveChromeDevtoolsMcpBin":
-      return resolveChromeDevtoolsMcpBin();
+      // Legacy — return null since we now use in-process MCP servers
+      return null;
+    case "getBrowserMcpPorts":
+      return browserMcpPorts
+        ? { builtinPort: browserMcpPorts.builtinPort, externalPort: browserMcpPorts.externalPort }
+        : null;
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
@@ -1807,6 +1835,20 @@ if (!app.requestSingleInstanceLock()) {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     }));
+
+    // Start in-process browser MCP servers and inject into active workspace config
+    ensureBrowserMcpServers().then(async (ports) => {
+      if (!ports) return;
+      // Inject into all known workspaces
+      try {
+        const wsState = await readWorkspaceState();
+        for (const ws of wsState.workspaces ?? []) {
+          if (ws.path && ws.workspaceType === "local") {
+            await seedBrowserMcpConfig(ws.path).catch(() => {});
+          }
+        }
+      } catch {}
+    }).catch((err) => console.warn("[browser-mcp] boot error:", err));
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();

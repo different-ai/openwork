@@ -149,6 +149,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       chrome-devtools-mcp:
         specifier: 0.17.0
         version: 0.17.0

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -938,74 +937,16 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
   }
 
-  /**
-   * Resolve the bundled chrome-devtools-mcp binary for the MCP command.
-   * Returns `["node", "<abs-path>"]` or falls back to the npx command.
-   */
-  function chromeDevtoolsMcpCommand() {
-    try {
-      const require_ = createRequire(import.meta.url);
-      const pkgJsonPath = require_.resolve("chrome-devtools-mcp/package.json");
-      const binPath = path.join(path.dirname(pkgJsonPath), "build", "src", "index.js");
-      if (existsSync(binPath)) return ["node", binPath];
-    } catch { /* not found */ }
-    return ["npx", "-y", "chrome-devtools-mcp@latest"];
-  }
-
   async function ensureOpencodeConfig(projectDir) {
     const jsoncPath = path.join(projectDir, "opencode.jsonc");
     const jsonPath = path.join(projectDir, "opencode.json");
-    const configPath = (await fileExists(jsoncPath))
-      ? jsoncPath
-      : (await fileExists(jsonPath))
-        ? jsonPath
-        : null;
-
-    let config;
-    if (configPath) {
-      try {
-        config = JSON.parse(await readFile(configPath, "utf8"));
-      } catch {
-        return; // malformed — don't touch it
-      }
-    } else {
-      config = { $schema: "https://opencode.ai/config.json" };
-    }
-
-    // Auto-inject or migrate chrome-devtools MCP.
-    let changed = !configPath; // new file = always write
-    if (!config.mcp || typeof config.mcp !== "object") {
-      config.mcp = {};
-    }
-
-    const bundledCmd = chromeDevtoolsMcpCommand();
-    const existing = config.mcp["chrome-devtools"];
-    const isLegacy = (cmd) => {
-      if (!Array.isArray(cmd) || cmd.length === 0) return true;
-      const f = String(cmd[0]);
-      return f === "npx" || f === "npm" || f === "chrome-devtools-mcp" || f === "npm.cmd";
-    };
-    const needsInject = !existing;
-    const needsMigrate = existing && bundledCmd[0] === "node" && isLegacy(existing.command);
-
-    if (needsInject || needsMigrate) {
-      config.mcp["chrome-devtools"] = {
-        ...(existing && typeof existing === "object" ? existing : {}),
-        type: "local",
-        command: bundledCmd,
-      };
-      changed = true;
-    }
-
-    if (changed) {
-      const targetPath = configPath || jsoncPath;
-      await mkdir(projectDir, { recursive: true });
-      await writeFile(
-        targetPath,
-        `${JSON.stringify(config, null, 2)}\n`,
-        "utf8",
-      );
-    }
+    if ((await fileExists(jsoncPath)) || (await fileExists(jsonPath))) return;
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(
+      jsoncPath,
+      `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
+      "utf8",
+    );
   }
 
   function generateManagedCredentials() {

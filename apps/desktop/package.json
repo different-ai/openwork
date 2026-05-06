@@ -24,6 +24,7 @@
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chrome-devtools-mcp": "0.17.0",
     "electron-updater": "^6.3.9"
   },
