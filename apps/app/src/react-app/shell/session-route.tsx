@@ -483,6 +483,17 @@ export function SessionRoute() {
           setRetryingWorkspaceIds((current) =>
             current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
           );
+          // When a workspace returns zero sessions during the initial batch
+          // load, OpenCode may still be warming up its index.  Schedule a
+          // single delayed retry so the sidebar doesn't stay permanently
+          // empty while the managed engine finishes starting.
+          if (items.length === 0 && attempt === 0) {
+            window.setTimeout(() => {
+              if (backgroundSessionLoadInFlight.current.get(workspace.id)) return;
+              backgroundSessionLoadInFlight.current.delete(workspace.id);
+              void fetchOnce(workspace, 1);
+            }, 3_000);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : t("app.unknown_error");
           // The first cold call to OpenCode's /session endpoint often hits
