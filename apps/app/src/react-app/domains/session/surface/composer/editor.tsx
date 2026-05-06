@@ -426,7 +426,18 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
       // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText);
-      $getRoot().selectEnd();
+      // $getRoot().selectEnd() doesn't work when the last node is a
+      // token (chip) — Lexical can't position a cursor inside a token,
+      // so the selection collapses to position 0. Use element-level
+      // selection instead: place the cursor *after* the last child of
+      // the last paragraph.
+      const lastParagraph = $getRoot().getLastChild();
+      if ($isElementNode(lastParagraph)) {
+        const childCount = lastParagraph.getChildrenSize();
+        lastParagraph.select(childCount, childCount);
+      } else {
+        $getRoot().selectEnd();
+      }
     });
   }, [editor, props.mentions, props.pastedText, props.value]);
 

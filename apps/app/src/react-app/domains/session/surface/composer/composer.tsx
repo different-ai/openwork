@@ -1065,17 +1065,11 @@ export function ReactSessionComposer(props: ComposerProps) {
 
                 const text = event.clipboardData?.getData("text/plain") ?? "";
 
-                // Collapse long pastes into an inline chip. The threshold
-                // is 3+ lines or 200+ characters — short pastes still go
-                // straight into the editor as plain text.
-                const PASTE_CHIP_LINE_THRESHOLD = 3;
-                const PASTE_CHIP_CHAR_THRESHOLD = 200;
-                const lineCount = text.split(/\r?\n/).length;
-                if (text.trim() && (lineCount >= PASTE_CHIP_LINE_THRESHOLD || text.length >= PASTE_CHIP_CHAR_THRESHOLD)) {
-                  event.preventDefault();
-                  props.onPasteText(text);
-                  return;
-                }
+                // Long pastes (3+ lines / 200+ chars) are collapsed into
+                // an inline chip by PasteChipPlugin inside the Lexical
+                // editor. Do NOT duplicate that here — calling onPasteText
+                // from both the React onPaste handler and the Lexical
+                // PASTE_COMMAND handler causes double chip creation.
 
                 if (
                   text.trim() &&
