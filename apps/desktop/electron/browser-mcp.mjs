@@ -113,10 +113,9 @@ async function connectExternalBrowser(browserURL) {
  * @param {string}   opts.version    — server version
  * @param {Function} opts.getBrowser — async () => Puppeteer.Browser
  * @param {Function} [opts.onToolCall] — called before each tool (e.g. to show browser panel)
- * @param {Function} [opts.onBuiltinNavigate] — direct Electron navigation for built-in browser
  * @returns {McpServer}
  */
-function createBrowserMcpServer({ name, version, getBrowser, onToolCall, onBuiltinNavigate }) {
+function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
   const server = new McpServer(
     { name, version },
     { capabilities: { logging: {} } },
@@ -142,6 +141,13 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall, onBuilt
       });
     }
     return context;
+  }
+
+  /** Force a full Puppeteer reconnect + fresh McpContext on next getContext(). */
+  function invalidateContext() {
+    try { lastBrowser?.disconnect(); } catch { /* already gone */ }
+    lastBrowser = null;
+    context = null;
   }
 
   // Skip performance / extension / emulation categories that don't make
@@ -171,18 +177,19 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall, onBuilt
             const page = ctx.getSelectedPage();
             const timeout = Number.isFinite(params?.timeout) && params.timeout > 0
               ? params.timeout
-              : 10_000;
-            const options = { timeout, waitUntil: "domcontentloaded" };
+              : 30_000;
+            // Use default Puppeteer waitUntil (load event).
+            const options = { timeout };
             const type = params?.type ?? "url";
 
             if (type === "url") {
               const url = String(params?.url ?? "").trim();
               if (!url) throw new Error("navigate_page requires a url for type=url");
-              if (onBuiltinNavigate) {
-                await onBuiltinNavigate(url);
-              } else {
-                await withTimeout(page.goto(url, options), timeout + 1_000, "openwork-browser/navigate_page");
-              }
+              // Use Puppeteer page.goto() with waitUntil:domcontentloaded
+              // wrapped in a hard timeout.  Electron's loadURL sometimes
+              // fails in the WebContentsView sandboxed partition while
+              // Puppeteer's CDP-based navigation succeeds.
+              await withTimeout(page.goto(url, options), timeout + 1_000, "openwork-browser/navigate_page");
             } else if (type === "back") {
               await withTimeout(page.goBack(options), timeout + 1_000, "openwork-browser/navigate_page(back)");
             } else if (type === "forward") {
@@ -193,9 +200,8 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall, onBuilt
               throw new Error(`Unsupported navigation type: ${type}`);
             }
 
-            await ctx.createPagesSnapshot();
             const targetUrl = type === "url" ? String(params?.url ?? "").trim() : page.url();
-            return { content: [{ type: "text", text: `Navigation started: ${targetUrl || page.url()}` }] };
+            return { content: [{ type: "text", text: `Navigated to ${targetUrl || page.url()}` }] };
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             return { content: [{ type: "text", text: `Error: ${msg}` }] };
@@ -361,10 +367,9 @@ async function startMcpHttpServer(mcpServerFactory, preferredPort = 0) {
  * @param {number} opts.electronCdpPort — Electron's remote debugging port (for built-in browser)
  * @param {Function} opts.onBuiltinToolCall — called before each built-in browser tool (opens panel)
  * @param {Function} opts.onHideBrowser — called to close the browser panel
- * @param {Function} opts.onBuiltinNavigate — direct Electron navigation for built-in browser
  * @returns {{ builtinPort: number, externalPort: number | null, stop: () => Promise<void> }}
  */
-export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall, onHideBrowser, onBuiltinNavigate }) {
+export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall, onHideBrowser }) {
   let builtinBrowser = null;
   let externalBrowser = null;
 
@@ -384,7 +389,6 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
         return builtinBrowser;
       },
       onToolCall: onBuiltinToolCall,
-      onBuiltinNavigate,
     });
 
     server.tool(

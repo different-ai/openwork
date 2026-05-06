@@ -319,13 +319,6 @@ async function ensureBrowserMcpServers() {
           mainWindow.webContents.send("openwork:browser:panel-closed");
         }
       },
-      onBuiltinNavigate: async (url) => {
-        const view = createBrowserView();
-        void view.webContents.loadURL(url).catch((error) => {
-          console.warn("[browser-mcp] built-in navigation failed", error);
-        });
-        sendBrowserState();
-      },
     });
     console.log(`[browser-mcp] Built-in browser MCP at http://127.0.0.1:${browserMcpPorts.builtinPort}/mcp`);
     console.log(`[browser-mcp] External Chrome MCP at http://127.0.0.1:${browserMcpPorts.externalPort}/mcp`);
