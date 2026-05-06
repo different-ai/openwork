@@ -1,0 +1,19 @@
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_964c212a2dffad::t_3044b37c0992a7 295,302-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "1e9f44e9a9e119ff0c4a7b04e36f6d2dde524601",
+  "prompts": {},
+  "sessions": {
+    "s_964c212a2dffad": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "76a09dac-d078-4a22-ab32-be671b543bdb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
