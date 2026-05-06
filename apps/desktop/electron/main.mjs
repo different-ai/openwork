@@ -12,6 +12,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1329,6 +1330,21 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       window.webContents.setZoomFactor(factor);
       return true;
+    }
+    case "resolveChromeDevtoolsMcpBin": {
+      // Resolve the bundled chrome-devtools-mcp bin path so the renderer
+      // can write a command to opencode.json that doesn't require npx.
+      try {
+        const require_ = createRequire(import.meta.url);
+        const pkgJsonPath = require_.resolve("chrome-devtools-mcp/package.json");
+        const binPath = path.join(path.dirname(pkgJsonPath), "build", "src", "index.js");
+        if (existsSync(binPath)) {
+          return [process.execPath, binPath];
+        }
+      } catch {
+        // package not found — fall through to null
+      }
+      return null;
     }
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);

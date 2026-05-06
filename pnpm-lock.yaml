@@ -170,6 +170,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      chrome-devtools-mcp:
+        specifier: 0.17.0
+        version: 0.17.0
       electron-updater:
         specifier: ^6.3.9
         version: 6.8.3
@@ -4379,6 +4382,11 @@ packages:
   chownr@3.0.0:
     resolution: {integrity: sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g==}
     engines: {node: '>=18'}
+
+  chrome-devtools-mcp@0.17.0:
+    resolution: {integrity: sha512-vMi2zXq2ph2EG6amyyApcvuKJcEFj4cGK1XQVb6x8vQYHk8D9ZnSxdtFqD0cRnG7SbUOrg3GhjOZEJAD1dZWSQ==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=23}
+    hasBin: true
 
   chromium-pickle-js@0.2.0:
     resolution: {integrity: sha512-1R5Fho+jBq0DDydt+/vHWj5KJNJCKdARKOCwZUen84I5BreWoLqRLANH1U87eJy1tiASPtMnGqJJq0ZsLoRPOw==}
@@ -12503,6 +12511,8 @@ snapshots:
   chownr@2.0.0: {}
 
   chownr@3.0.0: {}
+
+  chrome-devtools-mcp@0.17.0: {}
 
   chromium-pickle-js@0.2.0: {}
 

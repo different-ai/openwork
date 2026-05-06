@@ -20,6 +20,7 @@ import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
   removeMcpFromConfig,
+  resolveChromeDevtoolsMcpCommand,
   usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
@@ -31,7 +32,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
 } from "../../../app/types";
-import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
+import { isDesktopRuntime, isElectronRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
 
@@ -496,11 +497,23 @@ export function createConnectionsStore(options: {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = entry.command;
+
+        // For chrome-devtools in Electron, resolve the bundled binary so we
+        // don't need npx/npm at runtime.
+        let resolvedCommand = entry.command;
+        if (slug === CHROME_DEVTOOLS_MCP_ID && isElectronRuntime()) {
+          const bundled = await resolveChromeDevtoolsMcpCommand();
+          // Preserve any extra args (e.g. --autoConnect) from the original
+          const extraArgs = entry.command.filter(
+            (arg) => arg.startsWith("--") || arg.startsWith("-"),
+          );
+          resolvedCommand = [...bundled, ...extraArgs];
+        }
+        mcpEntryConfig["command"] = resolvedCommand;
 
         if (
           slug === CHROME_DEVTOOLS_MCP_ID &&
-          usesChromeDevtoolsAutoConnect(entry.command) &&
+          usesChromeDevtoolsAutoConnect(resolvedCommand) &&
           isDesktopRuntime()
         ) {
           try {

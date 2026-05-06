@@ -162,20 +162,14 @@ const orchestratorTargetName = orchestratorTargetTriple
 const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
 const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
 
-// chrome-devtools-mcp shim sidecar
+// chrome-devtools-mcp: now bundled as a node_modules dependency of
+// @openwork/desktop (Electron resolves it directly). The Bun-compiled shim
+// sidecar is no longer built.  These variables are kept only so the
+// versions.json metadata block below can record the pinned version without
+// breaking the build.
 const chromeDevtoolsBaseName = "chrome-devtools-mcp";
 const chromeDevtoolsName = isWindowsTarget ? `${chromeDevtoolsBaseName}.exe` : chromeDevtoolsBaseName;
 const chromeDevtoolsPath = join(sidecarDir, chromeDevtoolsName);
-const chromeDevtoolsBuildName = bunTarget
-  ? `${chromeDevtoolsBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : chromeDevtoolsName;
-const chromeDevtoolsBuildPath = join(sidecarDir, chromeDevtoolsBuildName);
-const chromeDevtoolsTargetTriple = resolvedTargetTriple;
-const chromeDevtoolsTargetName = chromeDevtoolsTargetTriple
-  ? `${chromeDevtoolsBaseName}-${chromeDevtoolsTargetTriple}${chromeDevtoolsTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const chromeDevtoolsTargetPath = chromeDevtoolsTargetName ? join(sidecarDir, chromeDevtoolsTargetName) : null;
-const chromeDevtoolsShimPath = resolve(__dirname, "chrome-devtools-mcp-shim.ts");
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -560,80 +554,7 @@ if (existsSync(orchestratorBuildPath)) {
   }
 }
 
-// Build chrome-devtools-mcp shim sidecar
-let didBuildChromeDevtools = false;
-const shouldBuildChromeDevtools =
-  forceBuild || !existsSync(chromeDevtoolsBuildPath) || isStubBinary(chromeDevtoolsBuildPath);
-if (shouldBuildChromeDevtools) {
-  mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(chromeDevtoolsBuildPath)) {
-    try {
-      unlinkSync(chromeDevtoolsBuildPath);
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!existsSync(chromeDevtoolsShimPath)) {
-    console.error(`Chrome DevTools MCP shim source not found at ${chromeDevtoolsShimPath}`);
-    process.exit(1);
-  }
-
-  const chromeDevtoolsArgs = [
-    "build",
-    "--compile",
-    chromeDevtoolsShimPath,
-    "--outfile",
-    chromeDevtoolsBuildPath,
-  ];
-  if (bunTarget) {
-    chromeDevtoolsArgs.push("--target", bunTarget);
-  }
-
-  const result = spawnSync("bun", chromeDevtoolsArgs, {
-    cwd: __dirname,
-    stdio: "inherit",
-    shell: true,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      BUN_ENV: "production",
-    },
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-
-  didBuildChromeDevtools = true;
-}
-
-if (existsSync(chromeDevtoolsBuildPath)) {
-  const shouldCopyCanonical =
-    didBuildChromeDevtools || !existsSync(chromeDevtoolsPath) || isStubBinary(chromeDevtoolsPath);
-  if (shouldCopyCanonical && chromeDevtoolsBuildPath !== chromeDevtoolsPath) {
-    try {
-      if (existsSync(chromeDevtoolsPath)) unlinkSync(chromeDevtoolsPath);
-    } catch {
-      // ignore
-    }
-    copyFileSync(chromeDevtoolsBuildPath, chromeDevtoolsPath);
-  }
-
-  if (chromeDevtoolsTargetPath) {
-    const shouldCopyTarget =
-      didBuildChromeDevtools ||
-      !existsSync(chromeDevtoolsTargetPath) ||
-      isStubBinary(chromeDevtoolsTargetPath);
-    if (shouldCopyTarget && chromeDevtoolsBuildPath !== chromeDevtoolsTargetPath) {
-      try {
-        if (existsSync(chromeDevtoolsTargetPath)) unlinkSync(chromeDevtoolsTargetPath);
-      } catch {
-        // ignore
-      }
-      copyFileSync(chromeDevtoolsBuildPath, chromeDevtoolsTargetPath);
-    }
-  }
-}
+// chrome-devtools-mcp is now a node_modules dependency — no sidecar build needed.
 
 adHocSignDarwinSidecars([
   opencodePath,
@@ -644,9 +565,6 @@ adHocSignDarwinSidecars([
   orchestratorBuildPath,
   orchestratorPath,
   orchestratorTargetPath,
-  chromeDevtoolsBuildPath,
-  chromeDevtoolsPath,
-  chromeDevtoolsTargetPath,
 ]);
 
 const openworkServerVersion = (() => {
@@ -682,7 +600,8 @@ const versions = {
   },
   "chrome-devtools-mcp": {
     version: chromeDevtoolsMcpVersion,
-    sha256: existsSync(chromeDevtoolsPath) ? sha256File(chromeDevtoolsPath) : null,
+    // No longer a sidecar binary — bundled as a node_modules dependency.
+    sha256: "bundled",
   },
 };
 
