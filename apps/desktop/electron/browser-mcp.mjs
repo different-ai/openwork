@@ -245,10 +245,11 @@ async function startMcpHttpServer(mcpServer) {
  *
  * @param {object} opts
  * @param {number} opts.electronCdpPort — Electron's remote debugging port (for built-in browser)
- * @param {Function} opts.onBuiltinToolCall — called when a tool runs on the built-in browser
+ * @param {Function} opts.onBuiltinToolCall — called before each built-in browser tool (opens panel)
+ * @param {Function} opts.onHideBrowser — called to close the browser panel
  * @returns {{ builtinPort: number, externalPort: number | null, stop: () => Promise<void> }}
  */
-export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall }) {
+export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall, onHideBrowser }) {
   // ── Built-in browser server ──
   let builtinBrowser = null;
 
@@ -264,6 +265,30 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
     },
     onToolCall: onBuiltinToolCall,
   });
+
+  // ── Extra tools: show/hide the browser panel ──
+  builtinServer.tool(
+    "show_browser",
+    "Open the built-in browser panel inside the OpenWork app. " +
+    "Called automatically when any browser tool runs, but can also be " +
+    "called explicitly to show the panel before interacting.",
+    {},
+    async () => {
+      await onBuiltinToolCall?.("show_browser");
+      return { content: [{ type: "text", text: "Browser panel opened." }] };
+    },
+  );
+
+  builtinServer.tool(
+    "hide_browser",
+    "Close the built-in browser panel. Call when the browsing task is " +
+    "finished and the user no longer needs to see the browser.",
+    {},
+    async () => {
+      onHideBrowser?.();
+      return { content: [{ type: "text", text: "Browser panel closed." }] };
+    },
+  );
 
   const builtin = await startMcpHttpServer(builtinServer);
 

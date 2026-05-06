@@ -285,23 +285,30 @@ async function ensureBrowserMcpServers() {
     browserMcpPorts = await startBrowserMcpServers({
       electronCdpPort: cdpPort,
       onBuiltinToolCall: async (toolName) => {
-        // Ensure the WebContentsView exists and has a page loaded BEFORE
-        // the MCP tool handler tries to connect via puppeteer.
+        // Every built-in browser tool call ensures the panel is open and
+        // has a loaded page before puppeteer tries to connect.
         if (!mainWindow) return;
         const view = createBrowserView();
-        if (!mainWindow.contentView.children.includes(view)) {
+        if (!browserViewVisible) {
           const [w, h] = mainWindow.getContentSize();
           const panelWidth = Math.min(520, Math.floor(w * 0.4));
           showBrowserView({ x: w - panelWidth, y: 0, width: panelWidth, height: h });
           mainWindow.webContents.send("openwork:browser:panel-opened");
         }
         // Wait for the page to have a real URL (not about:blank)
-        if (!view.webContents.getURL() || view.webContents.getURL() === "about:blank") {
+        const url = view.webContents.getURL();
+        if (!url || url === "about:blank") {
           view.webContents.loadURL(BROWSER_DEFAULT_URL);
           await new Promise((resolve) => {
             view.webContents.once("did-finish-load", resolve);
-            setTimeout(resolve, 5000); // safety timeout
+            setTimeout(resolve, 5000);
           });
+        }
+      },
+      onHideBrowser: () => {
+        hideBrowserView();
+        if (mainWindow) {
+          mainWindow.webContents.send("openwork:browser:panel-closed");
         }
       },
     });
