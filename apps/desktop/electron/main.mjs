@@ -284,14 +284,24 @@ async function ensureBrowserMcpServers() {
   try {
     browserMcpPorts = await startBrowserMcpServers({
       electronCdpPort: cdpPort,
-      onBuiltinToolCall: (toolName) => {
-        // Auto-show the browser panel when an agent calls a tool
-        if (mainWindow && !browserViewVisible) {
+      onBuiltinToolCall: async (toolName) => {
+        // Ensure the WebContentsView exists and has a page loaded BEFORE
+        // the MCP tool handler tries to connect via puppeteer.
+        if (!mainWindow) return;
+        const view = createBrowserView();
+        if (!mainWindow.contentView.children.includes(view)) {
           const [w, h] = mainWindow.getContentSize();
           const panelWidth = Math.min(520, Math.floor(w * 0.4));
           showBrowserView({ x: w - panelWidth, y: 0, width: panelWidth, height: h });
-          // Tell the renderer the panel opened
           mainWindow.webContents.send("openwork:browser:panel-opened");
+        }
+        // Wait for the page to have a real URL (not about:blank)
+        if (!view.webContents.getURL() || view.webContents.getURL() === "about:blank") {
+          view.webContents.loadURL(BROWSER_DEFAULT_URL);
+          await new Promise((resolve) => {
+            view.webContents.once("did-finish-load", resolve);
+            setTimeout(resolve, 5000); // safety timeout
+          });
         }
       },
     });

@@ -37,17 +37,51 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 function noop() {}
 
-const TARGET_FILTER = (target) => {
+/**
+ * Target filter for the EXTERNAL Chrome server — accept all normal pages,
+ * skip chrome:// and extension pages.
+ */
+const EXTERNAL_TARGET_FILTER = (target) => {
   const url = target.url();
   if (url === "chrome://newtab/") return true;
   if (url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return false;
   return true;
 };
 
-async function connectBrowser(browserURL) {
+/**
+ * Target filter for the BUILT-IN browser server — only accept pages that
+ * are NOT the main OpenWork renderer.  The main renderer loads from
+ * localhost (dev) or file:// (prod).  The WebContentsView loads real
+ * websites (https://, http:// on non-localhost).
+ */
+const BUILTIN_TARGET_FILTER = (target) => {
+  const url = target.url();
+  // Skip the main OpenWork renderer
+  if (url.startsWith("file://")) return false;
+  if (url.startsWith("http://localhost")) return false;
+  if (url.startsWith("http://127.0.0.1")) return false;
+  if (url.startsWith("http://[::1]")) return false;
+  // Skip chrome internals
+  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return false;
+  if (url.startsWith("devtools://")) return false;
+  // Skip about:blank (initial empty state before WebContentsView loads)
+  if (url === "about:blank") return false;
+  // Accept everything else — these are real websites in the WebContentsView
+  return true;
+};
+
+async function connectBuiltinBrowser(browserURL) {
   return puppeteer.connect({
     browserURL,
-    targetFilter: TARGET_FILTER,
+    targetFilter: BUILTIN_TARGET_FILTER,
+    defaultViewport: null,
+  });
+}
+
+async function connectExternalBrowser(browserURL) {
+  return puppeteer.connect({
+    browserURL,
+    targetFilter: EXTERNAL_TARGET_FILTER,
     defaultViewport: null,
   });
 }
@@ -106,7 +140,8 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
       async (params) => {
         const guard = await mutex.acquire();
         try {
-          onToolCall?.(tool.name, params);
+          // onToolCall may be async (e.g. ensuring the WebContentsView is loaded)
+          await onToolCall?.(tool.name, params);
           const ctx = await getContext();
           const response = new McpResponse();
           await tool.handler({ params }, response, ctx);
@@ -221,9 +256,10 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
     name: "openwork-browser",
     version: "0.1.0",
     getBrowser: async () => {
-      if (!builtinBrowser?.connected) {
-        builtinBrowser = await connectBrowser(`http://127.0.0.1:${electronCdpPort}`);
-      }
+      // Always reconnect — the WebContentsView may have just been created
+      // by onToolCall and a stale connection won't see the new target.
+      try { builtinBrowser?.disconnect(); } catch {}
+      builtinBrowser = await connectBuiltinBrowser(`http://127.0.0.1:${electronCdpPort}`);
       return builtinBrowser;
     },
     onToolCall: onBuiltinToolCall,
@@ -243,7 +279,7 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
         // Try common Chrome debugging ports
         for (const port of [9222, 9229]) {
           try {
-            externalBrowser = await connectBrowser(`http://127.0.0.1:${port}`);
+            externalBrowser = await connectExternalBrowser(`http://127.0.0.1:${port}`);
             return externalBrowser;
           } catch { /* not available */ }
         }
