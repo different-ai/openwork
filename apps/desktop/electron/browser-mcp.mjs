@@ -275,8 +275,13 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
       name: "openwork-browser",
       version: "0.1.0",
       getBrowser: async () => {
-        try { builtinBrowser?.disconnect(); } catch {}
-        builtinBrowser = await connectBuiltinBrowser(`http://127.0.0.1:${electronCdpPort}`);
+        // Preserve the Puppeteer browser/context across sequential tool calls.
+        // chrome-devtools-mcp stores the latest accessibility snapshot on the
+        // McpContext; reconnecting for every tool loses that snapshot, making
+        // follow-up fill/click calls fail with "No snapshot found".
+        if (!builtinBrowser?.connected) {
+          builtinBrowser = await connectBuiltinBrowser(`http://127.0.0.1:${electronCdpPort}`);
+        }
         return builtinBrowser;
       },
       onToolCall: onBuiltinToolCall,
