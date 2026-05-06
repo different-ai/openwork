@@ -311,6 +311,13 @@ async function ensureBrowserMcpServers() {
           mainWindow.webContents.send("openwork:browser:panel-closed");
         }
       },
+      onBuiltinNavigate: async (url) => {
+        const view = createBrowserView();
+        void view.webContents.loadURL(url).catch((error) => {
+          console.warn("[browser-mcp] built-in navigation failed", error);
+        });
+        sendBrowserState();
+      },
     });
     console.log(`[browser-mcp] Built-in browser MCP at http://127.0.0.1:${browserMcpPorts.builtinPort}/mcp`);
     console.log(`[browser-mcp] External Chrome MCP at http://127.0.0.1:${browserMcpPorts.externalPort}/mcp`);
@@ -324,6 +331,10 @@ async function ensureBrowserMcpServers() {
 /**
  * Inject the in-process MCP servers as remote entries in opencode.json.
  * Replaces any legacy local chrome-devtools entries.
+ *
+ * Browser MCP servers prefer stable localhost ports (64883/64884), so this
+ * remains stable across app restarts instead of writing a fresh random port
+ * every time.
  */
 async function seedBrowserMcpConfig(workspaceDir) {
   const ports = await ensureBrowserMcpServers();
@@ -344,28 +355,24 @@ async function seedBrowserMcpConfig(workspaceDir) {
 
   let changed = !configPath;
 
-  // Built-in browser (always inject / update)
   const builtinUrl = `http://127.0.0.1:${ports.builtinPort}/mcp`;
   if (config.mcp["openwork-browser"]?.url !== builtinUrl) {
     config.mcp["openwork-browser"] = { type: "remote", url: builtinUrl };
     changed = true;
   }
 
-  // External Chrome (always inject / update)
   const externalUrl = `http://127.0.0.1:${ports.externalPort}/mcp`;
   if (config.mcp["chrome"]?.url !== externalUrl) {
     config.mcp["chrome"] = { type: "remote", url: externalUrl };
     changed = true;
   }
 
-  // Remove legacy local chrome-devtools entry if present
-  if (config.mcp["chrome-devtools"]) {
-    delete config.mcp["chrome-devtools"];
-    changed = true;
-  }
-  if (config.mcp["control-chrome"]) {
-    delete config.mcp["control-chrome"];
-    changed = true;
+  // Remove legacy entries
+  for (const key of ["chrome-devtools", "control-chrome"]) {
+    if (config.mcp[key]) {
+      delete config.mcp[key];
+      changed = true;
+    }
   }
 
   if (changed) {
@@ -1130,7 +1137,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
 
-      // Inject in-process browser MCP servers into opencode.json
+      // Clean up any legacy browser MCP entries from the new workspace config
       await seedBrowserMcpConfig(folderPath);
       return mutateWorkspaceState((state) => {
         const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
@@ -1850,10 +1857,10 @@ if (!app.requestSingleInstanceLock()) {
       error: error instanceof Error ? error.message : String(error),
     }));
 
-    // Start in-process browser MCP servers and inject into active workspace config
+    // Start in-process browser MCP servers and inject stable endpoints into
+    // workspace configs.
     ensureBrowserMcpServers().then(async (ports) => {
       if (!ports) return;
-      // Inject into all known workspaces
       try {
         const wsState = await readWorkspaceState();
         for (const ws of wsState.workspaces ?? []) {
