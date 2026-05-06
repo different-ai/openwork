@@ -4,14 +4,12 @@ import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 
 import { t } from "../../../i18n";
 import {
-  CHROME_DEVTOOLS_MCP_ID,
   MCP_QUICK_CONNECT,
   type McpDirectoryInfo,
 } from "../../../app/constants";
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
-  getDesktopHomeDir,
   readOpencodeConfig,
   writeOpencodeConfig,
   type OpencodeConfigFile,
@@ -20,8 +18,6 @@ import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
   removeMcpFromConfig,
-  resolveChromeDevtoolsMcpCommand,
-  usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
 import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
@@ -32,7 +28,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
 } from "../../../app/types";
-import { isDesktopRuntime, isElectronRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
 
@@ -476,8 +472,6 @@ export function createConnectionsStore(options: {
     try {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
 
-      let mcpEnvironment: Record<string, string> | undefined;
-
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
         enabled: true,
@@ -497,33 +491,7 @@ export function createConnectionsStore(options: {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
-
-        // For chrome-devtools in Electron, resolve the bundled binary so we
-        // don't need npx/npm at runtime.  Only carry over -- prefixed flags
-        // from the original command (skip npx flags like -y).
-        let resolvedCommand = entry.command;
-        if (slug === CHROME_DEVTOOLS_MCP_ID && isElectronRuntime()) {
-          const bundled = await resolveChromeDevtoolsMcpCommand();
-          const extraArgs = entry.command.filter((arg) => arg.startsWith("--"));
-          resolvedCommand = [...bundled, ...extraArgs];
-        }
-        mcpEntryConfig["command"] = resolvedCommand;
-
-        if (
-          slug === CHROME_DEVTOOLS_MCP_ID &&
-          usesChromeDevtoolsAutoConnect(resolvedCommand) &&
-          isDesktopRuntime()
-        ) {
-          try {
-            const hostHome = (await getDesktopHomeDir()).replace(/[\\/]+$/, "");
-            if (hostHome) {
-              mcpEnvironment = { HOME: hostHome };
-              mcpEntryConfig["environment"] = mcpEnvironment;
-            }
-          } catch {
-            // ignore and let the MCP use the default worker environment
-          }
-        }
+        mcpEntryConfig["command"] = entry.command;
       }
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
@@ -589,7 +557,6 @@ export function createConnectionsStore(options: {
                 type: "local" as const,
                 command: (mcpEntryConfig["command"] as string[]) ?? entry.command!,
                 enabled: true,
-                ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
               };
 
         const status = unwrap(

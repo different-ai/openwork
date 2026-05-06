@@ -15,7 +15,6 @@ import {
   Plug2,
   Plus,
   Power,
-  Settings,
   Settings2,
   Unplug,
   Zap,
@@ -29,11 +28,8 @@ import {
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
 import {
-  buildChromeDevtoolsCommand,
   getMcpIdentityKey,
-  isChromeDevtoolsMcp,
   normalizeMcpSlug,
-  usesChromeDevtoolsAutoConnect,
 } from "../../../../app/mcp";
 import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
@@ -41,7 +37,6 @@ import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
-import { ControlChromeSetupModal } from "../../connections/modals/control-chrome-setup-modal";
 
 export type ReactMcpStatus =
   | "connected"
@@ -174,9 +169,6 @@ export function McpView(props: McpViewProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
   const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
-  const [controlChromeModalOpen, setControlChromeModalOpen] = useState(false);
-  const [controlChromeModalMode, setControlChromeModalMode] = useState<"connect" | "edit">("connect");
-  const [controlChromeExistingProfile, setControlChromeExistingProfile] = useState(false);
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
@@ -248,32 +240,6 @@ export function McpView(props: McpViewProps) {
 
   const isQuickConnectConfigured = (entry: McpDirectoryInfo) =>
     props.mcpServers.some((server) => server.name === getMcpIdentityKey(entry));
-
-  const openControlChromeModal = (
-    mode: "connect" | "edit",
-    existingEntry?: McpServerEntry | null,
-  ) => {
-    setControlChromeModalMode(mode);
-    setControlChromeExistingProfile(
-      usesChromeDevtoolsAutoConnect(existingEntry?.config.command),
-    );
-    setControlChromeModalOpen(true);
-  };
-
-  const saveControlChromeSettings = (useExistingProfile: boolean) => {
-    const controlChrome = quickConnectList.find((entry) => isChromeDevtoolsMcp(entry));
-    if (!controlChrome) return;
-    const existingEntry = props.mcpServers.find((entry) => isChromeDevtoolsMcp(entry.name));
-
-    props.connectMcp({
-      ...controlChrome,
-      command: buildChromeDevtoolsCommand(
-        existingEntry?.config.command ?? controlChrome.command,
-        useExistingProfile,
-      ),
-    });
-    setControlChromeModalOpen(false);
-  };
 
   const supportsOauth = (entry: McpServerEntry) =>
     entry.config.type === "remote" && entry.config.oauth !== false;
@@ -388,37 +354,15 @@ export function McpView(props: McpViewProps) {
             const configured = isQuickConnectConfigured(entry);
             const connecting = props.mcpConnectingName === entry.name;
             const Icon = serviceIcon(entry.name);
-            const controlChrome = isChromeDevtoolsMcp(entry);
             const quickStatus = !configured ? quickConnectStatus(entry) : undefined;
 
             return (
               <div key={getMcpIdentityKey(entry)} className="relative">
-                {controlChrome && configured ? (
-                  <button
-                    type="button"
-                    className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-green-6 bg-white/90 text-green-11 transition-colors hover:bg-white"
-                    aria-label={t("mcp.control_chrome_edit")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const existingEntry = props.mcpServers.find(
-                        (server) => server.name === getMcpIdentityKey(entry),
-                      );
-                      openControlChromeModal("edit", existingEntry);
-                    }}
-                  >
-                    <Settings size={14} />
-                  </button>
-                ) : null}
-
                 <button
                   type="button"
                   disabled={configured || props.busy || connecting}
                   onClick={() => {
                     if (configured) return;
-                    if (controlChrome) {
-                      openControlChromeModal("connect");
-                      return;
-                    }
                     props.connectMcp(entry);
                   }}
                   className={`group w-full rounded-xl border p-4 text-left transition-all ${
@@ -625,16 +569,6 @@ export function McpView(props: McpViewProps) {
                       ) : null}
 
                       <div className="flex justify-end gap-2 pt-1">
-                        {isChromeDevtoolsMcp(entry.name) ? (
-                          <Button
-                            variant="outline"
-                            className="!px-3 !py-1.5 !text-xs"
-                            onClick={() => openControlChromeModal("edit", entry)}
-                          >
-                            <Settings size={13} />
-                            {t("mcp.control_chrome_edit")}
-                          </Button>
-                        ) : null}
                         {props.setMcpEnabled && entry.source !== "config.global" ? (
                           <Button
                             variant="outline"
@@ -811,15 +745,6 @@ export function McpView(props: McpViewProps) {
         onAdd={(entry) => props.connectMcp(entry)}
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
-      />
-
-      <ControlChromeSetupModal
-        open={controlChromeModalOpen}
-        busy={props.busy || props.mcpConnectingName === "Control Chrome"}
-        mode={controlChromeModalMode}
-        initialUseExistingProfile={controlChromeExistingProfile}
-        onClose={() => setControlChromeModalOpen(false)}
-        onSave={saveControlChromeSettings}
       />
     </section>
   );

@@ -66,10 +66,6 @@ const normalizeVersion = (value) => {
 };
 
 const opencodeAssetOverride = process.env.OPENCODE_ASSET?.trim() || null;
-const chromeDevtoolsMcpVersion =
-  process.env.CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
-  process.env.OPENWORK_CHROME_DEVTOOLS_MCP_VERSION?.trim() ||
-  "0.17.0";
 
 // Target triple for native platform binaries
 const resolvedTargetTriple = (() => {
@@ -161,13 +157,6 @@ const orchestratorTargetName = orchestratorTargetTriple
   : null;
 const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
 const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
-
-// chrome-devtools-mcp: now bundled as a node_modules dependency of
-// @openwork/desktop (Electron resolves it directly). The Bun-compiled shim
-// sidecar is no longer built.
-const chromeDevtoolsBaseName = "chrome-devtools-mcp";
-const chromeDevtoolsName = isWindowsTarget ? `${chromeDevtoolsBaseName}.exe` : chromeDevtoolsBaseName;
-const chromeDevtoolsPath = join(sidecarDir, chromeDevtoolsName);
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -494,8 +483,6 @@ if (existsSync(orchestratorBuildPath)) {
   }
 }
 
-// chrome-devtools-mcp is now a node_modules dependency — no sidecar build needed.
-
 adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
@@ -535,10 +522,6 @@ const versions = {
   "openwork-orchestrator": {
     version: orchestratorVersion,
     sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
-  },
-  "chrome-devtools-mcp": {
-    version: chromeDevtoolsMcpVersion,
-    sha256: "bundled",
   },
 };
 

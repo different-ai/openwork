@@ -1538,9 +1538,6 @@ async function handleDesktopInvoke(event, command, ...args) {
     }
     case "__setNativeTheme":
       return applyNativeTheme(String(args[0]));
-    case "resolveChromeDevtoolsMcpBin":
-      // Legacy — return null since we now use in-process MCP servers
-      return null;
     case "getBrowserMcpPorts":
       return browserMcpPorts
         ? { builtinPort: browserMcpPorts.builtinPort, externalPort: browserMcpPorts.externalPort }
