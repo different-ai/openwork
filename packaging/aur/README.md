@@ -1,25 +1,24 @@
-# Arch Linux AMD64 package
+# Arch Linux package
 
-Use this directory to build and install the AMD64 OpenWork package locally on Arch Linux without Docker.
+Use this directory to build and install the OpenWork package locally on Arch Linux without Docker.
 
 ## What this packaging does
 
-- Targets `x86_64` Arch Linux.
-- Downloads the published GitHub release asset `openwork-desktop-linux-amd64.deb`.
-- Repackages the `.deb` contents into an Arch package with `makepkg`.
-- Removes the bundled `/usr/bin/opencode` file so the package does not conflict with `opencode-bin`.
+- Targets `x86_64` and `aarch64` Arch Linux.
+- Downloads the published Electron GitHub release asset for the current architecture.
+- Installs the Electron bundle under `/opt/openwork`.
+- Adds `/usr/bin/openwork`, a desktop entry, and the OpenWork icon.
 
 ## Prerequisites
 
-- Arch Linux on `x86_64`
+- Arch Linux on `x86_64` or `aarch64`
 - `base-devel`
-- `bsdtar` / `libarchive`
 - `curl`
 
 Install the packaging prerequisites once:
 
 ```bash
-sudo pacman -S --needed base-devel curl libarchive
+sudo pacman -S --needed base-devel curl
 ```
 
 ## Build and install the current packaged version
@@ -33,24 +32,18 @@ makepkg -si
 
 That will:
 
-1. download the AMD64 `.deb` pinned in `PKGBUILD`
+1. download the Electron tarball pinned in `PKGBUILD`
 2. build an Arch package such as `openwork-<version>-1-x86_64.pkg.tar.zst`
 3. install it locally with `pacman`
 
-After install, `openwork` is available as the desktop launcher. If you also want the standalone OpenCode CLI, install `opencode-bin` separately.
-
-## OpenCode CLI conflict note
-
-Recent `.deb` builds include `/usr/bin/opencode`, but the AUR package intentionally strips that file during repackaging.
-
-That keeps OpenWork compatible with systems that already install the OpenCode CLI from `opencode-bin`, which should remain the owner of the global `opencode` command.
+After install, `openwork` is available as the desktop launcher. The bundled sidecars remain inside `/opt/openwork`; the package does not claim the standalone `opencode` command.
 
 ## Update the package to a newer release
 
 If the GitHub release version changed, refresh the packaging metadata first:
 
 ```bash
-scripts/aur/update-aur.sh v0.11.162
+scripts/aur/update-aur.sh v0.13.4
 ```
 
 Then rebuild:

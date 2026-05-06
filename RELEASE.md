@@ -46,7 +46,7 @@ Use `pnpm release:review --json` when automating these checks in scripts or agen
 
 ## AUR
 
-`Release App` publishes the Arch AUR package automatically after the Linux `.deb` asset is uploaded.
+`Release App` publishes the Arch AUR package automatically after the Electron Linux tarball assets are uploaded.
 
 For local AMD64 Arch builds without Docker, see `packaging/aur/README.md`.
 

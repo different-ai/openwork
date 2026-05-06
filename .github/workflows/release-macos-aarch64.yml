@@ -252,8 +252,7 @@ jobs:
     name: Build + Publish (${{ matrix.target }})
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.build_tauri == 'true'
-    # Set OPENWORK_LINUX_X64_RUNNER_LABEL to route only the Linux x86_64 build to a larger runner.
-    runs-on: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 360
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -277,29 +276,12 @@ jobs:
             os_type: macos
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin --bundles dmg,app"
-          - platform: ubuntu-22.04
-            os_type: linux
-            target: x86_64-unknown-linux-gnu
-            args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: ubuntu-22.04-arm
-            os_type: linux
-            target: aarch64-unknown-linux-gnu
-            args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - platform: windows-2022
             os_type: windows
             target: x86_64-pc-windows-msvc
             args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
-      - name: Log runner selection
-        shell: bash
-        run: |
-          echo "Requested larger runner label: ${RUNNER_LABEL:-<unset>}"
-          echo "Effective runs-on: ${EFFECTIVE_RUNS_ON}"
-        env:
-          RUNNER_LABEL: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL }}
-          EFFECTIVE_RUNS_ON: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
-
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -358,21 +340,6 @@ jobs:
       - name: Install OpenTUI x64 core (macOS x86_64)
         if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
         run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77
-
-      - name: Install Linux build dependencies
-        if: matrix.os_type == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libayatana-appindicator3-dev \
-            libsoup-3.0-dev \
-            libwebkit2gtk-4.1-dev \
-            libssl-dev \
-            rpm \
-            libdbus-1-dev \
-            librsvg2-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -1076,11 +1043,11 @@ jobs:
 
   aur-publish:
     name: Publish AUR
-    needs: [resolve-release, publish-tauri, publish-release]
+    needs: [resolve-release, publish-electron, publish-release]
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
-      (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
+      needs.publish-electron.result == 'success' &&
       (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
