@@ -192,6 +192,12 @@ function describeWorkspaceCreateError(error: unknown) {
   return message;
 }
 
+function focusPromptSoon() {
+  if (typeof window === "undefined") return;
+  const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
+  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
+}
+
 const emptyPendingPermissions: PendingPermission[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
@@ -1726,6 +1732,7 @@ export function SessionRoute() {
         [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
       }));
       navigateToWorkspaceSession(workspaceId, session.id);
+      focusPromptSoon();
       void refreshRouteState();
     } catch (error) {
       const message = describeRouteError(error);
@@ -1911,6 +1918,7 @@ export function SessionRoute() {
           }));
         }
         navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
+        if (session?.id) focusPromptSoon();
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));

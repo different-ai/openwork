@@ -27,6 +27,12 @@ function folderNameFromPath(path: string) {
   return parts[parts.length - 1] ?? "workspace";
 }
 
+function focusPromptSoon() {
+  if (typeof window === "undefined") return;
+  const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
+  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
+}
+
 /**
  * WelcomeRoute: full-screen welcome page shown on first launch when
  * the user has no workspaces and has not completed onboarding.
@@ -120,6 +126,7 @@ export function WelcomeRoute() {
         markOnboardingComplete();
         setModalOpen(false);
         navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId, targetSessionId) : "/session", { replace: true });
+        if (targetSessionId) focusPromptSoon();
       } catch (error) {
         setCreateError(
           error instanceof Error ? error.message : "Failed to create workspace.",

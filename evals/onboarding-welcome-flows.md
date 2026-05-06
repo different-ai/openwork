@@ -154,6 +154,8 @@ Pass criteria:
 - After workspace creation, URL contains `/workspace/` and `/session/ses_`.
 - Main panel heading is "New session".
 - Composer is visible with the "Run task" action.
+- Composer is focused so typing starts in "Describe your task..." without an
+  extra click.
 - "Select or create a session to get started." is not visible.
 - Navigating to `/welcome` redirects away (onboarding flagged done).
 - `localStorage` contains `hasCompletedOnboarding: true` in

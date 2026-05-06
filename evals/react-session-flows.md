@@ -107,6 +107,8 @@ Pass criteria:
 - URL changes to `/session/ses_*`.
 - Sidebar shows a new **"New session"** entry above existing sessions.
 - Main area renders the composer with **"No transcript yet."**.
+- Composer is focused so typing starts in **"Describe your task..."** without
+  an extra click.
 - Composer model label is whatever is saved as default (e.g.
   `opencode/minimax-m2.5-free`).
 
@@ -559,6 +561,8 @@ Pass criteria:
 - The selected sidebar workspace name matches the folder name.
 - Main panel heading is "New session".
 - Composer is visible with the "Run task" action.
+- Composer is focused so typing starts in "Describe your task..." without an
+  extra click.
 - "Select or create a session to get started." is not visible.
 - Settings heading is not visible after creation.
 
