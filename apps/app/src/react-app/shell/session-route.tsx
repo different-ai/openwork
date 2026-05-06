@@ -593,6 +593,7 @@ export function SessionRoute() {
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
+      const alreadyLoadedWorkspaceIds = new Set(Object.keys(sessionsByWorkspaceIdRef.current));
       const cachedEntries = nextWorkspaces.map((workspace) => ({
         workspaceId: workspace.id,
         sessions: sessionsByWorkspaceIdRef.current[workspace.id] ?? [],
@@ -632,9 +633,10 @@ export function SessionRoute() {
         return next;
       });
       setRetryingWorkspaceIds(
-        cachedEntries.find((entry) => entry.workspaceId === nextWorkspaceId)?.sessions.length === 0 && nextWorkspaceId
-          ? [nextWorkspaceId]
-          : [],
+        cachedEntries
+          .filter((entry) => entry.sessions.length === 0)
+          .filter((entry) => entry.workspaceId === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(entry.workspaceId))
+          .map((entry) => entry.workspaceId),
       );
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
@@ -657,8 +659,14 @@ export function SessionRoute() {
       // so the UI is interactive immediately; the sidebar shows a
       // loading state per-workspace until the list arrives.
       const selectedWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId);
-      if (selectedWorkspace) {
-        void loadWorkspaceSessionsInBackground(openworkClient, [selectedWorkspace]);
+      const backgroundWorkspaces = nextWorkspaces.filter(
+        (workspace) => workspace.id === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(workspace.id),
+      );
+      if (backgroundWorkspaces.length > 0) {
+        const orderedWorkspaces = selectedWorkspace
+          ? [selectedWorkspace, ...backgroundWorkspaces.filter((workspace) => workspace.id !== selectedWorkspace.id)]
+          : backgroundWorkspaces;
+        void loadWorkspaceSessionsInBackground(openworkClient, orderedWorkspaces);
       }
     } catch (error) {
       const message = describeRouteError(error);
