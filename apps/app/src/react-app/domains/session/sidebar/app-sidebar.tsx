@@ -39,6 +39,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  SidebarRail,
 } from "@/components/ui/sidebar";
 import {
   Collapsible,
@@ -255,6 +256,7 @@ export type AppSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
 
 function useSessionTree(
@@ -420,6 +422,14 @@ export function AppSidebar(props: AppSidebarProps) {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>
+        <SidebarRail
+          aria-label={props.onStartResize ? t("session.resize_workspace_column") : undefined}
+          title={props.onStartResize ? t("session.resize_workspace_column") : undefined}
+          onClick={props.onStartResize ? (event) => {
+            event.preventDefault();
+          } : undefined}
+          onPointerDown={props.onStartResize}
+        />
       </Sidebar>
     </SidebarContext.Provider>
   );

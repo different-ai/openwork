@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Globe, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
@@ -35,6 +36,8 @@ import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { isElectronRuntime } from "../../../../app/utils";
 import { BrowserPanel } from "../browser/browser-panel";
+import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
+import { cn } from "@/lib/utils";
 
 type StatusBarOverrides = Pick<
   StatusBarProps,
@@ -189,6 +192,12 @@ export function SessionPage(props: SessionPageProps) {
     const unsubClose = browser.onPanelClosed?.(() => setBrowserPanelOpen(false));
     return () => { unsubOpen?.(); unsubClose?.(); };
   }, []);
+  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+  });
+  const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
+    "--sidebar-width": `${leftSidebarWidth}px`,
+  };
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(
@@ -297,7 +306,14 @@ export function SessionPage(props: SessionPageProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text mac:bg-transparent">
-      <SidebarProvider className="relative min-h-0 flex-1 mac:bg-transparent">
+      <SidebarProvider
+        className={cn(
+          "relative min-h-0 flex-1 mac:bg-transparent",
+          leftSidebarResizing &&
+            "**:data-[slot=sidebar-container]:transition-none **:data-[slot=sidebar-gap]:transition-none",
+        )}
+        style={sidebarProviderStyle}
+      >
         <AppSidebar
           workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
@@ -326,6 +342,7 @@ export function SessionPage(props: SessionPageProps) {
           onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
           onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+          onStartResize={startLeftSidebarResize}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28 flex flex-row">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-border">

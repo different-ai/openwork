@@ -67,6 +67,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
   }, []);
 
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(readLeftSidebarWidth);
+  const [leftSidebarResizing, setLeftSidebarResizing] = useState(false);
   const [rightSidebarExpanded, setRightSidebarExpanded] = useState(readRightSidebarExpanded);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
@@ -89,6 +90,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
   const stopLeftSidebarResize = useCallback(() => {
     dragCleanupRef.current?.();
     dragCleanupRef.current = null;
+    setLeftSidebarResizing(false);
     if (typeof document === "undefined") return;
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
@@ -99,6 +101,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       if (event.button !== 0 || typeof window === "undefined") return;
 
       stopLeftSidebarResize();
+      setLeftSidebarResizing(true);
       const initialX = event.clientX;
       const initialWidth = leftSidebarWidth;
 
@@ -142,6 +145,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
 
   return {
     leftSidebarWidth,
+    leftSidebarResizing,
     rightSidebarExpanded,
     rightSidebarWidth,
     setRightSidebarExpanded,

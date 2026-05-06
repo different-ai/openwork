@@ -1090,15 +1090,18 @@ function activeWindowFromEvent(event) {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow ?? undefined;
 }
 
+function macosVibrancyForCurrentTheme() {
+  return nativeTheme.shouldUseDarkColors ? "under-window" : "sidebar";
+}
+
 function applyNativeTheme(mode) {
   nativeTheme.themeSource = mode;
 
   if (process.platform !== "darwin") {
     return true;
   }
-  // const isDark = nativeTheme.shouldUseDarkColors;
 
-  mainWindow?.setVibrancy("under-window");
+  mainWindow?.setVibrancy(macosVibrancyForCurrentTheme());
   mainWindow?.setBackgroundColor("#00000001");
 
   return true;
@@ -1705,7 +1708,7 @@ async function createMainWindow() {
     Object.assign(windowAppearanceOptions, {
       backgroundColor: "#00000001",
       titleBarStyle: "hiddenInset",
-      vibrancy: "under-window",
+      vibrancy: macosVibrancyForCurrentTheme(),
       visualEffectState: "active",
     });
   }
