@@ -72,6 +72,7 @@ function createOpenworkServerState() {
   return {
     child: null,
     childExited: true,
+    inProcess: false,
     remoteAccessEnabled: false,
     host: null,
     port: null,
@@ -91,8 +92,9 @@ function createOpenworkServerState() {
 
 function snapshotOpenworkServerState(state) {
   const child = state.childExited ? null : state.child;
+  const running = state.inProcess || Boolean(child && child.exitCode === null && !child.killed);
   return {
-    running: Boolean(child && child.exitCode === null && !child.killed),
+    running,
     remoteAccessEnabled: state.remoteAccessEnabled,
     host: state.host,
     port: state.port,
@@ -1006,8 +1008,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     Object.assign(process.env, serverEnv);
 
     // Import the server in-process (compiled TS → JS via tsc into dist/)
-    const { startServer } = await import("../../server/dist/server.js");
-    const { resolveServerConfig } = await import("../../server/dist/config.js");
+    let startServer, resolveServerConfig;
+    try {
+      ({ startServer } = await import("../../server/dist/server.js"));
+      ({ resolveServerConfig } = await import("../../server/dist/config.js"));
+    } catch (importError) {
+      console.error("[openwork-server] Failed to import server library:", importError);
+      throw importError;
+    }
 
     // Build CLI-style args for resolveServerConfig
     const cliArgs = {
@@ -1021,14 +1029,27 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
       opencodeDirectory: activeWorkspace || undefined,
     };
-    const serverConfig = await resolveServerConfig(cliArgs);
+    let serverConfig;
+    try {
+      serverConfig = await resolveServerConfig(cliArgs);
+    } catch (configError) {
+      console.error("[openwork-server] Failed to resolve config:", configError);
+      throw configError;
+    }
 
-    const server = await startServer(serverConfig);
+    let server;
+    try {
+      server = await startServer(serverConfig);
+    } catch (startError) {
+      console.error("[openwork-server] Failed to start in-process server:", startError);
+      throw startError;
+    }
     inProcessServer = server;
 
     const boundPort = server.port;
     const baseUrl = `http://127.0.0.1:${boundPort}`;
 
+    openworkServerState.inProcess = true;
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
