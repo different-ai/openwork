@@ -564,9 +564,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function resolveOpenworkPort(host, workspaceKey) {
-    // Use a fresh port every boot. Persisted preferred ports made prod starts
-    // fragile when an old sidecar held the previous port or shutdown was
-    // unclean; Electron publishes the chosen URL to React after boot.
+    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
+    if (preferredPort && (await portAvailable(host, preferredPort))) {
+      return preferredPort;
+    }
     return findFreePort(host);
   }
 
@@ -1034,14 +1035,25 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     openworkServerState.lanUrl = connectUrls.lanUrl;
 
     // No health check needed -- startServer() resolves only after the listener is bound.
-    const ownerToken = await issueOwnerToken(baseUrl, tokens.hostToken);
+    let workspaceList = null;
+    let ownerToken = tokens.ownerToken?.trim() || null;
+    if (ownerToken) {
+      try {
+        workspaceList = await fetchJson(`${baseUrl}/workspaces`, {
+          headers: { Authorization: `Bearer ${ownerToken}` },
+        }, 5000);
+      } catch {
+        ownerToken = null;
+      }
+    }
+    ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
     openworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
       await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
     }
     if (ownerToken) {
       try {
-        const list = await fetchJson(`${baseUrl}/workspaces`, {
+        const list = workspaceList ?? await fetchJson(`${baseUrl}/workspaces`, {
           headers: { Authorization: `Bearer ${ownerToken}` },
         }, 5000);
         const first = Array.isArray(list?.items) ? list.items[0] : undefined;
@@ -1310,12 +1322,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function openworkServerRestart(options = {}) {
     const workspacePaths = (await listLocalWorkspacePaths()).filter(Boolean);
+    const shouldManageOpencode = Boolean(
+      openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath,
+    );
     return startOpenworkServer({
       workspacePaths,
-      opencodeBaseUrl: engineState.baseUrl,
-      opencodeUsername: engineState.opencodeUsername,
-      opencodePassword: engineState.opencodePassword,
+      opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
+      opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
+      opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
+      manageOpencode: shouldManageOpencode,
+      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
   }
 
