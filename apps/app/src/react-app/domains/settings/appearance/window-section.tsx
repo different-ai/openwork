@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { t } from "../../../../i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
@@ -30,14 +30,11 @@ export function WindowSection(props: WindowSectionProps) {
             <div className="text-sm text-foreground">{t("settings.hide_titlebar")}</div>
             <div className="text-xs text-muted-foreground">{t("settings.hide_titlebar_desc")}</div>
           </div>
-          <Button
-            variant="outline"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
-            onClick={props.toggleHideTitlebar}
+          <Switch
+            checked={props.hideTitlebar}
             disabled={props.busy}
-          >
-            {props.hideTitlebar ? t("settings.on") : t("settings.off")}
-          </Button>
+            onCheckedChange={props.toggleHideTitlebar}
+          />
         </div>
       </SettingsInset>
     </SettingsSection>
