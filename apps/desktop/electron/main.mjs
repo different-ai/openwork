@@ -290,9 +290,14 @@ async function ensureBrowserMcpServers() {
         if (!mainWindow) return;
         const view = createBrowserView();
         if (!browserViewVisible) {
-          const [w, h] = mainWindow.getContentSize();
-          const panelWidth = Math.min(520, Math.floor(w * 0.4));
-          showBrowserView({ x: w - panelWidth, y: 0, width: panelWidth, height: h });
+          // Add the WebContentsView but don't position it yet — pass zero
+          // bounds so it stays invisible.  The React <BrowserPanel>
+          // component will compute its own layout bounds and call
+          // browser.show(bounds) / browser.setBounds(bounds) once the
+          // <aside> has been laid out.  Positioning eagerly here causes
+          // the view to overlay on top of the session content before React
+          // has made room for the panel column.
+          showBrowserView({ x: 0, y: 0, width: 0, height: 0 });
         }
         // Always notify the renderer so it can render the BrowserPanel
         // toolbar.  The React component may have unmounted (session switch)
