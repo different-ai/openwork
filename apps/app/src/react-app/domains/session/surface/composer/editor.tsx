@@ -414,7 +414,16 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
     const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
+    // Check whether the editor already reflects the desired state BEFORE
+    // entering editor.update(). Even a bail-out inside editor.update()
+    // triggers Lexical's reconciliation cycle which can normalise the DOM
+    // selection and reset the cursor (e.g. after a multi-line paste the
+    // cursor jumps to position 0 instead of staying after the pasted
+    // content). The read() above already gave us `currentText` — reuse it.
+    if (!forceRebuild && currentText === props.value) return;
     editor.update(() => {
+      // Double-check inside the update in case another queued update
+      // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText);
       $getRoot().selectEnd();
