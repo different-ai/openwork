@@ -287,69 +287,11 @@ const parseChecksum = (content, assetName) => {
   return null;
 };
 
-let didBuildOpenworkServer = false;
-const shouldBuildOpenworkServer =
-  forceBuild || !existsSync(openworkServerBuildPath) || isStubBinary(openworkServerBuildPath);
+// openwork-server is no longer compiled as a sidecar binary — it runs
+// in-process inside Electron via a direct import of the server library.
+const didBuildOpenworkServer = false;
 
-if (shouldBuildOpenworkServer) {
-  mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(openworkServerBuildPath)) {
-    try {
-      unlinkSync(openworkServerBuildPath);
-    } catch {
-      // ignore
-    }
-  }
-  const openworkServerScript = resolveBuildScript(openworkServerDir);
-  if (!existsSync(openworkServerScript)) {
-    console.error(`OpenWork server build script not found at ${openworkServerScript}`);
-    process.exit(1);
-  }
-  const openworkServerArgs = [openworkServerScript, "--outdir", sidecarDir, "--filename", "openwork-server"];
-  if (bunTarget) {
-    openworkServerArgs.push("--target", bunTarget);
-  }
-  const buildResult = spawnSync("bun", openworkServerArgs, {
-    cwd: openworkServerDir,
-    stdio: "inherit",
-    shell: true,
-  });
-
-  if (buildResult.status !== 0) {
-    process.exit(buildResult.status ?? 1);
-  }
-
-  didBuildOpenworkServer = true;
-}
-
-if (existsSync(openworkServerBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenworkServer || !existsSync(openworkServerPath) || isStubBinary(openworkServerPath);
-  if (shouldCopyCanonical && openworkServerBuildPath !== openworkServerPath) {
-    try {
-      if (existsSync(openworkServerPath)) {
-        unlinkSync(openworkServerPath);
-      }
-    } catch {
-      // ignore
-    }
-    copyFileSync(openworkServerBuildPath, openworkServerPath);
-  }
-
-  if (openworkServerTargetPath) {
-    const shouldCopyTarget =
-      didBuildOpenworkServer || !existsSync(openworkServerTargetPath) || isStubBinary(openworkServerTargetPath);
-    if (shouldCopyTarget && openworkServerBuildPath !== openworkServerTargetPath) {
-      try {
-        if (existsSync(openworkServerTargetPath)) {
-          unlinkSync(openworkServerTargetPath);
-        }
-      } catch {
-        // ignore
-      }
-      copyFileSync(openworkServerBuildPath, openworkServerTargetPath);
-    }
-  }
-}
+// Server binary copy/sign skipped — runs in-process.
 
 if (!existingOpencodeVersion && opencodeCandidatePath) {
   existingOpencodeVersion =
@@ -559,9 +501,7 @@ if (existsSync(orchestratorBuildPath)) {
 adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
-  openworkServerBuildPath,
-  openworkServerPath,
-  openworkServerTargetPath,
+  // openwork-server runs in-process — no binary to sign.
   orchestratorBuildPath,
   orchestratorPath,
   orchestratorTargetPath,
@@ -592,7 +532,7 @@ const versions = {
   },
   "openwork-server": {
     version: openworkServerVersion,
-    sha256: existsSync(openworkServerPath) ? sha256File(openworkServerPath) : null,
+    sha256: "in-process",
   },
   "openwork-orchestrator": {
     version: orchestratorVersion,
