@@ -25,7 +25,6 @@
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
-    "chrome-devtools-mcp": "0.17.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
