@@ -86,8 +86,6 @@ const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
 const FILE_URL_RE = /^file:\/\//i;
 const HTTP_URL_RE = /^https?:\/\//i;
 
@@ -125,8 +123,6 @@ function formatBytes(size: number) {
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
-
-const isSupportedAttachmentType = (mime: string) => ACCEPTED_FILE_TYPES.includes(mime);
 
 async function compressImageFile(file: File): Promise<File> {
   if (file.type === "image/gif" || file.size <= IMAGE_COMPRESS_TARGET_BYTES) {
@@ -791,14 +787,9 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
 
     const accepted: File[] = [];
-    const unsupported: string[] = [];
     const oversize: string[] = [];
 
     for (const original of inputFiles) {
-      if (!isSupportedAttachmentType(original.type)) {
-        unsupported.push(original.name || t("composer.file_kind"));
-        continue;
-      }
       const processed = original.type.startsWith("image/") ? await compressImageFile(original) : original;
       if (processed.size > MAX_ATTACHMENT_BYTES) {
         oversize.push(processed.name || original.name);
@@ -828,15 +819,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       });
     }
 
-    if (unsupported.length) {
-      props.onNotice({
-        title:
-          unsupported.length === 1
-            ? `${unsupported[0]} · ${t("composer.unsupported_attachment_type")}`
-            : `${unsupported.length} ${t("composer.unsupported_attachment_type").toLowerCase()}`,
-        tone: "warning",
-      });
-    }
   };
 
   const activeMcpItems = mcpServers.map((entry) => ({
@@ -1017,7 +999,7 @@ export function ReactSessionComposer(props: ComposerProps) {
             <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
               <div className="rounded-2xl border border-dls-border bg-dls-surface/95 px-5 py-4 text-center backdrop-blur-sm">
                 <div className="text-sm font-medium text-dls-text">{t("composer.attach_files")}</div>
-                <div className="mt-1 text-xs text-dls-secondary">Images and PDFs are supported.</div>
+                <div className="mt-1 text-xs text-dls-secondary">{t("composer.any_file_type_supported")}</div>
               </div>
             </div>
           ) : null}
