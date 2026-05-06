@@ -285,6 +285,17 @@ function resolveChromeDevtoolsMcpBin() {
  * Chrome works out of the box.  Reads the existing config (jsonc or json),
  * injects `mcp.chrome-devtools` if missing, and writes back.
  */
+/**
+ * Returns true when the command looks like a generated npx/npm fallback
+ * or a bare binary name — i.e. not a user-customised command.
+ */
+function isLegacyChromeDevtoolsCommand(cmd) {
+  if (!Array.isArray(cmd) || cmd.length === 0) return true;
+  const first = String(cmd[0]);
+  // npx / npm exec path, or bare binary name without an absolute path
+  return first === "npx" || first === "npm" || first === "chrome-devtools-mcp" || first === "npm.cmd";
+}
+
 async function seedChromeDevtoolsMcp(workspaceDir) {
   const jsoncPath = path.join(workspaceDir, "opencode.jsonc");
   const jsonPath = path.join(workspaceDir, "opencode.json");
@@ -298,12 +309,24 @@ async function seedChromeDevtoolsMcp(workspaceDir) {
   }
 
   if (!config.mcp || typeof config.mcp !== "object") config.mcp = {};
-  if (config.mcp["chrome-devtools"]) return; // already present
 
   const resolved = resolveChromeDevtoolsMcpBin();
+  const bundledCommand = resolved ?? ["npx", "-y", "chrome-devtools-mcp@latest"];
+
+  // Inject if missing, or migrate if the existing entry uses a legacy
+  // npx / bare-binary command (not a user-customised path).
+  const existing = config.mcp["chrome-devtools"];
+  const needsInject = !existing;
+  const needsMigrate = existing && resolved && isLegacyChromeDevtoolsCommand(existing.command);
+
+  if (!needsInject && !needsMigrate) return;
+
   config.mcp["chrome-devtools"] = {
     type: "local",
-    command: resolved ?? ["npx", "-y", "chrome-devtools-mcp@latest"],
+    command: bundledCommand,
+    // Preserve extra fields (environment, enabled, etc.)
+    ...(existing && typeof existing === "object" ? existing : {}),
+    command: bundledCommand,
   };
 
   const targetPath = configPath || jsoncPath;

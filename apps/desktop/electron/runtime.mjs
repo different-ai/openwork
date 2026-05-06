@@ -970,15 +970,27 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       config = { $schema: "https://opencode.ai/config.json" };
     }
 
-    // Auto-inject chrome-devtools MCP if not already present
+    // Auto-inject or migrate chrome-devtools MCP.
     let changed = !configPath; // new file = always write
     if (!config.mcp || typeof config.mcp !== "object") {
       config.mcp = {};
     }
-    if (!config.mcp["chrome-devtools"]) {
+
+    const bundledCmd = chromeDevtoolsMcpCommand();
+    const existing = config.mcp["chrome-devtools"];
+    const isLegacy = (cmd) => {
+      if (!Array.isArray(cmd) || cmd.length === 0) return true;
+      const f = String(cmd[0]);
+      return f === "npx" || f === "npm" || f === "chrome-devtools-mcp" || f === "npm.cmd";
+    };
+    const needsInject = !existing;
+    const needsMigrate = existing && bundledCmd[0] === "node" && isLegacy(existing.command);
+
+    if (needsInject || needsMigrate) {
       config.mcp["chrome-devtools"] = {
+        ...(existing && typeof existing === "object" ? existing : {}),
         type: "local",
-        command: chromeDevtoolsMcpCommand(),
+        command: bundledCmd,
       };
       changed = true;
     }
