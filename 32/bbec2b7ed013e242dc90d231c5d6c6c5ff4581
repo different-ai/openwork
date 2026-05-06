@@ -1,0 +1,23 @@
+apps/app/src/react-app/domains/onboarding/welcome-page.tsx
+  s_11b2bfeb196fbd::t_580959494866a3 31-32
+apps/app/src/react-app/domains/cloud/den-signin-surface.tsx
+  s_11b2bfeb196fbd::t_634611cec9ff7e 194-195
+apps/app/src/react-app/domains/settings/shell/settings-shell.tsx
+  s_11b2bfeb196fbd::t_fa65b085fd3448 52,54,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "32bbec2b7ed013e242dc90d231c5d6c6c5ff4581",
+  "prompts": {},
+  "sessions": {
+    "s_11b2bfeb196fbd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "39e178d4-7b9b-4e86-8244-fa45806a8f2c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
