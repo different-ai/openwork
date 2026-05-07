@@ -1,12 +1,10 @@
 /**
  * In-process browser MCP servers.
  *
- * Imports chrome-devtools-mcp tools and runs them inside the Electron main
- * process — no sidecar binary, no npx, no absolute paths.
- *
  * Two servers:
- *   1. "openwork-browser" — controls the embedded WebContentsView
- *   2. "chrome"           — connects to the user's external Chrome via CDP
+ *   1. "openwork-browser" — controls the embedded WebContentsView using
+ *      native Electron webContents APIs (no Puppeteer, no app-level CDP).
+ *   2. "chrome" — connects to the user's external Chrome via Puppeteer/CDP.
  *
  * Both are exposed as HTTP MCP endpoints that OpenCode connects to as
  * remote MCP servers.
@@ -15,7 +13,10 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 
-// ── Chrome DevTools MCP internals (imported as library, NOT spawned) ──
+// ── Native built-in browser server ────────────────────────────────────
+import { createNativeBuiltinServer } from "./browser-native-tools.mjs";
+
+// ── Chrome DevTools MCP internals (for EXTERNAL Chrome only) ──────────
 // IMPORTANT: never import main.js — it runs parseArguments at module load.
 import "chrome-devtools-mcp/build/src/polyfill.js";
 
@@ -59,40 +60,6 @@ const EXTERNAL_TARGET_FILTER = (target) => {
   return true;
 };
 
-/**
- * Target filter for the BUILT-IN browser server — only accept pages that
- * are NOT the main OpenWork renderer.  The main renderer loads from
- * localhost (dev) or file:// (prod).  The WebContentsView loads real
- * websites (https://, http:// on non-localhost).
- */
-const BUILTIN_TARGET_FILTER = (target) => {
-  const url = target.url();
-  // Skip the main OpenWork renderer
-  if (url.startsWith("file://")) return false;
-  if (url.startsWith("http://localhost")) return false;
-  if (url.startsWith("http://127.0.0.1")) return false;
-  if (url.startsWith("http://[::1]")) return false;
-  // Skip chrome internals
-  if (url.startsWith("chrome://") || url.startsWith("chrome-extension://")) return false;
-  if (url.startsWith("devtools://")) return false;
-  // Skip about:blank (initial empty state before WebContentsView loads)
-  if (url === "about:blank") return false;
-  // Accept everything else — these are real websites in the WebContentsView
-  return true;
-};
-
-async function connectBuiltinBrowser(browserURL) {
-  return withTimeout(
-    puppeteer.connect({
-      browserURL,
-      targetFilter: BUILTIN_TARGET_FILTER,
-      defaultViewport: null,
-    }),
-    10_000,
-    "connectBuiltinBrowser",
-  );
-}
-
 async function connectExternalBrowser(browserURL) {
   return withTimeout(
     puppeteer.connect({
@@ -107,17 +74,11 @@ async function connectExternalBrowser(browserURL) {
 
 /**
  * Create an MCP server backed by chrome-devtools-mcp tools.
- *
- * @param {object}   opts
- * @param {string}   opts.name       — server name (e.g. "openwork-browser")
- * @param {string}   opts.version    — server version
- * @param {Function} opts.getBrowser — async () => Puppeteer.Browser
- * @param {Function} [opts.onToolCall] — called before each tool (e.g. to show browser panel)
- * @returns {McpServer}
+ * Used ONLY for the external Chrome server.
  */
-function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
+function createExternalChromeServer({ getBrowser }) {
   const server = new McpServer(
-    { name, version },
+    { name: "chrome", version: "0.1.0" },
     { capabilities: { logging: {} } },
   );
 
@@ -130,7 +91,7 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
   async function getContext() {
     const browser = await getBrowser();
     if (!browser?.connected) {
-      throw new Error(`Browser not connected for ${name}`);
+      throw new Error("Browser not connected for chrome");
     }
     if (browser !== lastBrowser) {
       lastBrowser = browser;
@@ -143,76 +104,7 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
     return context;
   }
 
-  /** Force a full Puppeteer reconnect + fresh McpContext on next getContext(). */
-  function invalidateContext() {
-    try { lastBrowser?.disconnect(); } catch { /* already gone */ }
-    lastBrowser = null;
-    context = null;
-  }
-
-  // Skip performance / extension / emulation categories that don't make
-  // sense for the built-in browser.  Keep the full set for external Chrome.
-  const skipCategories = name === "openwork-browser"
-    ? new Set(["extensions", "performance"])
-    : new Set();
-
   for (const tool of chromeDevtoolsTools) {
-    if (skipCategories.has(tool.annotations?.category)) continue;
-
-    // The upstream navigate_page tool wraps page.goto() in an additional
-    // waitForNavigation/stable-DOM sequence. Electron WebContentsView targets
-    // can complete the navigation while that extra wait never resolves, which
-    // makes built-in browser navigation hang. Use a simpler built-in-specific
-    // handler that waits for DOMContentLoaded and returns promptly.
-    if (name === "openwork-browser" && tool.name === "navigate_page") {
-      server.tool(
-        tool.name,
-        tool.description,
-        tool.schema,
-        async (params) => {
-          const guard = await mutex.acquire();
-          try {
-            await onToolCall?.(tool.name, params);
-            const ctx = await getContext();
-            const page = ctx.getSelectedPage();
-            const timeout = Number.isFinite(params?.timeout) && params.timeout > 0
-              ? params.timeout
-              : 30_000;
-            // Use default Puppeteer waitUntil (load event).
-            const options = { timeout };
-            const type = params?.type ?? "url";
-
-            if (type === "url") {
-              const url = String(params?.url ?? "").trim();
-              if (!url) throw new Error("navigate_page requires a url for type=url");
-              // Use Puppeteer page.goto() with waitUntil:domcontentloaded
-              // wrapped in a hard timeout.  Electron's loadURL sometimes
-              // fails in the WebContentsView sandboxed partition while
-              // Puppeteer's CDP-based navigation succeeds.
-              await withTimeout(page.goto(url, options), timeout + 1_000, "openwork-browser/navigate_page");
-            } else if (type === "back") {
-              await withTimeout(page.goBack(options), timeout + 1_000, "openwork-browser/navigate_page(back)");
-            } else if (type === "forward") {
-              await withTimeout(page.goForward(options), timeout + 1_000, "openwork-browser/navigate_page(forward)");
-            } else if (type === "reload") {
-              await withTimeout(page.reload({ ...options, ignoreCache: params?.ignoreCache }), timeout + 1_000, "openwork-browser/navigate_page(reload)");
-            } else {
-              throw new Error(`Unsupported navigation type: ${type}`);
-            }
-
-            const targetUrl = type === "url" ? String(params?.url ?? "").trim() : page.url();
-            return { content: [{ type: "text", text: `Navigated to ${targetUrl || page.url()}` }] };
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return { content: [{ type: "text", text: `Error: ${msg}` }] };
-          } finally {
-            guard.dispose();
-          }
-        },
-      );
-      continue;
-    }
-
     server.tool(
       tool.name,
       tool.description,
@@ -220,25 +112,17 @@ function createBrowserMcpServer({ name, version, getBrowser, onToolCall }) {
       async (params) => {
         const guard = await mutex.acquire();
         try {
-          // onToolCall may be async (e.g. ensuring the WebContentsView is loaded)
-          await onToolCall?.(tool.name, params);
           const ctx = await getContext();
           const response = new McpResponse();
-          // Wrap the tool handler with a hard timeout to prevent indefinite
-          // hangs. navigate_page in particular can hang inside Puppeteer's
-          // waitForNavigation when the Electron WebContentsView doesn't fire
-          // the expected CDP events.
           const TOOL_TIMEOUT = 30_000;
           await withTimeout(
             tool.handler({ params }, response, ctx),
             TOOL_TIMEOUT,
-            `${name}/${tool.name}`,
+            `chrome/${tool.name}`,
           );
           const { content } = await response.handle(tool.name, ctx);
           return { content };
         } catch (err) {
-          // Return the error as tool output instead of crashing the
-          // session — the agent can retry or fall back.
           const msg = err instanceof Error ? err.message : String(err);
           return { content: [{ type: "text", text: `Error: ${msg}` }] };
         } finally {
@@ -363,64 +247,29 @@ async function startMcpHttpServer(mcpServerFactory, preferredPort = 0) {
 /**
  * Boot both MCP servers.
  *
- * @param {object} opts
- * @param {number} opts.electronCdpPort — Electron's remote debugging port (for built-in browser)
+ * @param {object}   opts
+ * @param {Function} opts.getWebContents    — () => WebContents | null (built-in browser view)
  * @param {Function} opts.onBuiltinToolCall — called before each built-in browser tool (opens panel)
- * @param {Function} opts.onHideBrowser — called to close the browser panel
- * @returns {{ builtinPort: number, externalPort: number | null, stop: () => Promise<void> }}
+ * @param {Function} opts.onHideBrowser     — called to close the browser panel
+ * @returns {{ builtinPort: number, externalPort: number, stop: () => Promise<void> }}
  */
-export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCall, onHideBrowser }) {
-  let builtinBrowser = null;
+export async function startBrowserMcpServers({ getWebContents, onBuiltinToolCall, onHideBrowser }) {
   let externalBrowser = null;
 
-  // Factory: each new MCP session gets a fresh server instance.
+  // ── Built-in browser: native Electron APIs ────────────────────────
+  let builtinSnapshotReset = null;
   function createBuiltinFactory() {
-    const server = createBrowserMcpServer({
-      name: "openwork-browser",
-      version: "0.1.0",
-      getBrowser: async () => {
-        // Preserve the Puppeteer browser/context across sequential tool calls.
-        // chrome-devtools-mcp stores the latest accessibility snapshot on the
-        // McpContext; reconnecting for every tool loses that snapshot, making
-        // follow-up fill/click calls fail with "No snapshot found".
-        if (!builtinBrowser?.connected) {
-          builtinBrowser = await connectBuiltinBrowser(`http://127.0.0.1:${electronCdpPort}`);
-        }
-        return builtinBrowser;
-      },
+    const srv = createNativeBuiltinServer({
+      getWebContents,
       onToolCall: onBuiltinToolCall,
+      onHideBrowser,
     });
-
-    server.tool(
-      "show_browser",
-      "Open the built-in browser panel inside the OpenWork app. " +
-      "Called automatically when any browser tool runs, but can also be " +
-      "called explicitly to show the panel before interacting.",
-      {},
-      async () => {
-        await onBuiltinToolCall?.("show_browser");
-        return { content: [{ type: "text", text: "Browser panel opened." }] };
-      },
-    );
-
-    server.tool(
-      "hide_browser",
-      "Close the built-in browser panel. Call when the browsing task is " +
-      "finished and the user no longer needs to see the browser.",
-      {},
-      async () => {
-        onHideBrowser?.();
-        return { content: [{ type: "text", text: "Browser panel closed." }] };
-      },
-    );
-
-    return server;
+    builtinSnapshotReset = srv._snapshotReset;
+    return srv;
   }
 
-  /**
-   * Probe whether an external Chrome is reachable on any known CDP port.
-   * Returns { connected, port } without storing state.
-   */
+  // ── External Chrome: Puppeteer + CDP (unchanged) ──────────────────
+
   async function probeExternalChrome() {
     for (const port of [9222, 9229]) {
       try {
@@ -434,9 +283,7 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
   }
 
   function createExternalFactory() {
-    const server = createBrowserMcpServer({
-      name: "chrome",
-      version: "0.1.0",
+    const server = createExternalChromeServer({
       getBrowser: async () => {
         if (!externalBrowser?.connected) {
           for (const port of [9222, 9229]) {
@@ -504,9 +351,9 @@ export async function startBrowserMcpServers({ electronCdpPort, onBuiltinToolCal
   return {
     builtinPort: builtin.port,
     externalPort: external.port,
+    _snapshotReset: () => builtinSnapshotReset?.(),
     async stop() {
       await Promise.all([builtin.close(), external.close()]);
-      try { builtinBrowser?.disconnect(); } catch {}
       try { externalBrowser?.disconnect(); } catch {}
     },
   };

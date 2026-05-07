@@ -86,8 +86,9 @@ if (process.platform === "darwin" && APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty()
   app.dock.setIcon(APP_ICON_IMAGE);
 }
 
-// Optional: expose Chrome DevTools Protocol so external tools (chrome-devtools
-// MCP, raw CDP clients, etc.) can attach to this Electron instance.
+// Optional: expose Chrome DevTools Protocol so external tools (raw CDP clients,
+// DevTools front-ends) can attach to this Electron instance for debugging.
+// NOT required for the built-in browser — that uses native webContents APIs.
 // Enable by setting OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=<port> before launch.
 const remoteDebugPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
@@ -192,6 +193,12 @@ let browserView = null;
 let browserViewVisible = false;
 const BROWSER_DEFAULT_URL = "https://www.google.com";
 
+/** Send an IPC message to the main renderer, guarding against disposed frames. */
+function sendToRenderer(channel, payload) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  try { mainWindow.webContents.send(channel, payload); } catch { /* window closing */ }
+}
+
 function createBrowserView() {
   if (browserView) return browserView;
   browserView = new WebContentsView({
@@ -202,6 +209,9 @@ function createBrowserView() {
       partition: "persist:openwork-browser",
     },
   });
+  // Load about:blank immediately to preempt persistent-session restore.
+  // Cookies live on the session object, not the document — they survive this.
+  browserView.webContents.loadURL("about:blank");
   browserView.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
@@ -215,21 +225,23 @@ function createBrowserView() {
 }
 
 function sendBrowserState() {
-  if (!mainWindow || !browserView) return;
-  try {
-    mainWindow.webContents.send("openwork:browser:state", {
-      url: browserView.webContents.getURL(),
-      title: browserView.webContents.getTitle(),
-      canGoBack: browserView.webContents.canGoBack(),
-      canGoForward: browserView.webContents.canGoForward(),
-      isLoading: browserView.webContents.isLoading(),
-    });
-  } catch {
-    // window may be closing
-  }
+  if (!browserView) return;
+  sendToRenderer("openwork:browser:state", {
+    url: browserView.webContents.getURL(),
+    title: browserView.webContents.getTitle(),
+    canGoBack: browserView.webContents.canGoBack(),
+    canGoForward: browserView.webContents.canGoForward(),
+    isLoading: browserView.webContents.isLoading(),
+  });
 }
 
-function showBrowserView(bounds) {
+/**
+ * Attach the browser view to the main window.
+ * @param {object} bounds — { x, y, width, height }
+ * @param {object} [opts]
+ * @param {boolean} [opts.preloadDefault=true] — load default URL if the view has no URL
+ */
+function attachBrowserView(bounds, { preloadDefault = true } = {}) {
   if (!mainWindow) return;
   const view = createBrowserView();
   if (!mainWindow.contentView.children.includes(view)) {
@@ -239,7 +251,8 @@ function showBrowserView(bounds) {
     view.setBounds(bounds);
   }
   browserViewVisible = true;
-  if (!view.webContents.getURL()) {
+  const url = view.webContents.getURL();
+  if (preloadDefault && (!url || url === "about:blank")) {
     view.webContents.loadURL(BROWSER_DEFAULT_URL);
   }
   sendBrowserState();
@@ -255,9 +268,12 @@ function hideBrowserView() {
   browserViewVisible = false;
 }
 
+let _snapshotReset = null; // set by ensureBrowserMcpServers
+
 function destroyBrowserView() {
   hideBrowserView();
   if (browserView) {
+    _snapshotReset?.();
     try { browserView.webContents.close(); } catch { /* already destroyed */ }
     browserView = null;
   }
@@ -273,53 +289,27 @@ let browserMcpPorts = null; // { builtinPort, externalPort, stop }
 async function ensureBrowserMcpServers() {
   if (browserMcpPorts) return browserMcpPorts;
 
-  // CDP port for the Electron app itself (WebContentsView is a target on it)
-  const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
-  const cdpPort = Number.parseInt(cdpPortRaw, 10);
-  if (!Number.isFinite(cdpPort) || cdpPort <= 0) {
-    console.error("[browser-mcp] Cannot start — no Electron CDP port configured (OPENWORK_ELECTRON_REMOTE_DEBUG_PORT)");
-    return null;
-  }
-
   try {
     browserMcpPorts = await startBrowserMcpServers({
-      electronCdpPort: cdpPort,
+      getWebContents: () => browserView?.webContents ?? null,
       onBuiltinToolCall: async (toolName) => {
-        // Every built-in browser tool call ensures the panel is open and
-        // has a loaded page before puppeteer tries to connect.
+        // Ensure the browser panel is open so the agent can interact.
+        // preloadDefault: false — the tool will navigate on its own.
         if (!mainWindow) return;
-        const view = createBrowserView();
         if (!browserViewVisible) {
-          // Add the WebContentsView but don't position it yet — pass zero
-          // bounds so it stays invisible.  The React <BrowserPanel>
-          // component will compute its own layout bounds and call
-          // browser.show(bounds) / browser.setBounds(bounds) once the
-          // <aside> has been laid out.  Positioning eagerly here causes
-          // the view to overlay on top of the session content before React
-          // has made room for the panel column.
-          showBrowserView({ x: 0, y: 0, width: 0, height: 0 });
+          attachBrowserView({ x: 0, y: 0, width: 0, height: 0 }, { preloadDefault: false });
         }
-        // Always notify the renderer so it can render the BrowserPanel
-        // toolbar.  The React component may have unmounted (session switch)
-        // while the WebContentsView stayed open, so we re-send every time.
-        mainWindow.webContents.send("openwork:browser:panel-opened");
-        // Wait for the page to have a real URL (not about:blank)
-        const url = view.webContents.getURL();
-        if (!url || url === "about:blank") {
-          view.webContents.loadURL(BROWSER_DEFAULT_URL);
-          await new Promise((resolve) => {
-            view.webContents.once("did-finish-load", resolve);
-            setTimeout(resolve, 5000);
-          });
-        }
+        sendToRenderer("openwork:browser:panel-opened");
       },
       onHideBrowser: () => {
         hideBrowserView();
-        if (mainWindow) {
-          mainWindow.webContents.send("openwork:browser:panel-closed");
-        }
+        sendToRenderer("openwork:browser:panel-closed");
       },
     });
+    // Wire snapshot reset so destroyBrowserView clears stale uid state
+    if (browserMcpPorts._snapshotReset) {
+      _snapshotReset = browserMcpPorts._snapshotReset;
+    }
     console.log(`[browser-mcp] Built-in browser MCP at http://127.0.0.1:${browserMcpPorts.builtinPort}/mcp`);
     console.log(`[browser-mcp] External Chrome MCP at http://127.0.0.1:${browserMcpPorts.externalPort}/mcp`);
   } catch (err) {
@@ -1935,7 +1925,7 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
 });
 
 // ── Embedded browser IPC ────────────────────────────────────────────────
-ipcMain.handle("openwork:browser:show", (_event, bounds) => showBrowserView(bounds));
+ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
 ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
 ipcMain.handle("openwork:browser:navigate", (_event, url) => {
   if (!browserView) return;
