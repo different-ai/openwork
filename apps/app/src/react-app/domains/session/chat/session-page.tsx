@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Globe, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -98,7 +98,14 @@ export type SessionPageProps = {
     workspaceType?: WorkspaceInfo["workspaceType"];
   };
   selectedWorkspaceRoot: string;
+  selectedWorkspaceError?: string | null;
   runtimeWorkspaceId: string | null;
+  /**
+   * Pre-built OpenCode SDK base URL for the selected workspace's owning
+   * server. The parent route resolves this through `resolveWorkspaceEndpoint`
+   * so we never compose `<baseUrl>/workspace/<id>/opencode` here.
+   */
+  opencodeBaseUrl?: string | null;
   workspaces: WorkspaceInfo[];
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
@@ -229,16 +236,34 @@ export function SessionPage(props: SessionPageProps) {
     [todos],
   );
   const sidebarInitialLoading = useMemo(() => getSidebarInitialLoading(props.sidebar), [props.sidebar]);
+  // Derive the main-pane error from the same data the sidebar uses so the two
+  // panes can never disagree. We check (in priority order):
+  // 1. selectedWorkspaceError (errorsByWorkspaceId[selectedWorkspaceId])
+  // 2. workspaceConnectionStateById[selectedWorkspaceId].message (covers test/recover paths)
+  // 3. group.error from workspaceSessionGroups (the same source the sidebar reads)
+  const selectedWorkspaceConnectionMessage = (() => {
+    const state = props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId];
+    if (state?.status === "error") return state.message?.trim() ?? "";
+    return "";
+  })();
+  const selectedWorkspaceGroupError = (() => {
+    const group = props.sidebar.workspaceSessionGroups.find(
+      (item) => item.workspace.id === props.selectedWorkspaceId,
+    );
+    return group?.error?.trim() ?? "";
+  })();
+  const selectedWorkspaceErrorMessage =
+    props.selectedWorkspaceError?.trim() ||
+    selectedWorkspaceConnectionMessage ||
+    selectedWorkspaceGroupError ||
+    "";
+  const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
 
-  const reactSessionBaseUrl = useMemo(() => {
-    const workspaceId = props.runtimeWorkspaceId?.trim() ?? "";
-    const baseUrl = props.openworkServerClient?.baseUrl?.trim() ?? "";
-    if (!workspaceId || !baseUrl) return "";
-    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl;
-    return `${mounted.replace(/\/+$/, "")}/opencode`;
-  }, [props.openworkServerClient?.baseUrl, props.runtimeWorkspaceId]);
-
-  const reactSessionToken = props.openworkServerClient?.token?.trim() || props.openworkServerToken?.trim() || "";
+  const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
+  const reactSessionToken =
+    props.openworkServerToken?.trim() ||
+    props.openworkServerClient?.token?.trim() ||
+    "";
   const canRenderReactSurface = Boolean(
     props.selectedSessionId &&
       props.runtimeWorkspaceId &&
@@ -467,12 +492,18 @@ export function SessionPage(props: SessionPageProps) {
 
               {!showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <SessionSurface
+                  // Spread `surface` first so the explicit per-workspace
+                  // routing props below CAN'T be silently overridden by
+                  // anything that leaks into `surface`. SessionSurface's
+                  // server target (client/workspaceId/sessionId/opencodeBaseUrl/openworkToken)
+                  // must come from the resolved workspace endpoint passed by
+                  // SessionRoute, not from anything in `surface`.
+                  {...props.surface!}
                   client={props.openworkServerClient!}
                   workspaceId={props.runtimeWorkspaceId!}
                   sessionId={props.selectedSessionId!}
                   opencodeBaseUrl={reactSessionBaseUrl}
                   openworkToken={reactSessionToken}
-                  {...props.surface!}
                 />
               ) : null}
 
@@ -498,6 +529,40 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       <div className="flex justify-center">
                         <Button onClick={props.sidebar.onOpenCreateWorkspace}>{t("workspace.create_workspace")}</Button>
+                      </div>
+                    </div>
+                  ) : showSelectedWorkspaceError ? (
+                    <div className="px-6 py-16">
+                      <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 px-5 py-5 text-left shadow-[var(--dls-card-shadow)]">
+                        <div className="text-sm font-medium text-red-11">Remote workspace unavailable</div>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-red-11/90">
+                          {selectedWorkspaceErrorMessage}
+                        </p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            className="px-3 py-1.5 text-xs"
+                            onClick={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
+                          >
+                            {t("workspace_list.test_connection")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="px-3 py-1.5 text-xs"
+                            onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
+                          >
+                            {t("workspace_list.edit_connection")}
+                          </Button>
+                          {props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId]?.status === "error" ? (
+                            <Button
+                              variant="outline"
+                              className="px-3 py-1.5 text-xs"
+                              onClick={() => void Promise.resolve(props.sidebar.onRecoverWorkspace(props.selectedWorkspaceId))}
+                            >
+                              {t("workspace_list.recover")}
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ) : (

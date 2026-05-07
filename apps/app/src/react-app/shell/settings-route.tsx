@@ -5,7 +5,6 @@ import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
 import { SUGGESTED_PLUGINS } from "../../app/constants";
 import { createClient } from "../../app/lib/opencode";
 import {
-  buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
   readOpenworkServerSettings,
@@ -13,6 +12,7 @@ import {
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
+import { resolveWorkspaceEndpoint } from "../../app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
 import type {
   Client,
@@ -703,22 +703,23 @@ export function SettingsRoute() {
     [errorsByWorkspaceId, sessionsByWorkspaceId, workspaces],
   );
 
-  const opencodeBaseUrl = useMemo(() => {
-    if (!selectedWorkspace || !selectedWorkspaceId || !baseUrl) return "";
-    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, selectedWorkspaceId) ?? baseUrl;
-    return `${mounted.replace(/\/+$/, "")}/opencode`;
-  }, [baseUrl, selectedWorkspace, selectedWorkspaceId]);
-
-  const opencodeClient = useMemo(
-    () =>
-      opencodeBaseUrl && token
-        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
-            token,
-            mode: "openwork",
-          })
-        : null,
-    [opencodeBaseUrl, selectedWorkspaceRoot, token],
+  const selectedWorkspaceEndpoint = useMemo(
+    () => resolveWorkspaceEndpoint(selectedWorkspace, { baseUrl, token }),
+    [baseUrl, selectedWorkspace, token],
   );
+  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+
+  const opencodeClient = useMemo(() => {
+    if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
+    return createClient(
+      selectedWorkspaceEndpoint.opencodeBaseUrl,
+      selectedWorkspaceRoot || undefined,
+      {
+        token: selectedWorkspaceEndpoint.token,
+        mode: "openwork",
+      },
+    );
+  }, [selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
 
   useEffect(() => {
     setActiveClient(opencodeClient);

@@ -12,12 +12,15 @@ import type {
 import { createClient, unwrap } from "../../app/lib/opencode";
 import { listCommands, shellInSession } from "../../app/lib/opencode-session";
 import {
-  buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   readOpenworkServerSettings,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "../../app/lib/openwork-server";
+import {
+  resolveWorkspaceEndpoint,
+  type ResolvedWorkspaceEndpoint,
+} from "../../app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
 import {
   engineInfo,
@@ -220,10 +223,26 @@ function mergeRouteWorkspaces(
       .filter(([path]) => path.length > 0),
   );
 
-  const mergedServer = serverWorkspaces.map((workspace) => {
+  // If a server workspace's id matches a desktop workspace marked as remote,
+  // skip the server's view entirely. The local OpenWork server may have stale
+  // registrations from earlier (buggy) activate calls that show up here as
+  // `workspaceType: "local"`, which would otherwise clobber the desktop's
+  // remote routing fields and send workspace-scoped requests back to the
+  // local server.
+  const remoteDesktopIds = new Set(
+    desktopWorkspaces
+      .filter((workspace) => workspace.workspaceType === "remote")
+      .map((workspace) => workspace.id),
+  );
+  const filteredServer = serverWorkspaces.filter((workspace) => !remoteDesktopIds.has(workspace.id));
+
+  const mergedServer = filteredServer.map((workspace) => {
     const match =
       desktopById.get(workspace.id) ??
       desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
+    // For local workspaces, prefer the server's view (which knows things like
+    // `path` and per-workspace runtime fields) and only fall back to the
+    // desktop's display name when the server doesn't provide one.
     const merged = match
       ? {
           ...workspace,
@@ -273,6 +292,10 @@ function toSessionGroups(
     error: errorsByWorkspaceId[workspace.id],
   }));
 }
+
+// All workspace-scoped server URLs/clients/tokens come from
+// `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
+// Don't compose `<baseUrl>/workspace/<id>` here.
 
 function isActiveSessionStatus(status: unknown) {
   return status === "running" || status === "retry" || status === "busy";
@@ -379,6 +402,28 @@ export function SessionRoute() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState<string>(() => readActiveWorkspaceId() ?? "");
   const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
+  const selectedWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
+    [selectedWorkspaceId, workspaces],
+  );
+  // Workspace-scoped API calls (sessions, events, activate, opencode/*) must
+  // hit the worker that owns the workspace, not the user's local server. The
+  // single source of truth for that routing is `resolveWorkspaceEndpoint`.
+  //
+  // We read the latest local server's baseUrl/token through a ref so the
+  // `endpointForWorkspace` callback stays permanently stable. Otherwise it
+  // would change on every `setBaseUrl`/`setToken`, which used to cascade up
+  // through `loadWorkspaceSessionsInBackground` and `refreshRouteState` and
+  // produce a tight render-refresh-setWorkspaces loop.
+  const localServerRef = useRef<{ baseUrl: string; token: string }>({ baseUrl: "", token: "" });
+  useEffect(() => {
+    localServerRef.current = { baseUrl, token };
+  }, [baseUrl, token]);
+  const endpointForWorkspace = useCallback(
+    (workspace: RouteWorkspace | null | undefined): ResolvedWorkspaceEndpoint | null =>
+      resolveWorkspaceEndpoint(workspace, localServerRef.current),
+    [],
+  );
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
@@ -461,17 +506,19 @@ export function SessionRoute() {
 
   const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
   const loadWorkspaceSessionsInBackground = useCallback(
-    async (openworkClient: OpenworkServerClient, workspaces: RouteWorkspace[]) => {
+    async (workspaces: RouteWorkspace[]) => {
       const MAX_ATTEMPTS = 6;
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
       const fetchOnce = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
+        const endpoint = endpointForWorkspace(workspace);
+        if (!endpoint) return;
         const startedAt = backgroundSessionLoadInFlight.current.get(workspace.id) ?? 0;
         if (startedAt && Date.now() - startedAt < 5_000) return;
         const requestStartedAt = Date.now();
         backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
         try {
-          const response = await openworkClient.listSessions(workspace.id, { limit: 200 });
+          const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot
             ? (response.items ?? []).filter((session: any) =>
@@ -544,7 +591,7 @@ export function SessionRoute() {
 
       await Promise.all(workspaces.map((workspace) => fetchOnce(workspace, 0)));
     },
-    [],
+    [endpointForWorkspace],
   );
 
   const refreshRouteState = useCallback(async () => {
@@ -652,7 +699,11 @@ export function SessionRoute() {
       // transport failure is non-fatal. See issue #870.
       if (nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
-        void openworkClient.activateWorkspace(nextWorkspaceId).catch(() => undefined);
+        const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
+        const nextEndpoint = endpointForWorkspace(nextWorkspace);
+        if (nextEndpoint) {
+          void nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId).catch(() => undefined);
+        }
       }
       recordInspectorEvent("route.refresh.complete", {
         workspaces: nextWorkspaces.length,
@@ -672,7 +723,7 @@ export function SessionRoute() {
         const orderedWorkspaces = selectedWorkspace
           ? [selectedWorkspace, ...backgroundWorkspaces.filter((workspace) => workspace.id !== selectedWorkspace.id)]
           : backgroundWorkspaces;
-        void loadWorkspaceSessionsInBackground(openworkClient, orderedWorkspaces);
+        void loadWorkspaceSessionsInBackground(orderedWorkspaces);
       }
     } catch (error) {
       const message = describeRouteError(error);
@@ -712,7 +763,12 @@ export function SessionRoute() {
       setRouteError(t("app.error_connect_first"));
       return false;
     }
-    await client.reloadEngine(selectedWorkspaceId);
+    const endpoint = endpointForWorkspace(selectedWorkspace);
+    if (!endpoint) {
+      setRouteError(t("app.error_connect_first"));
+      return false;
+    }
+    await endpoint.client.reloadEngine(endpoint.workspaceId);
     setEngineReloadVersion((v) => v + 1);
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
@@ -721,7 +777,7 @@ export function SessionRoute() {
     }
     await refreshRouteState();
     return true;
-  }, [client, refreshRouteState, selectedWorkspaceId]);
+  }, [client, endpointForWorkspace, refreshRouteState, selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
@@ -733,13 +789,15 @@ export function SessionRoute() {
 
   useEffect(() => {
     if (!client || !selectedWorkspaceId) return;
+    const endpoint = endpointForWorkspace(selectedWorkspace);
+    if (!endpoint) return;
     let cancelled = false;
 
     const pollReloadEvents = async () => {
       const currentCursor = reloadEventCursorByWorkspaceRef.current[selectedWorkspaceId];
       try {
-        const response = await client.listReloadEvents(
-          selectedWorkspaceId,
+        const response = await endpoint.client.listReloadEvents(
+          endpoint.workspaceId,
           typeof currentCursor === "number" ? { since: currentCursor } : undefined,
         );
         if (cancelled) return;
@@ -767,15 +825,17 @@ export function SessionRoute() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [client, reloadCoordinator, selectedWorkspaceId]);
+  }, [client, endpointForWorkspace, reloadCoordinator, selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId) return;
+    const endpoint = endpointForWorkspace(selectedWorkspace);
+    if (!endpoint) return;
     let cancelled = false;
 
     const refreshSelectedSessionTitle = async () => {
       try {
-        const response = await client.getSession(selectedWorkspaceId, selectedSessionId);
+        const response = await endpoint.client.getSession(endpoint.workspaceId, selectedSessionId);
         if (cancelled || !response.item) return;
         setSessionsByWorkspaceId((current) => {
           const list = current[selectedWorkspaceId] ?? [];
@@ -798,7 +858,7 @@ export function SessionRoute() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [client, selectedSessionId, selectedWorkspaceId]);
+  }, [client, endpointForWorkspace, selectedSessionId, selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     workspacesRef.current = workspaces;
@@ -960,6 +1020,15 @@ export function SessionRoute() {
   // restore the last session the user opened in the active workspace.
   useEffect(() => {
     if (loading) return;
+    if (routeWorkspaceId && workspaces.length > 0 && !workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
+      const fallbackWorkspaceId = workspaces.some((workspace) => workspace.id === legacySelectedWorkspaceId)
+        ? legacySelectedWorkspaceId
+        : workspaces[0]?.id || "";
+      if (fallbackWorkspaceId) {
+        navigateToWorkspaceSession(fallbackWorkspaceId, selectedSessionId, { replace: true });
+      }
+      return;
+    }
     if (!routeWorkspaceId && selectedWorkspaceId) {
       navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId, { replace: true });
       return;
@@ -973,11 +1042,13 @@ export function SessionRoute() {
     navigateToWorkspaceSession(selectedWorkspaceId, remembered, { replace: true });
   }, [
     loading,
+    legacySelectedWorkspaceId,
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
     selectedWorkspaceId,
     sessionsByWorkspaceId,
+    workspaces,
   ]);
 
   // Redirect to /welcome when no workspaces exist and the user hasn't
@@ -1014,10 +1085,6 @@ export function SessionRoute() {
     return selectedWorkspaceId;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
 
-  const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
-    [selectedWorkspaceId, workspaces],
-  );
   const workspaceConnectionStateById = useMemo(() => {
     const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
     for (const workspace of workspaces) {
@@ -1056,11 +1123,15 @@ export function SessionRoute() {
   }, [client, loading, selectedWorkspace, workspaces]);
 
   const selectedWorkspaceRoot = selectedWorkspace?.path?.trim() || "";
-  const opencodeBaseUrl = useMemo(() => {
-    if (!selectedWorkspaceId || !baseUrl) return "";
-    const mounted = buildOpenworkWorkspaceBaseUrl(baseUrl, selectedWorkspaceId) ?? baseUrl;
-    return `${mounted.replace(/\/+$|\/+$/g, "")}/opencode`;
-  }, [baseUrl, selectedWorkspaceId]);
+  // Single source of truth for the selected workspace's server URL/token/id.
+  // For remote workspaces this is the worker that owns the workspace; for
+  // local workspaces it's the user's local OpenWork server.
+  const selectedWorkspaceEndpoint = useMemo(
+    () => resolveWorkspaceEndpoint(selectedWorkspace, { baseUrl, token }),
+    [baseUrl, selectedWorkspace, token],
+  );
+  const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
+  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
   const selectedWorkspaceIsLoading = retryingWorkspaceIds.includes(selectedWorkspaceId);
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
   const selectedSessionKnown = Boolean(
@@ -1083,13 +1154,13 @@ export function SessionRoute() {
 
   const opencodeClient = useMemo(
     () =>
-      opencodeBaseUrl && token && !selectedWorkspaceError
+      opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
         ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
-            token,
+            token: selectedWorkspaceServerToken,
             mode: "openwork",
           })
         : null,
-    [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, token],
+    [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
   );
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError,
@@ -1395,13 +1466,15 @@ export function SessionRoute() {
       return null;
     }
 
+    // Note: do NOT include `client`, `workspaceId`, `sessionId`,
+    // `opencodeBaseUrl`, or `openworkToken` here. SessionPage forwards those
+    // explicitly to SessionSurface from the per-workspace endpoint resolved
+    // by `resolveWorkspaceEndpoint`. If we leak them in here, the spread of
+    // `surfaceProps` in SessionPage overrides those correct values with the
+    // local server's, and remote workspaces silently end up calling the
+    // local server with the local `rem_*` id.
     return {
-      client,
-      workspaceId: selectedWorkspaceId,
       workspaceRoot: selectedWorkspaceRoot,
-      sessionId: selectedSessionId,
-      opencodeBaseUrl,
-      openworkToken: token,
       developerMode: false,
       modelLabel,
       onModelClick: () => {
@@ -1706,19 +1779,20 @@ export function SessionRoute() {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
-      !token ||
-      !baseUrl ||
       loading ||
       retryingWorkspaceIds.includes(workspaceId) ||
       errorsByWorkspaceId[workspaceId]
     ) {
       return;
     }
-    const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
+    const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl, token });
+    if (!endpoint || !endpoint.token) {
+      return;
+    }
     const workspaceClient = createClient(
-      workspaceOpencodeBaseUrl,
+      endpoint.opencodeBaseUrl,
       workspace.path?.trim() || undefined,
-      { token, mode: "openwork" },
+      { token: endpoint.token, mode: "openwork" },
     );
     try {
       const session = unwrap(
@@ -1966,12 +2040,16 @@ export function SessionRoute() {
 
   return (
     <>
-    {opencodeClient && selectedWorkspaceId && opencodeBaseUrl && token ? (
+    {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
-        workspaceId={selectedWorkspaceId}
+        // Use the server-side workspace id (the one without the `rem_`
+        // prefix) so the React Query cache keys session-sync writes match
+        // the keys SessionSurface reads from. Otherwise events arrive but
+        // the UI never sees them and gets stuck on "thinking".
+        workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
         opencodeBaseUrl={opencodeBaseUrl}
-        openworkToken={token}
+        openworkToken={selectedWorkspaceServerToken}
       />
     ) : null}
     <SessionPage
@@ -1984,12 +2062,14 @@ export function SessionRoute() {
         workspaceType: selectedWorkspace.workspaceType,
       } : { workspaceType: "local" }}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
-      runtimeWorkspaceId={selectedWorkspaceId || null}
+      selectedWorkspaceError={selectedWorkspaceError}
+      runtimeWorkspaceId={selectedWorkspaceEndpoint?.workspaceId || null}
+      opencodeBaseUrl={opencodeBaseUrl}
       workspaces={workspaces}
       clientConnected={canCreateTask}
       openworkServerStatus={client ? "connected" : "disconnected"}
-      openworkServerClient={client}
-      openworkServerToken={token}
+      openworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
+      openworkServerToken={selectedWorkspaceServerToken}
       developerMode={false}
       headerStatus={canCreateTask ? t("status.connected") : t("session.loading_detail")}
       busyHint={effectiveLoading ? t("session.loading_detail") : null}
@@ -2023,7 +2103,7 @@ export function SessionRoute() {
           const workspace = workspaces.find((item) => item.id === workspaceId);
           if (client && workspace && !sessionsByWorkspaceId[workspaceId]?.length) {
             setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspaceId])));
-            void loadWorkspaceSessionsInBackground(client, [workspace]);
+            void loadWorkspaceSessionsInBackground([workspace]);
           }
           // Fire Tauri updates but don't await them — they're bookkeeping and
           // awaiting 2 IPC roundtrips on every click used to stall rapid
@@ -2038,9 +2118,11 @@ export function SessionRoute() {
           // applied on the workspace the user is already on at launch. See
           // issue #870.
           if (workspaceId && client) {
-            void client
-              .activateWorkspace(workspaceId)
-              .catch(() => undefined);
+            const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+            const endpoint = endpointForWorkspace(workspace);
+            if (endpoint) {
+              void endpoint.client.activateWorkspace(endpoint.workspaceId).catch(() => undefined);
+            }
           }
           // If we remember what the user last opened here and that session
           // still exists in our local list, navigate. Otherwise stay put.
@@ -2064,34 +2146,8 @@ export function SessionRoute() {
           navigateToWorkspaceSession(workspaceId, sessionId);
         },
         onPrefetchSession: () => {},
-        onCreateTaskInWorkspace: async (workspaceId) => {
+        onCreateTaskInWorkspace: (workspaceId) => {
           void handleCreateTaskInWorkspace(workspaceId);
-          return;
-          const workspace = workspaces.find((item) => item.id === workspaceId)!;
-          if (!workspace || !token || !baseUrl) return;
-          const workspaceOpencodeBaseUrl = `${(buildOpenworkWorkspaceBaseUrl(baseUrl, workspace.id) ?? baseUrl).replace(/\/+$|\/+$/g, "")}/opencode`;
-          const workspaceClient = createClient(
-            workspaceOpencodeBaseUrl,
-            workspace.path?.trim() || undefined,
-            { token, mode: "openwork" },
-          );
-          const session = unwrap(
-            await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-          );
-          // Make sure the new session is the active pair before navigating
-          // so the surface renders the new id immediately instead of going
-          // through the "unknown session" render tick.
-          setLegacySelectedWorkspaceId(workspaceId);
-          writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, session.id);
-          setSessionsByWorkspaceId((current) => ({
-            ...current,
-            [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
-          }));
-          navigateToWorkspaceSession(workspaceId, session.id);
-          // Refresh in the background so the new session picks up its real
-          // metadata (title, timestamps) as soon as the server knows them.
-          void refreshRouteState();
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
@@ -2164,7 +2220,9 @@ export function SessionRoute() {
       onDeleteSession={
         client && selectedWorkspaceId
           ? async (sessionId) => {
-              await client.deleteSession(selectedWorkspaceId, sessionId);
+              const endpoint = endpointForWorkspace(selectedWorkspace);
+              if (!endpoint) return;
+              await endpoint.client.deleteSession(endpoint.workspaceId, sessionId);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }
