@@ -369,10 +369,34 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const mapped = toUIPart(part);
     if (!mapped) return;
     const pending = entry.pendingDeltas.get(part.id);
+    // Seed the new part with any deltas that arrived before this
+    // declaration. We deliberately ignore `pending.reasoning` — it
+    // can't be trusted because opencode emits `field: "text"` for
+    // both text and reasoning streams. The part's actual kind
+    // (`mapped.type`) is the source of truth.
+    //
+    // Both `pending.text` and `mapped.text` are cumulative views of the
+    // same stream, so we keep whichever is longer instead of
+    // concatenating (concatenation double-counts the bytes that landed
+    // in both). Without this, reasoning text shows up duplicated in the
+    // streaming UI.
     const seededPart =
-      pending && ((mapped.type === "text" && !pending.reasoning) || (mapped.type === "reasoning" && pending.reasoning))
-        ? { ...mapped, text: `${mapped.text}${pending.text}`, state: "streaming" as const }
+      pending && (mapped.type === "text" || mapped.type === "reasoning")
+        ? {
+            ...mapped,
+            text: pending.text.length > mapped.text.length ? pending.text : mapped.text,
+            state: "streaming" as const,
+          }
         : mapped;
+    // Drop any deltas for this partID still queued in the rAF flush
+    // buffer — they've already been incorporated into `mapped.text`.
+    // Without this, the rAF flush would re-append them on top of the
+    // cumulative text we just wrote, duplicating bytes mid-stream.
+    if (entry.deltaFlushBuffer.length > 0) {
+      entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+        (item) => item.partId !== part.id,
+      );
+    }
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
       // If we already have this message, keep its role; otherwise infer
       // from the alternation pattern. Only the newly-stubbed case needs
@@ -398,13 +422,17 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
-    // Buffer this delta and let the frame flusher apply all queued deltas
-    // for this entry in a single setQueryData call per affected session.
+    // Note: we do NOT trust `props.field` to disambiguate reasoning vs
+    // text. Opencode emits `field: "text"` for both kinds; the actual
+    // distinction lives on the part's `type`, which we only see via
+    // `message.part.updated`. The flusher resolves the kind at apply
+    // time, falling back to `pendingDeltas` if the part hasn't been
+    // declared yet.
     entry.deltaFlushBuffer.push({
       sessionId: props.sessionID!,
       messageId: props.messageID!,
       partId: props.partID!,
-      reasoning: props.field === "reasoning",
+      reasoning: false,
       delta: props.delta!,
     });
     scheduleDeltaFlush(entry, workspaceId);
@@ -467,15 +495,22 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             next = upsertMessage(next, { id: item.messageId, role, parts: [] });
             ensuredMessageIds.add(item.messageId);
           }
-          next = appendDelta(next, item.messageId, item.partId, item.delta, item.reasoning);
-          // If the delta landed on a synthetic "no matching part" case, keep
-          // the text so a later message.part.updated event can stitch it.
-          const message = next.find((m) => m.id === item.messageId);
-          const matched = message?.parts.some((part) =>
+          // Resolve the part kind from the transcript instead of trusting
+          // the inbound delta event (opencode emits `field: "text"` for
+          // both text and reasoning parts). If the part hasn't been
+          // declared yet via `message.part.updated`, defer the delta into
+          // `entry.pendingDeltas` so the part can be created with the
+          // correct kind later. Without this, every delta lands as a text
+          // part — and reasoning content leaks into the response markdown
+          // until the next reload reconstructs the transcript from the
+          // snapshot.
+          const ownerMessage = next.find((m) => m.id === item.messageId);
+          const ownerPart = ownerMessage?.parts.find((part) =>
             (part.type === "dynamic-tool" && part.toolCallId === item.partId) ||
               getPartMetadataId(part) === item.partId,
           );
-          if (!matched) {
+
+          if (!ownerPart) {
             const existing = entry.pendingDeltas.get(item.partId) ?? {
               messageId: item.messageId,
               reasoning: item.reasoning,
@@ -483,7 +518,11 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             };
             existing.text += item.delta;
             entry.pendingDeltas.set(item.partId, existing);
+            continue;
           }
+
+          const reasoning = ownerPart.type === "reasoning";
+          next = appendDelta(next, item.messageId, item.partId, item.delta, reasoning);
         }
         return next;
       },
