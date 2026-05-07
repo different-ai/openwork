@@ -63,6 +63,7 @@ export type SessionSurfaceProps = {
   opencodeBaseUrl: string;
   openworkToken: string;
   developerMode: boolean;
+  showThinking: boolean;
   modelLabel: string;
   onModelClick: () => void;
   onSendDraft: (draft: ComposerDraft) => void;
@@ -893,7 +894,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     messages={renderedMessages}
                     isStreaming={chatStreaming}
                     developerMode={props.developerMode}
-                    showThinking={showThinking}
+                    showThinking={props.showThinking}
                     scrollElement={() => scrollRef.current}
                   />
                   {error ? (

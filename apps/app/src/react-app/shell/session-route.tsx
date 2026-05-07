@@ -1490,6 +1490,7 @@ export function SessionRoute() {
     return {
       workspaceRoot: selectedWorkspaceRoot,
       developerMode: false,
+      showThinking: local.prefs.showThinking,
       modelLabel,
       onModelClick: () => {
         setModelPickerQuery("");
