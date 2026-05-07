@@ -33,11 +33,6 @@ on:
         required: false
         type: boolean
         default: true
-      build_tauri:
-        description: "Build desktop (Tauri) artifacts"
-        required: false
-        type: boolean
-        default: true
       publish_sidecars:
         description: "Build + upload openwork-orchestrator sidecar release assets"
         required: false
@@ -53,11 +48,11 @@ on:
         required: false
         type: boolean
         default: true
-      publish_electron:
-        description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows) alongside Tauri"
+      build_electron:
+        description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows)"
         required: false
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -78,7 +73,7 @@ jobs:
       draft: ${{ steps.resolve.outputs.draft }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       notarize: ${{ steps.resolve.outputs.notarize }}
-      build_tauri: ${{ steps.resolve.outputs.build_tauri }}
+      build_electron: ${{ steps.resolve.outputs.build_electron }}
       publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
       publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
@@ -93,7 +88,7 @@ jobs:
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
           INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
-          INPUT_BUILD_TAURI: ${{ github.event.inputs.build_tauri }}
+          INPUT_BUILD_ELECTRON: ${{ github.event.inputs.build_electron }}
           INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
           INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
@@ -101,7 +96,7 @@ jobs:
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
           DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
-          DEFAULT_BUILD_TAURI: ${{ vars.RELEASE_BUILD_TAURI }}
+          DEFAULT_BUILD_ELECTRON: ${{ vars.RELEASE_PUBLISH_ELECTRON }}
         run: |
           set -euo pipefail
 
@@ -132,12 +127,11 @@ jobs:
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s' \
               "## What's new" \
               "$TAG" \
               "- Download the attached installer for your platform." \
-              "- Electron builds use the attached latest-mac.yml updater feed when Electron publishing is enabled." \
-              "- Tauri builds use the attached latest.json updater manifest."
+              "- Electron builds use the attached latest-mac.yml updater feed."
           fi
 
           draft="${INPUT_DRAFT:-}"
@@ -155,9 +149,9 @@ jobs:
             notarize="${DEFAULT_NOTARIZE:-true}"
           fi
 
-          build_tauri="${INPUT_BUILD_TAURI:-}"
-          if [ -z "$build_tauri" ]; then
-            build_tauri="${DEFAULT_BUILD_TAURI:-true}"
+          build_electron="${INPUT_BUILD_ELECTRON:-}"
+          if [ -z "$build_electron" ]; then
+            build_electron="${DEFAULT_BUILD_ELECTRON:-true}"
           fi
 
           publish_sidecars="${INPUT_PUBLISH_SIDECARS:-}"
@@ -184,7 +178,7 @@ jobs:
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
-          echo "build_tauri=$build_tauri" >> "$GITHUB_OUTPUT"
+          echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
           echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
           echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
@@ -248,368 +242,10 @@ jobs:
       - name: Release review (strict)
         run: node scripts/release/review.mjs --strict
 
-  publish-tauri:
-    name: Build + Publish (${{ matrix.target }})
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 360
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-      RELEASE_NAME: ${{ needs.resolve-release.outputs.release_name }}
-      RELEASE_BODY: ${{ needs.resolve-release.outputs.release_body }}
-      RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
-      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
-      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
-      # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
-      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-14
-            os_type: macos
-            target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg,app"
-          - platform: macos-14
-            os_type: macos
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg,app"
-          - platform: windows-2022
-            os_type: windows
-            target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc --bundles msi"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Enable git long paths (Windows)
-        if: matrix.os_type == 'windows'
-        shell: pwsh
-        run: git config --global core.longpaths true
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: .nvmrc
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: "1.3.6"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        continue-on-error: true
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/desktop/src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Install OpenTUI x64 core (macOS x86_64)
-        if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
-        run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Resolve OpenCode version
-        id: opencode-version
-        shell: bash
-        run: |
-          node <<'NODE' >> "$GITHUB_OUTPUT"
-          const fs = require('fs');
-          const parsed = JSON.parse(fs.readFileSync('./constants.json', 'utf8'));
-          const version = String(parsed.opencodeVersion || '').replace(/^v/, '').trim();
-          if (!version) {
-            throw new Error('Pinned OpenCode version is missing from constants.json');
-          }
-          console.log('version=' + version);
-          NODE
-
-      - name: Download OpenCode sidecar
-        shell: bash
-        env:
-          PINNED_OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
-          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-        run: |
-          set -euo pipefail
-
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin)
-              opencode_asset="opencode-darwin-arm64.zip"
-              ;;
-            x86_64-apple-darwin)
-              opencode_asset="opencode-darwin-x64-baseline.zip"
-              ;;
-            x86_64-unknown-linux-gnu)
-              opencode_asset="opencode-linux-x64-baseline.tar.gz"
-              ;;
-            aarch64-unknown-linux-gnu)
-              opencode_asset="opencode-linux-arm64.tar.gz"
-              ;;
-            x86_64-pc-windows-msvc)
-              opencode_asset="opencode-windows-x64-baseline.zip"
-              ;;
-            *)
-              echo "Unsupported target: ${{ matrix.target }}" >&2
-              exit 1
-              ;;
-          esac
-
-          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
-          url="https://github.com/${repo}/releases/download/v${PINNED_OPENCODE_VERSION}/${opencode_asset}"
-          tmp_dir="$RUNNER_TEMP/opencode"
-          extract_dir="$tmp_dir/extracted"
-          rm -rf "$tmp_dir"
-          mkdir -p "$extract_dir"
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$tmp_dir/$opencode_asset" "$url"
-
-          if [[ "$opencode_asset" == *.tar.gz ]]; then
-            tar -xzf "$tmp_dir/$opencode_asset" -C "$extract_dir"
-          else
-            if command -v unzip >/dev/null 2>&1; then
-              unzip -q "$tmp_dir/$opencode_asset" -d "$extract_dir"
-            elif command -v 7z >/dev/null 2>&1; then
-              7z x "$tmp_dir/$opencode_asset" -o"$extract_dir" >/dev/null
-            else
-              echo "No unzip utility available" >&2
-              exit 1
-            fi
-          fi
-
-          if [ -f "$extract_dir/opencode" ]; then
-            bin_path="$extract_dir/opencode"
-          elif [ -f "$extract_dir/opencode.exe" ]; then
-            bin_path="$extract_dir/opencode.exe"
-          else
-            echo "OpenCode binary not found in archive" >&2
-            ls -la "$extract_dir"
-            exit 1
-          fi
-
-          target_name="opencode-${{ matrix.target }}"
-          if [ "${{ matrix.os_type }}" = "windows" ]; then
-            target_name="${target_name}.exe"
-          fi
-
-          mkdir -p apps/desktop/src-tauri/sidecars
-          cp "$bin_path" "apps/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "apps/desktop/src-tauri/sidecars/${target_name}"
-
-      - name: Write notary API key
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
-        env:
-          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
-          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
-          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-
-          missing=()
-          for name in \
-            APPLE_NOTARY_API_KEY_P8_BASE64 \
-            APPLE_NOTARY_API_KEY_ID \
-            APPLE_NOTARY_API_ISSUER_ID \
-            APPLE_CODESIGN_CERT_P12_BASE64 \
-            APPLE_CODESIGN_CERT_PASSWORD \
-            APPLE_SIGNING_IDENTITY; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'Missing macOS notarization/signing secrets: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-
-          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
-          chmod 600 "$NOTARY_KEY_PATH"
-
-          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
-
-      - name: Reject unnotarized macOS Tauri release
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE != 'true'
-        shell: bash
-        run: |
-          echo "macOS release assets must be notarized. Re-run with notarize=true or set MACOS_NOTARIZE=true." >&2
-          exit 1
-
-      - name: Build + upload (notarized)
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
-        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-
-          # macOS notarization (App Store Connect API key)
-          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
-          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
-          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: apps/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-          uploadUpdaterJson: false
-          updaterJsonPreferNsis: true
-          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
-
-      - name: Build + upload
-        if: matrix.os_type != 'macos'
-        uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ env.RELEASE_DRAFT == 'true' }}
-          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
-          projectPath: apps/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-          uploadUpdaterJson: false
-          updaterJsonPreferNsis: true
-          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
-
-      - name: Verify versions.json bundled (macOS)
-        if: success() && matrix.os_type == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          tmp_dir="$RUNNER_TEMP/openwork-bundle-verify"
-          archive_path="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenWork.app.tar.gz"
-
-          if [ ! -f "$archive_path" ]; then
-            echo "ERROR: updater archive missing from local build output: $archive_path" >&2
-            exit 1
-          fi
-
-          rm -rf "$tmp_dir"
-          mkdir -p "$tmp_dir"
-
-          tar -xzf "$archive_path" -C "$tmp_dir"
-
-          app_path="$tmp_dir/OpenWork.app"
-          manifest_path="$app_path/Contents/Resources/versions.json"
-
-          if [ ! -f "$manifest_path" ]; then
-            echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
-            echo "Hint: ensure apps/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json as a resource" >&2
-            exit 1
-          fi
-
-          echo "Found bundled versions.json at $manifest_path"
-          codesign --verify --deep --strict --verbose=2 "$app_path"
-          spctl -a -vv -t execute "$app_path"
-          xcrun stapler validate "$app_path"
-
-  publish-updater-json:
-    name: Publish consolidated latest.json
-    needs: [resolve-release, verify-release, publish-tauri]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Generate latest.json from release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          node scripts/release/generate-latest-json.mjs \
-            --tag "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --output "$RUNNER_TEMP/latest.json"
-
-      - name: Upload latest.json
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/latest.json#latest.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
   publish-electron:
     name: Build + publish Electron (${{ matrix.artifact }})
-    # Runs alongside the Tauri jobs so the same release carries both
-    # latest.json (Tauri updater) AND latest-*.yml (electron-updater).
-    # Gated on RELEASE_PUBLISH_ELECTRON=true (repo var) OR the workflow
-    # input of the same name so opt-in during rollout, opt-out if a
-    # non-migration release doesn't want Electron artifacts.
     needs: [resolve-release, verify-release]
-    if: ${{ vars.RELEASE_PUBLISH_ELECTRON == 'true' || github.event.inputs.publish_electron == 'true' }}
+    if: needs.resolve-release.outputs.build_electron == 'true'
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 120
     env:
@@ -1099,8 +735,6 @@ jobs:
     needs:
       - resolve-release
       - verify-release
-      - publish-tauri
-      - publish-updater-json
       - publish-electron
       - release-orchestrator-sidecars
       - publish-npm
@@ -1110,8 +744,6 @@ jobs:
       needs.resolve-release.outputs.draft == 'true' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
-      (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
-      (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
