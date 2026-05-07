@@ -492,10 +492,72 @@ async function isDirectory(targetPath) {
 async function readJsonFile(targetPath, fallback) {
   try {
     const raw = await readFile(targetPath, "utf8");
-    return JSON.parse(raw);
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      const recovered = parseFirstJsonObject(raw);
+      if (recovered.ok) {
+        console.warn(`[json] recovered ${targetPath} from trailing invalid data`, error);
+        await writeJsonFileAtomic(targetPath, recovered.value);
+        return recovered.value;
+      }
+      throw error;
+    }
   } catch {
     return fallback;
   }
+}
+
+function parseFirstJsonObject(raw) {
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+  let start = -1;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          return { ok: true, value: JSON.parse(raw.slice(start, index + 1)) };
+        } catch {
+          return { ok: false, value: null };
+        }
+      }
+    }
+  }
+
+  return { ok: false, value: null };
+}
+
+async function writeJsonFileAtomic(outputPath, value) {
+  const content = `${JSON.stringify(value, null, 2)}\n`;
+  JSON.parse(content);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const tempPath = `${outputPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tempPath, content, "utf8");
+  await rename(tempPath, outputPath);
 }
 
 function normalizeDesktopBootstrapConfig(input) {
@@ -628,11 +690,52 @@ function remoteWorkspaceId(baseUrl, directory) {
   return stableWorkspaceId(key);
 }
 
+function parseOpenworkWorkspaceIdFromUrl(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    return mountIndex >= 0 && segments[mountIndex + 1]
+      ? decodeURIComponent(segments[mountIndex + 1])
+      : null;
+  } catch {
+    const match = raw.match(/\/(?:workspace|w)\/([^/?#]+)/);
+    if (!match?.[1]) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+}
+
+function stripOpenworkWorkspaceMount(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/\/(?:workspace|w)\/[^/?#]+.*$/, "").replace(/\/+$/, "") || raw;
+  }
+}
+
 function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
-  const key = String(workspaceId ?? "").trim()
-    ? `openwork::${hostUrl}::${String(workspaceId).trim()}`
-    : `openwork::${hostUrl}`;
-  return stableWorkspaceId(key);
+  const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  if (remoteWorkspaceId) return `rem_${remoteWorkspaceId}`;
+  return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
 }
 
 async function readWorkspaceOpenworkConfig(workspacePath) {
@@ -653,24 +756,66 @@ async function writeWorkspaceOpenworkConfig(workspacePath, config) {
 
 async function readWorkspaceState() {
   const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
-  return {
+  const selectedId =
+    typeof state?.selectedId === "string"
+      ? state.selectedId
+      : typeof state?.selectedWorkspaceId === "string"
+        ? state.selectedWorkspaceId
+        : typeof state?.activeId === "string"
+          ? state.activeId
+          : "";
+  const watchedId =
+    typeof state?.watchedId === "string"
+      ? state.watchedId
+      : typeof state?.watchedWorkspaceId === "string"
+        ? state.watchedWorkspaceId
+        : null;
+  const activeId = typeof state?.activeId === "string" ? state.activeId : null;
+  const workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
+  let changed = false;
+  const idMap = new Map();
+  const migratedWorkspaces = workspaces.map((entry) => {
+    const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});
+    if (workspace.workspaceType !== "remote" || workspace.remoteType !== "openwork") return workspace;
+
+    const remoteWorkspaceId = String(workspace.openworkWorkspaceId ?? "").trim()
+      || parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl)
+      || parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl);
+    if (!remoteWorkspaceId) return workspace;
+
+    const hostUrl = stripOpenworkWorkspaceMount(workspace.openworkHostUrl) || stripOpenworkWorkspaceMount(workspace.baseUrl);
+    const nextId = openworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
+    idMap.set(workspace.id, nextId);
+    const nextWorkspace = {
+      ...workspace,
+      id: nextId,
+      baseUrl: hostUrl,
+      openworkWorkspaceId: remoteWorkspaceId,
+      openworkHostUrl: hostUrl,
+    };
+    if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.openworkWorkspaceId !== nextWorkspace.openworkWorkspaceId || workspace.openworkHostUrl !== nextWorkspace.openworkHostUrl) {
+      changed = true;
+    }
+    return nextWorkspace;
+  });
+
+  const migratedSelectedId = idMap.get(selectedId) ?? selectedId;
+  const migratedWatchedId = watchedId ? idMap.get(watchedId) ?? watchedId : null;
+  const migratedActiveId = activeId ? idMap.get(activeId) ?? activeId : null;
+  if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
+
+  const nextState = {
     selectedId:
-      typeof state?.selectedId === "string"
-        ? state.selectedId
-        : typeof state?.selectedWorkspaceId === "string"
-          ? state.selectedWorkspaceId
-          : typeof state?.activeId === "string"
-            ? state.activeId
-            : "",
-    watchedId:
-      typeof state?.watchedId === "string"
-        ? state.watchedId
-        : typeof state?.watchedWorkspaceId === "string"
-          ? state.watchedWorkspaceId
-          : null,
-    activeId: typeof state?.activeId === "string" ? state.activeId : null,
-    workspaces: Array.isArray(state?.workspaces) ? state.workspaces : [],
+      migratedSelectedId,
+    watchedId: migratedWatchedId,
+    activeId: migratedActiveId,
+    workspaces: migratedWorkspaces,
   };
+
+  if (changed) {
+    return writeWorkspaceState(nextState);
+  }
+  return nextState;
 }
 
 async function writeWorkspaceState(nextState) {
@@ -688,8 +833,7 @@ async function writeWorkspaceState(nextState) {
     watchedWorkspaceId: watchedId,
     activeId: selectedId || null,
   };
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(outputPath, output);
   return output;
 }
 
@@ -1164,12 +1308,17 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
       const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
-      const openworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
+      const rawOpenworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
         ? input.openworkHostUrl.trim()
         : null;
+      const openworkHostUrl = remoteType === "openwork"
+        ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
+        : rawOpenworkHostUrl;
       const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
         ? input.openworkWorkspaceId.trim()
-        : null;
+        : remoteType === "openwork"
+          ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+          : null;
       const id = remoteType === "openwork"
         ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
         : remoteWorkspaceId(baseUrl, directory);
@@ -1205,9 +1354,10 @@ async function handleDesktopInvoke(event, command, ...args) {
       const input = args[0] ?? {};
       const workspaceId = String(input.workspaceId ?? "").trim();
       if (!workspaceId) throw new Error("workspaceId is required");
+      const { workspaceId: _workspaceId, ...patch } = input;
       return mutateWorkspaceState((state) => {
         state.workspaces = state.workspaces.map((entry) =>
-          entry.id === workspaceId ? { ...entry, ...input } : entry,
+          entry.id === workspaceId ? { ...entry, ...patch } : entry,
         );
         return state;
       });
