@@ -218,7 +218,6 @@ if (!viteReady) {
 if (!viteReady) {
   uiChild = run(pnpmCmd, ["-w", "dev:ui"], {
     cwd: repoRoot,
-    detached: process.platform !== "win32",
     env: {
       ...process.env,
       PORT: String(devPort),
@@ -239,7 +238,6 @@ const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
   cwd: desktopRoot,
-  detached: process.platform !== "win32",
   env: {
     ...process.env,
     OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
