@@ -626,6 +626,10 @@ export function SessionRoute() {
       const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await resolveOpenworkConnection();
       setOpenworkServerHostInfoState(hostInfo);
       if (!normalizedBaseUrl || !resolvedToken) {
+        // Keep `localServerRef` in lockstep with the disconnected state.
+        // Otherwise a previously-cached baseUrl/token would still resolve a
+        // (now invalid) endpoint for any callback that consults the ref.
+        localServerRef.current = { baseUrl: "", token: "" };
         setClient(null);
         setBaseUrl("");
         setToken("");
@@ -635,6 +639,16 @@ export function SessionRoute() {
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
         return;
       }
+
+      // Update the local-server ref synchronously, BEFORE we kick off any
+      // workspace-scoped requests below. `endpointForWorkspace` reads from
+      // this ref synchronously; the `useEffect` that mirrors `[baseUrl,
+      // token]` into the ref doesn't run until after the next React commit,
+      // which is too late for the `activateWorkspace` and
+      // `loadWorkspaceSessionsInBackground` calls that fire later in this
+      // function. Stale ref => `resolveWorkspaceEndpoint` returns null for
+      // local workspaces => sidebar gets stuck in "loading" forever.
+      localServerRef.current = { baseUrl: normalizedBaseUrl, token: resolvedToken };
 
       const openworkClient = createOpenworkServerClient({
         baseUrl: normalizedBaseUrl,
