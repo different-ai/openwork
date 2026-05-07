@@ -852,7 +852,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
-      if (!id || id === "opencode") continue;
+      if (!id) continue;
       if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "api")) continue;

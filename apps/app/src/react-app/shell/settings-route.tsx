@@ -1761,6 +1761,9 @@ export function SettingsRoute() {
         // Hide any provider the org blocks at the desktop layer so users
         // can't connect a forbidden one (dev #1505). Same helper covers
         // opencode-provider gating via the `blockZenModel` restriction.
+        // We also strip the matching key from `authMethods` because the
+        // modal builds its entry list from `Object.keys(authMethods)`,
+        // not from `providers`.
         providers={providerAuthSnapshot.providerAuthProviders.filter(
           (provider) =>
             !isDesktopProviderBlocked({
@@ -1769,7 +1772,15 @@ export function SettingsRoute() {
             }),
         )}
         connectedProviderIds={providerConnectedIds}
-        authMethods={providerAuthSnapshot.providerAuthMethods}
+        authMethods={Object.fromEntries(
+          Object.entries(providerAuthSnapshot.providerAuthMethods).filter(
+            ([providerId]) =>
+              !isDesktopProviderBlocked({
+                providerId,
+                checkRestriction: checkDesktopRestriction,
+              }),
+          ),
+        )}
         onSelect={providerAuthStore.startProviderAuth}
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
