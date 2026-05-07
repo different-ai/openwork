@@ -20,6 +20,8 @@ import type {
 } from "../../../../app/types";
 import {
   getWorkspaceTaskLoadErrorDisplay,
+  isRemoteConnectionErrorMessage,
+  isRemoteConnectionWorkspace,
   isSandboxWorkspace,
   isWindowsPlatform,
 } from "../../../../app/utils";
@@ -547,16 +549,16 @@ export function WorkspaceSessionList(props: Props) {
             };
             const isConnectionActionBusy =
               isConnecting || connectionState.status === "connecting";
-            const canRecover =
-              workspace.workspaceType === "remote" && connectionState.status === "error";
+            const isRemoteWorkspace = isRemoteConnectionWorkspace(workspace);
+            const canRecover = isRemoteWorkspace && connectionState.status === "error";
             const isMenuOpen = workspaceMenuId === workspace.id;
             const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
             const connectionIssueMessage =
               connectionState.status === "error"
                 ? connectionState.message?.trim() || taskLoadError.message
-                : taskLoadError.message;
+                : group.error?.trim() || taskLoadError.message;
             const showRemoteConnectionIssue =
-              workspace.workspaceType === "remote" &&
+              (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
               Boolean(connectionIssueMessage) &&
               (connectionState.status === "error" || group.status === "error");
             const statusLabel = (() => {
@@ -798,8 +800,7 @@ export function WorkspaceSessionList(props: Props) {
                             props.onEditWorkspaceConnection(workspace.id);
                           }}
                         />
-                      ) : null}
-                      {props.showInitialLoading ? (
+                      ) : props.showInitialLoading ? (
                         <div className="space-y-2">
                           {[0, 1, 2].map((idx) => (
                             <div
@@ -845,7 +846,7 @@ export function WorkspaceSessionList(props: Props) {
                             </button>
                           ) : null}
                         </>
-                      ) : showRemoteConnectionIssue ? null : group.status === "error" ? (
+                      ) : group.status === "error" ? (
                         <div
                           className={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
                             taskLoadError.tone === "offline"

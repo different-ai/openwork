@@ -333,6 +333,20 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
   );
 }
 
+export function isRemoteConnectionWorkspace(workspace: WorkspaceInfo) {
+  return workspace.id.trim().startsWith("rem_");
+}
+
+export function isRemoteConnectionErrorMessage(message?: string | null) {
+  const value = message?.trim().toLowerCase() ?? "";
+  return (
+    value.includes("remote worker") ||
+    value.includes("cannot reach ") ||
+    value.includes("health check failed") ||
+    value.includes("worker connection failed")
+  );
+}
+
 export function redactTokenLikeText(value: string): string {
   return value
     .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")

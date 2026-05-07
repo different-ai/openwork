@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import {
+  AlertCircle,
   ChevronRight,
   Loader2,
   MoreHorizontal,
@@ -9,6 +10,7 @@ import {
   Share2,
   Trash2,
   RefreshCw,
+  RotateCcw,
   Settings,
   FolderOpen,
 } from "lucide-react";
@@ -20,7 +22,9 @@ import type {
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import {
+  isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
+  isRemoteConnectionWorkspace,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -227,6 +231,90 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function RemoteConnectionIssueCard(props: {
+  message: string;
+  tone: "error" | "offline";
+  canRecover: boolean;
+  busy: boolean;
+  onRecover: () => void;
+  onTest: () => void;
+  onEdit: () => void;
+}) {
+  const isOffline = props.tone === "offline";
+  const shellClass = isOffline
+    ? "border-amber-7/35 bg-amber-2/45"
+    : "border-red-7/35 bg-red-1/40";
+  const iconClass = isOffline
+    ? "bg-amber-3/60 text-amber-11"
+    : "bg-red-3/60 text-red-11";
+  const detailClass = isOffline
+    ? "border-amber-7/25 bg-amber-1/40 text-amber-11"
+    : "border-red-7/25 bg-red-1/40 text-red-11";
+
+  return (
+    <SidebarMenuSubItem>
+      <div className={`w-full rounded-[15px] border px-3 py-3 text-left ${shellClass}`}>
+        <div className="flex items-start gap-2.5">
+          <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+            <AlertCircle size={14} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] font-medium text-dls-text">
+              {t("workspace_list.remote_worker_unavailable")}
+            </div>
+            <div className="mt-1 text-[11px] leading-5 text-gray-10">
+              {t("workspace_list.remote_worker_unavailable_hint")}
+            </div>
+            <div
+              className={`mt-2 rounded-lg border px-2 py-1.5 text-[11px] leading-4 ${detailClass}`}
+              title={props.message}
+            >
+              {props.message}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {props.canRecover ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
+                  onClick={props.onRecover}
+                  disabled={props.busy}
+                >
+                  <RotateCcw size={12} />
+                  {t("workspace_list.recover")}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
+                onClick={props.onTest}
+                disabled={props.busy}
+              >
+                <RefreshCw size={12} />
+                {t("workspace_list.test_connection")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
+                onClick={props.onEdit}
+                disabled={props.busy}
+              >
+                <Settings size={12} />
+                {t("common.edit")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </SidebarMenuSubItem>
   );
 }
 
@@ -525,12 +613,22 @@ function WorkspaceSidebarGroup({
     message: null,
   };
   const isConnectionActionBusy = isConnecting || connectionState.status === "connecting";
-  const canRecover = workspace.workspaceType === "remote" && connectionState.status === "error";
+  const isRemoteWorkspace = isRemoteConnectionWorkspace(workspace);
+  const canRecover = isRemoteWorkspace && connectionState.status === "error";
   const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
+  const connectionIssueMessage = connectionState.status === "error"
+    ? connectionState.message?.trim() || taskLoadError.message
+    : group.error?.trim() || taskLoadError.message;
+  const showRemoteConnectionIssue =
+    (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
+    Boolean(connectionIssueMessage) &&
+    (connectionState.status === "error" || group.status === "error");
   const isExpanded = ctx.expandedWorkspaceIds.has(workspace.id);
   const isSelected = ctx.selectedWorkspaceId === workspace.id;
 
   const statusLabel = (() => {
+    if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
+    if (connectionState.status === "error") return connectionState.message?.trim() || taskLoadError.message;
     if (group.status === "error") return taskLoadError.label;
     if (isConnectionActionBusy) return t("workspace_list.connecting");
     if (!ctx.developerMode) return "";
@@ -599,7 +697,23 @@ function WorkspaceSidebarGroup({
 
             <CollapsibleContent className="pt-1">
               <SidebarMenuSub>
-                {showInitialLoading ? (
+                {showRemoteConnectionIssue ? (
+                  <RemoteConnectionIssueCard
+                    message={connectionIssueMessage}
+                    tone={taskLoadError.tone}
+                    canRecover={canRecover}
+                    busy={isConnectionActionBusy}
+                    onRecover={() => {
+                      void Promise.resolve(ctx.onRecoverWorkspace(workspace.id));
+                    }}
+                    onTest={() => {
+                      void Promise.resolve(ctx.onTestWorkspaceConnection(workspace.id));
+                    }}
+                    onEdit={() => {
+                      ctx.onEditWorkspaceConnection(workspace.id);
+                    }}
+                  />
+                ) : showInitialLoading ? (
                   <>
                     {[0, 1, 2].map((idx) => (
                       <SidebarMenuSubItem key={`skeleton-${idx}`}>
