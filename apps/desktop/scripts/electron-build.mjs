@@ -13,11 +13,15 @@ const packagedServerRoot = resolve(desktopRoot, "server");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
 
+function needsShell(command) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     env: env ? { ...process.env, ...env } : process.env,
   });
   if (result.status !== 0) {
