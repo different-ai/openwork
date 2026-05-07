@@ -27,10 +27,14 @@ const viteProbeUrls = explicitStartUrl
       `http://localhost:${devPort}`,
     ];
 
+function needsShell(command) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
 function run(command, args, options = {}) {
   return spawn(command, args, {
     stdio: ["ignore", "inherit", "inherit"],
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     ...options,
   });
 }
@@ -38,7 +42,7 @@ function run(command, args, options = {}) {
 function runSync(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     ...options,
   });
   if (result.status !== 0) {
