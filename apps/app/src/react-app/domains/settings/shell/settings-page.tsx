@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
 import type * as React from "react";
 import {
+  ArrowLeft,
   Bug,
+  ChevronDown,
   Cloud,
   Cog,
   Paintbrush,
@@ -19,12 +21,17 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarInset,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarProvider,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
 import {
@@ -141,100 +148,151 @@ type SettingsPageProps = {
   children: React.ReactNode;
 };
 
-export function SettingsPage(props: SettingsPageProps) {
+type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" | "developerMode"> & {
+  onClose: () => void;
+  selectedWorkspaceId: string;
+  selectedWorkspaceName: string;
+  selectedWorkspaceColor: string;
+  workspaces: Array<{ id: string; name: string; color: string }>;
+  onSelectWorkspace: (workspaceId: string) => void;
+};
+
+export function SettingsSidebar(props: SettingsSidebarProps) {
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode);
 
   return (
-    <SidebarProvider className="relative min-h-full min-w-0">
-        <Sidebar collapsible="none" className="absolute inset-0">
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>{t("settings.group_workspace")}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {workspaceTabs.map((tab) => {
-                    const Icon = getSettingsTabIcon(tab);
-                    return (
-                      <SidebarMenuItem key={tab}>
-                        <SidebarMenuButton
-                          type="button"
-                          isActive={props.activeTab === tab}
-                          onClick={() => props.onSelectTab(tab)}
-                        >
-                          <Icon />
-                          <span>{getSettingsTabLabel(tab)}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel>{t("settings.group_global")}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {globalTabs.map((tab) => {
-                    const Icon = getSettingsTabIcon(tab);
-                    return (
-                      <SidebarMenuItem key={tab}>
-                        <SidebarMenuButton
-                          type="button"
-                          isActive={props.activeTab === tab}
-                          onClick={() => props.onSelectTab(tab)}
-                        >
-                          <Icon />
-                          <span>{getSettingsTabLabel(tab)}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-        </Sidebar>
-
-        <SidebarInset className="h-full min-w-0 w-full max-w-full overflow-hidden">
-        <SettingsContent>
-          <SettingsPanel>
-            <SettingsPanelHeading>
-              <SettingsPanelTitle>{getSettingsTabLabel(props.activeTab)}</SettingsPanelTitle>
-              <SettingsPanelDescription>{getSettingsTabDescription(props.activeTab)}</SettingsPanelDescription>
-            </SettingsPanelHeading>
-
-            {props.showUpdateToolbar && props.activeTab === "general" ? (
-              <SettingsPanelToolbar>
-                <SettingsPanelToolbarActions>
-                  <SettingsPanelToolbarStatus
-                    tone={props.updateToolbarTone}
-                    title={props.updateToolbarTitle}
-                    spinning={props.updateToolbarSpinning}
+    <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
+      <div className="hidden h-10 mac:block mac:titlebar-drag" />
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton type="button" onClick={props.onClose}>
+              <ArrowLeft size={14} />
+              <span>{t("dashboard.back_to_app")}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <SidebarMenuButton type="button">
+                    <span
+                      className="size-4 shrink-0 rounded-full"
+                      style={{ backgroundColor: props.selectedWorkspaceColor }}
+                    />
+                    <span className="truncate">{props.selectedWorkspaceName}</span>
+                    <ChevronDown className="ml-auto" />
+                  </SidebarMenuButton>
+                }
+              />
+              <DropdownMenuContent className="w-(--anchor-width)">
+                {props.workspaces.map((workspace) => (
+                  <DropdownMenuItem
+                    key={workspace.id}
+                    onClick={() => props.onSelectWorkspace(workspace.id)}
+                    disabled={workspace.id === props.selectedWorkspaceId}
                   >
-                    {props.updateToolbarLabel}
-                  </SettingsPanelToolbarStatus>
-                  {props.updateToolbarActionLabel ? (
-                    <SettingsPanelToolbarButton
-                      onClick={props.onUpdateToolbarAction}
-                      disabled={props.updateToolbarDisabled}
-                      title={props.updateRestartBlockedMessage ?? ""}
+                    <span
+                      className="size-4 shrink-0 rounded-full"
+                      style={{ backgroundColor: workspace.color }}
+                    />
+                    <span className="truncate">{workspace.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("settings.group_workspace")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {workspaceTabs.map((tab) => {
+                const Icon = getSettingsTabIcon(tab);
+                return (
+                  <SidebarMenuItem key={tab}>
+                    <SidebarMenuButton
+                      type="button"
+                      isActive={props.activeTab === tab}
+                      onClick={() => props.onSelectTab(tab)}
                     >
-                      {props.updateToolbarActionLabel}
-                    </SettingsPanelToolbarButton>
-                  ) : null}
-                </SettingsPanelToolbarActions>
-                {props.updateRestartBlockedMessage ? (
-                  <SettingsPanelToolbarMessage>{props.updateRestartBlockedMessage}</SettingsPanelToolbarMessage>
-                ) : null}
-              </SettingsPanelToolbar>
-            ) : null}
-          </SettingsPanel>
+                      <Icon />
+                      <span>{getSettingsTabLabel(tab)}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
-          {props.children}
-        </SettingsContent>
-        </SidebarInset>
-    </SidebarProvider>
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("settings.group_global")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {globalTabs.map((tab) => {
+                const Icon = getSettingsTabIcon(tab);
+                return (
+                  <SidebarMenuItem key={tab}>
+                    <SidebarMenuButton
+                      type="button"
+                      isActive={props.activeTab === tab}
+                      onClick={() => props.onSelectTab(tab)}
+                    >
+                      <Icon />
+                      <span>{getSettingsTabLabel(tab)}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
+}
+
+export function SettingsPage(props: SettingsPageProps) {
+  return (
+    <SettingsContent>
+      <SettingsPanel>
+        <SettingsPanelHeading>
+          <SettingsPanelTitle>{getSettingsTabLabel(props.activeTab)}</SettingsPanelTitle>
+          <SettingsPanelDescription>{getSettingsTabDescription(props.activeTab)}</SettingsPanelDescription>
+        </SettingsPanelHeading>
+
+        {props.showUpdateToolbar && props.activeTab === "general" ? (
+          <SettingsPanelToolbar>
+            <SettingsPanelToolbarActions>
+              <SettingsPanelToolbarStatus
+                tone={props.updateToolbarTone}
+                title={props.updateToolbarTitle}
+                spinning={props.updateToolbarSpinning}
+              >
+                {props.updateToolbarLabel}
+              </SettingsPanelToolbarStatus>
+              {props.updateToolbarActionLabel ? (
+                <SettingsPanelToolbarButton
+                  onClick={props.onUpdateToolbarAction}
+                  disabled={props.updateToolbarDisabled}
+                  title={props.updateRestartBlockedMessage ?? ""}
+                >
+                  {props.updateToolbarActionLabel}
+                </SettingsPanelToolbarButton>
+              ) : null}
+            </SettingsPanelToolbarActions>
+            {props.updateRestartBlockedMessage ? (
+              <SettingsPanelToolbarMessage>{props.updateRestartBlockedMessage}</SettingsPanelToolbarMessage>
+            ) : null}
+          </SettingsPanelToolbar>
+        ) : null}
+      </SettingsPanel>
+
+      {props.children}
+    </SettingsContent>
   );
 }

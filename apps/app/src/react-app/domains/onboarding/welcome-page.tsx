@@ -28,7 +28,8 @@ type WelcomePageProps = {
 
 export function WelcomePage({ onGetStarted }: WelcomePageProps) {
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-dls-background p-6">
+    <div className="relative flex min-h-screen w-full items-center justify-center bg-dls-background p-6">
+      <div className="absolute inset-x-0 top-0 h-10 mac:titlebar-drag" />
       <div className="mx-auto w-full max-w-[640px] space-y-10">
         {/* Header */}
         <div className="space-y-3 text-center">

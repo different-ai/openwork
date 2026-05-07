@@ -13,7 +13,6 @@ import { ServerProvider } from "../kernel/server-provider";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
-import { MigrationPrompt } from "./migration-prompt";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
 
@@ -74,7 +73,6 @@ export function AppProviders({ children }: AppProvidersProps) {
             </RestrictionNoticeProvider>
           </DesktopConfigProvider>
         </DenAuthProvider>
-        <MigrationPrompt />
       </ServerProvider>
     </BootStateProvider>
   );

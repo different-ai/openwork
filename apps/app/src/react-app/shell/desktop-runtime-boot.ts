@@ -117,6 +117,7 @@ export function useDesktopRuntimeBoot() {
               baseUrl?: string | null;
               ownerToken?: string | null;
               clientToken?: string | null;
+              hostToken?: string | null;
               port?: number | null;
               remoteAccessEnabled?: boolean;
             };
@@ -137,6 +138,16 @@ export function useDesktopRuntimeBoot() {
           }
           const serverInfo = boot.openworkServer;
           if (serverInfo?.baseUrl) {
+            writeOpenworkServerSettings({
+              urlOverride: serverInfo.baseUrl,
+              token:
+                serverInfo.ownerToken?.trim() ||
+                serverInfo.clientToken?.trim() ||
+                undefined,
+              hostToken: serverInfo.hostToken?.trim() || undefined,
+              portOverride: serverInfo.port ?? undefined,
+              remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+            });
             try {
               window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
             } catch {

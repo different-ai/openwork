@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+
+const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
@@ -73,6 +76,7 @@ function createOpenworkServerState() {
   return {
     child: null,
     childExited: true,
+    inProcess: false,
     remoteAccessEnabled: false,
     host: null,
     port: null,
@@ -92,8 +96,9 @@ function createOpenworkServerState() {
 
 function snapshotOpenworkServerState(state) {
   const child = state.childExited ? null : state.child;
+  const running = state.inProcess || Boolean(child && child.exitCode === null && !child.killed);
   return {
-    running: Boolean(child && child.exitCode === null && !child.killed),
+    running,
     remoteAccessEnabled: state.remoteAccessEnabled,
     host: state.host,
     port: state.port,
@@ -563,9 +568,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function resolveOpenworkPort(host, workspaceKey) {
-    // Use a fresh port every boot. Persisted preferred ports made prod starts
-    // fragile when an old sidecar held the previous port or shutdown was
-    // unclean; Electron publishes the chosen URL to React after boot.
+    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
+    if (preferredPort && (await portAvailable(host, preferredPort))) {
+      return preferredPort;
+    }
     return findFreePort(host);
   }
 
@@ -936,74 +942,16 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
   }
 
-  /**
-   * Resolve the bundled chrome-devtools-mcp binary for the MCP command.
-   * Returns `["node", "<abs-path>"]` or falls back to the npx command.
-   */
-  function chromeDevtoolsMcpCommand() {
-    try {
-      const require_ = createRequire(import.meta.url);
-      const pkgJsonPath = require_.resolve("chrome-devtools-mcp/package.json");
-      const binPath = path.join(path.dirname(pkgJsonPath), "build", "src", "index.js");
-      if (existsSync(binPath)) return ["node", binPath];
-    } catch { /* not found */ }
-    return ["npx", "-y", "chrome-devtools-mcp@latest"];
-  }
-
   async function ensureOpencodeConfig(projectDir) {
     const jsoncPath = path.join(projectDir, "opencode.jsonc");
     const jsonPath = path.join(projectDir, "opencode.json");
-    const configPath = (await fileExists(jsoncPath))
-      ? jsoncPath
-      : (await fileExists(jsonPath))
-        ? jsonPath
-        : null;
-
-    let config;
-    if (configPath) {
-      try {
-        config = JSON.parse(await readFile(configPath, "utf8"));
-      } catch {
-        return; // malformed — don't touch it
-      }
-    } else {
-      config = { $schema: "https://opencode.ai/config.json" };
-    }
-
-    // Auto-inject or migrate chrome-devtools MCP.
-    let changed = !configPath; // new file = always write
-    if (!config.mcp || typeof config.mcp !== "object") {
-      config.mcp = {};
-    }
-
-    const bundledCmd = chromeDevtoolsMcpCommand();
-    const existing = config.mcp["chrome-devtools"];
-    const isLegacy = (cmd) => {
-      if (!Array.isArray(cmd) || cmd.length === 0) return true;
-      const f = String(cmd[0]);
-      return f === "npx" || f === "npm" || f === "chrome-devtools-mcp" || f === "npm.cmd";
-    };
-    const needsInject = !existing;
-    const needsMigrate = existing && bundledCmd[0] === "node" && isLegacy(existing.command);
-
-    if (needsInject || needsMigrate) {
-      config.mcp["chrome-devtools"] = {
-        ...(existing && typeof existing === "object" ? existing : {}),
-        type: "local",
-        command: bundledCmd,
-      };
-      changed = true;
-    }
-
-    if (changed) {
-      const targetPath = configPath || jsoncPath;
-      await mkdir(projectDir, { recursive: true });
-      await writeFile(
-        targetPath,
-        `${JSON.stringify(config, null, 2)}\n`,
-        "utf8",
-      );
-    }
+    if ((await fileExists(jsoncPath)) || (await fileExists(jsonPath))) return;
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(
+      jsoncPath,
+      `${JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2)}\n`,
+      "utf8",
+    );
   }
 
   function generateManagedCredentials() {
@@ -1027,33 +975,22 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return token || null;
   }
 
+  // In-process server handle. Kept alive across restarts so we can stop it.
+  let inProcessServer = null;
+
   async function startOpenworkServer(options) {
+    // Stop any previously running in-process server
+    if (inProcessServer) {
+      try { inProcessServer.stop(); } catch { /* ignore */ }
+      inProcessServer = null;
+    }
     await stopChild(openworkServerState);
 
     const workspacePaths = options.workspacePaths.filter((value) => value.trim().length > 0);
     const activeWorkspace = workspacePaths[0] ?? "";
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
     const port = await resolveOpenworkPort(host, activeWorkspace);
-    const baseUrl = `http://127.0.0.1:${port}`;
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
-    const program = resolveBinary("openwork-server");
-    if (!program) {
-      throw new Error("Failed to locate openwork-server.");
-    }
-
-    const args = [
-      "--host",
-      host,
-      "--port",
-      String(port),
-      "--cors",
-      "*",
-      "--approval",
-      "auto",
-      ...workspacePaths.flatMap((workspacePath) => ["--workspace", workspacePath]),
-      ...(options.opencodeBaseUrl ? ["--opencode-base-url", options.opencodeBaseUrl] : []),
-      ...(activeWorkspace ? ["--opencode-directory", activeWorkspace] : []),
-    ];
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
@@ -1063,47 +1000,78 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
     }
 
-    const env = await buildChildEnv({
-      OPENWORK_TOKEN: tokens.clientToken,
-      OPENWORK_HOST_TOKEN: tokens.hostToken,
-      ...(options.manageOpencode ? { OPENWORK_MANAGE_OPENCODE: "1" } : {}),
-      ...(options.manageOpencode ? { OPENWORK_OPENCODE_BIN: managedOpencode?.path ?? "" } : {}),
-      ...(options.manageOpencode ? { OPENWORK_MANAGED_OPENCODE_CWD: managedOpencodeWorkdir() } : {}),
-      ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
-      ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
-    });
+    // Inject user env vars so the server and managed OpenCode inherit them.
+    const serverEnv = await buildChildEnv({});
+    Object.assign(process.env, serverEnv);
 
-    spawnManagedChild(openworkServerState, program, args, {
-      cwd: activeWorkspace || desktopRoot,
-      env,
+    // One call: resolve config, spawn managed OpenCode, start HTTP server.
+    // Dev must prefer apps/server/dist; build output also stages a packaged
+    // copy under apps/desktop/server for electron-builder.
+    const devPath = path.resolve(__runtimeDir, "..", "..", "server", "dist", "embedded.js");
+    const packagedPaths = [
+      path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js"),
+      ...(process.resourcesPath ? [path.resolve(process.resourcesPath, "server", "dist", "embedded.js")] : []),
+    ];
+    const candidates = process.env.OPENWORK_DEV_MODE === "1"
+      ? [devPath, ...packagedPaths]
+      : [...packagedPaths, devPath];
+    const embeddedPath = candidates.find((candidate) => existsSync(candidate));
+    if (!embeddedPath) {
+      throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
+    }
+    const { startEmbeddedServer } = await import(pathToFileURL(embeddedPath).href);
+    const handle = await startEmbeddedServer({
+      host,
+      port,
+      corsOrigins: ["*"],
+      approvalMode: "auto",
+      workspaces: workspacePaths,
+      token: tokens.clientToken,
+      hostToken: tokens.hostToken,
+      opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
+      opencodeDirectory: activeWorkspace || undefined,
+      manageOpencode: options.manageOpencode === true,
+      opencodeBin: managedOpencode?.path ?? undefined,
+      opencodeCwd: managedOpencodeWorkdir(),
     });
+    inProcessServer = handle;
 
+    const boundPort = handle.port;
+    const baseUrl = handle.url;
+
+    openworkServerState.inProcess = true;
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
-    openworkServerState.port = port;
+    openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
     openworkServerState.clientToken = tokens.clientToken;
     openworkServerState.hostToken = tokens.hostToken;
 
-    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(port) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
+    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
     openworkServerState.connectUrl = connectUrls.connectUrl;
     openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
     openworkServerState.lanUrl = connectUrls.lanUrl;
 
-    await waitForHttpOk(`${baseUrl}/health`, 10_000);
-    // Owner tokens live in the OpenWork server token store, which can be reset
-    // independently from the desktop runtime token cache. Always mint a fresh
-    // owner token for the newly-started server instead of trusting the cached
-    // value; otherwise the renderer can receive a stale bearer token and all
-    // workspace calls fail with 401.
-    const ownerToken = await issueOwnerToken(baseUrl, tokens.hostToken);
+    // No health check needed -- startServer() resolves only after the listener is bound.
+    let workspaceList = null;
+    let ownerToken = tokens.ownerToken?.trim() || null;
+    if (ownerToken) {
+      try {
+        workspaceList = await fetchJson(`${baseUrl}/workspaces`, {
+          headers: { Authorization: `Bearer ${ownerToken}` },
+        }, 5000);
+      } catch {
+        ownerToken = null;
+      }
+    }
+    ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
     openworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
       await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
     }
     if (ownerToken) {
       try {
-        const list = await fetchJson(`${baseUrl}/workspaces`, {
+        const list = workspaceList ?? await fetchJson(`${baseUrl}/workspaces`, {
           headers: { Authorization: `Bearer ${ownerToken}` },
         }, 5000);
         const first = Array.isArray(list?.items) ? list.items[0] : undefined;
@@ -1123,7 +1091,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         appendOutput(openworkServerState, "lastStderr", `OpenWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
-    await persistPreferredOpenworkPort(activeWorkspace, port);
+    await persistPreferredOpenworkPort(activeWorkspace, boundPort);
     return snapshotOpenworkServerState(openworkServerState);
   }
 
@@ -1253,6 +1221,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function stopAllRuntimeChildren() {
+    // Stop the in-process server (and its managed OpenCode child) if running.
+    if (inProcessServer) {
+      try { inProcessServer.stop(); } catch { /* ignore */ }
+      inProcessServer = null;
+    }
     await stopChild(openworkServerState);
     await stopChild(orchestratorState, {
       requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
@@ -1367,12 +1340,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function openworkServerRestart(options = {}) {
     const workspacePaths = (await listLocalWorkspacePaths()).filter(Boolean);
+    const shouldManageOpencode = Boolean(
+      openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath,
+    );
     return startOpenworkServer({
       workspacePaths,
-      opencodeBaseUrl: engineState.baseUrl,
-      opencodeUsername: engineState.opencodeUsername,
-      opencodePassword: engineState.opencodePassword,
+      opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
+      opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
+      opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
+      manageOpencode: shouldManageOpencode,
+      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
   }
 

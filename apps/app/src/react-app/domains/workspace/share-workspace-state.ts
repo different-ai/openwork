@@ -140,8 +140,9 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
         ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId)
         : null;
       const url = mountedUrl || hostUrl;
-      const ownerToken = options.openworkServerHostInfo?.ownerToken?.trim() || "";
       const collaboratorToken = options.openworkServerHostInfo?.clientToken?.trim() || "";
+      const ownerToken =
+        collaboratorToken || options.openworkServerHostInfo?.ownerToken?.trim() || "";
       return [
         {
           label: t("session.share_worker_url"),

@@ -11,6 +11,7 @@ directories:
   output: dist-electron
 files:
   - electron/**/*
+  - server/**/*
   - package.json
 extraResources:
   - from: ../app/dist
@@ -40,9 +41,6 @@ mac:
         - opencode
         - opencode-aarch64-apple-darwin
         - opencode-x86_64-apple-darwin
-        - openwork-server
-        - openwork-server-aarch64-apple-darwin
-        - openwork-server-x86_64-apple-darwin
         - openwork-orchestrator
         - openwork-orchestrator-aarch64-apple-darwin
         - openwork-orchestrator-x86_64-apple-darwin
@@ -64,9 +62,6 @@ linux:
         - opencode
         - opencode-aarch64-unknown-linux-gnu
         - opencode-x86_64-unknown-linux-gnu
-        - openwork-server
-        - openwork-server-aarch64-unknown-linux-gnu
-        - openwork-server-x86_64-unknown-linux-gnu
         - openwork-orchestrator
         - openwork-orchestrator-aarch64-unknown-linux-gnu
         - openwork-orchestrator-x86_64-unknown-linux-gnu
@@ -88,9 +83,6 @@ win:
         - opencode.exe
         - opencode-aarch64-pc-windows-msvc.exe
         - opencode-x86_64-pc-windows-msvc.exe
-        - openwork-server.exe
-        - openwork-server-aarch64-pc-windows-msvc.exe
-        - openwork-server-x86_64-pc-windows-msvc.exe
         - openwork-orchestrator.exe
         - openwork-orchestrator-aarch64-pc-windows-msvc.exe
         - openwork-orchestrator-x86_64-pc-windows-msvc.exe

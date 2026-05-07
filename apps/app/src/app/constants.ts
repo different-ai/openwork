@@ -25,9 +25,6 @@ export type McpDirectoryInfo = {
   oauth: boolean;
 };
 
-export const CHROME_DEVTOOLS_MCP_ID = "chrome-devtools";
-export const CHROME_DEVTOOLS_MCP_COMMAND = ["npx", "-y", "chrome-devtools-mcp@latest"] as const;
-
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
     get name() { return t("mcp.quick_connect_notion_title"); },
@@ -62,14 +59,6 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     get description() { return t("mcp.quick_connect_context7_desc"); },
     url: "https://mcp.context7.com/mcp",
     type: "remote",
-    oauth: false,
-  },
-  {
-    id: CHROME_DEVTOOLS_MCP_ID,
-    get name() { return t("mcp.quick_connect_chrome_title"); },
-    get description() { return t("mcp.quick_connect_chrome_desc"); },
-    type: "local",
-    command: [...CHROME_DEVTOOLS_MCP_COMMAND],
     oauth: false,
   },
 ];

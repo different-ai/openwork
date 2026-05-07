@@ -120,7 +120,7 @@ function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promis
   return { server, requests };
 }
 
-function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
+async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -146,7 +146,7 @@ function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: st
     logFormat: "pretty",
     logRequests: false,
   };
-  const server = startServer(config) as Served;
+  const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
   return { server, token: config.token };
 }
@@ -171,7 +171,7 @@ describe("workspace session read APIs", () => {
   test("lists sessions and returns session details, messages, and snapshot", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
-    const openwork = startOpenworkServer({
+    const openwork = await startOpenworkServer({
       workspaceRoot,
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });
@@ -240,7 +240,7 @@ describe("workspace session read APIs", () => {
   test("returns 404 when the upstream session is missing", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
-    const openwork = startOpenworkServer({
+    const openwork = await startOpenworkServer({
       workspaceRoot,
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });
@@ -260,13 +260,13 @@ describe("workspace session read APIs", () => {
     const workspaceRoot = await createWorkspaceRoot();
     const command = deferred();
     const mock = startMockOpencode({ holdCommand: command.promise });
-    const openwork = startOpenworkServer({
+    const openwork = await startOpenworkServer({
       workspaceRoot,
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });
 
     const response = await Promise.race([
-      fetch(`http://127.0.0.1:${openwork.server.port}/w/ws_1/opencode/session/ses_1/command`, {
+      fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session/ses_1/command`, {
         method: "POST",
         headers: { ...auth(openwork.token), "Content-Type": "application/json" },
         body: JSON.stringify({ command: "review", arguments: "" }),
@@ -282,10 +282,28 @@ describe("workspace session read APIs", () => {
     expect(sawCommand).toBe(true);
   });
 
+  test("keeps legacy /w workspace opencode proxy alias", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/w/ws_1/opencode/session`, {
+      headers: auth(openwork.token),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body)).toBe(true);
+    expect(mock.requests.some((request) => request.pathname === "/session")).toBe(true);
+  });
+
   test("returns 502 when OpenCode returns an invalid session list payload", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode({ invalidList: true });
-    const openwork = startOpenworkServer({
+    const openwork = await startOpenworkServer({
       workspaceRoot,
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });

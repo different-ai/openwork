@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { formatBytes, formatRelativeTime, isTauriRuntime } from "../../../../app/utils";
+import { formatBytes, formatRelativeTime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
 import { Button } from "../../../design-system/button";
@@ -53,7 +53,7 @@ export function UpdatesView(props: UpdatesViewProps) {
       : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="flex items-start justify-between gap-4">
           <div>

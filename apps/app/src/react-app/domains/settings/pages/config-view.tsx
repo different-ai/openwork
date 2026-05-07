@@ -300,7 +300,7 @@ export function ConfigView(props: ConfigViewProps) {
   );
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-6 max-w-3xl w-full">
       <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
         <div className="text-sm font-medium text-gray-12">
           {t("config.workspace_config_title")}

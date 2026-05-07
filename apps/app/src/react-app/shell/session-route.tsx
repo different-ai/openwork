@@ -192,6 +192,12 @@ function describeWorkspaceCreateError(error: unknown) {
   return message;
 }
 
+function focusPromptSoon() {
+  if (typeof window === "undefined") return;
+  const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
+  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
+}
+
 const emptyPendingPermissions: PendingPermission[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
@@ -483,6 +489,17 @@ export function SessionRoute() {
           setRetryingWorkspaceIds((current) =>
             current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
           );
+          // When a workspace returns zero sessions during the initial batch
+          // load, OpenCode may still be warming up its index.  Schedule a
+          // single delayed retry so the sidebar doesn't stay permanently
+          // empty while the managed engine finishes starting.
+          if (items.length === 0 && attempt === 0) {
+            window.setTimeout(() => {
+              if (backgroundSessionLoadInFlight.current.get(workspace.id)) return;
+              backgroundSessionLoadInFlight.current.delete(workspace.id);
+              void fetchOnce(workspace, 1);
+            }, 3_000);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : t("app.unknown_error");
           // The first cold call to OpenCode's /session endpoint often hits
@@ -582,6 +599,7 @@ export function SessionRoute() {
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
+      const alreadyLoadedWorkspaceIds = new Set(Object.keys(sessionsByWorkspaceIdRef.current));
       const cachedEntries = nextWorkspaces.map((workspace) => ({
         workspaceId: workspace.id,
         sessions: sessionsByWorkspaceIdRef.current[workspace.id] ?? [],
@@ -621,9 +639,10 @@ export function SessionRoute() {
         return next;
       });
       setRetryingWorkspaceIds(
-        cachedEntries.find((entry) => entry.workspaceId === nextWorkspaceId)?.sessions.length === 0 && nextWorkspaceId
-          ? [nextWorkspaceId]
-          : [],
+        cachedEntries
+          .filter((entry) => entry.sessions.length === 0)
+          .filter((entry) => entry.workspaceId === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(entry.workspaceId))
+          .map((entry) => entry.workspaceId),
       );
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
@@ -646,8 +665,14 @@ export function SessionRoute() {
       // so the UI is interactive immediately; the sidebar shows a
       // loading state per-workspace until the list arrives.
       const selectedWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId);
-      if (selectedWorkspace) {
-        void loadWorkspaceSessionsInBackground(openworkClient, [selectedWorkspace]);
+      const backgroundWorkspaces = nextWorkspaces.filter(
+        (workspace) => workspace.id === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(workspace.id),
+      );
+      if (backgroundWorkspaces.length > 0) {
+        const orderedWorkspaces = selectedWorkspace
+          ? [selectedWorkspace, ...backgroundWorkspaces.filter((workspace) => workspace.id !== selectedWorkspace.id)]
+          : backgroundWorkspaces;
+        void loadWorkspaceSessionsInBackground(openworkClient, orderedWorkspaces);
       }
     } catch (error) {
       const message = describeRouteError(error);
@@ -1707,6 +1732,7 @@ export function SessionRoute() {
         [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
       }));
       navigateToWorkspaceSession(workspaceId, session.id);
+      focusPromptSoon();
       void refreshRouteState();
     } catch (error) {
       const message = describeRouteError(error);
@@ -1849,6 +1875,8 @@ export function SessionRoute() {
         preset,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
+      let targetWorkspaceId = createdId;
+      let targetWorkspace = list.workspaces.find((workspace) => workspace.id === createdId) ?? null;
       if (createdId) {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -1859,23 +1887,45 @@ export function SessionRoute() {
       // is launched with a fixed --workspace list at boot and the bridge
       // write only updates desktop-side state).
       if (client) {
-        await client
+        const serverList = await client
           .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .catch(() => undefined);
+          .catch(() => null);
+        targetWorkspaceId = serverList
+          ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
+          : targetWorkspaceId;
+        targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
       }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
-      if (createdId) {
-        handleOpenSettings("/settings/general", createdId);
+      if (targetWorkspaceId) {
+        const workspacePath = targetWorkspace?.path?.trim() || folder;
+        const session = baseUrl && token
+          ? unwrap(await createClient(
+              `${(buildOpenworkWorkspaceBaseUrl(baseUrl, targetWorkspaceId) ?? baseUrl).replace(/\/+$/, "")}/opencode`,
+              workspacePath || undefined,
+              { token, mode: "openwork" },
+            ).session.create({ directory: workspacePath || undefined }))
+          : null;
+        setLegacySelectedWorkspaceId(targetWorkspaceId);
+        writeActiveWorkspaceId(targetWorkspaceId);
+        if (session?.id) {
+          writeLastSessionFor(targetWorkspaceId, session.id);
+          setSessionsByWorkspaceId((current) => ({
+            ...current,
+            [targetWorkspaceId]: [session as any, ...(current[targetWorkspaceId] ?? [])],
+          }));
+        }
+        navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
+        if (session?.id) focusPromptSoon();
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [client, handleOpenSettings, local, refreshRouteState]);
+  }, [client, local, navigateToWorkspaceSession, refreshRouteState]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;

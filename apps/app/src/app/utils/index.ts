@@ -69,16 +69,12 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   return `${providerLabel} · ${modelLabel}`;
 }
 
-export function isTauriRuntime() {
-  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
-}
-
 export function isElectronRuntime() {
   return typeof window !== "undefined" && (window as Window).__OPENWORK_ELECTRON__ != null;
 }
 
 export function isDesktopRuntime() {
-  return isTauriRuntime() || isElectronRuntime();
+  return isElectronRuntime();
 }
 
 export function isWindowsPlatform() {

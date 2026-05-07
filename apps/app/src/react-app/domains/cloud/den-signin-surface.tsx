@@ -191,7 +191,8 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
   if (variant === "fullscreen") {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_42%),linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.92))] px-6 py-10 text-dls-text">
+      <div className="relative min-h-screen bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_42%),linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.92))] px-6 py-10 text-dls-text">
+        <div className="absolute inset-x-0 top-0 h-10 mac:titlebar-drag" />
         <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-3xl items-center justify-center">
           <div className="w-full space-y-4">{content}</div>
         </div>

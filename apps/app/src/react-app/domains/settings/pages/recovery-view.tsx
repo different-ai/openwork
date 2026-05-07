@@ -25,7 +25,7 @@ export type RecoveryViewProps = {
 
 export function RecoveryView(props: RecoveryViewProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div className={`${settingsPanelClass} space-y-3`}>
         <div className="text-sm font-medium text-gray-12">{t("settings.workspace_config_title")}</div>
         <div className="text-xs text-gray-10">{t("settings.workspace_config_desc")}</div>

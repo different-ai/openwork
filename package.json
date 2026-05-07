@@ -51,8 +51,7 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch",
-    "tauri": "pnpm --filter @openwork/desktop exec tauri"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch"
   },
   "devDependencies": {
     "turbo": "^2.5.5"

@@ -79,7 +79,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     }`;
 
   return (
-    <section className="space-y-6 animate-in fade-in duration-300">
+    <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
           {props.showHeader !== false ? (

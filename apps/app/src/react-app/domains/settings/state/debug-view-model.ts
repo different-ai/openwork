@@ -22,13 +22,9 @@ import {
 } from "../../../../app/lib/desktop";
 import {
   ELECTRON_ALPHA_RELEASE_PAGE_URL,
-  resolveElectronAlphaArtifact,
   type ElectronAlphaArtifact,
 } from "../../../../app/lib/electron-alpha";
-import {
-  migrateToElectron,
-  writeMigrationSnapshotFromTauri,
-} from "../../../../app/lib/migration";
+
 import {
   writeOpenworkServerSettings,
 } from "../../../../app/lib/openwork-server";
@@ -37,7 +33,6 @@ import {
   isDesktopRuntime,
   isElectronRuntime,
   isMacPlatform,
-  isTauriRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -268,7 +263,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [electronMigrationSha256, setElectronMigrationSha256] = useState("");
   const [electronMigrationSha512, setElectronMigrationSha512] = useState("");
   const [electronMigrationArtifact, setElectronMigrationArtifact] = useState<ElectronAlphaArtifact | null>(null);
-  const [electronMigrationBusy, setElectronMigrationBusy] = useState(false);
+  const [electronMigrationBusy] = useState(false);
   const [electronMigrationStatus, setElectronMigrationStatus] = useState<string | null>(null);
   const [electronAlphaUpdaterBusy, setElectronAlphaUpdaterBusy] = useState(false);
   const [electronAlphaUpdaterStatus, setElectronAlphaUpdaterStatus] = useState<string | null>(null);
@@ -447,35 +442,11 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [electronMigrationArtifact]);
 
   const onResolveElectronAlphaArtifact = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Electron alpha migration resolution is only available in the Tauri desktop app.");
-      return;
-    }
-    if (!isMacPlatform()) {
-      setElectronMigrationStatus("Electron alpha migration is macOS-only for now.");
-      return;
-    }
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const artifact = await resolveElectronAlphaArtifact("arm64");
-      setElectronMigrationArtifact(artifact);
-      setElectronMigrationUrl(artifact.url);
-      setElectronMigrationSha512(artifact.sha512);
-      setElectronMigrationSha256("");
-      setElectronMigrationStatus(
-        `Resolved Electron alpha v${artifact.version} from latest-mac.yml. Review Advanced if you need to override the artifact URL.`,
-      );
-      pushDeveloperLog(`resolved Electron alpha artifact version=${artifact.version} path=${artifact.path}`);
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-    } finally {
-      setElectronMigrationBusy(false);
-    }
-  }, [pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri → Electron migration controls were removed after Electron became the desktop runtime.");
+  }, []);
 
   const onRevealElectronMigrationBackup = useCallback(async () => {
-    if (!isTauriRuntime() && !isElectronRuntime()) {
+    if (!isElectronRuntime()) {
       setElectronMigrationStatus("Migration backup reveal is available only in the desktop app.");
       return;
     }
@@ -494,89 +465,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, []);
 
   const onPrepareElectronMigrationSnapshot = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Migration snapshot export is only available in the Tauri desktop app.");
-      return;
-    }
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const result = await writeMigrationSnapshotFromTauri();
-      if (!result.ok) {
-        throw new Error(result.reason ?? "Failed to write migration snapshot.");
-      }
-      setElectronMigrationStatus(
-        `Prepared Electron migration data (${result.keyCount} localStorage key${result.keyCount === 1 ? "" : "s"}). This did not replace or quit Tauri.`,
-      );
-      pushDeveloperLog(`prepared Electron migration snapshot keyCount=${result.keyCount}`);
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-    } finally {
-      setElectronMigrationBusy(false);
-    }
-  }, [pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri migration snapshots are no longer available because Tauri has been removed.");
+  }, []);
 
   const onInstallElectronPreviewFromTauri = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Electron install handoff is only available in the Tauri desktop app.");
-      return;
-    }
-
-    const url = electronMigrationUrl.trim();
-    if (!url) {
-      setElectronMigrationStatus("Paste a trusted Electron artifact URL before starting the install handoff.");
-      return;
-    }
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "https:") {
-        setElectronMigrationStatus("Electron artifact URLs must use https://.");
-        return;
-      }
-    } catch {
-      setElectronMigrationStatus("Paste a valid https:// Electron artifact URL before starting the install handoff.");
-      return;
-    }
-
-    const confirmed =
-      typeof window === "undefined" ||
-      window.confirm(
-        "This debug-only migration action first writes a migration snapshot, then starts the Tauri → Electron handoff. On macOS, the installer swaps OpenWork.app in place and keeps OpenWork.app.migrate-bak for rollback. Tauri stable updates remain unchanged. Continue?",
-      );
-    if (!confirmed) return;
-
-    const doubleConfirmed =
-      typeof window === "undefined" ||
-      window.confirm(
-        "Final confirmation: quit Tauri and start installing the resolved Electron alpha now? The current app bundle will be moved to OpenWork.app.migrate-bak before replacement.",
-      );
-    if (!doubleConfirmed) {
-      setElectronMigrationStatus("Install handoff cancelled before any app replacement step.");
-      return;
-    }
-
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const snapshot = await writeMigrationSnapshotFromTauri();
-      if (!snapshot.ok) {
-        throw new Error(snapshot.reason ?? "Failed to write migration snapshot.");
-      }
-      pushDeveloperLog(`prepared Electron migration snapshot before install keyCount=${snapshot.keyCount}`);
-      const result = await migrateToElectron({
-        url,
-        sha256: electronMigrationSha256.trim() || undefined,
-        sha512: electronMigrationSha512.trim() || undefined,
-      });
-      if (!result.ok) {
-        throw new Error(result.reason ?? "Electron install handoff failed.");
-      }
-      setElectronMigrationStatus("Electron install handoff started. Tauri will quit if the native handoff accepted the request.");
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-      setElectronMigrationBusy(false);
-    }
-  }, [electronMigrationSha256, electronMigrationSha512, electronMigrationUrl, pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri → Electron install handoff is no longer available because Electron is now the desktop runtime.");
+  }, []);
 
   useEffect(() => {
     if (!developerMode || !isElectronRuntime()) return;
@@ -988,7 +882,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onClearDeveloperLog,
       onCopyDeveloperLog,
       onExportDeveloperLog,
-      electronMigrationAvailable: isTauriRuntime(),
+      electronMigrationAvailable: false,
       electronMigrationUrl,
       electronMigrationSha256,
       electronMigrationSha512,

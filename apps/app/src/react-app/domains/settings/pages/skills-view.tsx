@@ -716,7 +716,7 @@ export function SkillsView(props: SkillsViewProps) {
   };
 
   return (
-    <section className="space-y-8">
+    <section className="space-y-8 max-w-3xl w-full">
       <div className="space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">

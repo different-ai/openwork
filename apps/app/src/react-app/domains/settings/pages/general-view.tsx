@@ -58,7 +58,7 @@ function providerSourceLabel(source?: ConnectedProvider["source"]) {
 
 export function GeneralSettingsView(props: GeneralSettingsViewProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <AuthorizedFoldersPanel {...props.authorizedFoldersPanel} />
 
       <div className={`${settingsPanelClass} space-y-4`}>
