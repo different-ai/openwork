@@ -14,6 +14,7 @@ import {
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
+import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
@@ -216,6 +217,7 @@ function RemoteConnectionIssueCard(props: {
           >
             {props.message}
           </div>
+          <OpenWorkDenHelpLink />
           <div className="mt-2 flex flex-wrap gap-1.5">
             {props.canRecover ? (
               <button
