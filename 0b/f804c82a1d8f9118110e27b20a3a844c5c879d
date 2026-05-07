@@ -1,0 +1,55 @@
+apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+  s_a2549c74cb5794::t_ad2165d92670b4 698-702,704,707-712,718-719,722-724,727
+  s_a6d2c5ee8fc3dd::t_d9801b280924a8 622,634,643,645,655,670
+  s_a2549c74cb5794::t_db2a87b856aba9 473
+  s_a2549c74cb5794::t_43898efe853223 714-717,720
+  s_b1fb0374d317df::t_132c9fd857e398 577-588,590-596
+  s_a2549c74cb5794::t_9074408e592b2f 740-745
+  s_a2549c74cb5794::t_9fe373fa6dae56 471-472,474-476
+  s_519ce0c348d840::t_d9f86639ad166e 102,108,136,142,174,180,184,189,200,208,215,225,418,486,488,589,721
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "0bf804c82a1d8f9118110e27b20a3a844c5c879d",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_519ce0c348d840": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d2562b61-31ea-41b2-beca-cfc99c8bf893",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_a2549c74cb5794": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1c70e855-5fcb-4080-ae6a-90d261ee7c39",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_a6d2c5ee8fc3dd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e99a7606-551f-4b18-9474-9a19c6160e52",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_b1fb0374d317df": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7bdb7305-a971-4a99-bedf-ace5748f7853",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}
