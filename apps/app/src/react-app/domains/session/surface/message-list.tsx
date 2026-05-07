@@ -577,7 +577,10 @@ function StepRow(props: {
       ? (props.part as { text: string }).text
       : "";
     return (
-      <div className="text-[14px] leading-[1.7] text-gray-9 whitespace-pre-wrap">
+      <div
+        data-reasoning="true"
+        className="font-mono text-[12px] leading-[1.7] text-gray-8 whitespace-pre-wrap"
+      >
         <div className="max-w-[720px]">{cleanReasoningPreview(raw) || headline}</div>
       </div>
     );
