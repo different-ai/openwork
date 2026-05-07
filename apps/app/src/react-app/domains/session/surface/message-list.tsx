@@ -579,7 +579,7 @@ function StepRow(props: {
     return (
       <div
         data-reasoning="true"
-        className="font-mono text-[12px] leading-[1.7] text-gray-8 whitespace-pre-wrap"
+        className="font-mono text-[13px] leading-[1.7] text-gray-8 whitespace-pre-wrap"
       >
         <div className="max-w-[720px]">{cleanReasoningPreview(raw) || headline}</div>
       </div>
