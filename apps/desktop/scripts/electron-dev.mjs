@@ -16,16 +16,45 @@ const defaultDevDataDir = resolve(
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
-const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
+const portFromEnv = Number.isFinite(portValue) && portValue > 0;
+const userExplicitPort = portFromEnv;
+let devPort = portFromEnv ? portValue : 5173;
 const explicitStartUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || "";
-const startUrl = explicitStartUrl || `http://localhost:${devPort}`;
-const viteProbeUrls = explicitStartUrl
+let startUrl = explicitStartUrl || `http://localhost:${devPort}`;
+let viteProbeUrls = explicitStartUrl
   ? [explicitStartUrl]
   : [
       `http://127.0.0.1:${devPort}`,
       `http://[::1]:${devPort}`,
       `http://localhost:${devPort}`,
     ];
+
+function rebuildStartUrls(port) {
+  if (explicitStartUrl) return;
+  startUrl = `http://localhost:${port}`;
+  viteProbeUrls = [
+    `http://127.0.0.1:${port}`,
+    `http://[::1]:${port}`,
+    `http://localhost:${port}`,
+  ];
+}
+
+async function isPortFree(port) {
+  for (const host of ["127.0.0.1", "::1"]) {
+    if (await probeHost(host, port)) return false;
+  }
+  return true;
+}
+
+async function findFreePort(preferred, maxAttempts = 100) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const candidate = preferred + i;
+    if (await isPortFree(candidate)) return candidate;
+  }
+  throw new Error(
+    `No free port found in range ${preferred}-${preferred + maxAttempts - 1}`,
+  );
+}
 
 function run(command, args, options = {}) {
   return spawn(command, args, {
@@ -46,7 +75,7 @@ function runSync(command, args, options = {}) {
   }
 }
 
-async function fetchWithTimeout(url, timeoutMs = 4000) {
+async function fetchWithTimeout(url, timeoutMs = 1500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -202,13 +231,26 @@ for (const candidate of initialProbeUrls) {
   }
 }
 
-if (!viteReady) {
-  for (const candidate of initialProbeUrls) {
-    if (await portIsOpenForVite(candidate)) {
-      viteReady = true;
-      break;
+if (!viteReady && !explicitStartUrl) {
+  // Port may be held by a non-Vite process. Auto-bump only if the port came
+  // from the default — respect explicit PORT= overrides by failing loud.
+  const occupied = !(await isPortFree(devPort));
+  if (occupied) {
+    if (userExplicitPort) {
+      throw new Error(
+        `Port ${devPort} is in use. Set a different PORT or free the port.`,
+      );
+    }
+    const freePort = await findFreePort(devPort);
+    if (freePort !== devPort) {
+      console.log(
+        `[openwork] Port ${devPort} busy — using ${freePort} instead`,
+      );
+      devPort = freePort;
+      rebuildStartUrls(devPort);
     }
   }
+  console.log(`[openwork] Vite dev port: ${devPort}`);
 }
 
 if (!viteReady) {
