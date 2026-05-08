@@ -1,0 +1,24 @@
+apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+  s_ce62ccabcdd9ee::t_b07d5ee6289b2b 17,491,497-529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "fdf396250121798574d89f4c726d6467c120d53e",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_ce62ccabcdd9ee": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a1f1d80b-02f7-43db-91ad-8de2a53422e4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
