@@ -144,9 +144,10 @@ function mergeRouteWorkspaces(
 ): RouteWorkspace[] {
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
   const desktopByPath = new Map(
-    desktopWorkspaces
-      .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
-      .filter(([path]) => path.length > 0),
+    desktopWorkspaces.flatMap((workspace) => {
+      const path = normalizeDirectoryPath(workspace.path ?? "");
+      return path ? [[path, workspace] as const] : [];
+    }),
   );
 
   const mergedServer = serverWorkspaces.map((workspace) => {
@@ -170,9 +171,10 @@ function mergeRouteWorkspaces(
 
   const mergedIds = new Set(mergedServer.map((workspace) => workspace.id));
   const mergedPaths = new Set(
-    mergedServer
-      .map((workspace) => normalizeDirectoryPath(workspace.path ?? ""))
-      .filter((path) => path.length > 0),
+    mergedServer.flatMap((workspace) => {
+      const path = normalizeDirectoryPath(workspace.path ?? "");
+      return path ? [path] : [];
+    }),
   );
 
   const missingDesktop = desktopWorkspaces.filter((workspace) => {
@@ -505,14 +507,17 @@ export function SettingsRoute() {
     () =>
       Object.values(sessionsByWorkspaceId)
         .flat()
-        .filter((session) => isActiveSessionStatus(getSessionStatus(session)))
-        .map((session: any) => ({
-          id: String(session?.id ?? ""),
-          title:
-            String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
-            t("session.untitled"),
-        }))
-        .filter((session) => session.id.length > 0),
+        .flatMap((session: any) => {
+          if (!isActiveSessionStatus(getSessionStatus(session))) return [];
+          const id = String(session?.id ?? "");
+          if (!id) return [];
+          return [{
+            id,
+            title:
+              String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
+              t("session.untitled"),
+          }];
+        }),
     [sessionsByWorkspaceId],
   );
 
@@ -1148,12 +1153,15 @@ export function SettingsRoute() {
   const providerSummary = providerConnectedIds.length > 0
     ? t("status.providers_connected", { count: providerConnectedIds.length })
     : t("settings.no_providers_connected");
-  const connectedProviders = providers
-    .filter((provider) => providerConnectedIds.includes(provider.id))
-    .map((provider) => ({
-      id: provider.id,
-      name: provider.name ?? provider.id,
-    }));
+  const providerConnectedIdSet = new Set(providerConnectedIds);
+  const connectedProviders = providers.flatMap((provider) =>
+    providerConnectedIdSet.has(provider.id)
+      ? [{
+          id: provider.id,
+          name: provider.name ?? provider.id,
+        }]
+      : [],
+  );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
@@ -1180,13 +1188,14 @@ export function SettingsRoute() {
     }
     const workspacePaths = Array.from(
       new Set(
-        workspaces
-          .filter((workspace) => workspace.workspaceType !== "remote")
-          .map((workspace) => workspace.path?.trim() ?? "")
-          .filter((path) => path.length > 0),
+        workspaces.flatMap((workspace) => {
+          const path = workspace.workspaceType !== "remote" ? workspace.path?.trim() ?? "" : "";
+          return path ? [path] : [];
+        }),
       ),
     );
-    if (!workspacePaths.includes(selectedWorkspaceRoot)) {
+    const workspacePathSet = new Set(workspacePaths);
+    if (!workspacePathSet.has(selectedWorkspaceRoot)) {
       workspacePaths.unshift(selectedWorkspaceRoot);
     }
     await engineStart(selectedWorkspaceRoot, {

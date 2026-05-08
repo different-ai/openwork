@@ -220,9 +220,10 @@ function mergeRouteWorkspaces(
 ): RouteWorkspace[] {
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
   const desktopByPath = new Map(
-    desktopWorkspaces
-      .map((workspace) => [normalizeDirectoryPath(workspace.path ?? ""), workspace] as const)
-      .filter(([path]) => path.length > 0),
+    desktopWorkspaces.flatMap((workspace) => {
+      const path = normalizeDirectoryPath(workspace.path ?? "");
+      return path ? [[path, workspace] as const] : [];
+    }),
   );
 
   // If a server workspace's id matches a desktop workspace marked as remote,
@@ -232,9 +233,7 @@ function mergeRouteWorkspaces(
   // remote routing fields and send workspace-scoped requests back to the
   // local server.
   const remoteDesktopIds = new Set(
-    desktopWorkspaces
-      .filter((workspace) => workspace.workspaceType === "remote")
-      .map((workspace) => workspace.id),
+    desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
   );
   const filteredServer = serverWorkspaces.filter((workspace) => !remoteDesktopIds.has(workspace.id));
 
@@ -262,9 +261,10 @@ function mergeRouteWorkspaces(
 
   const mergedIds = new Set(mergedServer.map((workspace) => workspace.id));
   const mergedPaths = new Set(
-    mergedServer
-      .map((workspace) => normalizeDirectoryPath(workspace.path ?? ""))
-      .filter((path) => path.length > 0),
+    mergedServer.flatMap((workspace) => {
+      const path = normalizeDirectoryPath(workspace.path ?? "");
+      return path ? [path] : [];
+    }),
   );
 
   const missingDesktop = desktopWorkspaces.filter((workspace) => {
@@ -519,14 +519,17 @@ export function SessionRoute() {
     () =>
       Object.values(sessionsByWorkspaceId)
         .flat()
-        .filter((session) => isActiveSessionStatus(getSessionStatus(session)))
-        .map((session: any) => ({
-          id: String(session?.id ?? ""),
-          title:
-            String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
-            t("session.untitled"),
-        }))
-        .filter((session) => session.id.length > 0),
+        .flatMap((session: any) => {
+          if (!isActiveSessionStatus(getSessionStatus(session))) return [];
+          const id = String(session?.id ?? "");
+          if (!id) return [];
+          return [{
+            id,
+            title:
+              String(session?.title ?? session?.slug ?? session?.id ?? "").trim() ||
+              t("session.untitled"),
+          }];
+        }),
     [sessionsByWorkspaceId],
   );
 
@@ -730,10 +733,12 @@ export function SessionRoute() {
         return next;
       });
       setRetryingWorkspaceIds(
-        cachedEntries
-          .filter((entry) => entry.sessions.length === 0)
-          .filter((entry) => entry.workspaceId === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(entry.workspaceId))
-          .map((entry) => entry.workspaceId),
+        cachedEntries.flatMap((entry) =>
+          entry.sessions.length === 0 &&
+          (entry.workspaceId === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(entry.workspaceId))
+            ? [entry.workspaceId]
+            : [],
+        ),
       );
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
@@ -1989,15 +1994,18 @@ export function SessionRoute() {
   const handleReorderWorkspaces = useCallback((workspaceIds: string[]) => {
     const activeWorkspaceIds = new Set(workspacesRef.current.map((workspace) => workspace.id));
     const nextOrderIds: string[] = [];
+    const nextOrderIdSet = new Set<string>();
 
     for (const id of workspaceIds) {
-      if (!activeWorkspaceIds.has(id) || nextOrderIds.includes(id)) continue;
+      if (!activeWorkspaceIds.has(id) || nextOrderIdSet.has(id)) continue;
       nextOrderIds.push(id);
+      nextOrderIdSet.add(id);
     }
 
     for (const workspace of workspacesRef.current) {
-      if (nextOrderIds.includes(workspace.id)) continue;
+      if (nextOrderIdSet.has(workspace.id)) continue;
       nextOrderIds.push(workspace.id);
+      nextOrderIdSet.add(workspace.id);
     }
 
     workspaceOrderIdsRef.current = nextOrderIds;

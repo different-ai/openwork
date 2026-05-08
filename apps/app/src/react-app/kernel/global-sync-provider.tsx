@@ -252,13 +252,10 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
     setField("project", projects);
     setProjectMetaForProjects(projects);
     await Promise.allSettled(
-      projects
-        .map((project) => project.worktree)
-        .filter(
-          (worktree): worktree is string =>
-            typeof worktree === "string" && worktree.length > 0,
-        )
-        .map((worktree) => refreshVcs(worktree)),
+      projects.flatMap((project) => {
+        const worktree = project.worktree;
+        return typeof worktree === "string" && worktree.length > 0 ? [refreshVcs(worktree)] : [];
+      }),
     );
   }, [globalSDK.client, refreshVcs, setField, setProjectMetaForProjects]);
 

@@ -263,9 +263,9 @@ function MarketplacePluginListItem({
   onImportPlugin,
 }: MarketplacePluginListItemProps) {
   const actionBusy = actionId === row.plugin.id;
-  const counts = Object.entries(row.plugin.componentCounts)
-    .filter(([, count]) => count > 0)
-    .map(([type, count]) => `${count} ${type}${count === 1 ? "" : "s"}`);
+  const counts = Object.entries(row.plugin.componentCounts).flatMap(([type, count]) =>
+    count > 0 ? [`${count} ${type}${count === 1 ? "" : "s"}`] : [],
+  );
 
   return (
     <SettingsListItem>
@@ -799,19 +799,22 @@ export function CloudWorkersSection({
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleWorkers = useSearch({ items: workers, keys: workerSearchKeys, query: searchQuery });
   const workerGroups: { value: string; label: string; rows: CloudWorker[] }[] = [];
+  const workerGroupsByValue = new Map<string, { value: string; label: string; rows: CloudWorker[] }>();
 
   for (const worker of visibleWorkers) {
     const value = workerStatusValue(worker.status);
-    const group = workerGroups.find((entry) => entry.value === value);
+    const group = workerGroupsByValue.get(value);
 
     if (group) {
       group.rows.push(worker);
     } else {
-      workerGroups.push({ value, label: workerStatusMeta(worker.status).label, rows: [worker] });
+      const nextGroup = { value, label: workerStatusMeta(worker.status).label, rows: [worker] };
+      workerGroups.push(nextGroup);
+      workerGroupsByValue.set(value, nextGroup);
     }
   }
 
-  const workerDefaultGroups = workerGroups.filter((group) => group.value !== "stopped").map((group) => group.value);
+  const workerDefaultGroups = workerGroups.flatMap((group) => group.value !== "stopped" ? [group.value] : []);
 
   return (
     <SettingsSection>

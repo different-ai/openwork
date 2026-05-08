@@ -625,12 +625,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     // `client.listWorkspaces()` later returns the full set, not just the
     // active one.
     const workspacePaths = [workspacePath];
+    const workspacePathSet = new Set(workspacePaths);
     try {
       const list = await workspaceBootstrapCmd();
       for (const entry of list?.workspaces ?? []) {
         if (entry.workspaceType === "remote") continue;
         const path = entry.path?.trim() ?? "";
-        if (path && !workspacePaths.includes(path)) workspacePaths.push(path);
+        if (path && !workspacePathSet.has(path)) {
+          workspacePaths.push(path);
+          workspacePathSet.add(path);
+        }
       }
     } catch {
       // best-effort: fall back to just the active workspace path

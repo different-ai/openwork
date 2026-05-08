@@ -91,9 +91,9 @@ export function seedPermissionState(
   const now = Date.now();
   queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
-    const seeded = permissions
-      .filter((permission) => permission.sessionID === sessionId)
-      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now));
+    const seeded = permissions.flatMap((permission) =>
+      permission.sessionID === sessionId ? [withReceivedAt(permission, receivedAtById.get(permission.id) ?? now)] : [],
+    );
     const seededIds = new Set(seeded.map((permission) => permission.id));
     const snapshotStartedAt = options.snapshotStartedAt;
     const liveAfterSnapshot =
@@ -481,6 +481,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
       transcriptKey(workspaceId, sessionId),
       (current = []) => {
         let next = current;
+        const nextById = new Map(next.map((message) => [message.id, message]));
         // Track which message shells we've ensured exist this flush so we
         // don't call upsertMessage for the same message on every delta.
         const ensuredMessageIds = new Set<string>();
@@ -490,9 +491,11 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             // state; otherwise infer it from the alternation pattern
             // so the brief "stub before message.updated" window doesn't
             // mislabel the message's bubble style.
-            const existing = next.find((m) => m.id === item.messageId);
+            const existing = nextById.get(item.messageId);
             const role = existing?.role ?? inferStubRole(next);
-            next = upsertMessage(next, { id: item.messageId, role, parts: [] });
+            const ensuredMessage = { id: item.messageId, role, parts: existing?.parts ?? [] };
+            next = upsertMessage(next, ensuredMessage);
+            nextById.set(item.messageId, ensuredMessage);
             ensuredMessageIds.add(item.messageId);
           }
           // Resolve the part kind from the transcript instead of trusting
@@ -504,11 +507,14 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
           // part — and reasoning content leaks into the response markdown
           // until the next reload reconstructs the transcript from the
           // snapshot.
-          const ownerMessage = next.find((m) => m.id === item.messageId);
-          const ownerPart = ownerMessage?.parts.find((part) =>
-            (part.type === "dynamic-tool" && part.toolCallId === item.partId) ||
-              getPartMetadataId(part) === item.partId,
+          const ownerMessage = nextById.get(item.messageId);
+          const ownerPartsById = new Map(
+            (ownerMessage?.parts ?? []).flatMap((part) => {
+              const id = part.type === "dynamic-tool" ? part.toolCallId : getPartMetadataId(part);
+              return id ? [[id, part] as const] : [];
+            }),
           );
+          const ownerPart = ownerPartsById.get(item.partId);
 
           if (!ownerPart) {
             const existing = entry.pendingDeltas.get(item.partId) ?? {

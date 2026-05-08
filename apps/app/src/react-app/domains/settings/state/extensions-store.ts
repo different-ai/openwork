@@ -671,16 +671,18 @@ export function createExtensionsStore(options: {
     });
 
     const nextSkillNames: string[] = [];
+    const nextSkillNameSet = new Set<string>();
     const nextSkillIds: string[] = [];
 
     for (const skill of hub.skills) {
       const preferredName = importedNameMap.get(skill.id)?.trim() ?? "";
       const installName =
-        preferredName && !nextSkillNames.includes(preferredName)
+        preferredName && !nextSkillNameSet.has(preferredName)
           ? preferredName
           : uniqueSkillInstallName(slugifyOpencodeSkillName(skill.title), taken, skill.id);
       taken.add(installName);
       nextSkillNames.push(installName);
+      nextSkillNameSet.add(installName);
       nextSkillIds.push(skill.id);
 
       const rawDesc = (skill.description?.trim() || skill.title).trim();
@@ -692,7 +694,7 @@ export function createExtensionsStore(options: {
       });
     }
 
-    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNames.includes(name));
+    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNameSet.has(name));
     for (const name of removedSkillNames) {
       await deleteWorkspaceSkill(name);
     }
@@ -957,10 +959,11 @@ export function createExtensionsStore(options: {
       }
       const listing = (await listingRes.json()) as unknown;
       const dirs: string[] = Array.isArray(listing)
-        ? listing
-            .filter((entry) => entry && typeof entry === "object" && (entry as { type?: string }).type === "dir")
-            .map((entry) => String((entry as { name?: string }).name ?? ""))
-            .filter(Boolean)
+        ? listing.flatMap((entry) => {
+            if (!entry || typeof entry !== "object" || (entry as { type?: string }).type !== "dir") return [];
+            const name = String((entry as { name?: string }).name ?? "");
+            return name ? [name] : [];
+          })
         : [];
 
       const next: HubSkillCard[] = dirs.map((dirName) => ({
@@ -969,7 +972,7 @@ export function createExtensionsStore(options: {
       }));
 
       if (refreshHubSkillsAborted) return;
-      const sorted = next.slice().sort((a, b) => a.name.localeCompare(b.name));
+      const sorted = next.toSorted((a, b) => a.name.localeCompare(b.name));
       mutateState((current) => ({
         ...current,
         hubSkills: sorted,

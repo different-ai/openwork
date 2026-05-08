@@ -122,7 +122,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const workerDisabled = Boolean(props.workerDisabled);
   const workerDisabledReason = (props.workerDisabledReason ?? "").trim();
   const workerDebugLines = useMemo(
-    () => (props.workerDebugLines ?? []).map((line) => line.trim()).filter(Boolean),
+    () => (props.workerDebugLines ?? []).flatMap((line) => {
+      const trimmed = line.trim();
+      return trimmed ? [trimmed] : [];
+    }),
     [props.workerDebugLines],
   );
   const hasSelectedFolder = Boolean(selectedFolder?.trim());

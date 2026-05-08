@@ -106,8 +106,10 @@ function messageToReadableText(message: UIMessage) {
 
 function transcriptToText(messages: UIMessage[]) {
   return messages
-    .map(messageToReadableText)
-    .filter(Boolean)
+    .flatMap((message) => {
+      const text = messageToReadableText(message);
+      return text ? [text] : [];
+    })
     .join("\n\n---\n\n");
 }
 

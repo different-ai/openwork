@@ -238,21 +238,20 @@ function isAttachmentPart(part: TranscriptPart) {
 }
 
 function attachmentsForParts(parts: TranscriptPart[]) {
-  return parts
-    .filter(isAttachmentPart)
-    .map((part) => {
+  return parts.flatMap((part) => {
+      if (!isAttachmentPart(part)) return [];
       const record = part as {
         url?: string;
         filename?: string;
         mime?: string;
       };
-      return {
+      const attachment = {
         url: record.url ?? "",
         filename: record.filename ?? "attachment",
         mime: record.mime ?? "application/octet-stream",
       };
-    })
-    .filter((attachment) => Boolean(attachment.url));
+      return attachment.url ? [attachment] : [];
+    });
 }
 
 function partToText(part: TranscriptPart) {
@@ -713,9 +712,10 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
       id: message.id,
       role: message.role,
       source: message,
-      parts: message.parts
-        .map((part, index) => toLegacyPart(part, `${message.id}:${index}`))
-        .filter((part): part is TranscriptPart => Boolean(part)),
+      parts: message.parts.flatMap((part, index) => {
+        const legacyPart = toLegacyPart(part, `${message.id}:${index}`);
+        return legacyPart ? [legacyPart] : [];
+      }),
     }));
   }, [props.messages]);
 

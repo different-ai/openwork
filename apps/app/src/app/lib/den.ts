@@ -727,26 +727,26 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
     return [];
   }
 
-  return payload.orgs
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      if (
-        typeof entry.id !== "string" ||
-        typeof entry.name !== "string" ||
-        typeof entry.slug !== "string" ||
-        (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
-      ) {
-        return null;
-      }
+  return payload.orgs.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    if (
+      typeof entry.id !== "string" ||
+      typeof entry.name !== "string" ||
+      typeof entry.slug !== "string" ||
+      (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
+    ) {
+      return [];
+    }
 
-      return {
+    return [
+      {
         id: entry.id,
         name: entry.name,
         slug: entry.slug,
         role: entry.role,
-      } satisfies DenOrgSummary;
-    })
-    .filter((entry): entry is DenOrgSummary => Boolean(entry));
+      } satisfies DenOrgSummary,
+    ];
+  });
 }
 
 function getWorkers(payload: unknown): DenWorkerSummary[] {
@@ -754,14 +754,14 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
     return [];
   }
 
-  return payload.workers
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      const instance = isRecord(entry.instance) ? entry.instance : null;
-      if (typeof entry.id !== "string" || typeof entry.name !== "string") {
-        return null;
-      }
-      return {
+  return payload.workers.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const instance = isRecord(entry.instance) ? entry.instance : null;
+    if (typeof entry.id !== "string" || typeof entry.name !== "string") {
+      return [];
+    }
+    return [
+      {
         workerId: entry.id,
         workerName: entry.name,
         status: typeof entry.status === "string" ? entry.status : "unknown",
@@ -769,9 +769,9 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
         provider: instance && typeof instance.provider === "string" ? instance.provider : null,
         isMine: Boolean(entry.isMine),
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
-      } satisfies DenWorkerSummary;
-    })
-    .filter((entry): entry is DenWorkerSummary => Boolean(entry));
+      } satisfies DenWorkerSummary,
+    ];
+  });
 }
 
 function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
@@ -811,9 +811,10 @@ function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
   if (!isRecord(payload) || !Array.isArray(payload.skills)) {
     return [];
   }
-  return payload.skills
-    .map((entry) => (isRecord(entry) ? parseDenOrgSkillRow(entry, null) : null))
-    .filter((entry): entry is DenOrgSkillCard => entry !== null);
+  return payload.skills.flatMap((entry) => {
+    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry, null) : null;
+    return skill ? [skill] : [];
+  });
 }
 
 export type DenOrgSkillHub = { id: string; name: string; skills: DenOrgSkillCard[] };
@@ -825,9 +826,10 @@ function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHub | n
   if (typeof hubId !== "string" || typeof hubName !== "string" || !Array.isArray(hubSkills)) {
     return null;
   }
-  const skills = hubSkills
-    .map((s) => (isRecord(s) ? parseDenOrgSkillRow(s, hubName) : null))
-    .filter((s): s is DenOrgSkillCard => s !== null);
+  const skills = hubSkills.flatMap((s) => {
+    const skill = isRecord(s) ? parseDenOrgSkillRow(s, hubName) : null;
+    return skill ? [skill] : [];
+  });
   return { id: hubId, name: hubName, skills };
 }
 
@@ -835,9 +837,10 @@ function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
   if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
     return [];
   }
-  return payload.skillHubs
-    .map((entry) => (isRecord(entry) ? parseOrgSkillHubEntry(entry) : null))
-      .filter((e): e is DenOrgSkillHub => e !== null);
+  return payload.skillHubs.flatMap((entry) => {
+    const hub = isRecord(entry) ? parseOrgSkillHubEntry(entry) : null;
+    return hub ? [hub] : [];
+  });
 }
 
 function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
@@ -872,7 +875,10 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerConfig: isRecord(value.providerConfig) ? value.providerConfig : {},
     hasApiKey: value.hasApiKey === true,
     models: Array.isArray(value.models)
-      ? value.models.map(parseDenOrgLlmProviderModel).filter((entry): entry is DenOrgLlmProviderModel => entry !== null)
+      ? value.models.flatMap((model) => {
+          const parsed = parseDenOrgLlmProviderModel(model);
+          return parsed ? [parsed] : [];
+        })
       : [],
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
@@ -884,9 +890,10 @@ function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
     return [];
   }
 
-  return payload.llmProviders
-    .map(parseDenOrgLlmProvider)
-    .filter((entry): entry is DenOrgLlmProvider => entry !== null);
+  return payload.llmProviders.flatMap((provider) => {
+    const parsed = parseDenOrgLlmProvider(provider);
+    return parsed ? [parsed] : [];
+  });
 }
 
 function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConnection | null {
@@ -988,7 +995,10 @@ function parsePluginMembership(value: unknown): DenPluginMembership | null {
 
 function getOrgMarketplaces(payload: unknown): DenOrgMarketplace[] {
   if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
-  return payload.items.map(parseOrgMarketplace).filter((entry): entry is DenOrgMarketplace => entry !== null);
+  return payload.items.flatMap((item) => {
+    const marketplace = parseOrgMarketplace(item);
+    return marketplace ? [marketplace] : [];
+  });
 }
 
 function getOrgMarketplaceResolved(payload: unknown): DenOrgMarketplaceResolved | null {
@@ -997,13 +1007,19 @@ function getOrgMarketplaceResolved(payload: unknown): DenOrgMarketplaceResolved 
   if (!marketplace || !Array.isArray(payload.item.plugins)) return null;
   return {
     marketplace,
-    plugins: payload.item.plugins.map(parseOrgPlugin).filter((entry): entry is DenOrgPlugin => entry !== null),
+    plugins: payload.item.plugins.flatMap((item) => {
+      const plugin = parseOrgPlugin(item);
+      return plugin ? [plugin] : [];
+    }),
   };
 }
 
 function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPluginResolved {
   const memberships = isRecord(payload) && Array.isArray(payload.items)
-    ? payload.items.map(parsePluginMembership).filter((entry): entry is DenPluginMembership => entry !== null)
+    ? payload.items.flatMap((item) => {
+        const membership = parsePluginMembership(item);
+        return membership ? [membership] : [];
+      })
     : [];
   return { plugin, memberships };
 }
@@ -1068,15 +1084,13 @@ function getOrgSkillHubSummaries(payload: unknown): DenOrgSkillHubSummary[] {
     return [];
   }
 
-  return payload.skillHubs
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
-        return null;
-      }
-      return { id: entry.id, name: entry.name, canManage: entry.canManage };
-    })
-    .filter((entry): entry is DenOrgSkillHubSummary => Boolean(entry));
+  return payload.skillHubs.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
+      return [];
+    }
+    return [{ id: entry.id, name: entry.name, canManage: entry.canManage }];
+  });
 }
 
 function getCreatedOrgSkillId(payload: unknown): string | null {
@@ -1107,7 +1121,10 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
     price: getBillingPrice(billing.price),
     subscription: getBillingSubscription(billing.subscription),
     invoices: Array.isArray(billing.invoices)
-      ? billing.invoices.map((item) => getBillingInvoice(item)).filter((item): item is DenBillingInvoice => item !== null)
+      ? billing.invoices.flatMap((item) => {
+          const invoice = getBillingInvoice(item);
+          return invoice ? [invoice] : [];
+        })
       : [],
     productId: typeof billing.productId === "string" ? billing.productId : null,
     benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
@@ -1520,5 +1537,5 @@ export async function fetchDenOrgSkillsCatalog(
       hubName: hubNameBySkillId.get(skill.id) ?? null,
     });
   }
-  return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
+  return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
 }

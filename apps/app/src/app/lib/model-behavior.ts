@@ -27,11 +27,11 @@ const humanize = (value: string) => {
   if (!cleaned) return value;
   return cleaned
     .split(" ")
-    .filter(Boolean)
-    .map((word) => {
-      if (/\d/.test(word) || word.length <= 3) return word.toUpperCase();
+    .flatMap((word) => {
+      if (!word) return [];
+      if (/\d/.test(word) || word.length <= 3) return [word.toUpperCase()];
       const lower = word.toLowerCase();
-      return lower.charAt(0).toUpperCase() + lower.slice(1);
+      return [lower.charAt(0).toUpperCase() + lower.slice(1)];
     })
     .join(" ");
 };
@@ -52,9 +52,10 @@ export const normalizeModelBehaviorValue = (value: string | null) => {
 };
 
 const getVariantKeys = (model: ProviderModel) => {
-  const keys = Object.keys(model.variants ?? {})
-    .map((key) => normalizeModelBehaviorValue(key))
-    .filter((key): key is string => Boolean(key));
+  const keys = Object.keys(model.variants ?? {}).flatMap((key) => {
+    const normalized = normalizeModelBehaviorValue(key);
+    return normalized ? [normalized] : [];
+  });
   return Array.from(new Set(keys));
 };
 

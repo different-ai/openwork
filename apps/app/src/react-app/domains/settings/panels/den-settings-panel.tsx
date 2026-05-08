@@ -105,7 +105,7 @@ export type DenSettingsPanelProps = {
   removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
 };
 
-const sortStrings = (values: string[]) => [...values].sort();
+const sortStrings = (values: string[]) => values.toSorted();
 
 const sameStringList = (a: string[], b: string[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);

@@ -108,13 +108,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
     return cleaned
       .split(" ")
-      .filter(Boolean)
-      .map((word) => {
+      .flatMap((word) => {
+        if (!word) return [];
         if (/\d/.test(word) || word.length <= 3) {
-          return word.toUpperCase();
+          return [word.toUpperCase()];
         }
         const lower = word.toLowerCase();
-        return lower.charAt(0).toUpperCase() + lower.slice(1);
+        return [lower.charAt(0).toUpperCase() + lower.slice(1)];
       })
       .join(" ");
   };
@@ -159,9 +159,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const connected = new Set(props.connectedProviderIds ?? []);
     const providers = props.providers ?? [];
 
+    const providersById = new Map(providers.map((provider) => [provider.id, provider]));
     return Object.keys(methods)
-      .map((id): ProviderAuthEntry => {
-        const provider = providers.find((item) => item.id === id);
+      .flatMap((id) => {
+        const provider = providersById.get(id);
         const entryMethods = (methods[id] ?? []).filter((method) => {
           if (isAnthropicProvider(id, provider?.name) && isClaudeProMaxMethod(method)) {
             return false;
@@ -171,15 +172,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           if (isRemoteWorker) return isOpenAiHeadlessMethod(method);
           return !isOpenAiHeadlessMethod(method);
         });
-        return {
+        if (entryMethods.length === 0) return [];
+        return [{
           id,
           name: formatProviderName(id, provider?.name),
           methods: entryMethods,
           connected: connected.has(id),
           env: Array.isArray(provider?.env) ? provider.env : [],
-        };
+        } satisfies ProviderAuthEntry];
       })
-      .filter((entry) => entry.methods.length > 0)
       .sort(compareProviders);
   }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers]);
 

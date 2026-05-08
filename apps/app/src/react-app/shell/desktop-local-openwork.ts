@@ -46,10 +46,10 @@ export async function ensureDesktopLocalOpenworkConnection(
 
   const workspacePaths = Array.from(
     new Set(
-      options.allWorkspaces
-        .filter((item) => item.workspaceType === "local")
-        .map((item) => item.path?.trim() ?? "")
-        .filter((path) => path.length > 0),
+      options.allWorkspaces.flatMap((item) => {
+        const path = item.workspaceType === "local" ? item.path?.trim() ?? "" : "";
+        return path ? [path] : [];
+      }),
     ),
   );
   if (!workspacePaths.includes(workspaceRoot)) {

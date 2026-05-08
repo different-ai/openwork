@@ -44,14 +44,14 @@ function releaseNotesToText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     return value
-      .map((entry) => {
+      .flatMap((entry) => {
         if (typeof entry === "string") return entry;
         if (entry && typeof entry === "object" && "note" in entry) {
-          return String((entry as { note?: unknown }).note ?? "");
+          const note = String((entry as { note?: unknown }).note ?? "");
+          return note ? [note] : [];
         }
-        return "";
+        return [];
       })
-      .filter(Boolean)
       .join("\n\n") || undefined;
   }
   return undefined;

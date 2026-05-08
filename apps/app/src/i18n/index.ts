@@ -120,14 +120,20 @@ const lookupEntry = (loc: Language, candidateKey: string): string | null => {
   return null;
 };
 
-const pluralRulesCache = new Map<Language, Intl.PluralRules>();
+const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
+  en: new Intl.PluralRules("en"),
+  ja: new Intl.PluralRules("ja"),
+  zh: new Intl.PluralRules("zh"),
+  vi: new Intl.PluralRules("vi"),
+  "pt-BR": new Intl.PluralRules("pt-BR"),
+  th: new Intl.PluralRules("th"),
+  fr: new Intl.PluralRules("fr"),
+  ca: new Intl.PluralRules("ca"),
+  es: new Intl.PluralRules("es"),
+  ru: new Intl.PluralRules("ru"),
+};
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
-  let rules = pluralRulesCache.get(loc);
-  if (!rules) {
-    rules = new Intl.PluralRules(loc);
-    pluralRulesCache.set(loc, rules);
-  }
-  return rules.select(count);
+  return pluralRulesByLanguage[loc].select(count);
 };
 
 /**

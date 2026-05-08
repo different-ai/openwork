@@ -39,7 +39,10 @@ export const filterProviderList = (
   value: ProviderListResponse,
   disabledProviders: string[],
 ): ProviderListResponse => {
-  const disabled = new Set(disabledProviders.map((id) => id.trim()).filter(Boolean));
+  const disabled = new Set(disabledProviders.flatMap((id) => {
+    const trimmed = id.trim();
+    return trimmed ? [trimmed] : [];
+  }));
   if (!disabled.size) return value;
   return {
     all: value.all.filter((provider) => !disabled.has(provider.id)),

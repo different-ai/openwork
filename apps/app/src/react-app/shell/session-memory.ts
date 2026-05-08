@@ -45,17 +45,20 @@ export function readWorkspaceOrderIds(): string[] {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim())
-      .filter(Boolean);
+    return parsed.flatMap((value) => {
+      const trimmed = typeof value === "string" ? value.trim() : "";
+      return trimmed ? [trimmed] : [];
+    });
   } catch {
     return [];
   }
 }
 
 export function writeWorkspaceOrderIds(ids: string[]): void {
-  const normalized = ids.map((id) => id.trim()).filter(Boolean);
+  const normalized = ids.flatMap((id) => {
+    const trimmed = id.trim();
+    return trimmed ? [trimmed] : [];
+  });
   safeSet(WORKSPACE_ORDER_KEY, normalized.length ? JSON.stringify(normalized) : null);
 }
 

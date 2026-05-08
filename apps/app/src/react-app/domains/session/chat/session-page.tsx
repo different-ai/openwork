@@ -166,11 +166,9 @@ function getSidebarInitialLoading(props: SessionPageSidebarProps) {
 
 function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | undefined) {
   if (!id) return "";
-  for (const group of groups) {
-    const match = group.sessions.find((session) => session.id === id);
-    if (match) return getDisplaySessionTitle(match.title);
-  }
-  return "";
+  const sessionsById = new Map(groups.flatMap((group) => group.sessions.map((session) => [session.id, session] as const)));
+  const match = sessionsById.get(id);
+  return match ? getDisplaySessionTitle(match.title) : "";
 }
 
 export function SessionPage(props: SessionPageProps) {
