@@ -14,7 +14,7 @@ import {
   Settings,
   FolderOpen,
 } from "lucide-react";
-import { Reorder } from "motion/react";
+import { motion, Reorder } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -488,41 +488,45 @@ export function AppSidebar(props: AppSidebarProps) {
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        <Reorder.Group
-          as="div"
-          axis="y"
+        <motion.div
           layoutScroll
-          values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
-          onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
           data-slot="sidebar-content"
           data-sidebar="content"
           className="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
         >
-          {props.workspaceSessionGroups.map((group, index) => (
-            <Reorder.Item
-              as="div"
-              key={group.workspace.id}
-              value={group.workspace.id}
-              id={group.workspace.id}
-              layout="position"
-              dragElastic={0}
-              transformTemplate={(_latest, generated) =>
-                // Keep Motion's translate-based reorder movement, but drop projection scale
-                // so expanded workspace contents don't stretch during collapse/expand.
-                generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
-              }
-              className="relative"
-            >
-              <WorkspaceSidebarGroup
-                className={cn(index === 0 && "mac:pt-0")}
-                group={group}
-                showInitialLoading={props.showInitialLoading}
-                previewCount={previewCount(group.workspace.id)}
-                showMoreSessions={showMoreSessions}
-              />
-            </Reorder.Item>
-          ))}
-        </Reorder.Group>
+          <Reorder.Group
+            as="div"
+            axis="y"
+            values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
+            onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
+            className="flex flex-col gap-2"
+          >
+            {props.workspaceSessionGroups.map((group, index) => (
+              <Reorder.Item
+                as="div"
+                key={group.workspace.id}
+                value={group.workspace.id}
+                id={group.workspace.id}
+                layout="position"
+                dragElastic={0}
+                transformTemplate={(_latest, generated) =>
+                  // Keep Motion's translate-based reorder movement, but drop projection scale
+                  // so expanded workspace contents don't stretch during collapse/expand.
+                  generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
+                }
+                className="relative"
+              >
+                <WorkspaceSidebarGroup
+                  className={cn(index === 0 && "mac:pt-0")}
+                  group={group}
+                  showInitialLoading={props.showInitialLoading}
+                  previewCount={previewCount(group.workspace.id)}
+                  showMoreSessions={showMoreSessions}
+                />
+              </Reorder.Item>
+            ))}
+          </Reorder.Group>
+        </motion.div>
 
         <SidebarFooter>
           <SidebarMenu>
