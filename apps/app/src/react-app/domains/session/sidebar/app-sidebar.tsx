@@ -575,7 +575,6 @@ function WorkspaceHeader({
         {isLoading ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground transition-opacity group-hover/menu-item:opacity-0 group-hover/workspace-header:opacity-0" />
         ) : null}
-        <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/collapsible:rotate-90 hover:text-foreground" />
       </span>
     </SidebarMenuButton>
   );
@@ -664,15 +663,11 @@ function WorkspaceSidebarGroup({
             className="group/collapsible"
           >
             <div className="group/workspace-header relative">
-              <CollapsibleTrigger
-                render={
-                  <WorkspaceHeader
-                    workspace={workspace}
-                    statusLabel={statusLabel}
-                    isError={group.status === "error"}
-                    isLoading={group.status === "loading" || isConnecting}
-                  />
-                }
+              <WorkspaceHeader
+                workspace={workspace}
+                statusLabel={statusLabel}
+                isError={group.status === "error"}
+                isLoading={group.status === "loading" || isConnecting}
               />
               <div className="absolute right-8 top-1/2 flex -translate-y-1/2 items-center gap-1">
                 <Button
@@ -695,6 +690,19 @@ function WorkspaceSidebarGroup({
                   className="size-6 text-muted-foreground opacity-0 group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-popup-open:opacity-100"
                 />
               </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={isExpanded ? t("sidebar.collapse") : t("sidebar.expand")}
+                aria-expanded={isExpanded}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  ctx.toggleWorkspaceExpanded(workspace.id);
+                }}
+              >
+                <ChevronRight className={cn("size-4 transition-transform duration-200", isExpanded && "rotate-90")} />
+              </Button>
             </div>
 
             <CollapsibleContent className="pt-1">
