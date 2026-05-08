@@ -14,6 +14,7 @@ import {
   Settings,
   FolderOpen,
 } from "lucide-react";
+import { Reorder } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -32,7 +33,6 @@ import { t } from "../../../../i18n";
 
 import {
   Sidebar,
-  SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
@@ -345,6 +345,7 @@ export type AppSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
 
@@ -487,19 +488,41 @@ export function AppSidebar(props: AppSidebarProps) {
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        <SidebarContent>
-          
-          {props.workspaceSessionGroups.map((group) => (
-            <WorkspaceSidebarGroup
-              className="mac:first:pt-0"
+        <Reorder.Group
+          as="div"
+          axis="y"
+          layoutScroll
+          values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
+          onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
+          data-slot="sidebar-content"
+          data-sidebar="content"
+          className="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
+        >
+          {props.workspaceSessionGroups.map((group, index) => (
+            <Reorder.Item
+              as="div"
               key={group.workspace.id}
-              group={group}
-              showInitialLoading={props.showInitialLoading}
-              previewCount={previewCount(group.workspace.id)}
-              showMoreSessions={showMoreSessions}
-            />
+              value={group.workspace.id}
+              id={group.workspace.id}
+              layout="position"
+              dragElastic={0}
+              transformTemplate={(_latest, generated) =>
+                // Keep Motion's translate-based reorder movement, but drop projection scale
+                // so expanded workspace contents don't stretch during collapse/expand.
+                generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
+              }
+              className="relative"
+            >
+              <WorkspaceSidebarGroup
+                className={cn(index === 0 && "mac:pt-0")}
+                group={group}
+                showInitialLoading={props.showInitialLoading}
+                previewCount={previewCount(group.workspace.id)}
+                showMoreSessions={showMoreSessions}
+              />
+            </Reorder.Item>
           ))}
-        </SidebarContent>
+        </Reorder.Group>
 
         <SidebarFooter>
           <SidebarMenu>
@@ -575,7 +598,6 @@ function WorkspaceHeader({
         {isLoading ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground transition-opacity group-hover/menu-item:opacity-0 group-hover/workspace-header:opacity-0" />
         ) : null}
-        <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/collapsible:rotate-90 hover:text-foreground" />
       </span>
     </SidebarMenuButton>
   );
@@ -664,15 +686,11 @@ function WorkspaceSidebarGroup({
             className="group/collapsible"
           >
             <div className="group/workspace-header relative">
-              <CollapsibleTrigger
-                render={
-                  <WorkspaceHeader
-                    workspace={workspace}
-                    statusLabel={statusLabel}
-                    isError={group.status === "error"}
-                    isLoading={group.status === "loading" || isConnecting}
-                  />
-                }
+              <WorkspaceHeader
+                workspace={workspace}
+                statusLabel={statusLabel}
+                isError={group.status === "error"}
+                isLoading={group.status === "loading" || isConnecting}
               />
               <div className="absolute right-8 top-1/2 flex -translate-y-1/2 items-center gap-1">
                 <Button
@@ -695,6 +713,19 @@ function WorkspaceSidebarGroup({
                   className="size-6 text-muted-foreground opacity-0 group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-popup-open:opacity-100"
                 />
               </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label={isExpanded ? t("sidebar.collapse") : t("sidebar.expand")}
+                aria-expanded={isExpanded}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  ctx.toggleWorkspaceExpanded(workspace.id);
+                }}
+              >
+                <ChevronRight className={cn("size-4 transition-transform duration-200", isExpanded && "rotate-90")} />
+              </Button>
             </div>
 
             <CollapsibleContent className="pt-1">

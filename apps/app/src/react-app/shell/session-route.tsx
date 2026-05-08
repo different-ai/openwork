@@ -94,8 +94,10 @@ import {
   forgetWorkspaceMemory,
   readActiveWorkspaceId,
   readLastSessionFor,
+  readWorkspaceOrderIds,
   writeActiveWorkspaceId,
   writeLastSessionFor,
+  writeWorkspaceOrderIds,
 } from "./session-memory";
 import {
   publishInspectorSlice,
@@ -275,6 +277,28 @@ function mergeRouteWorkspaces(
   return [...mergedServer, ...missingDesktop];
 }
 
+function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: string[]): RouteWorkspace[] {
+  if (orderIds.length === 0) return workspaces;
+
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+  const ordered: RouteWorkspace[] = [];
+  const usedIds = new Set<string>();
+
+  for (const id of orderIds) {
+    const workspace = workspaceById.get(id);
+    if (!workspace || usedIds.has(id)) continue;
+    ordered.push(workspace);
+    usedIds.add(id);
+  }
+
+  for (const workspace of workspaces) {
+    if (usedIds.has(workspace.id)) continue;
+    ordered.push(workspace);
+  }
+
+  return ordered;
+}
+
 function toSessionGroups(
   workspaces: RouteWorkspace[],
   sessionsByWorkspaceId: Record<string, any[]>,
@@ -396,6 +420,7 @@ export function SessionRoute() {
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
+  const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
@@ -430,6 +455,7 @@ export function SessionRoute() {
   const refreshInFlightRef = useRef(false);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
   const workspacesRef = useRef<RouteWorkspace[]>([]);
+  const workspaceOrderIdsRef = useRef(workspaceOrderIds);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
   const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const sessionsByWorkspaceIdRef = useRef<Record<string, any[]>>({});
@@ -633,10 +659,11 @@ export function SessionRoute() {
         setClient(null);
         setBaseUrl("");
         setToken("");
-        setWorkspaces(desktopWorkspaces);
+        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        setWorkspaces(orderedDesktopWorkspaces);
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
-        setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "");
+        setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
         return;
       }
 
@@ -656,7 +683,10 @@ export function SessionRoute() {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await openworkClient.listWorkspaces();
-      const nextWorkspaces = mergeRouteWorkspaces(list.items, desktopWorkspaces);
+      const nextWorkspaces = orderRouteWorkspaces(
+        mergeRouteWorkspaces(list.items, desktopWorkspaces),
+        workspaceOrderIdsRef.current,
+      );
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
@@ -749,9 +779,10 @@ export function SessionRoute() {
       });
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
-        setWorkspaces(desktopWorkspaces);
+        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        setWorkspaces(orderedDesktopWorkspaces);
         setLegacySelectedWorkspaceId((current) =>
-          current || resolveWorkspaceListSelectedId(desktopList) || desktopWorkspaces[0]?.id || "",
+          current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
         );
       }
     } finally {
@@ -877,6 +908,10 @@ export function SessionRoute() {
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
+
+  useEffect(() => {
+    workspaceOrderIdsRef.current = workspaceOrderIds;
+  }, [workspaceOrderIds]);
 
   useEffect(() => {
     const activeWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
@@ -1951,6 +1986,26 @@ export function SessionRoute() {
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
 
+  const handleReorderWorkspaces = useCallback((workspaceIds: string[]) => {
+    const activeWorkspaceIds = new Set(workspacesRef.current.map((workspace) => workspace.id));
+    const nextOrderIds: string[] = [];
+
+    for (const id of workspaceIds) {
+      if (!activeWorkspaceIds.has(id) || nextOrderIds.includes(id)) continue;
+      nextOrderIds.push(id);
+    }
+
+    for (const workspace of workspacesRef.current) {
+      if (nextOrderIds.includes(workspace.id)) continue;
+      nextOrderIds.push(workspace.id);
+    }
+
+    workspaceOrderIdsRef.current = nextOrderIds;
+    setWorkspaceOrderIds(nextOrderIds);
+    writeWorkspaceOrderIds(nextOrderIds);
+    setWorkspaces((current) => orderRouteWorkspaces(current, nextOrderIds));
+  }, []);
+
   const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null) => {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
@@ -2171,6 +2226,7 @@ export function SessionRoute() {
         onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
+        onReorderWorkspaces: handleReorderWorkspaces,
       }}
       surface={surfaceProps}
       history={{
