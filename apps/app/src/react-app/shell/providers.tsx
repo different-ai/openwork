@@ -10,6 +10,7 @@ import { RestrictionNoticeProvider } from "../domains/cloud/restriction-notice-p
 import { StatusToastsProvider } from "../domains/shell-feedback/status-toasts";
 import { LocalProvider } from "../kernel/local-provider";
 import { ServerProvider } from "../kernel/server-provider";
+import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
@@ -61,18 +62,20 @@ export function AppProviders({ children }: AppProvidersProps) {
   return (
     <BootStateProvider>
       <ServerProvider defaultUrl={defaultUrl}>
-        <DesktopRuntimeBoot />
-        <DenAuthProvider>
-          <DesktopConfigProvider>
-            <RestrictionNoticeProvider>
-              <LocalProvider>
-                <StatusToastsProvider>
-                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                </StatusToastsProvider>
-              </LocalProvider>
-            </RestrictionNoticeProvider>
-          </DesktopConfigProvider>
-        </DenAuthProvider>
+        <ArchitectureMismatchGate>
+          <DesktopRuntimeBoot />
+          <DenAuthProvider>
+            <DesktopConfigProvider>
+              <RestrictionNoticeProvider>
+                <LocalProvider>
+                  <StatusToastsProvider>
+                    <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                  </StatusToastsProvider>
+                </LocalProvider>
+              </RestrictionNoticeProvider>
+            </DesktopConfigProvider>
+          </DenAuthProvider>
+        </ArchitectureMismatchGate>
       </ServerProvider>
     </BootStateProvider>
   );

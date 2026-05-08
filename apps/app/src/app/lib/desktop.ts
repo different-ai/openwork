@@ -38,6 +38,19 @@ declare global {
         openExternal?: (url: string) => Promise<void>;
         relaunch?: () => Promise<void>;
       };
+      system?: {
+        getArchitectureInfo?: () => Promise<{
+          appArch: string;
+          appArchLabel: string;
+          systemArch: string;
+          systemArchLabel: string;
+          mismatch: boolean;
+          platform: "darwin" | "linux" | "windows";
+          version: string;
+          downloadUrl: string;
+          releaseUrl: string;
+        }>;
+      };
       migration?: {
         readSnapshot?: () => Promise<unknown>;
         ackSnapshot?: () => Promise<{ ok: boolean; moved: boolean }>;

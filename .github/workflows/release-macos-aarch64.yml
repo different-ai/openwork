@@ -281,6 +281,11 @@ jobs:
             artifact: electron-windows-x64
             electron_args: "--win --x64"
             target_triple: x86_64-pc-windows-msvc
+          - platform: windows-2022
+            os_type: windows
+            artifact: electron-windows-arm64
+            electron_args: "--win --arm64"
+            target_triple: aarch64-pc-windows-msvc
 
     steps:
       - name: Checkout
@@ -374,7 +379,7 @@ jobs:
           TARGET: ${{ matrix.target_triple }}
         run: pnpm --filter @openwork/desktop build:electron
 
-      - name: Package + publish Electron (macOS, signed + notarized)
+      - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
@@ -382,36 +387,75 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml \
             ${{ matrix.electron_args }} \
-            --publish always
+            --publish never
 
-      - name: Package + publish Electron (Linux)
+      - name: Package Electron (Linux)
         if: matrix.os_type == 'linux'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml \
             ${{ matrix.electron_args }} \
-            --publish always
+            --publish never
 
-      - name: Package + publish Electron (Windows)
+      - name: Package Electron (Windows)
         if: matrix.os_type == 'windows'
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml \
             ${{ matrix.electron_args }} \
-            --publish always
+            --publish never
+
+      - name: Upload Electron dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: apps/desktop/dist-electron/**
+          if-no-files-found: error
+
+  publish-electron-assets:
+    name: Publish Electron Assets
+    needs: [resolve-release, verify-release, publish-electron]
+    if: |
+      always() &&
+      needs.resolve-release.outputs.build_electron == 'true' &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      needs.publish-electron.result == 'success'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Dispatch-based release recovery uses the workflow ref so fixes to
+          # release asset publishing can run without moving an already-shipped tag.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download Electron dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: electron-*
+          path: ${{ runner.temp }}/electron-dist
+
+      - name: Upload release assets and merged updater manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/publish-electron-assets.mjs "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
@@ -736,6 +780,7 @@ jobs:
       - resolve-release
       - verify-release
       - publish-electron
+      - publish-electron-assets
       - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
@@ -745,6 +790,7 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
+      (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
       (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
