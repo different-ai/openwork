@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { readDenBootstrapConfig } from "../../app/lib/den";
@@ -20,6 +20,16 @@ type DenSigninGateProps = {
   children: ReactNode;
 };
 
+const readRequireSigninSnapshot = () => readDenBootstrapConfig().requireSignin;
+
+const subscribeToRequireSignin = (onStoreChange: () => void) => {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(denSettingsChangedEvent, onStoreChange);
+  return () => {
+    window.removeEventListener(denSettingsChangedEvent, onStoreChange);
+  };
+};
+
 /**
  * Forced-signin gate ported from the Solid shell.
  *
@@ -35,24 +45,11 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  // The bootstrap file is read synchronously; re-read on settings-changed so a
-  // developer-mode override flips the gate live without a reload.
-  const [requireSignin, setRequireSignin] = useState(
-    () => readDenBootstrapConfig().requireSignin,
+  const requireSignin = useSyncExternalStore(
+    subscribeToRequireSignin,
+    readRequireSigninSnapshot,
+    readRequireSigninSnapshot,
   );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const handler = () => {
-      setRequireSignin(readDenBootstrapConfig().requireSignin);
-    };
-
-    window.addEventListener(denSettingsChangedEvent, handler);
-    return () => {
-      window.removeEventListener(denSettingsChangedEvent, handler);
-    };
-  }, []);
 
   useEffect(() => {
     // Wait for the first auth check so we don't bounce the user between

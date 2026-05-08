@@ -447,7 +447,7 @@ export function McpView(props: McpViewProps) {
           </h3>
           {props.mcpLastUpdatedAt ? (
             <span className="tabular-nums text-[11px] text-dls-secondary">
-              {t("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
+              {t("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt)}
             </span>
           ) : null}
         </div>

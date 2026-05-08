@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
   AgentPartInput,
@@ -1876,36 +1876,38 @@ export function SessionRoute() {
   // Global shortcuts:
   //   Cmd/Ctrl+N  -> new task in selected workspace
   //   Cmd/Ctrl+K  -> toggle command palette
+  const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
+    const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (!mod) return;
+    if (event.shiftKey || event.altKey) return;
+
+    const target = event.target as HTMLElement | null;
+    const inEditable =
+      !!target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable);
+
+    const key = event.key?.toLowerCase();
+    if (key === "n" && !inEditable) {
+      event.preventDefault();
+      if (canCreateTask && selectedWorkspaceId) {
+        void handleCreateTaskInWorkspace(selectedWorkspaceId);
+      }
+      return;
+    }
+    if (key === "k") {
+      event.preventDefault();
+      setCommandPaletteOpen((value) => !value);
+    }
+  });
+
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
-      const mod = isMac ? event.metaKey : event.ctrlKey;
-      if (!mod) return;
-      if (event.shiftKey || event.altKey) return;
-
-      const target = event.target as HTMLElement | null;
-      const inEditable =
-        !!target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable);
-
-      const key = event.key?.toLowerCase();
-      if (key === "n" && !inEditable) {
-        event.preventDefault();
-        if (canCreateTask && selectedWorkspaceId) {
-          void handleCreateTaskInWorkspace(selectedWorkspaceId);
-        }
-        return;
-      }
-      if (key === "k") {
-        event.preventDefault();
-        setCommandPaletteOpen((value) => !value);
-      }
-    };
+    const handler = (event: KeyboardEvent) => handleGlobalShortcut(event);
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [canCreateTask, handleCreateTaskInWorkspace, selectedWorkspaceId]);
+  }, []);
 
   const navigateToSessionForControl = useCallback((sessionId: string) => {
     const owner = Object.entries(sessionsByWorkspaceId).find(([, sessions]) =>

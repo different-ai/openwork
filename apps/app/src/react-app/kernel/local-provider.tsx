@@ -106,7 +106,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
       defaultModel: readStoredDefaultModel(),
     };
   });
-  const [ready, setReady] = useState(false);
+  const ready = true;
   const migratedThinkingRef = useRef(false);
 
   useEffect(() => {
@@ -118,11 +118,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
   }, [prefs]);
 
   useEffect(() => {
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
     if (typeof window === "undefined") return;
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
@@ -144,7 +139,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     } catch {
       // ignore
     }
-  }, [ready]);
+  }, []);
 
   const setUi = useCallback(
     (updater: (previous: LocalUIState) => LocalUIState) => {

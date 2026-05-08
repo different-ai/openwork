@@ -215,16 +215,13 @@ export function CommandPalette(props: CommandPaletteProps) {
   }, [props, query]);
 
   const items = mode === "sessions" ? sessionItems : rootItems;
-
-  useEffect(() => {
-    if (activeIndex >= items.length) setActiveIndex(0);
-  }, [activeIndex, items.length]);
+  const visibleActiveIndex = items.length > 0 ? Math.min(activeIndex, items.length - 1) : 0;
 
   useEffect(() => {
     if (!props.open) return;
-    const target = optionRefs.current[activeIndex];
+    const target = optionRefs.current[visibleActiveIndex];
     target?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, items.length, props.open]);
+  }, [props.open, visibleActiveIndex]);
 
   const handleKey = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -253,7 +250,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      const item = items[activeIndex];
+      const item = items[visibleActiveIndex];
       if (item) item.action();
       return;
     }
@@ -340,7 +337,7 @@ export function CommandPalette(props: CommandPaletteProps) {
                     }}
                     type="button"
                     className={`w-full px-4 py-2.5 flex items-start gap-3 text-left transition-colors ${
-                      index === activeIndex
+                      index === visibleActiveIndex
                         ? "bg-dls-hover"
                         : "hover:bg-dls-hover/60"
                     }`}

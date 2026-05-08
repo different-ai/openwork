@@ -2,6 +2,7 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -169,27 +170,24 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     [renderedItems.length],
   );
 
-  const scrollActiveIntoView = useCallback((idx: number) => {
+  const scrollActiveIntoView = useEffectEvent((idx: number) => {
     const el = optionRefs.current[idx];
     if (!el) return;
     el.scrollIntoView({ block: "nearest" });
-  }, []);
+  });
 
-  const selectRenderedItem = useCallback(
-    (item: RenderedItem | undefined) => {
-      if (!item) return;
-      if (item.kind === "provider") {
-        props.onClose({ restorePromptFocus: false });
-        props.onOpenSettings();
-        return;
-      }
-      props.onSelect({
-        providerID: item.opt.providerID,
-        modelID: item.opt.modelID,
-      });
-    },
-    [props],
-  );
+  const selectRenderedItem = useEffectEvent((item: RenderedItem | undefined) => {
+    if (!item) return;
+    if (item.kind === "provider") {
+      props.onClose({ restorePromptFocus: false });
+      props.onOpenSettings();
+      return;
+    }
+    props.onSelect({
+      providerID: item.opt.providerID,
+      modelID: item.opt.modelID,
+    });
+  });
 
   // Focus the search input whenever the modal opens.
   useEffect(() => {
@@ -211,7 +209,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     setActiveIndex(clamped);
     const frame = requestAnimationFrame(() => scrollActiveIntoView(clamped));
     return () => cancelAnimationFrame(frame);
-  }, [activeModelIndex, clampIndex, props.open, scrollActiveIntoView]);
+  }, [activeModelIndex, clampIndex, props.open]);
 
   // Window-level key handling.
   useEffect(() => {
@@ -255,7 +253,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [activeIndex, clampIndex, renderedItems, scrollActiveIntoView, selectRenderedItem]);
+  }, [activeIndex, clampIndex, renderedItems]);
 
   if (!props.open) return null;
 
