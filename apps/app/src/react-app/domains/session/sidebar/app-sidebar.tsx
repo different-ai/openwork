@@ -14,7 +14,7 @@ import {
   Settings,
   FolderOpen,
 } from "lucide-react";
-import { motion, Reorder } from "motion/react";
+import { motion, Reorder, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -502,28 +502,14 @@ export function AppSidebar(props: AppSidebarProps) {
             className="flex flex-col gap-2"
           >
             {props.workspaceSessionGroups.map((group, index) => (
-              <Reorder.Item
-                as="div"
+              <WorkspaceReorderItem
                 key={group.workspace.id}
-                value={group.workspace.id}
-                id={group.workspace.id}
-                layout="position"
-                dragElastic={0}
-                transformTemplate={(_latest, generated) =>
-                  // Keep Motion's translate-based reorder movement, but drop projection scale
-                  // so expanded workspace contents don't stretch during collapse/expand.
-                  generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
-                }
-                className="relative"
-              >
-                <WorkspaceSidebarGroup
-                  className={cn(index === 0 && "mac:pt-0")}
-                  group={group}
-                  showInitialLoading={props.showInitialLoading}
-                  previewCount={previewCount(group.workspace.id)}
-                  showMoreSessions={showMoreSessions}
-                />
-              </Reorder.Item>
+                group={group}
+                className={cn(index === 0 && "mac:pt-0")}
+                showInitialLoading={props.showInitialLoading}
+                previewCount={previewCount(group.workspace.id)}
+                showMoreSessions={showMoreSessions}
+              />
             ))}
           </Reorder.Group>
         </motion.div>
@@ -551,11 +537,57 @@ export function AppSidebar(props: AppSidebarProps) {
   );
 }
 
+type WorkspaceReorderItemProps = {
+  className: string;
+  group: WorkspaceSessionGroup;
+  showInitialLoading?: boolean;
+  previewCount: number;
+  showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+};
+
+function WorkspaceReorderItem({
+  className,
+  group,
+  showInitialLoading,
+  previewCount,
+  showMoreSessions,
+}: WorkspaceReorderItemProps) {
+  const dragControls = useDragControls();
+
+  return (
+    <Reorder.Item
+      as="div"
+      value={group.workspace.id}
+      id={group.workspace.id}
+      layout="position"
+      dragElastic={0}
+      dragListener={false}
+      dragControls={dragControls}
+      transformTemplate={(_latest, generated) =>
+        // Keep Motion's translate-based reorder movement, but drop projection scale
+        // so expanded workspace contents don't stretch during collapse/expand.
+        generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
+      }
+      className="relative"
+    >
+      <WorkspaceSidebarGroup
+        className={className}
+        group={group}
+        showInitialLoading={showInitialLoading}
+        previewCount={previewCount}
+        showMoreSessions={showMoreSessions}
+        onWorkspaceTitlePointerDown={(event) => dragControls.start(event)}
+      />
+    </Reorder.Item>
+  );
+}
+
 type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   workspace: WorkspaceInfo;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
+  onTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceHeader({
@@ -563,6 +595,7 @@ function WorkspaceHeader({
   statusLabel,
   isError,
   isLoading,
+  onTitlePointerDown,
   onClick,
   ...props
 }: WorkspaceHeaderProps) {
@@ -587,9 +620,10 @@ function WorkspaceHeader({
       />
       <div
         className={cn(
-          "min-w-0 flex-1 transition-[padding] duration-75 group-hover/menu-item:pr-12 group-focus-within/menu-item:pr-12 group-hover/workspace-header:pr-12 group-focus-within/workspace-header:pr-12",
+          "min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/menu-item:pr-12 group-focus-within/menu-item:pr-12 group-hover/workspace-header:pr-12 group-focus-within/workspace-header:pr-12",
           isLoading && "pr-6",
         )}
+        onPointerDown={onTitlePointerDown}
       >
         <span className="block truncate">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
@@ -613,6 +647,7 @@ type WorkspaceSidebarGroupProps = {
   showInitialLoading?: boolean;
   previewCount: number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
+  onWorkspaceTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceSidebarGroup({
@@ -621,6 +656,7 @@ function WorkspaceSidebarGroup({
   showInitialLoading,
   previewCount,
   showMoreSessions,
+  onWorkspaceTitlePointerDown,
 }: WorkspaceSidebarGroupProps) {
   const ctx = useSidebarContext();
   const workspace = group.workspace;
@@ -695,6 +731,7 @@ function WorkspaceSidebarGroup({
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={group.status === "loading" || isConnecting}
+                onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
               <div className="absolute right-8 top-1/2 flex -translate-y-1/2 items-center gap-1">
                 <Button
