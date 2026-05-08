@@ -535,7 +535,7 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="px-6 py-16">
                       <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 px-5 py-5 text-left shadow-[var(--dls-card-shadow)]">
                         <div className="text-sm font-medium text-red-11">Remote workspace unavailable</div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-red-11/90">
+                        <p className="mt-2 whitespace-pre-wrap wrap-anywhere text-sm leading-6 text-red-11/90">
                           {selectedWorkspaceErrorMessage}
                         </p>
                         <div className="mt-4 flex flex-wrap gap-2">

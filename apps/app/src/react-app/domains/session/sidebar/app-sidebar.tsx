@@ -245,21 +245,22 @@ function RemoteConnectionIssueCard(props: {
   onEdit: () => void;
 }) {
   const isOffline = props.tone === "offline";
-  const shellClass = isOffline
-    ? "border-amber-7/35 bg-amber-2/45"
-    : "border-red-7/35 bg-red-1/40";
-  const iconClass = isOffline
-    ? "bg-amber-3/60 text-amber-11"
-    : "bg-red-3/60 text-red-11";
-  const detailClass = isOffline
-    ? "border-amber-7/25 bg-amber-1/40 text-amber-11"
-    : "border-red-7/25 bg-red-1/40 text-red-11";
 
   return (
     <SidebarMenuSubItem>
-      <div className={`w-full rounded-[15px] border px-3 py-3 text-left ${shellClass}`}>
+      <div
+        className={cn(
+          "w-full rounded-[15px] border border-red-7/35 bg-red-1/40 px-3 py-3 text-left",
+          isOffline && "border-amber-7/35 bg-amber-2/45",
+        )}
+      >
         <div className="flex items-start gap-2.5">
-          <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+          <div
+            className={cn(
+              "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-3/60 text-red-11",
+              isOffline && "bg-amber-3/60 text-amber-11",
+            )}
+          >
             <AlertCircle size={14} />
           </div>
           <div className="min-w-0 flex-1">
@@ -270,7 +271,10 @@ function RemoteConnectionIssueCard(props: {
               {t("workspace_list.remote_worker_unavailable_hint")}
             </div>
             <div
-              className={`mt-2 rounded-lg border px-2 py-1.5 text-[11px] leading-4 ${detailClass}`}
+              className={cn(
+                "mt-2 rounded-lg border border-red-7/25 bg-red-1/40 px-2 py-1.5 text-[11px] leading-4 text-red-11 whitespace-pre-wrap wrap-anywhere",
+                isOffline && "border-amber-7/25 bg-amber-1/40 text-amber-11",
+              )}
               title={props.message}
             >
               {props.message}
