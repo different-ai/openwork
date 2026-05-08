@@ -34,6 +34,7 @@ const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 const APP_NAME = isDevMode ? "OpenWork - Dev" : "OpenWork";
 const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
 // so in-place migration is a no-op for almost every file. Dev mode uses the
@@ -128,18 +129,76 @@ function downloadAssetExtension() {
   return "AppImage";
 }
 
+function updaterManifestName(arch) {
+  if (process.platform === "darwin") return "latest-mac.yml";
+  if (process.platform === "win32") return "latest.yml";
+  return arch === "arm64" ? "latest-linux-arm64.yml" : "latest-linux.yml";
+}
+
 function archLabel(arch) {
   if (arch === "arm64") return "ARM";
   if (arch === "x64") return "Intel";
   return arch;
 }
 
-function resolveArchitectureInfo() {
+function parseUpdaterManifestFiles(raw) {
+  const files = [];
+  let current = null;
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const start = line.match(/^\s*-\s+url:\s*(.+?)\s*$/);
+    if (start) {
+      current = { url: start[1].trim().replace(/^['"]|['"]$/g, "") };
+      files.push(current);
+      continue;
+    }
+    const prop = line.match(/^\s{4}([A-Za-z][A-Za-z0-9_-]*):\s*(.+?)\s*$/);
+    if (prop && current) {
+      current[prop[1]] = prop[2].trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return files.filter((file) => file.url);
+}
+
+function selectDownloadFile(files, arch) {
+  const assetArch = downloadAssetArch(arch);
+  const expected = `-${assetArch}-`;
+  const extension = downloadAssetExtension();
+  const matchingArch = files.filter((file) => file.url.includes(expected));
+  return (
+    matchingArch.find((file) => file.url.endsWith(`.${extension}`)) ||
+    matchingArch.find((file) => file.url.endsWith(".zip")) ||
+    matchingArch[0] ||
+    files.find((file) => file.url.endsWith(`.${extension}`)) ||
+    files[0] ||
+    null
+  );
+}
+
+async function resolveCorrectArchitectureDownloadUrl(arch) {
+  const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
+  try {
+    const response = await fetch(manifestUrl, {
+      headers: { Accept: "text/yaml, text/plain, */*" },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const selected = selectDownloadFile(parseUpdaterManifestFiles(await response.text()), arch);
+    if (!selected?.url) return null;
+    return /^https?:\/\//i.test(selected.url)
+      ? selected.url
+      : new URL(selected.url, `${RELEASE_DOWNLOAD_BASE_URL}/`).toString();
+  } catch (error) {
+    console.warn("[architecture] failed to resolve latest download URL", error);
+    return null;
+  }
+}
+
+async function resolveArchitectureInfo() {
   const appArch = normalizeRuntimeArch(process.arch);
   const systemArch = resolveSystemArch();
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
   const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
+  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
   return {
     appArch,
     appArchLabel: archLabel(appArch),
@@ -148,8 +207,8 @@ function resolveArchitectureInfo() {
     mismatch: appArch !== systemArch && (systemArch === "arm64" || systemArch === "x64"),
     platform: process.platform === "win32" ? "windows" : process.platform,
     version,
-    downloadUrl: `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
-    releaseUrl: "https://github.com/different-ai/openwork/releases/latest",
+    downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
+    releaseUrl: RELEASE_PAGE_URL,
   };
 }
 
