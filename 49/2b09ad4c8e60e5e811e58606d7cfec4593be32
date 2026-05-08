@@ -1,0 +1,25 @@
+apps/desktop/electron/main.mjs
+  s_fe8b297898b884::t_d31df21688deeb 791-793,808-809
+  s_fe8b297898b884::t_7fcad22ecf4052 794-807,810-812,824
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "492b09ad4c8e60e5e811e58606d7cfec4593be32",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_fe8b297898b884": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0fe5cdaa-58dd-4aa2-ad92-2021a260eccb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
