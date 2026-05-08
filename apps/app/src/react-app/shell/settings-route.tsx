@@ -1217,7 +1217,7 @@ export function SettingsRoute() {
       void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
     }
     navigate(workspaceSettingsRoute(workspaceId, settingsPathForRoute(route)), { state: location.state });
-  }, [location.state, navigate, route]);
+  }, [location, navigate, route]);
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);

@@ -75,7 +75,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [
     denAuth.isSignedIn,
     denAuth.status,
-    location.pathname,
+    location,
     navigate,
     requireSignin,
   ]);
