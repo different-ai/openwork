@@ -37,6 +37,7 @@ User mental model:
 * The server is the execution/control API layer.
 * A worker is a remote runtime destination.
 * Connecting to a worker happens through `Add worker` -> `Connect remote` using URL + token (or deep link).
+* Billing gates belong to shared cloud workspace launch, not base Den sign-up or organization creation.
 
 Read `ARCHITECTURE.md` for runtime flow, server-vs-shell ownership, and architecture behavior. Read `INFRASTRUCTURE.md` for deployment and control-plane details.
 

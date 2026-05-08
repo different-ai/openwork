@@ -338,8 +338,8 @@ export function DashboardOverviewScreen() {
           <p className="text-[14px] font-medium text-white">Download OpenWork</p>
           <p className="mt-1 max-w-[480px] text-[13px] leading-[1.55] text-white/60">Run locally for free. Keep data on your machine and move to shared workflows when ready.</p>
         </div>
-        <a href="https://openworklabs.com/download" className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-white/10">
-          <Download className="h-3.5 w-3.5" />Download
+        <a href="https://github.com/different-ai/openwork/releases/latest" target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/20 px-4 py-2 text-[12px] font-medium text-white transition-colors hover:bg-white/10">
+          <Download className="h-3.5 w-3.5" />Download desktop app
         </a>
       </div>
     </div>

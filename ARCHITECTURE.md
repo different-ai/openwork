@@ -350,10 +350,11 @@ This is intentional for now: predictable scoping beats clever cross-root auto-ro
 ## Cloud Worker Connect Flow (Canonical)
 
 1. Authenticate in OpenWork Cloud control surface.
-2. Launch worker (with checkout/paywall when needed).
-3. Wait for provisioning and health.
-4. Generate/retrieve connect credentials.
-5. Connect in OpenWork app via deep link or manual URL + token.
+2. Create or select a Den organization without billing gates.
+3. Launch a shared cloud workspace/worker (with checkout/paywall when the hosted shared-workspace gate is enabled).
+4. Wait for provisioning and health.
+5. Generate/retrieve connect credentials.
+6. Connect in OpenWork app via deep link or manual URL + token.
 
 Technical note:
 

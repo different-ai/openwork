@@ -6,9 +6,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
-import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
-import { env } from "../../env.js"
 import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -56,16 +54,6 @@ const organizationOwnerSchema = z.object({
   email: z.string().email().nullable(),
   image: z.string().nullable().optional(),
 }).meta({ ref: "OrganizationOwner" })
-
-const paymentRequiredSchema = z.object({
-  error: z.literal("payment_required"),
-  message: z.string(),
-  polar: z.object({
-    checkoutUrl: z.string().nullable(),
-    productId: z.string().nullable().optional(),
-    benefitId: z.string().nullable().optional(),
-  }).passthrough(),
-}).meta({ ref: "PaymentRequiredError" })
 
 const invitationPreviewResponseSchema = z.object({}).passthrough().meta({ ref: "InvitationPreviewResponse" })
 
@@ -141,12 +129,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       tags: ["Organizations"],
       hide: true,
       summary: "Create organization",
-      description: "Creates a new organization for the signed-in user after verifying that their account can provision OpenWork Cloud workspaces.",
+      description: "Creates a new organization for the signed-in user. Billing is enforced only when launching shared cloud workspaces.",
       responses: {
         201: jsonResponse("Organization created successfully.", organizationResponseSchema),
         400: jsonResponse("The organization creation request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create an organization.", unauthorizedSchema),
-        402: jsonResponse("The caller needs an active cloud plan before creating an organization.", paymentRequiredSchema),
         403: jsonResponse("API keys cannot create organizations.", forbiddenSchema),
       },
     }),
@@ -162,29 +149,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     const user = c.get("user")
     const input = c.req.valid("json")
-    const email = getRequiredUserEmail(user)
-
-    if (!email) {
-      return c.json({ error: "user_email_required" }, 400)
-    }
-
-    const access = await requireCloudWorkerAccess({
-      userId: normalizeDenTypeId("user", user.id),
-      email,
-      name: user.name ?? user.email ?? "OpenWork User",
-    })
-
-    if (!access.allowed) {
-      return c.json({
-        error: "payment_required",
-        message: "Creating a workspace requires an active OpenWork Cloud plan.",
-        polar: {
-          checkoutUrl: access.checkoutUrl,
-          productId: env.polar.productId,
-          benefitId: env.polar.benefitId,
-        },
-      }, 402)
-    }
 
     const organizationId = await createOrganizationForUser({
       userId: normalizeDenTypeId("user", user.id),

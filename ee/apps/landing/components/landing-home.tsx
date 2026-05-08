@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion, useInView } from "framer-motion";
-import { Download, Users } from "lucide-react";
+import { ArrowRight, Users } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
@@ -28,6 +28,8 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
+const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
@@ -43,15 +45,9 @@ export function LandingHome(props: Props) {
   );
 
   const callLinkProps = externalLinkProps(props.callHref);
-  const primaryCtaHref = props.isMobileVisitor
-    ? "https://app.openworklabs.com"
-    : "/download";
-  const primaryCtaLabel = props.isMobileVisitor
-    ? "Open the app"
-    : "Download for free";
-  const primaryCtaLinkProps = props.isMobileVisitor
-    ? {}
-    : externalLinkProps(primaryCtaHref);
+  const primaryCtaHref = CLOUD_SIGNUP_URL;
+  const primaryCtaLabel = "Get Started for free";
+  const primaryCtaLinkProps = externalLinkProps(primaryCtaHref);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -63,8 +59,8 @@ export function LandingHome(props: Props) {
             stars={props.stars}
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
-            mobilePrimaryHref="https://app.openworklabs.com"
-            mobilePrimaryLabel="Open app"
+            mobilePrimaryHref={CLOUD_SIGNUP_URL}
+            mobilePrimaryLabel="Get Started for free"
             active="home"
           />
         </div>
@@ -86,7 +82,7 @@ export function LandingHome(props: Props) {
                   className="doc-button inline-flex items-center gap-2"
                   {...primaryCtaLinkProps}
                 >
-                  {primaryCtaLabel} <Download size={18} />
+                  {primaryCtaLabel} <ArrowRight size={18} />
                 </a>
                 <a
                   href={props.callHref}

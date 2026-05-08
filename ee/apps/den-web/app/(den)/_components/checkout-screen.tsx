@@ -197,9 +197,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before launching a shared workspace.</h1>
             <p className="den-copy max-w-2xl">
-              Start with one workspace plan for $50/month. Each plan includes up to 5 members and 1 hosted worker.
+              Den is free for solo setup. Shared cloud workspaces require a workspace plan with up to 5 members and 1 hosted worker.
             </p>
           </div>
 
@@ -218,8 +218,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 Refresh purchase link
               </button>
             )}
-            <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
-              Use desktop only
+            <a href="https://github.com/different-ai/openwork/releases/latest" target="_blank" rel="noreferrer" className="den-button-secondary w-full sm:w-auto">
+              Download desktop app
             </a>
           </div>
 
@@ -290,8 +290,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               </div>
 
               <div className="mt-auto pt-2">
-                <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
-                  Use desktop only
+                <a href="https://github.com/different-ai/openwork/releases/latest" target="_blank" rel="noreferrer" className="den-button-secondary w-full sm:w-auto">
+                  Download desktop app
                 </a>
               </div>
             </article>
@@ -302,7 +302,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
+                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to launch shared workspaces."}
               </p>
             </div>
 
