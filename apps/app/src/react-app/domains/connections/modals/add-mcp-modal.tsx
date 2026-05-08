@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
 import { Button } from "../../../design-system/button";
@@ -23,6 +23,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
   const [oauthRequired, setOauthRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const oauthRequiredId = useId();
 
   const reset = () => {
     setName("");
@@ -102,13 +103,16 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
+      <button
+        type="button"
         className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
+        aria-label={t("common.close")}
         onClick={handleClose}
       />
       <div
         className="relative w-full max-w-lg bg-gray-2 border border-gray-6 rounded-2xl shadow-2xl overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-6">
           <div>
@@ -134,7 +138,6 @@ export function AddMcpModal(props: AddMcpModalProps) {
             placeholder={t("mcp.server_name_placeholder")}
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
-            autoFocus
           />
 
           <div>
@@ -188,8 +191,9 @@ export function AddMcpModal(props: AddMcpModalProps) {
                 <div className="mb-2 text-xs font-medium text-dls-text">
                   {t("mcp.sign_in_section_label")}
                 </div>
-                <label className="flex items-start gap-2 text-xs text-dls-secondary">
+                <div className="flex items-start gap-2 text-xs text-dls-secondary">
                   <input
+                    id={oauthRequiredId}
                     type="checkbox"
                     className="mt-0.5 h-4 w-4 rounded border border-dls-border"
                     checked={oauthRequired}
@@ -197,15 +201,15 @@ export function AddMcpModal(props: AddMcpModalProps) {
                       setOauthRequired(event.currentTarget.checked)
                     }
                   />
-                  <span>
+                  <label htmlFor={oauthRequiredId}>
                     <span className="block text-dls-text">
                       {t("mcp.oauth_optional_label")}
                     </span>
                     <span className="mt-0.5 block text-dls-secondary">
                       {t("mcp.oauth_optional_hint")}
                     </span>
-                  </span>
-                </label>
+                  </label>
+                </div>
               </div>
             </div>
           ) : null}

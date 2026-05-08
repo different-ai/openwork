@@ -278,13 +278,14 @@ export function CommandPalette(props: CommandPaletteProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={props.onClose}
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
+      role="dialog"
+      aria-modal="true"
       onKeyDown={handleKey}
     >
+      <button type="button" className="absolute inset-0 cursor-default border-0 bg-gray-1/60 p-0 backdrop-blur-sm" aria-label={t("common.close")} onClick={props.onClose} />
       <div
-        className="w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
+        className="relative z-10 w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
       >
         <div className="border-b border-dls-border px-4 py-3 space-y-2">
           <div className="flex items-center gap-2">

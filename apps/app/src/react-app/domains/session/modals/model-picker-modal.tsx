@@ -351,7 +351,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             ) : null}
             {active && (opt.behaviorOptions?.length ?? 0) > 0 ? (
               <div
+                role="presentation"
                 className="mt-3 flex items-center gap-2"
+                onClick={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
               >
                 <span className="text-[11px] font-medium text-gray-10 mr-1">
@@ -359,7 +361,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 </span>
                 <div
                   className="flex flex-wrap items-center gap-3"
-                  onClick={(event) => event.stopPropagation()}
                 >
                   {(opt.behaviorOptions ?? []).map((option) => (
                     <button

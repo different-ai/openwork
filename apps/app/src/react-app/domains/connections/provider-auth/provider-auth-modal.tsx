@@ -687,7 +687,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           {!props.loading ? (
             <div className="flex-1 space-y-2 overflow-y-auto pr-1 -mr-1">
               {resolvedView === "list" ? (
-                <div className="space-y-3" onKeyDown={handleListKeyDown}>
+                <div className="space-y-3" role="presentation" onKeyDown={handleListKeyDown}>
                   <div className="relative flex items-center mb-1">
                     <Search size={16} className="absolute left-3 text-gray-9" />
                     <input

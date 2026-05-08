@@ -499,7 +499,6 @@ export function WorkspaceSessionList(props: Props) {
           <div
             ref={sessionMenuRef}
             className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
-            onClick={(event) => event.stopPropagation()}
           >
             {props.onOpenRenameSession ? (
               <button
@@ -696,7 +695,6 @@ export function WorkspaceSessionList(props: Props) {
                     <div
                       ref={workspaceMenuRef}
                       className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
-                      onClick={(event) => event.stopPropagation()}
                     >
                       <button
                         type="button"

@@ -835,10 +835,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!slashOpen) return null;
     return (
       <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
-        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-          <div
-            className="max-h-64 overflow-y-auto p-2"
-            onMouseDown={(event) => event.preventDefault()}
+          <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+            <div
+              role="presentation"
+              className="max-h-64 overflow-y-auto p-2"
+              onMouseDown={(event) => event.preventDefault()}
           >
             {slashFiltered.length > 0 ? (
               <div className="grid gap-1">
@@ -890,10 +891,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!mentionOpen || mentionFiltered.length === 0) return null;
     return (
       <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
-        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-          <div
-            className="max-h-64 overflow-y-auto p-2"
-            onMouseDown={(event) => event.preventDefault()}
+          <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+            <div
+              role="presentation"
+              className="max-h-64 overflow-y-auto p-2"
+              onMouseDown={(event) => event.preventDefault()}
           >
             <div className="grid gap-1">
               {mentionFiltered.map((item, index) => (
@@ -1355,6 +1357,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     {t("composer.agent_label")}
                   </div>
                   <div
+                    role="presentation"
                     className="space-y-1 p-2 max-h-64 overflow-y-auto"
                     onMouseDown={(event) => event.preventDefault()}
                   >

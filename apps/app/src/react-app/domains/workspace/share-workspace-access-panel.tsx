@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useId } from "react";
 import {
   Check,
   ChevronDown,
@@ -55,6 +56,7 @@ export type ShareWorkspaceAccessPanelProps = {
 export function ShareWorkspaceAccessPanel(
   props: ShareWorkspaceAccessPanelProps,
 ) {
+  const remoteAccessToggleId = useId();
   const accessFields = props.fields.filter(
     (field) => !isInviteField(field.label),
   );
@@ -154,9 +156,11 @@ export function ShareWorkspaceAccessPanel(
                 reachable from another machine.
               </p>
             </div>
-            <label className="relative inline-flex shrink-0 cursor-pointer items-center">
+            <label htmlFor={remoteAccessToggleId} className="relative inline-flex shrink-0 cursor-pointer items-center">
               <input
+                id={remoteAccessToggleId}
                 type="checkbox"
+                aria-label="Remote access"
                 className="peer sr-only"
                 checked={props.remoteAccessEnabled}
                 onChange={(event) =>

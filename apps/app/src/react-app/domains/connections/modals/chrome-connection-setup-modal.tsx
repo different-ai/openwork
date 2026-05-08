@@ -72,12 +72,14 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
+      <button
+        type="button"
         className="absolute inset-0 bg-gray-1/70 backdrop-blur-sm"
+        aria-label={t("common.close")}
         onClick={props.onClose}
       />
 
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-gray-6/70 bg-gray-2 shadow-2xl">
+      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-gray-6/70 bg-gray-2 shadow-2xl" role="dialog" aria-modal="true">
         {/* Header */}
         <div className="border-b border-gray-6 px-6 py-5 sm:px-7">
           <div className="flex items-start justify-between gap-4">

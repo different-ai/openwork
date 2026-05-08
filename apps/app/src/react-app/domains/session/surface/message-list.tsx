@@ -510,7 +510,7 @@ function FileCard(props: {
           </button>
           {menuOpen ? (
             <>
-              <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
+              <button type="button" className="fixed inset-0 z-30 cursor-default border-0 bg-transparent p-0" aria-label="Close file actions" onClick={() => setMenuOpen(false)} />
               <div className="absolute right-0 top-full z-40 mt-1 w-48 rounded-2xl border border-dls-border bg-dls-surface p-1.5 shadow-lg">
                 <button
                   type="button"

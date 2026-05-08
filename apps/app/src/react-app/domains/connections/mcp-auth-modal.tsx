@@ -588,11 +588,12 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" onClick={handleClose} />
+      <button type="button" className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" aria-label={t("common.close")} onClick={handleClose} />
 
       <div
         className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         <div className="flex items-center justify-between border-b border-gray-6 px-6 py-4">
           <div>

@@ -400,10 +400,9 @@ export function EnvironmentView(props: EnvironmentViewProps) {
 
       {editor ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" onClick={closeEditor} />
+          <button type="button" className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" aria-label={t("settings.environment.close_editor")} onClick={closeEditor} />
           <div
             className="relative w-full max-w-md rounded-2xl border border-gray-6 bg-gray-2 p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby={editorTitleId}
@@ -434,7 +433,6 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                   setEditor((current) => (current ? { ...current, key: event.target.value } : current))
                 }
                 disabled={editor.mode === "edit" || saving}
-                autoFocus={editor.mode === "add"}
                 placeholder="ANTHROPIC_API_KEY"
               />
               <label className="block">
