@@ -71,6 +71,15 @@ function stepIcon(status: CreateWorkspaceProgressStep["status"]) {
   return <div className="size-4 rounded-full border-2 border-dls-border" />;
 }
 
+function toKeyedLines(lines: string[]) {
+  let offset = 0;
+  return lines.map((line) => {
+    const key = `${offset}:${line}`;
+    offset += line.length + 1;
+    return { key, line };
+  });
+}
+
 function stepTextClass(status: CreateWorkspaceProgressStep["status"]) {
   if (status === "done") return "text-dls-text font-medium";
   if (status === "active") return "text-dls-text font-semibold";
@@ -210,9 +219,9 @@ export function CreateWorkspaceLocalPanel(
                   Live logs
                 </div>
                 <div className="max-h-[120px] space-y-0.5 overflow-y-auto">
-                  {progress.logs.slice(-10).map((line, index) => (
+                  {toKeyedLines(progress.logs.slice(-10)).map(({ key, line }) => (
                     <div
-                      key={`${progress.runId}-log-${index}`}
+                      key={`${progress.runId}-log-${key}`}
                       className="break-all font-mono text-[10px] leading-tight text-dls-text"
                     >
                       {line}
@@ -264,8 +273,8 @@ export function CreateWorkspaceLocalPanel(
                   Docker debug details
                 </summary>
                 <div className="mt-2 space-y-1 break-words font-mono">
-                  {props.workerDebugLines.map((line, index) => (
-                    <div key={`docker-line-${index}`}>{line}</div>
+                  {toKeyedLines(props.workerDebugLines).map(({ key, line }) => (
+                    <div key={`docker-line-${key}`}>{line}</div>
                   ))}
                 </div>
               </details>

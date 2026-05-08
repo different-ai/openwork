@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { ArrowLeft, ArrowRight, Globe, Loader2, RotateCw, X } from "lucide-react";
 import { isElectronRuntime } from "../../../../app/utils";
 
@@ -11,9 +11,33 @@ type BrowserState = {
   isLoading: boolean;
 };
 
+type BrowserPanelState = {
+  browserState: BrowserState;
+  urlInput: string;
+};
+
+type BrowserPanelAction =
+  | { type: "browserStateChanged"; browserState: BrowserState; syncUrlInput: boolean }
+  | { type: "urlInputChanged"; value: string };
+
 type BrowserPanelProps = { onClose: () => void };
 
 const EMPTY_STATE: BrowserState = { url: "", title: "", canGoBack: false, canGoForward: false, isLoading: false };
+
+function browserPanelReducer(
+  state: BrowserPanelState,
+  action: BrowserPanelAction,
+): BrowserPanelState {
+  switch (action.type) {
+    case "browserStateChanged":
+      return {
+        browserState: action.browserState,
+        urlInput: action.syncUrlInput ? action.browserState.url : state.urlInput,
+      };
+    case "urlInputChanged":
+      return { ...state, urlInput: action.value };
+  }
+}
 
 function getElectronBrowser() {
   if (!isElectronRuntime()) return null;
@@ -32,9 +56,11 @@ function computeBounds(el: HTMLElement, toolbar: HTMLElement) {
 }
 
 export function BrowserPanel({ onClose }: BrowserPanelProps) {
-  const [state, setState] = useState<BrowserState>(EMPTY_STATE);
-  const [urlInput, setUrlInput] = useState("");
-  const [urlFocused, setUrlFocused] = useState(false);
+  const [state, dispatch] = useReducer(browserPanelReducer, {
+    browserState: EMPTY_STATE,
+    urlInput: "",
+  });
+  const urlFocusedRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
@@ -46,14 +72,23 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
     const browser = getElectronBrowser();
     if (!browser) return;
     const unsub = browser.onStateChange?.((s: BrowserState) => {
-      setState(s);
-      if (!urlFocused) setUrlInput(s.url);
+      dispatch({
+        type: "browserStateChanged",
+        browserState: s,
+        syncUrlInput: !urlFocusedRef.current,
+      });
     });
     browser.getState?.().then((s: BrowserState | null) => {
-      if (s) { setState(s); setUrlInput(s.url); }
+      if (s) {
+        dispatch({
+          type: "browserStateChanged",
+          browserState: s,
+          syncUrlInput: true,
+        });
+      }
     });
     return unsub;
-  }, [urlFocused]);
+  }, []);
 
   // Show the browser view when the panel mounts, keep bounds in sync, hide on unmount.
   useEffect(() => {
@@ -99,8 +134,8 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
   }, []);
 
   const navigate = useCallback((url?: string) => {
-    getElectronBrowser()?.navigate?.(url ?? urlInput);
-  }, [urlInput]);
+    getElectronBrowser()?.navigate?.(url ?? state.urlInput);
+  }, [state.urlInput]);
 
   const handleUrlKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -122,14 +157,14 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
   return (
     <div ref={panelRef} className="flex h-full flex-col">
       <div ref={toolbarRef} className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.back?.()} disabled={!state.canGoBack} title="Back" aria-label="Go back">
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.back?.()} disabled={!state.browserState.canGoBack} title="Back" aria-label="Go back">
           <ArrowLeft className="size-4" />
         </button>
-        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.forward?.()} disabled={!state.canGoForward} title="Forward" aria-label="Go forward">
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.forward?.()} disabled={!state.browserState.canGoForward} title="Forward" aria-label="Go forward">
           <ArrowRight className="size-4" />
         </button>
         <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text" onClick={() => browser.reload?.()} title="Reload" aria-label="Reload page">
-          {state.isLoading ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+          {state.browserState.isLoading ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
         </button>
         <div className="relative mx-1 flex min-w-0 flex-1 items-center">
           <Globe className="absolute left-2 size-3.5 text-dls-secondary" />
@@ -137,11 +172,13 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
             ref={urlInputRef}
             type="text"
             className="h-7 w-full rounded-md border border-dls-border bg-dls-background-secondary pl-7 pr-2 text-[12px] text-dls-text placeholder:text-dls-secondary focus:border-dls-accent focus:outline-none"
-            value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
+            value={state.urlInput}
+            onChange={(e) =>
+              dispatch({ type: "urlInputChanged", value: e.target.value })
+            }
             onKeyDown={handleUrlKeyDown}
-            onFocus={() => { setUrlFocused(true); urlInputRef.current?.select(); }}
-            onBlur={() => setUrlFocused(false)}
+            onFocus={() => { urlFocusedRef.current = true; urlInputRef.current?.select(); }}
+            onBlur={() => { urlFocusedRef.current = false; }}
             placeholder="Enter URL..."
             spellCheck={false}
             autoComplete="off"

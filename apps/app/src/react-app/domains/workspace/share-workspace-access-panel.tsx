@@ -32,6 +32,63 @@ const displayFieldLabel = (field: ShareField) => {
   return field.label;
 };
 
+type CredentialFieldProps = {
+  field: ShareField;
+  fieldKey: string;
+  copiedKey: string | null;
+  revealedByKey: Record<string, boolean>;
+  onCopy: (value: string, key: string) => void;
+  onToggleReveal: (key: string) => void;
+};
+
+function CredentialField(props: CredentialFieldProps) {
+  const isSecret = Boolean(props.field.secret);
+  const revealed = Boolean(props.revealedByKey[props.fieldKey]);
+
+  return (
+    <div>
+      <label className="mb-1.5 block text-[13px] font-medium text-dls-text">
+        {displayFieldLabel(props.field)}
+      </label>
+      <div className="relative flex items-center gap-2">
+        <input
+          type={isSecret && !revealed ? "password" : "text"}
+          readOnly
+          value={props.field.value || props.field.placeholder || ""}
+          className={`${inputClass} font-mono text-[12px]`}
+        />
+        {isSecret ? (
+          <button
+            type="button"
+            onClick={() => props.onToggleReveal(props.fieldKey)}
+            disabled={!props.field.value}
+            className={pillSecondaryClass}
+            title={revealed ? "Hide password" : "Reveal password"}
+          >
+            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => props.onCopy(props.field.value, props.fieldKey)}
+          disabled={!props.field.value}
+          className={pillSecondaryClass}
+          title="Copy"
+        >
+          {props.copiedKey === props.fieldKey ? (
+            <Check size={14} className="text-emerald-600" />
+          ) : (
+            <Copy size={14} />
+          )}
+        </button>
+      </div>
+      {props.field.hint?.trim() ? (
+        <p className="mt-1.5 text-[12px] text-dls-secondary">{props.field.hint}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export type ShareWorkspaceAccessPanelProps = {
   fields: ShareField[];
   copiedKey: string | null;
@@ -78,59 +135,6 @@ export function ShareWorkspaceAccessPanel(
       : props.remoteAccess?.enabled === false && props.remoteAccessEnabled
         ? "Save & restart worker"
         : "Save";
-
-  const renderCredentialField = (
-    field: ShareField,
-    index: number,
-    keyPrefix: string,
-  ) => {
-    const key = `${keyPrefix}:${field.label}:${index}`;
-    const isSecret = Boolean(field.secret);
-    const revealed = Boolean(props.revealedByKey[key]);
-
-    return (
-      <div>
-        <label className="mb-1.5 block text-[13px] font-medium text-dls-text">
-          {displayFieldLabel(field)}
-        </label>
-        <div className="relative flex items-center gap-2">
-          <input
-            type={isSecret && !revealed ? "password" : "text"}
-            readOnly
-            value={field.value || field.placeholder || ""}
-            className={`${inputClass} font-mono text-[12px]`}
-          />
-          {isSecret ? (
-            <button
-              type="button"
-              onClick={() => props.onToggleReveal(key)}
-              disabled={!field.value}
-              className={pillSecondaryClass}
-              title={revealed ? "Hide password" : "Reveal password"}
-            >
-              {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => props.onCopy(field.value, key)}
-            disabled={!field.value}
-            className={pillSecondaryClass}
-            title="Copy"
-          >
-            {props.copiedKey === key ? (
-              <Check size={14} className="text-emerald-600" />
-            ) : (
-              <Copy size={14} />
-            )}
-          </button>
-        </div>
-        {field.hint?.trim() ? (
-          <p className="mt-1.5 text-[12px] text-dls-secondary">{field.hint}</p>
-        ) : null}
-      </div>
-    );
-  };
 
   return (
     <div className="space-y-5 pt-2 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -205,9 +209,16 @@ export function ShareWorkspaceAccessPanel(
             Connection details
           </div>
           <div className="space-y-4">
-            {primaryAccessFields.map((field, index) => (
-              <div key={`${field.label}-${index}`}>
-                {renderCredentialField(field, index, "primary")}
+            {primaryAccessFields.map((field) => (
+              <div key={field.label}>
+                <CredentialField
+                  field={field}
+                  fieldKey={`primary:${field.label}`}
+                  copiedKey={props.copiedKey}
+                  revealedByKey={props.revealedByKey}
+                  onCopy={props.onCopy}
+                  onToggleReveal={props.onToggleReveal}
+                />
               </div>
             ))}
           </div>
@@ -242,7 +253,14 @@ export function ShareWorkspaceAccessPanel(
               <div className="mb-3 text-[12px] text-dls-secondary">
                 Routine access without permission approvals.
               </div>
-              {renderCredentialField(collaboratorField, 0, "collaborator")}
+              <CredentialField
+                field={collaboratorField}
+                fieldKey={`collaborator:${collaboratorField.label}`}
+                copiedKey={props.copiedKey}
+                revealedByKey={props.revealedByKey}
+                onCopy={props.onCopy}
+                onToggleReveal={props.onToggleReveal}
+              />
             </div>
           ) : null}
         </div>

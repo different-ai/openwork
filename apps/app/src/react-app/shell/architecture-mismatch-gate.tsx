@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useReducer, type ReactNode } from "react";
 
 import { isDesktopRuntime } from "../../app/utils";
 import { useBootState } from "./boot-state";
@@ -20,6 +20,27 @@ type ArchitectureMismatchGateProps = {
   children: ReactNode;
 };
 
+type ArchitectureGateState = {
+  info: ArchitectureInfo | null;
+  checked: boolean;
+};
+
+type ArchitectureGateAction =
+  | { type: "checked" }
+  | { type: "resolved"; info: ArchitectureInfo };
+
+function architectureGateReducer(
+  state: ArchitectureGateState,
+  action: ArchitectureGateAction,
+): ArchitectureGateState {
+  switch (action.type) {
+    case "checked":
+      return { ...state, checked: true };
+    case "resolved":
+      return { info: action.info, checked: true };
+  }
+}
+
 function platformLabel(platform: ArchitectureInfo["platform"]): string {
   if (platform === "darwin") return "macOS";
   if (platform === "windows") return "Windows";
@@ -28,27 +49,29 @@ function platformLabel(platform: ArchitectureInfo["platform"]): string {
 
 export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateProps) {
   const { markRouteReady } = useBootState();
-  const [info, setInfo] = useState<ArchitectureInfo | null>(null);
-  const [checked, setChecked] = useState(!isDesktopRuntime());
+  const [state, dispatch] = useReducer(architectureGateReducer, {
+    info: null,
+    checked: !isDesktopRuntime(),
+  });
+  const { info, checked } = state;
 
   useEffect(() => {
     let cancelled = false;
     const bridge = window.__OPENWORK_ELECTRON__?.system?.getArchitectureInfo;
     if (!bridge) {
-      setChecked(true);
+      dispatch({ type: "checked" });
       return;
     }
 
     void bridge()
       .then((nextInfo) => {
         if (cancelled) return;
-        setInfo(nextInfo);
+        dispatch({ type: "resolved", info: nextInfo });
       })
       .catch((error) => {
+        if (cancelled) return;
         console.warn("[architecture-gate] failed to resolve runtime architecture", error);
-      })
-      .finally(() => {
-        if (!cancelled) setChecked(true);
+        dispatch({ type: "checked" });
       });
 
     return () => {
