@@ -788,6 +788,28 @@ async function readWorkspaceState() {
     }
     return nextWorkspace;
   });
+  // Older desktop state can contain multiple OpenWork remote entries that
+  // normalize to the same `rem_<workspaceId>` after stripping worker mounts.
+  // Collapse them here so React never receives duplicate workspace keys.
+  const workspaceIndexById = new Map();
+  const dedupedWorkspaces = [];
+  for (const workspace of migratedWorkspaces) {
+    const workspaceId = String(workspace?.id ?? "").trim();
+    if (!workspaceId) {
+      dedupedWorkspaces.push(workspace);
+      continue;
+    }
+    const existingIndex = workspaceIndexById.get(workspaceId);
+    if (existingIndex === undefined) {
+      workspaceIndexById.set(workspaceId, dedupedWorkspaces.length);
+      dedupedWorkspaces.push(workspace);
+      continue;
+    }
+    // Keep the later entry: normal mutations replace-then-push refreshed
+    // remote workspaces, and there is no persisted updatedAt to compare.
+    dedupedWorkspaces[existingIndex] = workspace;
+    changed = true;
+  }
 
   const migratedSelectedId = idMap.get(selectedId) ?? selectedId;
   const migratedWatchedId = watchedId ? idMap.get(watchedId) ?? watchedId : null;
@@ -799,7 +821,7 @@ async function readWorkspaceState() {
       migratedSelectedId,
     watchedId: migratedWatchedId,
     activeId: migratedActiveId,
-    workspaces: migratedWorkspaces,
+    workspaces: dedupedWorkspaces,
   };
 
   if (changed) {
