@@ -1,0 +1,19 @@
+pnpm-lock.yaml
+  ai_agent 94-96,5151-5164,6294-6296,6300-6316,13209-13217,14566-14569,14572-14580
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  ai_agent 84,371
+apps/app/package.json
+  ai_agent 63
+apps/app/src/react-app/shell/session-memory.ts
+  ai_agent 9,42-61,115-118
+apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+  ai_agent 17,348,491-503,505-523,525,689-693,716-728
+apps/app/src/react-app/shell/session-route.tsx
+  ai_agent 97,100,280-301,423,458,662-663,666,686-689,782-783,785,912-915,1989-2008,2229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "7c552eaf049fa1d8f7dc1ed17c523caa4687826f",
+  "prompts": {}
+}
