@@ -354,7 +354,7 @@ function DevProfilerOverlayVisible({ onHide }: { onHide: () => void }) {
       {collapsed ? null : (
         <div className="max-h-[50vh] overflow-y-auto">
           {topZones.length === 0 ? (
-            <div className="px-3 py-3 text-dls-secondary">
+            <div className="p-3 text-dls-secondary">
               No profiler data yet. Interact with the app.
             </div>
           ) : (

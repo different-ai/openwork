@@ -127,9 +127,9 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                 <Sparkles size={12} />
                 {t("share_skill_destination.skill_label")}
               </div>
-              <div className="rounded-xl border border-gray-6 bg-gray-2/40 px-4 py-4">
+              <div className="rounded-xl border border-gray-6 bg-gray-2/40 p-4">
                 <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-7/20 bg-indigo-7/10 text-indigo-11">
+                  <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border border-indigo-7/20 bg-indigo-7/10 text-indigo-11">
                     <Sparkles size={17} />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -220,7 +220,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                     >
                       <div className="flex items-start gap-3 px-4 py-3">
                         <div
-                          className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${workspaceCircleClass(
+                          className={`mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full ${workspaceCircleClass(
                             workspace,
                             isSelected,
                           )}`.trim()}
@@ -293,12 +293,12 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                     type="button"
                     onClick={() => props.onCreateWorker?.()}
                     disabled={footerBusy}
-                    className={`rounded-xl border border-indigo-7/30 bg-indigo-7/10 px-4 py-4 text-left transition hover:border-indigo-7/50 hover:bg-indigo-7/15 ${
+                    className={`rounded-xl border border-indigo-7/30 bg-indigo-7/10 p-4 text-left transition hover:border-indigo-7/50 hover:bg-indigo-7/15 ${
                       footerBusy ? "cursor-not-allowed opacity-60" : ""
                     }`.trim()}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-indigo-7/30 bg-indigo-7/15 text-indigo-11">
+                      <div className="mt-0.5 flex size-10 items-center justify-center rounded-full border border-indigo-7/30 bg-indigo-7/15 text-indigo-11">
                         <FolderPlus size={17} />
                       </div>
                       <div>
@@ -318,12 +318,12 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                     type="button"
                     onClick={() => props.onConnectRemote?.()}
                     disabled={footerBusy}
-                    className={`rounded-xl border border-sky-7/30 bg-sky-7/10 px-4 py-4 text-left transition hover:border-sky-7/50 hover:bg-sky-7/15 ${
+                    className={`rounded-xl border border-sky-7/30 bg-sky-7/10 p-4 text-left transition hover:border-sky-7/50 hover:bg-sky-7/15 ${
                       footerBusy ? "cursor-not-allowed opacity-60" : ""
                     }`.trim()}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-sky-7/30 bg-sky-7/15 text-sky-11">
+                      <div className="mt-0.5 flex size-10 items-center justify-center rounded-full border border-sky-7/30 bg-sky-7/15 text-sky-11">
                         <Globe size={17} />
                       </div>
                       <div>

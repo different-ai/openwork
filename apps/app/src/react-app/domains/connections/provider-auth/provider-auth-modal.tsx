@@ -719,7 +719,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         onMouseEnter={() => setActiveEntryIndex(index)}
                         onClick={() => handleEntrySelect(entry)}
                       >
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm overflow-hidden">
+                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm overflow-hidden">
                           <ProviderIcon providerId={entry.id} size={18} className="text-gray-12" />
                         </div>
 
@@ -987,7 +987,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   )}
                   {oauthDisplayCode ? (
-                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-3 flex items-center gap-3">
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
                         <div className="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode}</div>

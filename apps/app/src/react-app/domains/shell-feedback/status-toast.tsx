@@ -36,9 +36,9 @@ export function StatusToast(props: StatusToastProps) {
 
   return (
     <div className="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
-      <div className="flex items-start gap-3 px-4 py-4">
+      <div className="flex items-start gap-3 p-4">
         <div
-          className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${tileClass}`.trim()}
+          className={`mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl border ${tileClass}`.trim()}
         >
           <Icon size={18} />
         </div>

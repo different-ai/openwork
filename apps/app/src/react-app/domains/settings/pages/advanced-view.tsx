@@ -52,7 +52,7 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
   return (
     <div className={`${settingsPanelSoftClass} space-y-3`}>
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
           {props.icon}
         </div>
         <div>
@@ -63,7 +63,7 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
       <div
         className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${props.statusStyle}`}
       >
-        <span className={`h-2 w-2 rounded-full ${props.statusDot}`} />
+        <span className={`size-2 rounded-full ${props.statusDot}`} />
         {props.statusLabel}
       </div>
       {props.detailLines?.length ? (

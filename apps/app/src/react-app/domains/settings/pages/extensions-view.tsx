@@ -97,7 +97,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
           >
             {props.mcpConnectedAppsCount > 0 ? (
               <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-                <div className="w-2 h-2 rounded-full bg-green-9" />
+                <div className="size-2 rounded-full bg-green-9" />
                 <span className="text-xs font-medium text-green-11">
                   {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
                 </span>

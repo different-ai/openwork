@@ -199,9 +199,9 @@ function RemoteConnectionIssueCard(props: {
     : "border-red-7/25 bg-red-1/40 text-red-11";
 
   return (
-    <div className={`w-full rounded-[15px] border px-3 py-3 text-left ${shellClass}`}>
+    <div className={`w-full rounded-[15px] border p-3 text-left ${shellClass}`}>
       <div className="flex items-start gap-2.5">
-        <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+        <div className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
           <AlertCircle size={14} />
         </div>
         <div className="min-w-0 flex-1">
@@ -452,7 +452,7 @@ export function WorkspaceSessionList(props: Props) {
             {hasChildren ? (
               <button
                 type="button"
-                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={isExpanded ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -466,7 +466,7 @@ export function WorkspaceSessionList(props: Props) {
               <span className="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
             ) : null}
 
-            {isSessionActive ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" /> : null}
+            {isSessionActive ? <span className="size-1.5 shrink-0 rounded-full bg-amber-9" /> : null}
             <span
               className={`block min-w-0 truncate ${
                 isSelected ? "font-medium text-gray-12" : "font-normal text-current"
@@ -481,7 +481,7 @@ export function WorkspaceSessionList(props: Props) {
             {canManageSession ? (
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="flex size-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={t("workspace_list.session_actions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -615,7 +615,7 @@ export function WorkspaceSessionList(props: Props) {
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
                       <div
-                        className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-full"
+                        className="flex size-5.5 shrink-0 items-center justify-center rounded-full"
                         style={{
                           backgroundColor: workspaceSwatchColor(workspace.id || workspaceLabel(workspace)),
                         }}

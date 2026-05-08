@@ -317,7 +317,7 @@ export function CommandPalette(props: CommandPaletteProps) {
             />
             <button
               type="button"
-              className="h-8 w-8 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors flex items-center justify-center"
+              className="size-8 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors flex items-center justify-center"
               onClick={props.onClose}
               aria-label={t("common.close")}
             >

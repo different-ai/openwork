@@ -316,7 +316,7 @@ export function McpView(props: McpViewProps) {
           <p className="mt-1.5 text-sm text-dls-secondary">{t("mcp.apps_subtitle")}</p>
           {connectedCount > 0 ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-              <div className="h-2 w-2 rounded-full bg-green-9" />
+              <div className="size-2 rounded-full bg-green-9" />
               <span className="text-xs font-medium text-green-11">
                 {connectedCount} {connectedCount === 1 ? t("mcp.app_connected") : t("mcp.apps_connected")}
               </span>
@@ -333,7 +333,7 @@ export function McpView(props: McpViewProps) {
 
       {/* Connect Chrome card */}
       {isDesktopRuntime() ? (
-        <div className="rounded-2xl border border-amber-6/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.08),rgba(245,158,11,0.03))] px-5 py-5 sm:px-6">
+        <div className="rounded-2xl border border-amber-6/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.08),rgba(245,158,11,0.03))] p-5 sm:px-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <div className="text-base font-semibold text-dls-text">{t("chrome_setup.title")}</div>
@@ -347,7 +347,7 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] px-5 py-5 sm:px-6">
+      <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] p-5 sm:px-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-base font-semibold text-dls-text">{t("mcp.add_modal_title")}</div>
@@ -392,7 +392,7 @@ export function McpView(props: McpViewProps) {
                 >
                   <div className="flex items-start gap-3">
                     <div
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${
+                      className={`flex size-10 shrink-0 items-center justify-center rounded-lg border ${
                         configured ? "border-green-6 bg-green-3" : serviceIconBg(entry.name)
                       }`}
                     >
@@ -482,7 +482,7 @@ export function McpView(props: McpViewProps) {
                   >
                     <div className="flex items-center gap-3">
                       <div
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${
+                        className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${
                           status === "connected"
                             ? "border-green-6 bg-green-3"
                             : serviceIconBg(entry.name)
@@ -501,7 +501,7 @@ export function McpView(props: McpViewProps) {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${statusDot(status)}`} />
+                        <div className={`size-2 rounded-full ${statusDot(status)}`} />
                         <span className="text-[11px] text-dls-secondary">
                           {friendlyStatus(status)}
                         </span>

@@ -486,7 +486,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)]"
+              className="inline-flex size-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)]"
               onClick={() => props.onClose()}
             >
               <X size={16} />

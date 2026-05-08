@@ -221,8 +221,8 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       </div>
 
       <div className="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
+        <div className="pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-blue-6/20 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-12 left-6 size-24 rounded-full bg-cyan-6/20 blur-2xl" />
 
         <div className="relative space-y-4">
           <div className="space-y-2">

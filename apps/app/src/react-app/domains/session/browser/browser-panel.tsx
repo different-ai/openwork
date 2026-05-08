@@ -122,17 +122,17 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
   return (
     <div ref={panelRef} className="flex h-full flex-col">
       <div ref={toolbarRef} className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.back?.()} disabled={!state.canGoBack} title="Back" aria-label="Go back">
-          <ArrowLeft className="h-4 w-4" />
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.back?.()} disabled={!state.canGoBack} title="Back" aria-label="Go back">
+          <ArrowLeft className="size-4" />
         </button>
-        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.forward?.()} disabled={!state.canGoForward} title="Forward" aria-label="Go forward">
-          <ArrowRight className="h-4 w-4" />
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:opacity-40" onClick={() => browser.forward?.()} disabled={!state.canGoForward} title="Forward" aria-label="Go forward">
+          <ArrowRight className="size-4" />
         </button>
-        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text" onClick={() => browser.reload?.()} title="Reload" aria-label="Reload page">
-          {state.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text" onClick={() => browser.reload?.()} title="Reload" aria-label="Reload page">
+          {state.isLoading ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
         </button>
         <div className="relative mx-1 flex min-w-0 flex-1 items-center">
-          <Globe className="absolute left-2 h-3.5 w-3.5 text-dls-secondary" />
+          <Globe className="absolute left-2 size-3.5 text-dls-secondary" />
           <input
             ref={urlInputRef}
             type="text"
@@ -147,8 +147,8 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
             autoComplete="off"
           />
         </div>
-        <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text" onClick={onClose} title="Close browser" aria-label="Close browser panel">
-          <X className="h-4 w-4" />
+        <button type="button" className="inline-flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text" onClick={onClose} title="Close browser" aria-label="Close browser panel">
+          <X className="size-4" />
         </button>
       </div>
       {/* WebContentsView renders in this area (managed by Electron main process) */}

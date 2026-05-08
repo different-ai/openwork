@@ -65,7 +65,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
         <div className="border-b border-gray-6 bg-gray-1 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-9/15 text-indigo-11">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-indigo-9/15 text-indigo-11">
                 <Boxes size={20} />
               </div>
               <div>
@@ -118,10 +118,10 @@ export function BundleImportModal(props: BundleImportModalProps) {
             type="button"
             onClick={props.onCreateNewWorker}
             disabled={busy}
-            className="flex w-full items-center justify-between rounded-2xl border border-indigo-7/30 bg-indigo-9/10 px-4 py-4 text-left transition hover:border-indigo-7/50 hover:bg-indigo-9/15 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-between rounded-2xl border border-indigo-7/30 bg-indigo-9/10 p-4 text-left transition hover:border-indigo-7/50 hover:bg-indigo-9/15 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-9/20 text-indigo-11">
+              <div className="mt-0.5 flex size-10 items-center justify-center rounded-xl bg-indigo-9/20 text-indigo-11">
                 <Plus size={18} />
               </div>
               <div>
@@ -142,7 +142,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
               type="button"
               onClick={() => setShowWorkers((value) => !value)}
               disabled={busy}
-              className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition hover:bg-gray-3/60 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-between gap-3 p-4 text-left transition hover:bg-gray-3/60 disabled:cursor-not-allowed disabled:opacity-60"
               aria-expanded={showWorkers}
             >
               <div>
@@ -161,7 +161,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
             </button>
 
             {showWorkers ? (
-              <div className="space-y-3 border-t border-gray-6 px-4 py-4">
+              <div className="space-y-3 border-t border-gray-6 p-4">
                 {props.workers.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-gray-6 px-4 py-5 text-sm text-gray-10">
                     No configured workers are available yet. Create a new worker

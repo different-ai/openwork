@@ -677,7 +677,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
           {!isBusy && alreadyConnected ? (
             <div className="space-y-4 rounded-xl border border-green-7/20 bg-green-7/10 p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
                   <CheckCircle2 size={24} className="text-green-11" />
                 </div>
                 <div>
@@ -807,7 +807,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
             <>
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     1
                   </div>
                   <div>
@@ -819,7 +819,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     2
                   </div>
                   <div>
@@ -829,7 +829,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     3
                   </div>
                   <div>

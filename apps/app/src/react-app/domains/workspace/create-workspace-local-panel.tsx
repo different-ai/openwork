@@ -68,7 +68,7 @@ function stepIcon(status: CreateWorkspaceProgressStep["status"]) {
   if (status === "active")
     return <Loader2 size={16} className="animate-spin text-dls-accent" />;
   if (status === "error") return <XCircle size={16} className="text-red-10" />;
-  return <div className="h-4 w-4 rounded-full border-2 border-dls-border" />;
+  return <div className="size-4 rounded-full border-2 border-dls-border" />;
 }
 
 function stepTextClass(status: CreateWorkspaceProgressStep["status"]) {
@@ -183,7 +183,7 @@ export function CreateWorkspaceLocalPanel(
             <div className="mt-4 grid gap-2.5">
               {progress.steps.map((step) => (
                 <div key={step.key} className="flex items-center gap-3">
-                  <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                  <div className="flex size-5 shrink-0 items-center justify-center">
                     {stepIcon(step.status)}
                   </div>
                   <div className="flex min-w-0 flex-1 items-center justify-between gap-2">

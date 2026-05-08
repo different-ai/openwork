@@ -549,7 +549,7 @@ export function SessionPage(props: SessionPageProps) {
                     </div>
                   ) : showWorkspaceSetupEmptyState ? (
                     <div className="space-y-6 px-6 text-center">
-                      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-hover">
+                      <div className="mx-auto flex size-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-hover">
                         <Zap className="text-dls-secondary" />
                       </div>
                       <div className="space-y-2">
@@ -564,7 +564,7 @@ export function SessionPage(props: SessionPageProps) {
                     </div>
                   ) : showSelectedWorkspaceError ? (
                     <div className="px-6 py-16">
-                      <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 px-5 py-5 text-left shadow-[var(--dls-card-shadow)]">
+                      <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 p-5 text-left shadow-[var(--dls-card-shadow)]">
                         <div className="text-sm font-medium text-red-11">Remote workspace unavailable</div>
                         <p className="mt-2 whitespace-pre-wrap wrap-anywhere text-sm leading-6 text-red-11/90">
                           {selectedWorkspaceErrorMessage}
@@ -631,7 +631,7 @@ export function SessionPage(props: SessionPageProps) {
                         <div key={`${todo.content}-${index}`} className="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
                           <div className="flex items-center gap-1.5 pt-0.5">
                             <div
-                              className={`flex h-4.5 w-4.5 items-center justify-center rounded-full border ${
+                              className={`flex size-4.5 items-center justify-center rounded-full border ${
                                 done
                                   ? "border-green-6 bg-green-2 text-green-11"
                                   : active
@@ -641,7 +641,7 @@ export function SessionPage(props: SessionPageProps) {
                                       : "border-gray-6 bg-gray-1 text-gray-8"
                               }`}
                             >
-                              {done ? <Check size={10} /> : active ? <span className="h-1.5 w-1.5 rounded-full bg-amber-9" /> : null}
+                              {done ? <Check size={10} /> : active ? <span className="size-1.5 rounded-full bg-amber-9" /> : null}
                             </div>
                           </div>
                           <div className={`flex-1 text-sm leading-relaxed ${cancelled ? "text-gray-9 line-through" : "text-gray-12"}`}>

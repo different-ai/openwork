@@ -833,7 +833,7 @@ export function SkillsView(props: SkillsViewProps) {
                     onKeyDown={(event) => handleSkillCardKeyDown(event, skill)}
                   >
                     <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                         <Package size={20} className="text-dls-secondary" />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -966,7 +966,7 @@ export function SkillsView(props: SkillsViewProps) {
                       return (
                         <div key={skill.id} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
                           <div className="flex min-w-0 gap-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                               <Cloud size={20} className="text-dls-secondary" />
                             </div>
                             <div className="min-w-0 flex-1">
@@ -1111,7 +1111,7 @@ export function SkillsView(props: SkillsViewProps) {
                 {filteredHubSkills.map((skill) => (
                   <div key={`${skill.source.owner}/${skill.source.repo}/${skill.name}`} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
                     <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                         <Package size={20} className="text-dls-secondary" />
                       </div>
                       <div className="min-w-0 flex-1">

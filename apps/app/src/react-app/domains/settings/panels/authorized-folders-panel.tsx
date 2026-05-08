@@ -306,7 +306,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
       </div>
 
       {!canReadConfig ? (
-        <div className={`${softPanelClass} px-3 py-3 text-xs text-gray-10`}>
+        <div className={`${softPanelClass} p-3 text-xs text-gray-10`}>
           {authorizedFoldersHint ?? t("context_panel.authorized_folders_no_access")}
         </div>
       ) : (
@@ -330,7 +330,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                     }`}
                   >
                     <div className="flex overflow-hidden items-center gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-3/30 text-blue-11">
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-blue-3/30 text-blue-11">
                         <Folder size={15} />
                       </div>
                       <div className="flex min-w-0 flex-col">
@@ -348,7 +348,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                     {!isWorkspaceRoot ? (
                       <Button
                         variant="ghost"
-                        className="h-6 w-6 shrink-0 !rounded-full !p-0 border-0 bg-transparent text-red-10 shadow-none hover:bg-red-3/15 hover:text-red-11 focus:ring-red-7/25"
+                        className="size-6 shrink-0 !rounded-full !p-0 border-0 bg-transparent text-red-10 shadow-none hover:bg-red-3/15 hover:text-red-11 focus:ring-red-7/25"
                         onClick={() => void removeAuthorizedFolder(folder)}
                         disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig}
                         aria-label={t("context_panel.remove_folder", undefined, { name: folderName })}
@@ -366,7 +366,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center p-6 text-center">
-              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11">
+              <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-blue-3/30 text-blue-11">
                 <Folder size={20} />
               </div>
               <div className="text-sm font-medium text-gray-11">{t("context_panel.no_external_folders")}</div>

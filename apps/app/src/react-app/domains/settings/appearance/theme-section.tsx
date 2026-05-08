@@ -96,7 +96,7 @@ function ThemePickerItem(props: ThemePickerItemProps) {
     <ToggleGroupItem
       value={props.value}
       aria-label={props.label}
-      className="group/theme h-auto flex-1 flex-col gap-3 rounded-sm px-0 py-0 hover:bg-transparent aria-pressed:bg-transparent"
+      className="group/theme h-auto flex-1 flex-col gap-3 rounded-sm p-0 hover:bg-transparent aria-pressed:bg-transparent"
     >
       {props.children}
     </ToggleGroupItem>

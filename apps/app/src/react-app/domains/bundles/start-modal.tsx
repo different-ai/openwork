@@ -75,7 +75,7 @@ export function BundleStartModal(props: BundleStartModalProps) {
         <div className="border-b border-dls-border px-6 py-5 bg-dls-surface">
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-dls-accent/10 text-dls-accent">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-dls-accent/10 text-dls-accent">
                 <Rocket size={20} />
               </div>
               <div className="min-w-0">
@@ -118,7 +118,7 @@ export function BundleStartModal(props: BundleStartModalProps) {
           ) : null}
         </div>
 
-        <div className="space-y-4 px-6 py-6">
+        <div className="space-y-4 p-6">
           <div className="rounded-2xl border border-dls-border bg-dls-sidebar px-5 py-4">
             <div className="text-[15px] font-semibold text-dls-text">
               Workspace folder

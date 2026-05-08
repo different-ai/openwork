@@ -477,12 +477,12 @@ function FileCard(props: {
       }`}
     >
       {isImage && props.part.url ? (
-        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl border border-dls-border/60 bg-dls-surface">
-          <img src={props.part.url} alt={title} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        <div className="size-11 shrink-0 overflow-hidden rounded-xl border border-dls-border/60 bg-dls-surface">
+          <img src={props.part.url} alt={title} loading="lazy" decoding="async" className="size-full object-cover" />
         </div>
       ) : (
         <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+          className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${
             props.tone === "user" ? "bg-gray-3/60 text-gray-11" : "bg-gray-2/60 text-gray-10"
           }`}
         >
@@ -502,7 +502,7 @@ function FileCard(props: {
         <div className="relative">
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-xl text-gray-9 opacity-0 transition-all hover:bg-gray-3/60 hover:text-gray-12 group-hover:opacity-100"
+            className="flex size-8 items-center justify-center rounded-xl text-gray-9 opacity-0 transition-all hover:bg-gray-3/60 hover:text-gray-12 group-hover:opacity-100"
             onClick={() => setMenuOpen((value) => !value)}
             title="File actions"
           >

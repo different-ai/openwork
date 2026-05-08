@@ -101,7 +101,7 @@ export function ReactRenderWatchdogOverlay() {
       {collapsed ? null : (
         <div className="max-h-[50vh] overflow-y-auto">
           {hot.length === 0 ? (
-            <div className="px-3 py-3 text-dls-secondary">
+            <div className="p-3 text-dls-secondary">
               No render samples yet. Interact with the app.
             </div>
           ) : (

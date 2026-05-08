@@ -107,7 +107,7 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
         </div>
 
         {/* Body */}
-        <div className="space-y-5 px-6 py-6 sm:px-7">
+        <div className="space-y-5 p-6 sm:px-7">
           {/* Connection status */}
           <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${statusColor}`}>
             {status === "checking" ? (
@@ -133,7 +133,7 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
           {/* Step 1: Enable remote debugging */}
           <div className="rounded-2xl border border-gray-6 bg-gray-1/40 p-5">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-3 text-blue-11">
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-blue-3 text-blue-11">
                 <span className="text-sm font-bold">1</span>
               </div>
               <div className="min-w-0 flex-1">
@@ -170,7 +170,7 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
           {/* Step 2: Test connection */}
           <div className="rounded-2xl border border-gray-6 bg-gray-1/40 p-5">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-3 text-gray-11">
+              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-gray-3 text-gray-11">
                 <span className="text-sm font-bold">2</span>
               </div>
               <div className="min-w-0 flex-1">

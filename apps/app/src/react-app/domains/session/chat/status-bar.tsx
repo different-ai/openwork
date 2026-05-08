@@ -157,14 +157,14 @@ export function StatusBar(props: StatusBarProps) {
     <div className="border-t border-dls-border bg-dls-surface">
       <div className="flex h-12 items-center justify-between gap-3 px-4 md:px-6 text-[12px] text-dls-secondary">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+          <span className="relative flex size-2.5 shrink-0 items-center justify-center">
             {statusCopy.pulse ? (
               <span
-                className={`absolute inline-flex h-full w-full rounded-full ${statusCopy.pingClass}`}
+                className={`absolute inline-flex size-full rounded-full ${statusCopy.pingClass}`}
               />
             ) : null}
             <span
-              className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusCopy.dotClass}`}
+              className={`relative inline-flex size-2.5 rounded-full ${statusCopy.dotClass}`}
             />
           </span>
           <span className="shrink-0 font-medium text-dls-text">
@@ -184,7 +184,7 @@ export function StatusBar(props: StatusBarProps) {
             title={t("status.open_docs")}
             aria-label={t("status.open_docs")}
           >
-            <BookOpen className="h-4 w-4" />
+            <BookOpen className="size-4" />
             <span className="text-[11px] font-medium">{t("status.docs")}</span>
           </button>
           <button
@@ -195,7 +195,7 @@ export function StatusBar(props: StatusBarProps) {
             title={t("status.send_feedback")}
             aria-label={t("status.send_feedback")}
           >
-            <MessageCircle className="h-4 w-4" />
+            <MessageCircle className="size-4" />
             <span className="text-[11px] font-medium">
               {t("status.feedback")}
             </span>
@@ -204,7 +204,7 @@ export function StatusBar(props: StatusBarProps) {
             <button
               ref={settingsButtonRef}
               type="button"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               onClick={props.onOpenSettings}
               title={
                 props.settingsOpen ? t("status.back") : t("status.settings")
@@ -213,7 +213,7 @@ export function StatusBar(props: StatusBarProps) {
                 props.settingsOpen ? t("status.back") : t("status.settings")
               }
             >
-              <Settings className="h-4 w-4" />
+              <Settings className="size-4" />
             </button>
           ) : null}
         </div>

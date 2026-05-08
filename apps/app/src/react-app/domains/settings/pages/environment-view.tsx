@@ -15,9 +15,9 @@ import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-conte
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
 const rowIconButtonClass =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-7/80 bg-gray-2 text-gray-11 shadow-sm transition-colors hover:border-gray-8 hover:bg-gray-4 hover:text-gray-12 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-gray-7/80 bg-gray-2 text-gray-11 shadow-sm transition-colors hover:border-gray-8 hover:bg-gray-4 hover:text-gray-12 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-50";
 const rowDangerIconButtonClass =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-red-7/75 bg-red-3/40 text-red-10 shadow-sm transition-colors hover:border-red-8 hover:bg-red-4/80 hover:text-red-11 focus:outline-none focus:ring-2 focus:ring-red-7/30 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-red-7/75 bg-red-3/40 text-red-10 shadow-sm transition-colors hover:border-red-8 hover:bg-red-4/80 hover:text-red-11 focus:outline-none focus:ring-2 focus:ring-red-7/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
@@ -266,10 +266,10 @@ export function EnvironmentView(props: EnvironmentViewProps) {
         ) : null}
 
         {pendingChanges && !isRemoteWorkspace ? (
-          <div className="rounded-xl border border-amber-7/50 bg-amber-3/30 px-3 py-3">
+          <div className="rounded-xl border border-amber-7/50 bg-amber-3/30 p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex min-w-0 items-start gap-2.5">
-                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-4/70 text-amber-11">
+                <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-amber-4/70 text-amber-11">
                   <RefreshCw size={14} />
                 </div>
                 <div className="min-w-0">
@@ -369,7 +369,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                         : t("settings.environment.reveal_value")
                       ).replace("{key}", item.key)}
                     >
-                      {isRevealed ? <EyeOff className="h-4 w-4" strokeWidth={2.1} /> : <Eye className="h-4 w-4" strokeWidth={2.1} />}
+                      {isRevealed ? <EyeOff className="size-4" strokeWidth={2.1} /> : <Eye className="size-4" strokeWidth={2.1} />}
                     </button>
                     {canEdit ? (
                       <button
@@ -380,7 +380,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
                         title={t("settings.environment.delete")}
                         aria-label={t("settings.environment.delete_variable").replace("{key}", item.key)}
                       >
-                        <Trash2 className="h-4 w-4" strokeWidth={2.1} />
+                        <Trash2 className="size-4" strokeWidth={2.1} />
                       </button>
                     ) : null}
                   </div>
@@ -416,7 +416,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
               </div>
               <Button
                 variant="ghost"
-                className="h-7 w-7 p-0"
+                className="size-7 p-0"
                 onClick={closeEditor}
                 aria-label={t("settings.environment.close_editor")}
                 title={t("settings.environment.close_editor")}
