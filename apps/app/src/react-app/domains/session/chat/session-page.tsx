@@ -216,12 +216,17 @@ export function SessionPage(props: SessionPageProps) {
     expandedRightWidth: 520,
     minRightWidth: 320,
   });
+  const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth}px`,
   };
+  useEffect(() => {
+    if (browserPanelOpen) return;
+    setBrowserPanelDefaultWidth(browserPanelWidth);
+  }, [browserPanelOpen, browserPanelWidth]);
   const commitBrowserPanelWidth = useCallback(() => {
     const size = browserPanelRef.current?.getSize();
-    if (size) setBrowserPanelWidth(size.inPixels);
+    if (size?.inPixels) setBrowserPanelWidth(Math.round(size.inPixels));
   }, [browserPanelRef, setBrowserPanelWidth]);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
@@ -673,7 +678,7 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizableHandle withHandle className="hidden lg:flex" />
                 <ResizablePanel
                   panelRef={browserPanelRef}
-                  defaultSize={`${browserPanelWidth}px`}
+                  defaultSize={`${browserPanelDefaultWidth}px`}
                   minSize="320px"
                   maxSize="70%"
                   className="min-h-0 overflow-hidden lg:flex lg:flex-col"
