@@ -40,6 +40,11 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return ipcRenderer.invoke("openwork:shell:relaunch");
     },
   },
+  system: {
+    getArchitectureInfo() {
+      return ipcRenderer.invoke("openwork:system:architecture");
+    },
+  },
   migration: {
     readSnapshot() {
       return ipcRenderer.invoke("openwork:migration:read");
