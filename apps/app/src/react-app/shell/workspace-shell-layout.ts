@@ -3,11 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
 const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
+const RIGHT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.right-width.v1";
 
 export const DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH = 260;
 export const MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH = 220;
 export const MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH = 420;
 export const DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH = 72;
+export const MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 320;
+export const MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 960;
 
 type WorkspaceShellLayoutOptions = {
   defaultLeftWidth?: number;
@@ -15,6 +18,8 @@ type WorkspaceShellLayoutOptions = {
   maxLeftWidth?: number;
   collapsedRightWidth?: number;
   expandedRightWidth: number;
+  minRightWidth?: number;
+  maxRightWidth?: number;
 };
 
 function readStorage(key: string): string | null {
@@ -52,6 +57,9 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     options.collapsedRightWidth ?? DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH,
   );
   const expandedRightWidth = Math.max(collapsedRightWidth, options.expandedRightWidth);
+  const minRightWidth = Math.max(collapsedRightWidth, options.minRightWidth ?? MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH);
+  const maxRightWidth = Math.max(minRightWidth, options.maxRightWidth ?? MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH);
+  const defaultRightWidth = clampNumber(expandedRightWidth, minRightWidth, maxRightWidth);
 
   const readLeftSidebarWidth = useCallback(() => {
     const raw = readStorage(LEFT_SIDEBAR_WIDTH_KEY);
@@ -66,9 +74,17 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     return raw === "1";
   }, []);
 
+  const readRightSidebarExpandedWidth = useCallback(() => {
+    const raw = readStorage(RIGHT_SIDEBAR_WIDTH_KEY);
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return defaultRightWidth;
+    return clampNumber(parsed, minRightWidth, maxRightWidth);
+  }, [defaultRightWidth, maxRightWidth, minRightWidth]);
+
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(readLeftSidebarWidth);
   const [leftSidebarResizing, setLeftSidebarResizing] = useState(false);
   const [rightSidebarExpanded, setRightSidebarExpanded] = useState(readRightSidebarExpanded);
+  const [rightSidebarExpandedWidth, setRightSidebarExpandedWidthState] = useState(readRightSidebarExpandedWidth);
   const dragCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -82,9 +98,23 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     writeStorage(RIGHT_SIDEBAR_EXPANDED_KEY, rightSidebarExpanded ? "1" : "0");
   }, [rightSidebarExpanded]);
 
+  useEffect(() => {
+    writeStorage(
+      RIGHT_SIDEBAR_WIDTH_KEY,
+      String(clampNumber(rightSidebarExpandedWidth, minRightWidth, maxRightWidth)),
+    );
+  }, [maxRightWidth, minRightWidth, rightSidebarExpandedWidth]);
+
   const rightSidebarWidth = useMemo(
-    () => (rightSidebarExpanded ? expandedRightWidth : collapsedRightWidth),
-    [collapsedRightWidth, expandedRightWidth, rightSidebarExpanded],
+    () => (rightSidebarExpanded ? rightSidebarExpandedWidth : collapsedRightWidth),
+    [collapsedRightWidth, rightSidebarExpanded, rightSidebarExpandedWidth],
+  );
+
+  const setRightSidebarExpandedWidth = useCallback(
+    (width: number) => {
+      setRightSidebarExpandedWidthState(clampNumber(width, minRightWidth, maxRightWidth));
+    },
+    [maxRightWidth, minRightWidth],
   );
 
   const stopLeftSidebarResize = useCallback(() => {
@@ -147,8 +177,10 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     leftSidebarWidth,
     leftSidebarResizing,
     rightSidebarExpanded,
+    rightSidebarExpandedWidth,
     rightSidebarWidth,
     setRightSidebarExpanded,
+    setRightSidebarExpandedWidth,
     startLeftSidebarResize,
     toggleRightSidebar,
   };

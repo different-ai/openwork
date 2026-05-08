@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePanelRef } from "react-resizable-panels";
 import { Check, Globe, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
@@ -30,6 +31,11 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
@@ -184,6 +190,7 @@ export function SessionPage(props: SessionPageProps) {
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const [todoExpanded, setTodoExpanded] = useState(true);
   const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
+  const browserPanelRef = usePanelRef();
   const toggleBrowserPanel = useCallback(() => setBrowserPanelOpen((p) => !p), []);
 
   // Sync browser panel state with Electron main process IPC events.
@@ -199,12 +206,23 @@ export function SessionPage(props: SessionPageProps) {
     const unsubClose = browser.onPanelClosed?.(() => setBrowserPanelOpen(false));
     return () => { unsubOpen?.(); unsubClose?.(); };
   }, []);
-  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+  const {
+    leftSidebarResizing,
+    leftSidebarWidth,
+    rightSidebarExpandedWidth: browserPanelWidth,
+    setRightSidebarExpandedWidth: setBrowserPanelWidth,
+    startLeftSidebarResize,
+  } = useWorkspaceShellLayout({
     expandedRightWidth: 520,
+    minRightWidth: 320,
   });
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth}px`,
   };
+  const commitBrowserPanelWidth = useCallback(() => {
+    const size = browserPanelRef.current?.getSize();
+    if (size) setBrowserPanelWidth(size.inPixels);
+  }, [browserPanelRef, setBrowserPanelWidth]);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(
@@ -369,8 +387,14 @@ export function SessionPage(props: SessionPageProps) {
           onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
           onStartResize={startLeftSidebarResize}
         />
-        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28 flex flex-row">
-          <main className="flex min-w-0 flex-1 flex-col overflow-hidden border-r border-border">
+        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            onLayoutChanged={browserPanelOpen ? commitBrowserPanelWidth : undefined}
+            className="min-h-0"
+          >
+            <ResizablePanel minSize="360px" className="min-w-0">
+              <main className="flex h-full min-w-0 flex-col overflow-hidden border-r border-border">
           <header className="z-10 flex h-10 shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar">
             <div className="flex min-w-0 items-center gap-3">
               <SidebarTrigger className="mac:hidden" />
@@ -642,15 +666,23 @@ export function SessionPage(props: SessionPageProps) {
             statusPulse={props.statusBar?.statusPulse}
             showSettingsButton={props.statusBar?.showSettingsButton}
           />
-          </main>
-          {browserPanelOpen ? (
-            <aside
-              className="hidden min-h-0 shrink-0 overflow-hidden lg:flex lg:flex-col"
-              style={{ width: 520 }}
-            >
-              <BrowserPanel onClose={toggleBrowserPanel} />
-            </aside>
-          ) : null}
+              </main>
+            </ResizablePanel>
+            {browserPanelOpen ? (
+              <>
+                <ResizableHandle withHandle className="hidden lg:flex" />
+                <ResizablePanel
+                  panelRef={browserPanelRef}
+                  defaultSize={`${browserPanelWidth}px`}
+                  minSize="320px"
+                  maxSize="70%"
+                  className="min-h-0 overflow-hidden lg:flex lg:flex-col"
+                >
+                  <BrowserPanel onClose={toggleBrowserPanel} />
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
         </SidebarInset>
         <SidebarTrigger className="hidden mac:absolute mac:left-[64px] top-[3px] z-50 mac:flex titlebar-no-drag" />
       </SidebarProvider>

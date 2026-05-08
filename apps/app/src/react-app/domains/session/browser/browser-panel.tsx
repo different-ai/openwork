@@ -39,6 +39,7 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const shownRef = useRef(false);
+  const boundsFrameRef = useRef<number | null>(null);
 
   // Subscribe to state changes from the main process
   useEffect(() => {
@@ -61,7 +62,8 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
     const panel = panelRef.current;
     const toolbar = toolbarRef.current;
 
-    const tryShow = () => {
+    const syncBounds = () => {
+      boundsFrameRef.current = null;
       const bounds = computeBounds(panel, toolbar);
       if (bounds.width < 1 || bounds.height < 1) return; // not laid out yet
       if (!shownRef.current) {
@@ -71,18 +73,26 @@ export function BrowserPanel({ onClose }: BrowserPanelProps) {
         browser.setBounds?.(bounds);
       }
     };
+    const scheduleSyncBounds = () => {
+      if (boundsFrameRef.current != null) return;
+      boundsFrameRef.current = window.requestAnimationFrame(syncBounds);
+    };
 
     // Initial show (may be zero-dimension if layout hasn't settled)
-    tryShow();
+    syncBounds();
 
-    const observer = new ResizeObserver(tryShow);
+    const observer = new ResizeObserver(scheduleSyncBounds);
     observer.observe(panel);
     observer.observe(toolbar);
-    window.addEventListener("resize", tryShow);
+    window.addEventListener("resize", scheduleSyncBounds);
 
     return () => {
       observer.disconnect();
-      window.removeEventListener("resize", tryShow);
+      window.removeEventListener("resize", scheduleSyncBounds);
+      if (boundsFrameRef.current != null) {
+        window.cancelAnimationFrame(boundsFrameRef.current);
+        boundsFrameRef.current = null;
+      }
       browser.hide?.();
       shownRef.current = false;
     };
