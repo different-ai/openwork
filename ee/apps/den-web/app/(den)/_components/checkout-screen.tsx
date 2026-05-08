@@ -20,12 +20,32 @@ function formatSubscriptionStatus(value: string | null | undefined) {
     .join(" ");
 }
 
-function LoadingPanel({ title, body }: { title: string; body: string }) {
+function CheckoutStatusPanel({ body }: { body: string }) {
   return (
-    <section className="den-page py-4">
-      <div className="den-frame-soft grid max-w-[44rem] gap-4 p-6">
-        <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{title}</h1>
-        <p className="text-sm text-[var(--dls-text-secondary)]">{body}</p>
+    <section className="den-page grid gap-6 py-4 lg:py-6">
+      <div className="den-frame grid gap-6 p-6 md:p-8 lg:p-10">
+        <div className="flex flex-col gap-4 lg:max-w-3xl">
+          <div className="grid gap-3">
+            <p className="den-eyebrow">OpenWork Cloud</p>
+            <h1 className="den-title-xl max-w-[14ch]">Shared workspace billing.</h1>
+            <p className="den-copy max-w-2xl">
+              Den is free for solo setup. Billing appears only when launching a shared cloud workspace.
+            </p>
+          </div>
+
+          <div className="rounded-[1.5rem] border border-[var(--dls-border)] bg-[var(--dls-hover)]/60 p-4" role="status" aria-live="polite">
+            <div className="flex items-start gap-3">
+              <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--dls-accent)] opacity-30" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--dls-accent)]" />
+              </span>
+              <div className="min-w-0">
+                <p className="m-0 text-[14px] font-medium text-[var(--dls-text-primary)]">Checking access</p>
+                <p className="mt-1 text-[13px] leading-6 text-[var(--dls-text-secondary)]">{body}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -170,15 +190,12 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
-      <LoadingPanel
-        title="Checking your billing session..."
-        body="Loading your account and billing state before continuing."
-      />
+      <CheckoutStatusPanel body="Checking whether you are signed in before showing workspace billing." />
     );
   }
 
   if (redirectMessage) {
-    return <LoadingPanel title="One moment." body={redirectMessage} />;
+    return <CheckoutStatusPanel body={redirectMessage} />;
   }
 
   const billingPrice = billingSummary?.price ?? null;
