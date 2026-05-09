@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { DenDesktopConfig } from "../../../../app/lib/den";
 import { isAlphaUpdateAllowed, isUpdateAllowed } from "../../../../app/lib/version-gate";
@@ -28,6 +28,30 @@ type UseElectronUpdaterStateOptions = {
   desktopConfig: DenDesktopConfig | null | undefined;
   setError: (message: string | null) => void;
 };
+
+type ElectronUpdaterEnvState = {
+  appVersion: string | null;
+  updateEnv: { supported?: boolean; reason?: string | null } | null;
+};
+
+type ElectronUpdaterEnvAction =
+  | { type: "app-version"; appVersion: string | null }
+  | { type: "unsupported"; reason: string };
+
+function electronUpdaterEnvReducer(
+  state: ElectronUpdaterEnvState,
+  action: ElectronUpdaterEnvAction,
+): ElectronUpdaterEnvState {
+  switch (action.type) {
+    case "app-version":
+      return { ...state, appVersion: action.appVersion };
+    case "unsupported":
+      return {
+        ...state,
+        updateEnv: { supported: false, reason: action.reason },
+      };
+  }
+}
 
 function electronUpdaterBridge(): ElectronUpdaterBridge | null {
   if (typeof window === "undefined") return null;
@@ -71,15 +95,18 @@ function updateProgress(event: unknown): { downloaded?: number; total?: number }
 export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions) {
   const { releaseChannel, onReleaseChannelChange, updateAutoCheck, updateAutoDownload, desktopConfig, setError } = options;
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
-  const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [updateEnv, setUpdateEnv] = useState<{ supported?: boolean; reason?: string | null } | null>(null);
+  const [envState, dispatchEnvState] = useReducer(electronUpdaterEnvReducer, {
+    appVersion: null,
+    updateEnv: null,
+  });
+  const { appVersion, updateEnv } = envState;
   const autoCheckKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isElectronRuntime()) return;
     const bridge = electronUpdaterBridge();
     if (!bridge?.getChannel) {
-      setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+      dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
       return;
     }
     let cancelled = false;
@@ -87,11 +114,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       .getChannel()
       .then(async (state) => {
         if (cancelled) return;
-        setAppVersion(state.currentVersion ?? null);
+        dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== releaseChannel && bridge.setChannel) {
           const nextState = await bridge.setChannel(releaseChannel);
           if (cancelled) return;
-          setAppVersion(nextState.currentVersion ?? null);
+          dispatchEnvState({ type: "app-version", appVersion: nextState.currentVersion ?? null });
           if (nextState.channel && nextState.channel !== releaseChannel) {
             onReleaseChannelChange(nextState.channel);
           }
@@ -99,7 +126,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       })
       .catch(() => {
         if (!cancelled) {
-          setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+          dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
         }
       });
     return () => {
@@ -164,7 +191,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     setUpdateStatus({ state: "checking" });
     try {
       const result = await bridge.check();
-      setAppVersion(result.currentVersion ?? null);
+      dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
       if (result.channel && result.channel !== releaseChannel) {
         onReleaseChannelChange(result.channel);
       }
@@ -239,7 +266,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (!bridge?.setChannel) return;
       try {
         const state = await bridge.setChannel(next);
-        setAppVersion(state.currentVersion ?? null);
+        dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== next) {
           onReleaseChannelChange(state.channel);
         }

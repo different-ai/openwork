@@ -5,6 +5,7 @@ import {
   use,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ReactNode,
@@ -84,6 +85,11 @@ type DesktopConfigProviderProps = {
   children: ReactNode;
 };
 
+type DesktopConfigState = {
+  config: DenDesktopConfig;
+  loading: boolean;
+};
+
 /**
  * React port of the Solid `DesktopConfigProvider`
  * (`apps/app/src/app/cloud/desktop-config-provider.tsx` on dev).
@@ -96,10 +102,13 @@ type DesktopConfigProviderProps = {
  */
 export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) {
   const denAuth = useDenAuth();
-  const [config, setConfig] = useState<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
-  const [loading, setLoading] = useState(false);
+  const [desktopConfigState, setDesktopConfigState] = useState<DesktopConfigState>({
+    config: DEFAULT_DESKTOP_CONFIG,
+    loading: false,
+  });
+  const { config, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
-  const [settingsVersion, setSettingsVersion] = useState(0);
+  const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
   const refreshRunRef = useRef(0);
   const isSignedIn = denAuth.isSignedIn;
@@ -111,13 +120,14 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const cacheKey = getDesktopConfigCacheKey();
 
     if (!isSignedIn || !token || !settings.activeOrgId?.trim()) {
-      setConfig(DEFAULT_DESKTOP_CONFIG);
-      setLoading(false);
+      setDesktopConfigState({ config: DEFAULT_DESKTOP_CONFIG, loading: false });
       return;
     }
 
     const cached = readCachedDesktopConfig(cacheKey);
-    if (!cached) setLoading(true);
+    if (!cached) {
+      setDesktopConfigState((current) => ({ ...current, loading: true }));
+    }
 
     try {
       const nextConfig = await createDenClient({
@@ -129,7 +139,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       if (currentRun !== refreshRunRef.current) return;
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
-      setConfig(nextConfig);
+      setDesktopConfigState((current) => ({ ...current, config: nextConfig }));
     } catch (error) {
       if (currentRun !== refreshRunRef.current) return;
 
@@ -145,10 +155,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         );
       }
 
-      setConfig(cached ?? DEFAULT_DESKTOP_CONFIG);
+      setDesktopConfigState((current) => ({
+        ...current,
+        config: cached ?? DEFAULT_DESKTOP_CONFIG,
+      }));
     } finally {
       if (currentRun === refreshRunRef.current) {
-        setLoading(false);
+        setDesktopConfigState((current) => ({ ...current, loading: false }));
       }
     }
   }, [isSignedIn]);
@@ -161,15 +174,16 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     void settingsVersion;
 
     if (!isSignedIn) {
-      setConfig(DEFAULT_DESKTOP_CONFIG);
-      setLoading(false);
+      setDesktopConfigState({ config: DEFAULT_DESKTOP_CONFIG, loading: false });
       return;
     }
 
     const cacheKey = getDesktopConfigCacheKey();
     const cached = readCachedDesktopConfig(cacheKey);
-    setConfig(cached ?? DEFAULT_DESKTOP_CONFIG);
-    setLoading(!cached);
+    setDesktopConfigState({
+      config: cached ?? DEFAULT_DESKTOP_CONFIG,
+      loading: !cached,
+    });
     void refresh();
   }, [isSignedIn, refresh, settingsVersion]);
 
@@ -177,7 +191,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     if (typeof window === "undefined") return;
 
     const handleSettingsChanged = () => {
-      setSettingsVersion((value) => value + 1);
+      bumpSettingsVersion();
     };
 
     window.addEventListener(denSessionUpdatedEvent, handleSettingsChanged);

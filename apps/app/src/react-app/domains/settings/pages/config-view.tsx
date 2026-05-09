@@ -43,15 +43,26 @@ export type ConfigViewProps = {
 
 type OpenworkTestState = "idle" | "testing" | "success" | "error";
 
+type OpenworkConnectionState = {
+  url: string;
+  token: string;
+  testState: OpenworkTestState;
+  testMessage: string | null;
+};
+
 export function ConfigView(props: ConfigViewProps) {
-  const [openworkUrl, setOpenworkUrl] = useState("");
-  const [openworkToken, setOpenworkToken] = useState("");
+  const [openworkConnection, setOpenworkConnection] =
+    useState<OpenworkConnectionState>({
+      url: "",
+      token: "",
+      testState: "idle",
+      testMessage: null,
+    });
+  const openworkUrl = openworkConnection.url;
+  const openworkToken = openworkConnection.token;
+  const openworkTestState = openworkConnection.testState;
+  const openworkTestMessage = openworkConnection.testMessage;
   const [openworkTokenVisible, setOpenworkTokenVisible] = useState(false);
-  const [openworkTestState, setOpenworkTestState] =
-    useState<OpenworkTestState>("idle");
-  const [openworkTestMessage, setOpenworkTestMessage] = useState<string | null>(
-    null,
-  );
   const [clientTokenVisible, setClientTokenVisible] = useState(false);
   const [ownerTokenVisible, setOwnerTokenVisible] = useState(false);
   const [hostTokenVisible, setHostTokenVisible] = useState(false);
@@ -59,14 +70,13 @@ export function ConfigView(props: ConfigViewProps) {
   const copyTimeoutRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    setOpenworkUrl(props.openworkServerSettings.urlOverride ?? "");
-    setOpenworkToken(props.openworkServerSettings.token ?? "");
+    setOpenworkConnection({
+      url: props.openworkServerSettings.urlOverride ?? "",
+      token: props.openworkServerSettings.token ?? "",
+      testState: "idle",
+      testMessage: null,
+    });
   }, [props.openworkServerSettings]);
-
-  useEffect(() => {
-    setOpenworkTestState("idle");
-    setOpenworkTestMessage(null);
-  }, [openworkUrl, openworkToken]);
 
   useEffect(() => {
     return () => {
@@ -244,21 +254,30 @@ export function ConfigView(props: ConfigViewProps) {
     if (openworkTestState === "testing") return;
     const next = buildOpenworkSettings();
     props.updateOpenworkServerSettings(next);
-    setOpenworkTestState("testing");
-    setOpenworkTestMessage(null);
+    setOpenworkConnection((current) => ({
+      ...current,
+      testState: "testing",
+      testMessage: null,
+    }));
     try {
       const ok = await props.testOpenworkServerConnection(next);
-      setOpenworkTestState(ok ? "success" : "error");
-      setOpenworkTestMessage(
-        ok ? t("config.connection_successful") : t("config.connection_failed"),
-      );
+      setOpenworkConnection((current) => ({
+        ...current,
+        testState: ok ? "success" : "error",
+        testMessage: ok
+          ? t("config.connection_successful")
+          : t("config.connection_failed"),
+      }));
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : t("config.connection_failed_check");
-      setOpenworkTestState("error");
-      setOpenworkTestMessage(message);
+      setOpenworkConnection((current) => ({
+        ...current,
+        testState: "error",
+        testMessage: message,
+      }));
     }
   };
 
@@ -501,7 +520,14 @@ export function ConfigView(props: ConfigViewProps) {
           <TextInput
             label={t("config.server_url_input_label")}
             value={openworkUrl}
-            onChange={(event) => setOpenworkUrl(event.currentTarget.value)}
+            onChange={(event) =>
+              setOpenworkConnection((current) => ({
+                ...current,
+                url: event.currentTarget.value,
+                testState: "idle",
+                testMessage: null,
+              }))
+            }
             placeholder="http://127.0.0.1:<port>"
             hint={t("config.server_url_hint")}
             disabled={props.busy}
@@ -515,7 +541,14 @@ export function ConfigView(props: ConfigViewProps) {
               <input
                 type={openworkTokenVisible ? "text" : "password"}
                 value={openworkToken}
-                onChange={(event) => setOpenworkToken(event.currentTarget.value)}
+                onChange={(event) =>
+                  setOpenworkConnection((current) => ({
+                    ...current,
+                    token: event.currentTarget.value,
+                    testState: "idle",
+                    testMessage: null,
+                  }))
+                }
                 placeholder={t("config.token_placeholder")}
                 disabled={props.busy}
                 className="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
