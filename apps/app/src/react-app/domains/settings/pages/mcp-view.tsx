@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, type SetStateAction } from "react";
 import {
   BookOpen,
   CheckCircle2,
@@ -155,23 +155,110 @@ const serviceIconBg = (name: string) => {
   return "bg-dls-hover border-dls-border";
 };
 
+type ConfigScope = "project" | "global";
+
+type McpViewLocalState = {
+  logoutOpen: boolean;
+  logoutTarget: string | null;
+  logoutBusy: boolean;
+  removeOpen: boolean;
+  removeTarget: string | null;
+  configScope: ConfigScope;
+  projectConfig: OpencodeConfigFile | null;
+  globalConfig: OpencodeConfigFile | null;
+  configError: string | null;
+  revealBusy: boolean;
+  showAdvanced: boolean;
+  addMcpModalOpen: boolean;
+  togglingMcp: string | null;
+  chromeSetupOpen: boolean;
+};
+
+type McpViewLocalAction<K extends keyof McpViewLocalState = keyof McpViewLocalState> =
+  | { type: "set"; key: K; value: SetStateAction<any> }
+  | { type: "configUnavailable" }
+  | { type: "configLoaded"; project: OpencodeConfigFile | null; global: OpencodeConfigFile | null }
+  | { type: "configLoadError"; error: string };
+
+const initialMcpViewLocalState: McpViewLocalState = {
+  logoutOpen: false,
+  logoutTarget: null,
+  logoutBusy: false,
+  removeOpen: false,
+  removeTarget: null,
+  configScope: "project",
+  projectConfig: null,
+  globalConfig: null,
+  configError: null,
+  revealBusy: false,
+  showAdvanced: false,
+  addMcpModalOpen: false,
+  togglingMcp: null,
+  chromeSetupOpen: false,
+};
+
+function mcpViewLocalReducer(
+  state: McpViewLocalState,
+  action: McpViewLocalAction,
+): McpViewLocalState {
+  switch (action.type) {
+    case "set": {
+      const current = state[action.key];
+      const next =
+        typeof action.value === "function"
+          ? (action.value as (value: typeof current) => typeof current)(current)
+          : action.value;
+      if (Object.is(current, next)) return state;
+      return { ...state, [action.key]: next };
+    }
+    case "configUnavailable":
+      return { ...state, projectConfig: null, globalConfig: null, configError: null };
+    case "configLoaded":
+      return { ...state, projectConfig: action.project, globalConfig: action.global };
+    case "configLoadError":
+      return { ...state, projectConfig: null, globalConfig: null, configError: action.error };
+  }
+}
+
 export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
 
-  const [logoutOpen, setLogoutOpen] = useState(false);
-  const [logoutTarget, setLogoutTarget] = useState<string | null>(null);
-  const [logoutBusy, setLogoutBusy] = useState(false);
-  const [removeOpen, setRemoveOpen] = useState(false);
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const [configScope, setConfigScope] = useState<"project" | "global">("project");
-  const [projectConfig, setProjectConfig] = useState<OpencodeConfigFile | null>(null);
-  const [globalConfig, setGlobalConfig] = useState<OpencodeConfigFile | null>(null);
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [revealBusy, setRevealBusy] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
-  const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
-  const [chromeSetupOpen, setChromeSetupOpen] = useState(false);
+  const [localState, dispatchLocal] = useReducer(
+    mcpViewLocalReducer,
+    initialMcpViewLocalState,
+  );
+  const {
+    logoutOpen,
+    logoutTarget,
+    logoutBusy,
+    removeOpen,
+    removeTarget,
+    configScope,
+    projectConfig,
+    globalConfig,
+    configError,
+    revealBusy,
+    showAdvanced,
+    addMcpModalOpen,
+    togglingMcp,
+    chromeSetupOpen,
+  } = localState;
+  const setLocal = <K extends keyof McpViewLocalState>(
+    key: K,
+    value: SetStateAction<McpViewLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setLogoutOpen = (value: SetStateAction<boolean>) => setLocal("logoutOpen", value);
+  const setLogoutTarget = (value: SetStateAction<string | null>) => setLocal("logoutTarget", value);
+  const setLogoutBusy = (value: SetStateAction<boolean>) => setLocal("logoutBusy", value);
+  const setRemoveOpen = (value: SetStateAction<boolean>) => setLocal("removeOpen", value);
+  const setRemoveTarget = (value: SetStateAction<string | null>) => setLocal("removeTarget", value);
+  const setConfigScope = (value: SetStateAction<ConfigScope>) => setLocal("configScope", value);
+  const setConfigError = (value: SetStateAction<string | null>) => setLocal("configError", value);
+  const setRevealBusy = (value: SetStateAction<boolean>) => setLocal("revealBusy", value);
+  const setShowAdvanced = (value: SetStateAction<boolean>) => setLocal("showAdvanced", value);
+  const setAddMcpModalOpen = (value: SetStateAction<boolean>) => setLocal("addMcpModalOpen", value);
+  const setTogglingMcp = (value: SetStateAction<string | null>) => setLocal("togglingMcp", value);
+  const setChromeSetupOpen = (value: SetStateAction<boolean>) => setLocal("chromeSetupOpen", value);
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
@@ -183,9 +270,7 @@ export function McpView(props: McpViewProps) {
     const readConfig = props.readConfigFile;
 
     if (!readConfig && !isDesktopRuntime()) {
-      setProjectConfig(null);
-      setGlobalConfig(null);
-      setConfigError(null);
+      dispatchLocal({ type: "configUnavailable" });
       return;
     }
 
@@ -201,15 +286,17 @@ export function McpView(props: McpViewProps) {
           readConfig ? readConfig("global") : readOpencodeConfig("global", root),
         ]);
         if (nextId !== configRequestId.current) return;
-        setProjectConfig(project);
-        setGlobalConfig(global);
+        dispatchLocal({
+          type: "configLoaded",
+          project: project as OpencodeConfigFile | null,
+          global: global as OpencodeConfigFile | null,
+        });
       } catch (error) {
         if (nextId !== configRequestId.current) return;
-        setProjectConfig(null);
-        setGlobalConfig(null);
-        setConfigError(
-          error instanceof Error ? error.message : t("mcp.config_load_failed"),
-        );
+        dispatchLocal({
+          type: "configLoadError",
+          error: error instanceof Error ? error.message : t("mcp.config_load_failed"),
+        });
       }
     })();
   }, [props.readConfigFile, props.selectedWorkspaceRoot]);
@@ -291,13 +378,14 @@ export function McpView(props: McpViewProps) {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
         : await readOpencodeConfig(configScope, root);
-      if (!resolved) {
+      const configFile = resolved as OpencodeConfigFile | null;
+      if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
       }
       if (isWindowsPlatform()) {
-        await openDesktopPath(resolved.path);
+        await openDesktopPath(configFile.path);
       } else {
-        await revealDesktopItemInDir(resolved.path);
+        await revealDesktopItemInDir(configFile.path);
       }
     } catch (error) {
       setConfigError(

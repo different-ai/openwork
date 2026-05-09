@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, type ReactNode } from "react";
+import { useReducer, type ReactNode } from "react";
 import { CircleAlert, Cpu, RefreshCcw, Server, Zap } from "lucide-react";
 
 import type { OpencodeConnectStatus } from "../../../../app/types";
@@ -23,6 +23,79 @@ type RuntimeStatusCardProps = {
   statusDot: string;
   detailLines?: string[];
 };
+
+type AdvancedLocalState = {
+  reconnectStatus: string | null;
+  reconnectError: string | null;
+  restartBusy: boolean;
+  restartStatus: string | null;
+  restartError: string | null;
+  deepLinkOpen: boolean;
+  deepLinkInput: string;
+  deepLinkBusy: boolean;
+  deepLinkStatus: string | null;
+};
+
+type AdvancedLocalAction =
+  | { type: "reconnectStart" }
+  | { type: "reconnectStatus"; status: string | null }
+  | { type: "reconnectError"; error: string | null }
+  | { type: "restartStart" }
+  | { type: "restartStatus"; status: string | null }
+  | { type: "restartError"; error: string | null }
+  | { type: "restartDone" }
+  | { type: "toggleDeepLink" }
+  | { type: "deepLinkInput"; input: string }
+  | { type: "deepLinkStart" }
+  | { type: "deepLinkStatus"; status: string | null }
+  | { type: "deepLinkDone" }
+  | { type: "deepLinkSuccess"; status: string | null };
+
+const initialAdvancedLocalState: AdvancedLocalState = {
+  reconnectStatus: null,
+  reconnectError: null,
+  restartBusy: false,
+  restartStatus: null,
+  restartError: null,
+  deepLinkOpen: false,
+  deepLinkInput: "",
+  deepLinkBusy: false,
+  deepLinkStatus: null,
+};
+
+function advancedLocalReducer(
+  state: AdvancedLocalState,
+  action: AdvancedLocalAction,
+): AdvancedLocalState {
+  switch (action.type) {
+    case "reconnectStart":
+      return { ...state, reconnectStatus: null, reconnectError: null };
+    case "reconnectStatus":
+      return { ...state, reconnectStatus: action.status };
+    case "reconnectError":
+      return { ...state, reconnectError: action.error };
+    case "restartStart":
+      return { ...state, restartStatus: null, restartError: null, restartBusy: true };
+    case "restartStatus":
+      return { ...state, restartStatus: action.status };
+    case "restartError":
+      return { ...state, restartError: action.error };
+    case "restartDone":
+      return { ...state, restartBusy: false };
+    case "toggleDeepLink":
+      return { ...state, deepLinkOpen: !state.deepLinkOpen, deepLinkStatus: null };
+    case "deepLinkInput":
+      return { ...state, deepLinkInput: action.input };
+    case "deepLinkStart":
+      return { ...state, deepLinkBusy: true, deepLinkStatus: null };
+    case "deepLinkStatus":
+      return { ...state, deepLinkStatus: action.status };
+    case "deepLinkDone":
+      return { ...state, deepLinkBusy: false };
+    case "deepLinkSuccess":
+      return { ...state, deepLinkInput: "", deepLinkStatus: action.status };
+  }
+}
 
 export type AdvancedViewProps = {
   busy: boolean;
@@ -87,15 +160,21 @@ function formatOpencodeBinary(info: EngineInfo | null) {
 }
 
 export function AdvancedView(props: AdvancedViewProps) {
-  const [openworkReconnectStatus, setOpenworkReconnectStatus] = useState<string | null>(null);
-  const [openworkReconnectError, setOpenworkReconnectError] = useState<string | null>(null);
-  const [openworkRestartBusy, setOpenworkRestartBusy] = useState(false);
-  const [openworkRestartStatus, setOpenworkRestartStatus] = useState<string | null>(null);
-  const [openworkRestartError, setOpenworkRestartError] = useState<string | null>(null);
-  const [debugDeepLinkOpen, setDebugDeepLinkOpen] = useState(false);
-  const [debugDeepLinkInput, setDebugDeepLinkInput] = useState("");
-  const [debugDeepLinkBusy, setDebugDeepLinkBusy] = useState(false);
-  const [debugDeepLinkStatus, setDebugDeepLinkStatus] = useState<string | null>(null);
+  const [localState, dispatchLocal] = useReducer(
+    advancedLocalReducer,
+    initialAdvancedLocalState,
+  );
+  const {
+    reconnectStatus: openworkReconnectStatus,
+    reconnectError: openworkReconnectError,
+    restartBusy: openworkRestartBusy,
+    restartStatus: openworkRestartStatus,
+    restartError: openworkRestartError,
+    deepLinkOpen: debugDeepLinkOpen,
+    deepLinkInput: debugDeepLinkInput,
+    deepLinkBusy: debugDeepLinkBusy,
+    deepLinkStatus: debugDeepLinkStatus,
+  } = localState;
 
   const clientStatusLabel = (() => {
     const status = props.opencodeConnectStatus?.status;
@@ -157,58 +236,56 @@ export function AdvancedView(props: AdvancedViewProps) {
 
   const handleReconnectOpenworkServer = async () => {
     if (props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()) return;
-    setOpenworkReconnectStatus(null);
-    setOpenworkReconnectError(null);
+    dispatchLocal({ type: "reconnectStart" });
     try {
       const ok = await props.reconnectOpenworkServer();
       if (!ok) {
-        setOpenworkReconnectError(t("settings.reconnect_failed"));
+        dispatchLocal({ type: "reconnectError", error: t("settings.reconnect_failed") });
         return;
       }
-      setOpenworkReconnectStatus(t("settings.reconnected"));
+      dispatchLocal({ type: "reconnectStatus", status: t("settings.reconnected") });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setOpenworkReconnectError(message || t("settings.reconnect_server_failed"));
+      dispatchLocal({ type: "reconnectError", error: message || t("settings.reconnect_server_failed") });
     }
   };
 
   const handleRestartLocalServer = async () => {
     if (props.busy || openworkRestartBusy) return;
-    setOpenworkRestartStatus(null);
-    setOpenworkRestartError(null);
-    setOpenworkRestartBusy(true);
+    dispatchLocal({ type: "restartStart" });
     try {
       const ok = await props.restartLocalServer();
       if (!ok) {
-        setOpenworkRestartError(t("settings.restart_failed"));
+        dispatchLocal({ type: "restartError", error: t("settings.restart_failed") });
         return;
       }
-      setOpenworkRestartStatus(t("settings.restarted"));
+      dispatchLocal({ type: "restartStatus", status: t("settings.restarted") });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setOpenworkRestartError(message || t("settings.restart_server_failed"));
+      dispatchLocal({ type: "restartError", error: message || t("settings.restart_server_failed") });
     } finally {
-      setOpenworkRestartBusy(false);
+      dispatchLocal({ type: "restartDone" });
     }
   };
 
   const submitDebugDeepLink = async () => {
     const rawUrl = debugDeepLinkInput.trim();
     if (!rawUrl || props.busy || debugDeepLinkBusy) return;
-    setDebugDeepLinkBusy(true);
-    setDebugDeepLinkStatus(null);
+    dispatchLocal({ type: "deepLinkStart" });
     try {
       const result = await props.openDebugDeepLink(rawUrl);
-      setDebugDeepLinkStatus(result.message);
       if (result.ok) {
-        setDebugDeepLinkInput("");
+        dispatchLocal({ type: "deepLinkSuccess", status: result.message });
+      } else {
+        dispatchLocal({ type: "deepLinkStatus", status: result.message });
       }
     } catch (error) {
-      setDebugDeepLinkStatus(
-        error instanceof Error ? error.message : t("settings.open_deeplink_failed"),
-      );
+      dispatchLocal({
+        type: "deepLinkStatus",
+        status: error instanceof Error ? error.message : t("settings.open_deeplink_failed"),
+      });
     } finally {
-      setDebugDeepLinkBusy(false);
+      dispatchLocal({ type: "deepLinkDone" });
     }
   };
 
@@ -331,10 +408,7 @@ export function AdvancedView(props: AdvancedViewProps) {
               <button
                 type="button"
                 className="inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => {
-                  setDebugDeepLinkOpen((value) => !value);
-                  setDebugDeepLinkStatus(null);
-                }}
+                onClick={() => dispatchLocal({ type: "toggleDeepLink" })}
                 disabled={props.busy || debugDeepLinkBusy}
               >
                 {debugDeepLinkOpen ? t("common.hide") : t("settings.open_deeplink_button")}
@@ -345,7 +419,7 @@ export function AdvancedView(props: AdvancedViewProps) {
               <div className="space-y-3">
                 <textarea
                   value={debugDeepLinkInput}
-                  onChange={(event) => setDebugDeepLinkInput(event.currentTarget.value)}
+                  onChange={(event) => dispatchLocal({ type: "deepLinkInput", input: event.currentTarget.value })}
                   rows={3}
                   placeholder="openwork://..."
                   className="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 
 import {
   readReactRenderWatchdogSnapshot,
@@ -24,10 +24,42 @@ function writeStoredPreference(value: boolean) {
   }
 }
 
+type OverlayState = {
+  visible: boolean;
+  collapsed: boolean;
+  snapshot: ReturnType<typeof readReactRenderWatchdogSnapshot>;
+};
+
+type OverlayAction =
+  | { type: "toggleVisible" }
+  | { type: "hide" }
+  | { type: "toggleCollapsed" }
+  | { type: "snapshot"; snapshot: ReturnType<typeof readReactRenderWatchdogSnapshot> };
+
+function overlayReducer(state: OverlayState, action: OverlayAction): OverlayState {
+  switch (action.type) {
+    case "toggleVisible": {
+      const visible = !state.visible;
+      writeStoredPreference(visible);
+      return { ...state, visible };
+    }
+    case "hide":
+      writeStoredPreference(false);
+      return { ...state, visible: false };
+    case "toggleCollapsed":
+      return { ...state, collapsed: !state.collapsed };
+    case "snapshot":
+      return { ...state, snapshot: action.snapshot };
+  }
+}
+
 export function ReactRenderWatchdogOverlay() {
-  const [visible, setVisible] = useState(readStoredPreference);
-  const [collapsed, setCollapsed] = useState(false);
-  const [snapshot, setSnapshot] = useState(readReactRenderWatchdogSnapshot);
+  const [state, dispatch] = useReducer(overlayReducer, undefined, () => ({
+    visible: readStoredPreference(),
+    collapsed: false,
+    snapshot: readReactRenderWatchdogSnapshot(),
+  }));
+  const { visible, collapsed, snapshot } = state;
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -35,10 +67,7 @@ export function ReactRenderWatchdogOverlay() {
       if (!metaOrCtrl || !event.shiftKey) return;
       if (event.key.toLowerCase() !== "l") return;
       event.preventDefault();
-      setVisible((current) => {
-        writeStoredPreference(!current);
-        return !current;
-      });
+      dispatch({ type: "toggleVisible" });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -46,7 +75,7 @@ export function ReactRenderWatchdogOverlay() {
 
   useEffect(() => {
     if (!visible) return;
-    const tick = () => setSnapshot(readReactRenderWatchdogSnapshot());
+    const tick = () => dispatch({ type: "snapshot", snapshot: readReactRenderWatchdogSnapshot() });
     tick();
     const interval = window.setInterval(tick, 500);
     return () => window.clearInterval(interval);
@@ -73,7 +102,7 @@ export function ReactRenderWatchdogOverlay() {
             className="rounded px-1.5 py-0.5 text-[10px] text-dls-secondary hover:bg-dls-hover"
             onClick={() => {
               resetReactRenderWatchdogStats();
-              setSnapshot([]);
+              dispatch({ type: "snapshot", snapshot: [] });
             }}
           >
             reset
@@ -81,17 +110,14 @@ export function ReactRenderWatchdogOverlay() {
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-[10px] text-dls-secondary hover:bg-dls-hover"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() => dispatch({ type: "toggleCollapsed" })}
           >
             {collapsed ? "+" : "–"}
           </button>
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-[10px] text-dls-secondary hover:bg-dls-hover"
-            onClick={() => {
-              writeStoredPreference(false);
-              setVisible(false);
-            }}
+            onClick={() => dispatch({ type: "hide" })}
             title="Hide (Cmd+Shift+L to toggle)"
           >
             ×

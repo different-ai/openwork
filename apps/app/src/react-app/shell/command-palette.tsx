@@ -2,8 +2,8 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MutableRefObject,
   type RefObject,
@@ -39,6 +39,43 @@ type PaletteDialogProps = {
   onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 };
 
+type PaletteState = {
+  mode: PaletteMode;
+  query: string;
+  activeIndex: number;
+};
+
+type PaletteAction =
+  | { type: "reset" }
+  | { type: "sessions" }
+  | { type: "query"; query: string }
+  | { type: "activeIndex"; activeIndex: number }
+  | { type: "move"; delta: 1 | -1; itemCount: number };
+
+const initialPaletteState: PaletteState = {
+  mode: "root",
+  query: "",
+  activeIndex: 0,
+};
+
+function paletteReducer(state: PaletteState, action: PaletteAction): PaletteState {
+  switch (action.type) {
+    case "reset":
+      return initialPaletteState;
+    case "sessions":
+      return { mode: "sessions", query: "", activeIndex: 0 };
+    case "query":
+      return { ...state, query: action.query, activeIndex: 0 };
+    case "activeIndex":
+      return { ...state, activeIndex: action.activeIndex };
+    case "move":
+      if (action.itemCount === 0) return state;
+      return {
+        ...state,
+        activeIndex: (state.activeIndex + action.delta + action.itemCount) % action.itemCount,
+      };
+  }
+}
 export type SessionOption = {
   workspaceId: string;
   sessionId: string;
@@ -160,17 +197,14 @@ function PaletteDialog(props: PaletteDialogProps) {
  * - Sessions submode: fuzzy list of every session across workspaces.
  */
 export function CommandPalette(props: CommandPaletteProps) {
-  const [mode, setMode] = useState<PaletteMode>("root");
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [state, dispatch] = useReducer(paletteReducer, initialPaletteState);
+  const { mode, query, activeIndex } = state;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     if (!props.open) {
-      setMode("root");
-      setQuery("");
-      setActiveIndex(0);
+      dispatch({ type: "reset" });
       return;
     }
     const id = window.setTimeout(() => {
@@ -207,9 +241,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         }),
         meta: t("session.cmd_sessions_meta"),
         action: () => {
-          setMode("sessions");
-          setQuery("");
-          setActiveIndex(0);
+          dispatch({ type: "sessions" });
           window.setTimeout(() => inputRef.current?.focus(), 0);
         },
       },
@@ -335,9 +367,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     if (event.key === "Escape") {
       event.preventDefault();
       if (mode !== "root") {
-        setMode("root");
-        setQuery("");
-        setActiveIndex(0);
+        dispatch({ type: "reset" });
         window.setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
@@ -347,13 +377,13 @@ export function CommandPalette(props: CommandPaletteProps) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       if (items.length === 0) return;
-      setActiveIndex((current) => (current + 1) % items.length);
+      dispatch({ type: "move", delta: 1, itemCount: items.length });
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
       if (items.length === 0) return;
-      setActiveIndex((current) => (current - 1 + items.length) % items.length);
+      dispatch({ type: "move", delta: -1, itemCount: items.length });
       return;
     }
     if (event.key === "Enter") {
@@ -364,8 +394,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     }
     if (event.key === "Backspace" && !query && mode !== "root") {
       event.preventDefault();
-      setMode("root");
-      setActiveIndex(0);
+      dispatch({ type: "reset" });
     }
   };
 
@@ -382,15 +411,12 @@ export function CommandPalette(props: CommandPaletteProps) {
       : t("session.palette_title_actions");
 
   const handleBack = () => {
-    setMode("root");
-    setQuery("");
-    setActiveIndex(0);
+    dispatch({ type: "reset" });
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const handleQueryChange = (value: string) => {
-    setQuery(value);
-    setActiveIndex(0);
+    dispatch({ type: "query", query: value });
   };
 
   return (
@@ -407,7 +433,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       onBack={handleBack}
       onClose={props.onClose}
       onQueryChange={handleQueryChange}
-      onActiveIndexChange={setActiveIndex}
+      onActiveIndexChange={(value) => dispatch({ type: "activeIndex", activeIndex: value })}
       onKeyDown={handleKey}
     />
   );

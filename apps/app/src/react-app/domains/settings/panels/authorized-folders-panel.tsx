@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, type SetStateAction } from "react";
 import { Folder, FolderLock, FolderSearch, X } from "lucide-react";
 
 import { t } from "../../../../i18n";
@@ -28,6 +28,59 @@ export type AuthorizedFoldersPanelProps = {
 
 const panelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
 const softPanelClass = "rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4";
+
+type AuthorizedFoldersState = {
+  folders: string[];
+  draft: string;
+  loading: boolean;
+  saving: boolean;
+  status: string | null;
+  error: string | null;
+};
+
+type AuthorizedFoldersAction =
+  | { type: "set"; key: keyof AuthorizedFoldersState; value: SetStateAction<any> }
+  | { type: "reset" }
+  | { type: "loadStart" }
+  | { type: "loadSuccess"; folders: string[]; status: string | null }
+  | { type: "loadError"; message: string }
+  | { type: "loadDone" };
+
+const initialAuthorizedFoldersState: AuthorizedFoldersState = {
+  folders: [],
+  draft: "",
+  loading: false,
+  saving: false,
+  status: null,
+  error: null,
+};
+
+function authorizedFoldersReducer(
+  state: AuthorizedFoldersState,
+  action: AuthorizedFoldersAction,
+): AuthorizedFoldersState {
+  switch (action.type) {
+    case "set": {
+      const current = state[action.key];
+      const next =
+        typeof action.value === "function"
+          ? (action.value as (value: typeof current) => typeof current)(current)
+          : action.value;
+      if (Object.is(current, next)) return state;
+      return { ...state, [action.key]: next };
+    }
+    case "reset":
+      return initialAuthorizedFoldersState;
+    case "loadStart":
+      return { ...state, draft: "", loading: true, error: null, status: null };
+    case "loadSuccess":
+      return { ...state, folders: action.folders, status: action.status };
+    case "loadError":
+      return { ...state, folders: [], error: action.message };
+    case "loadDone":
+      return { ...state, loading: false };
+  }
+}
 
 const ensureRecord = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -102,12 +155,27 @@ const mergeAuthorizedFoldersIntoExternalDirectory = (
 };
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
-  const [authorizedFolders, setAuthorizedFolders] = useState<string[]>([]);
-  const [authorizedFolderDraft, setAuthorizedFolderDraft] = useState("");
-  const [authorizedFoldersLoading, setAuthorizedFoldersLoading] = useState(false);
-  const [authorizedFoldersSaving, setAuthorizedFoldersSaving] = useState(false);
-  const [authorizedFoldersStatus, setAuthorizedFoldersStatus] = useState<string | null>(null);
-  const [authorizedFoldersError, setAuthorizedFoldersError] = useState<string | null>(null);
+  const [folderState, dispatchFolderState] = useReducer(
+    authorizedFoldersReducer,
+    initialAuthorizedFoldersState,
+  );
+  const {
+    folders: authorizedFolders,
+    draft: authorizedFolderDraft,
+    loading: authorizedFoldersLoading,
+    saving: authorizedFoldersSaving,
+    status: authorizedFoldersStatus,
+    error: authorizedFoldersError,
+  } = folderState;
+  const setFolderState = <K extends keyof AuthorizedFoldersState>(
+    key: K,
+    value: SetStateAction<AuthorizedFoldersState[K]>,
+  ) => dispatchFolderState({ type: "set", key, value });
+  const setAuthorizedFolders = (value: SetStateAction<string[]>) => setFolderState("folders", value);
+  const setAuthorizedFolderDraft = (value: SetStateAction<string>) => setFolderState("draft", value);
+  const setAuthorizedFoldersSaving = (value: SetStateAction<boolean>) => setFolderState("saving", value);
+  const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => setFolderState("status", value);
+  const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => setFolderState("error", value);
 
   const openworkServerReady = props.openworkServerStatus === "connected";
   const openworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
@@ -141,37 +209,29 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     const openworkWorkspaceId = props.runtimeWorkspaceId;
 
     if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
-      setAuthorizedFolders([]);
-      setAuthorizedFolderDraft("");
-      setAuthorizedFoldersLoading(false);
-      setAuthorizedFoldersSaving(false);
-      setAuthorizedFoldersStatus(null);
-      setAuthorizedFoldersError(null);
+      dispatchFolderState({ type: "reset" });
       return;
     }
 
     let cancelled = false;
-    setAuthorizedFolderDraft("");
-    setAuthorizedFoldersLoading(true);
-    setAuthorizedFoldersError(null);
-    setAuthorizedFoldersStatus(null);
+    dispatchFolderState({ type: "loadStart" });
 
     void (async () => {
       try {
         const config = await openworkClient.getConfig(openworkWorkspaceId);
         if (cancelled) return;
         const next = readAuthorizedFoldersFromConfig(ensureRecord(config.opencode));
-        setAuthorizedFolders(next.folders);
-        setAuthorizedFoldersStatus(
-          buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
-        );
+        dispatchFolderState({
+          type: "loadSuccess",
+          folders: next.folders,
+          status: buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
+        });
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
-        setAuthorizedFolders([]);
-        setAuthorizedFoldersError(message);
+        dispatchFolderState({ type: "loadError", message });
       } finally {
-        if (!cancelled) setAuthorizedFoldersLoading(false);
+        if (!cancelled) dispatchFolderState({ type: "loadDone" });
       }
     })();
 
