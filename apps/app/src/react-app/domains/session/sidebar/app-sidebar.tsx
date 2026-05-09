@@ -79,6 +79,8 @@ import {
 import type { SessionListItem, SessionTreeState } from "./utils";
 import { cn } from "@/lib/utils";
 
+const WORKSPACE_MENU_SKELETON_ROWS = ["short", "medium", "compact"];
+
 type SessionActionsProps = {
   className: string;
   sessionId: string;
@@ -795,8 +797,8 @@ function WorkspaceSidebarGroup({
                   />
                 ) : showInitialLoading ? (
                   <>
-                    {[0, 1, 2].map((idx) => (
-                      <SidebarMenuSubItem key={`skeleton-${idx}`}>
+                    {WORKSPACE_MENU_SKELETON_ROWS.map((rowId) => (
+                      <SidebarMenuSubItem key={`skeleton-${rowId}`}>
                         <SidebarMenuSkeleton showIcon />
                       </SidebarMenuSubItem>
                     ))}

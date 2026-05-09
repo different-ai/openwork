@@ -50,6 +50,47 @@ type OpenworkConnectionState = {
   testMessage: string | null;
 };
 
+function TokenRow(props: {
+  label: string;
+  tokenValue: string | null | undefined;
+  hint: string;
+  visible: boolean;
+  toggle: () => void;
+  copyKey: string;
+  copyingField: string | null;
+  onCopy: (value: string, field: string) => void | Promise<void>;
+}) {
+  return (
+    <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+      <div className="min-w-0">
+        <div className="text-xs font-medium text-gray-11">{props.label}</div>
+        <div className="text-xs text-gray-7 font-mono truncate">
+          {props.visible ? props.tokenValue || "—" : props.tokenValue ? "••••••••••••" : "—"}
+        </div>
+        <div className="text-[11px] text-gray-8 mt-1">{props.hint}</div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          variant="outline"
+          className="text-xs h-8 py-0 px-3"
+          onClick={props.toggle}
+          disabled={!props.tokenValue}
+        >
+          {props.visible ? t("common.hide") : t("common.show")}
+        </Button>
+        <Button
+          variant="outline"
+          className="text-xs h-8 py-0 px-3"
+          onClick={() => props.onCopy(props.tokenValue ?? "", props.copyKey)}
+          disabled={!props.tokenValue}
+        >
+          {props.copyingField === props.copyKey ? t("config.copied") : t("config.copy")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ConfigView(props: ConfigViewProps) {
   const [openworkConnection, setOpenworkConnection] =
     useState<OpenworkConnectionState>({
@@ -281,43 +322,6 @@ export function ConfigView(props: ConfigViewProps) {
     }
   };
 
-  const renderTokenRow = (
-    label: string,
-    tokenValue: string | null | undefined,
-    hint: string,
-    visible: boolean,
-    toggle: () => void,
-    copyKey: string,
-  ) => (
-    <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-      <div className="min-w-0">
-        <div className="text-xs font-medium text-gray-11">{label}</div>
-        <div className="text-xs text-gray-7 font-mono truncate">
-          {visible ? tokenValue || "—" : tokenValue ? "••••••••••••" : "—"}
-        </div>
-        <div className="text-[11px] text-gray-8 mt-1">{hint}</div>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <Button
-          variant="outline"
-          className="text-xs h-8 py-0 px-3"
-          onClick={toggle}
-          disabled={!tokenValue}
-        >
-          {visible ? t("common.hide") : t("common.show")}
-        </Button>
-        <Button
-          variant="outline"
-          className="text-xs h-8 py-0 px-3"
-          onClick={() => handleCopy(tokenValue ?? "", copyKey)}
-          disabled={!tokenValue}
-        >
-          {copyingField === copyKey ? t("config.copied") : t("config.copy")}
-        </Button>
-      </div>
-    </div>
-  );
-
   return (
     <section className="space-y-6 max-w-3xl w-full">
       <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
@@ -461,36 +465,46 @@ export function ConfigView(props: ConfigViewProps) {
               </Button>
             </div>
 
-            {renderTokenRow(
-              t("config.collaborator_token_label"),
-              hostInfo?.clientToken,
-              hostRemoteAccessEnabled
-                ? t("config.collaborator_token_remote_hint")
-                : t("config.collaborator_token_disabled_hint"),
-              clientTokenVisible,
-              () => setClientTokenVisible((prev) => !prev),
-              "client-token",
-            )}
+            <TokenRow
+              label={t("config.collaborator_token_label")}
+              tokenValue={hostInfo?.clientToken}
+              hint={
+                hostRemoteAccessEnabled
+                  ? t("config.collaborator_token_remote_hint")
+                  : t("config.collaborator_token_disabled_hint")
+              }
+              visible={clientTokenVisible}
+              toggle={() => setClientTokenVisible((prev) => !prev)}
+              copyKey="client-token"
+              copyingField={copyingField}
+              onCopy={handleCopy}
+            />
 
-            {renderTokenRow(
-              t("config.owner_token_label"),
-              hostInfo?.ownerToken,
-              hostRemoteAccessEnabled
-                ? t("config.owner_token_remote_hint")
-                : t("config.owner_token_disabled_hint"),
-              ownerTokenVisible,
-              () => setOwnerTokenVisible((prev) => !prev),
-              "owner-token",
-            )}
+            <TokenRow
+              label={t("config.owner_token_label")}
+              tokenValue={hostInfo?.ownerToken}
+              hint={
+                hostRemoteAccessEnabled
+                  ? t("config.owner_token_remote_hint")
+                  : t("config.owner_token_disabled_hint")
+              }
+              visible={ownerTokenVisible}
+              toggle={() => setOwnerTokenVisible((prev) => !prev)}
+              copyKey="owner-token"
+              copyingField={copyingField}
+              onCopy={handleCopy}
+            />
 
-            {renderTokenRow(
-              t("config.host_admin_token_label"),
-              hostInfo?.hostToken,
-              t("config.host_admin_token_hint"),
-              hostTokenVisible,
-              () => setHostTokenVisible((prev) => !prev),
-              "host-token",
-            )}
+            <TokenRow
+              label={t("config.host_admin_token_label")}
+              tokenValue={hostInfo?.hostToken}
+              hint={t("config.host_admin_token_hint")}
+              visible={hostTokenVisible}
+              toggle={() => setHostTokenVisible((prev) => !prev)}
+              copyKey="host-token"
+              copyingField={copyingField}
+              onCopy={handleCopy}
+            />
           </div>
 
           <div className="text-xs text-gray-9">
