@@ -85,10 +85,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const forceStopActiveSessionsAndReload = useCallback(async () => {
     const controls = controlsRef.current;
-    if (controls?.stopSession) {
-      for (const session of activeSessions) {
-        await Promise.resolve(controls.stopSession(session.id)).catch(() => undefined);
-      }
+    const stopSession = controls?.stopSession;
+    if (stopSession) {
+      await Promise.all(activeSessions.map((session) => Promise.resolve(stopSession(session.id)).catch(() => undefined)));
     }
     await systemState.reloadWorkspaceEngine();
   }, [activeSessions, systemState.reloadWorkspaceEngine]);

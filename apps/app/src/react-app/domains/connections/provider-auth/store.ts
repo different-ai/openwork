@@ -1326,8 +1326,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return;
     }
 
-    const importedProviders = await refreshImportedCloudProviders();
-    const liveProviders = await refreshCloudOrgProviders({ force: true });
+    const [importedProviders, liveProviders] = await Promise.all([
+      refreshImportedCloudProviders(),
+      refreshCloudOrgProviders({ force: true }),
+    ]);
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
     const failures: string[] = [];
     const processedLiveProviderIds = new Set<string>();

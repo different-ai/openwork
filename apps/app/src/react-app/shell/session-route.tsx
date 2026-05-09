@@ -382,14 +382,16 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
     }
   }
 
-  for (const attachment of draft.attachments) {
-    parts.push({
-      type: "file",
-      url: await fileToDataUrl(attachment.file),
-      filename: attachment.name,
-      mime: attachment.mimeType,
-    });
-  }
+  parts.push(
+    ...(await Promise.all(
+      draft.attachments.map(async (attachment) => ({
+        type: "file" as const,
+        url: await fileToDataUrl(attachment.file),
+        filename: attachment.name,
+        mime: attachment.mimeType,
+      })),
+    )),
+  );
 
   return parts;
 }

@@ -22,17 +22,17 @@ export type ChromeConnectionSetupModalProps = {
 type ChromeStatus = "unknown" | "checking" | "connected" | "unavailable";
 
 async function checkChromeReachable(): Promise<boolean> {
-  for (const port of [9222, 9229]) {
+  const results = await Promise.all([9222, 9229].map(async (port) => {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
         signal: AbortSignal.timeout(2000),
       });
-      if (response.ok) return true;
+      return response.ok;
     } catch {
-      // not available on this port
+      return false;
     }
-  }
-  return false;
+  }));
+  return results.some(Boolean);
 }
 
 export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProps) {

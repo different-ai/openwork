@@ -674,7 +674,7 @@ export function createExtensionsStore(options: {
     const nextSkillNameSet = new Set<string>();
     const nextSkillIds: string[] = [];
 
-    for (const skill of hub.skills) {
+    const skillWrites = hub.skills.map((skill) => {
       const preferredName = importedNameMap.get(skill.id)?.trim() ?? "";
       const installName =
         preferredName && !nextSkillNameSet.has(preferredName)
@@ -689,15 +689,17 @@ export function createExtensionsStore(options: {
       const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
       const body = extractSkillBodyMarkdown(skill.skillText);
       const content = buildCloudSkillContent(installName, description, body);
-      await upsertWorkspaceSkill(installName, content, description, {
-        overwrite: Boolean(preferredName),
-      });
-    }
+      return { installName, content, description, overwrite: Boolean(preferredName) };
+    });
+
+    await Promise.all(
+      skillWrites.map(({ installName, content, description, overwrite }) =>
+        upsertWorkspaceSkill(installName, content, description, { overwrite }),
+      ),
+    );
 
     const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNameSet.has(name));
-    for (const name of removedSkillNames) {
-      await deleteWorkspaceSkill(name);
-    }
+    await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name)));
 
     return { nextSkillNames, nextSkillIds, removedSkillNames };
   };
@@ -1241,9 +1243,11 @@ export function createExtensionsStore(options: {
       };
       await persistImportedCloudSkillHubs(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return {
         ok: true,
         message: `Imported ${hub.skills.length} skill${hub.skills.length === 1 ? "" : "s"} from ${hub.name}.`,
@@ -1280,9 +1284,11 @@ export function createExtensionsStore(options: {
       };
       await persistImportedCloudSkillHubs(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return { ok: true, message: `Synced ${hub.name} from cloud.`, importedNames: applied.nextSkillNames };
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
@@ -1304,17 +1310,19 @@ export function createExtensionsStore(options: {
     setStateField("skillsStatus", null);
 
     try {
+      await Promise.all(imported.skillNames.map((name) => deleteWorkspaceSkill(name)));
       for (const name of imported.skillNames) {
-        await deleteWorkspaceSkill(name);
         options.markReloadRequired?.("skills", { type: "skill", name, action: "removed" });
       }
 
       const nextImports = { ...snapshot.importedCloudSkillHubs };
       delete nextImports[hubId];
       await persistImportedCloudSkillHubs(nextImports);
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return {
         ok: true,
         message: `Removed ${imported.skillNames.length} imported skill${imported.skillNames.length === 1 ? "" : "s"} from ${imported.name}.`,
@@ -1357,8 +1365,7 @@ export function createExtensionsStore(options: {
     try {
       const repoOverride: OpenworkHubRepo = { owner: repo.owner, repo: repo.repo, ref: repo.ref };
       const result = await openworkClient.installHubSkill(openworkWorkspaceId, trimmed, { repo: repoOverride });
-      await refreshSkills({ force: true });
-      await refreshHubSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshHubSkills({ force: true })]);
       if (!result?.ok) return { ok: false, message: "Install failed." };
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (error) {
@@ -1390,8 +1397,7 @@ export function createExtensionsStore(options: {
       await upsertWorkspaceSkill(installName, content, description, { overwrite: Boolean(existingImport) });
       await persistImportedCloudSkillRecord(skill, installName);
       options.markReloadRequired?.("skills", { type: "skill", name: installName, action });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshCloudOrgSkills({ force: true })]);
       return {
         ok: true,
         message: t(existingImport ? "skills.cloud_updated" : "skills.cloud_installed", { name: installName }),
@@ -1427,8 +1433,7 @@ export function createExtensionsStore(options: {
       delete nextImports[cloudSkillId];
       await persistImportedCloudSkills(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: imported.installedName, action: "removed" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshCloudOrgSkills({ force: true })]);
       return {
         ok: true,
         message: t("skills.cloud_removed", { name: imported.installedName }),
@@ -2105,9 +2110,11 @@ export function createExtensionsStore(options: {
     }
 
     try {
-      const opencodeSkills = await joinDesktopPath(root, ".opencode", "skills");
-      const claudeSkills = await joinDesktopPath(root, ".claude", "skills");
-      const legacySkills = await joinDesktopPath(root, ".opencode", "skill");
+      const [opencodeSkills, claudeSkills, legacySkills] = await Promise.all([
+        joinDesktopPath(root, ".opencode", "skills"),
+        joinDesktopPath(root, ".claude", "skills"),
+        joinDesktopPath(root, ".opencode", "skill"),
+      ]);
       const tryOpen = async (target: string) => {
         try {
           await openDesktopPath(target);
