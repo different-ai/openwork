@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, type RefObject, type UIEventHandler } from "react";
 
+import { initialSessionScrollState, sessionScrollReducer } from "./scroll-controller-state";
+
 const FOLLOW_LATEST_BOTTOM_GAP_PX = 96;
 // Widened from 250ms so a single wheel or trackpad flick isn't missed between
 // two rapid programmatic scroll-to-bottom frames during streaming.
@@ -8,37 +10,6 @@ const SCROLL_GESTURE_WINDOW_MS = 600;
 // smaller is treated as anchoring jitter and ignored so we don't trip out of
 // follow-latest for pixel-level content growth.
 const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
-
-type SessionScrollMode = "follow-latest" | "manual-browse";
-
-type SessionScrollState = {
-  mode: SessionScrollMode;
-  topClippedMessageId: string | null;
-};
-
-type SessionScrollAction =
-  | { type: "mode"; mode: SessionScrollMode }
-  | { type: "topClippedMessage"; id: string | null }
-  | { type: "followLatest" };
-
-const initialSessionScrollState: SessionScrollState = {
-  mode: "follow-latest",
-  topClippedMessageId: null,
-};
-
-function sessionScrollReducer(
-  state: SessionScrollState,
-  action: SessionScrollAction,
-): SessionScrollState {
-  switch (action.type) {
-    case "mode":
-      return { ...state, mode: action.mode };
-    case "topClippedMessage":
-      return { ...state, topClippedMessageId: action.id };
-    case "followLatest":
-      return { mode: "follow-latest", topClippedMessageId: null };
-  }
-}
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
