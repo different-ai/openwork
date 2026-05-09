@@ -835,6 +835,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       if (!quiet) setPluginActionError(null);
 
       try {
+        syncCurrentDenSettings();
         await props.extensions.refreshCloudOrgMarketplaces({ force: true });
         if (!quiet) {
           const count = props.extensions.cloudOrgMarketplaces().length;
@@ -853,7 +854,7 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         setMarketplacesBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, props.extensions, showToast],
+    [activeOrg, activeOrgId, authToken, props.extensions, showToast, syncCurrentDenSettings],
   );
 
   React.useEffect(() => {

@@ -29,6 +29,7 @@ const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "openwork.den.activeOrgSlug";
 const STORAGE_ACTIVE_ORG_NAME = "openwork.den.activeOrgName";
+const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
@@ -1135,6 +1136,14 @@ const resolveFetch = () => (isDesktopRuntime() ? desktopFetch : globalThis.fetch
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+type DenRequestOptions = {
+  method?: string;
+  token?: string | null;
+  body?: unknown;
+  timeoutMs?: number;
+  organizationId?: string | null;
+};
+
 async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(url, init);
@@ -1166,7 +1175,7 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
 async function requestJsonRaw<T>(
   input: string | DenBaseUrls,
   path: string,
-  options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
+  options: DenRequestOptions = {},
 ): Promise<RawJsonResponse<T>> {
   const baseUrls = typeof input === "string" ? resolveDenBaseUrls(input) : input;
   const url = `${resolveRequestBaseUrl(baseUrls, path)}${path}`;
@@ -1174,6 +1183,10 @@ async function requestJsonRaw<T>(
   const token = options.token?.trim() ?? "";
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  const organizationId = options.organizationId?.trim() ?? "";
+  if (organizationId) {
+    headers[ORG_PROXY_HEADER] = organizationId;
   }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -1204,7 +1217,7 @@ async function requestJsonRaw<T>(
 async function requestJson<T>(
   input: string | DenBaseUrls,
   path: string,
-  options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
+  options: DenRequestOptions = {},
 ): Promise<T> {
   const raw = await requestJsonRaw<T>(input, path, options);
   if (!raw.ok) {
@@ -1346,6 +1359,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getWorkers(payload);
     },
@@ -1354,6 +1368,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
         method: "POST",
         token,
+        organizationId: orgId,
         body: {},
       });
       const tokens = getWorkerTokens(payload);
@@ -1367,6 +1382,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgSkillsFromPayload(payload);
     },
@@ -1375,6 +1391,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgSkillHubsFromPayload(payload);
     },
@@ -1383,6 +1400,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getOrgSkillHubSummaries(payload);
     },
@@ -1398,6 +1416,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "POST",
         token,
+        organizationId: orgId,
         body,
       });
       const id = getCreatedOrgSkillId(payload);
@@ -1414,6 +1433,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         {
           method: "POST",
           token,
+          organizationId: orgId,
           body: { skillId },
         },
       );
@@ -1423,6 +1443,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/llm-providers", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgLlmProviders(payload);
     },
@@ -1434,6 +1455,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         {
           method: "GET",
           token,
+          organizationId: orgId,
         },
       );
       const provider = getDenOrgLlmProviderConnection(payload);
@@ -1447,7 +1469,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(
         baseUrls,
         `/v1/marketplaces?status=active&limit=100`,
-        { method: "GET", token },
+        { method: "GET", token, organizationId: orgId },
       );
       return getOrgMarketplaces(payload);
     },
@@ -1456,7 +1478,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(
         baseUrls,
         `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/resolved`,
-        { method: "GET", token },
+        { method: "GET", token, organizationId: orgId },
       );
       const resolved = getOrgMarketplaceResolved(payload);
       if (!resolved) {
@@ -1469,7 +1491,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(
         baseUrls,
         `/v1/plugins/${encodeURIComponent(plugin.id)}/resolved`,
-        { method: "GET", token },
+        { method: "GET", token, organizationId: orgId },
       );
       return getOrgPluginResolved(plugin, payload);
     },
