@@ -172,6 +172,71 @@ function TokenRow(props: {
   );
 }
 
+function buildDiagnosticsBundleJson(input: {
+  anyActiveRuns: boolean;
+  canReloadWorkspace: boolean;
+  clientConnected: boolean;
+  developerMode: boolean;
+  hostConnectUrl: string;
+  hostConnectUrlUsesMdns: boolean;
+  hostInfo: OpenworkServerInfo | null;
+  openworkServerSettings: OpenworkServerSettings;
+  openworkServerStatus: OpenworkServerStatus;
+  openworkServerUrl: string;
+  runtimeWorkspaceId: string | null;
+}) {
+  const urlOverride = input.openworkServerSettings.urlOverride?.trim() ?? "";
+  const token = input.openworkServerSettings.token?.trim() ?? "";
+  const developerLogs = input.developerMode ? readDevLogs(80) : [];
+  const perfLogs = input.developerMode ? readPerfLogs(80) : [];
+  const bundle = {
+    capturedAt: new Date().toISOString(),
+    runtime: {
+      tauri: isDesktopRuntime(),
+      developerMode: input.developerMode,
+    },
+    workspace: {
+      runtimeWorkspaceId: input.runtimeWorkspaceId ?? null,
+      clientConnected: input.clientConnected,
+      anyActiveRuns: input.anyActiveRuns,
+    },
+    openworkServer: {
+      status: input.openworkServerStatus,
+      url: input.openworkServerUrl,
+      settings: {
+        urlOverride: urlOverride || null,
+        tokenPresent: Boolean(token),
+      },
+      host: input.hostInfo
+        ? {
+            running: Boolean(input.hostInfo.running),
+            remoteAccessEnabled: input.hostInfo.remoteAccessEnabled,
+            baseUrl: input.hostInfo.baseUrl ?? null,
+            connectUrl: input.hostInfo.connectUrl ?? null,
+            mdnsUrl: input.hostInfo.mdnsUrl ?? null,
+            lanUrl: input.hostInfo.lanUrl ?? null,
+          }
+        : null,
+    },
+    reload: {
+      canReloadWorkspace: input.canReloadWorkspace,
+    },
+    sharing: {
+      hostConnectUrl: input.hostConnectUrl || null,
+      hostConnectUrlUsesMdns: input.hostConnectUrlUsesMdns,
+    },
+    performance: {
+      retainedEntries: perfLogs.length,
+      recent: perfLogs,
+    },
+    developerLogs: {
+      retainedEntries: developerLogs.length,
+      recent: developerLogs,
+    },
+  };
+  return JSON.stringify(bundle, null, 2);
+}
+
 export function ConfigView(props: ConfigViewProps) {
   const [localState, dispatchLocal] = useReducer(
     configLocalReducer,
@@ -286,56 +351,19 @@ export function ConfigView(props: ConfigViewProps) {
   const hostConnectUrlUsesMdns = hostConnectUrl.includes(".local");
 
   const diagnosticsBundleJson = useMemo(() => {
-    const urlOverride = props.openworkServerSettings.urlOverride?.trim() ?? "";
-    const token = props.openworkServerSettings.token?.trim() ?? "";
-    const developerLogs = props.developerMode ? readDevLogs(80) : [];
-    const perfLogs = props.developerMode ? readPerfLogs(80) : [];
-    const bundle = {
-      capturedAt: new Date().toISOString(),
-      runtime: {
-        tauri: isDesktopRuntime(),
-        developerMode: props.developerMode,
-      },
-      workspace: {
-        runtimeWorkspaceId: props.runtimeWorkspaceId ?? null,
-        clientConnected: props.clientConnected,
-        anyActiveRuns: props.anyActiveRuns,
-      },
-      openworkServer: {
-        status: props.openworkServerStatus,
-        url: props.openworkServerUrl,
-        settings: {
-          urlOverride: urlOverride || null,
-          tokenPresent: Boolean(token),
-        },
-        host: hostInfo
-          ? {
-              running: Boolean(hostInfo.running),
-              remoteAccessEnabled: hostInfo.remoteAccessEnabled,
-              baseUrl: hostInfo.baseUrl ?? null,
-              connectUrl: hostInfo.connectUrl ?? null,
-              mdnsUrl: hostInfo.mdnsUrl ?? null,
-              lanUrl: hostInfo.lanUrl ?? null,
-            }
-          : null,
-      },
-      reload: {
-        canReloadWorkspace: props.canReloadWorkspace,
-      },
-      sharing: {
-        hostConnectUrl: hostConnectUrl || null,
-        hostConnectUrlUsesMdns,
-      },
-      performance: {
-        retainedEntries: perfLogs.length,
-        recent: perfLogs,
-      },
-      developerLogs: {
-        retainedEntries: developerLogs.length,
-        recent: developerLogs,
-      },
-    };
-    return JSON.stringify(bundle, null, 2);
+    return buildDiagnosticsBundleJson({
+      anyActiveRuns: props.anyActiveRuns,
+      canReloadWorkspace: props.canReloadWorkspace,
+      clientConnected: props.clientConnected,
+      developerMode: props.developerMode,
+      hostConnectUrl,
+      hostConnectUrlUsesMdns,
+      hostInfo,
+      openworkServerSettings: props.openworkServerSettings,
+      openworkServerStatus: props.openworkServerStatus,
+      openworkServerUrl: props.openworkServerUrl,
+      runtimeWorkspaceId: props.runtimeWorkspaceId,
+    });
   }, [
     hostConnectUrl,
     hostConnectUrlUsesMdns,
@@ -401,332 +429,251 @@ export function ConfigView(props: ConfigViewProps) {
 
   return (
     <section className="space-y-6 max-w-3xl w-full">
-      <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-        <div className="text-sm font-medium text-gray-12">
-          {t("config.workspace_config_title")}
+      <ConfigWorkspaceSummary runtimeWorkspaceId={props.runtimeWorkspaceId} />
+      <ConfigEngineReloadSection
+        anyActiveRuns={props.anyActiveRuns}
+        reloadBusy={props.reloadBusy}
+        reloadError={props.reloadError}
+        reloadAvailabilityReason={reloadAvailabilityReason}
+        reloadButtonTone={reloadButtonTone}
+        reloadButtonDisabled={reloadButtonDisabled}
+        reloadButtonLabel={reloadButtonLabel}
+        onReload={props.reloadWorkspaceEngine}
+      />
+      {props.developerMode ? (
+        <ConfigDiagnosticsSection
+          busy={props.busy}
+          diagnosticsBundleJson={diagnosticsBundleJson}
+          copyingField={copyingField}
+          onCopy={handleCopy}
+        />
+      ) : null}
+      {hostInfo ? (
+        <ConfigServerSharingSection
+          hostInfo={hostInfo}
+          hostConnectUrl={hostConnectUrl}
+          hostRemoteAccessEnabled={hostRemoteAccessEnabled}
+          hostConnectUrlUsesMdns={hostConnectUrlUsesMdns}
+          hostStatusLabel={hostStatusLabel}
+          hostStatusStyle={hostStatusStyle}
+          tokenVisible={tokenVisible}
+          copyingField={copyingField}
+          onCopy={handleCopy}
+          onToggleToken={(key) => dispatchLocal({ type: "toggleToken", key })}
+        />
+      ) : null}
+      <ConfigServerConnectionSection
+        busy={props.busy}
+        openworkUrl={openworkUrl}
+        openworkToken={openworkToken}
+        tokenVisible={tokenVisible.openwork}
+        openworkStatusLabel={openworkStatusLabel}
+        openworkStatusStyle={openworkStatusStyle}
+        resolvedWorkspaceUrl={resolvedWorkspaceUrl}
+        resolvedWorkspaceId={resolvedWorkspaceId}
+        openworkTestState={openworkTestState}
+        openworkTestMessage={openworkTestMessage}
+        hasOpenworkChanges={hasOpenworkChanges}
+        onUrlChange={(url) => dispatchLocal({ type: "url", url })}
+        onTokenChange={(token) => dispatchLocal({ type: "token", token })}
+        onToggleToken={() => dispatchLocal({ type: "toggleToken", key: "openwork" })}
+        onTestConnection={handleTestConnection}
+        onSave={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
+        onReset={props.resetOpenworkServerSettings}
+      />
+      <ConfigMessagingIdentitiesSection />
+      {!isDesktopRuntime() ? <div className="text-xs text-gray-9">{t("config.desktop_only_hint")}</div> : null}
+    </section>
+  );
+}
+
+function ConfigWorkspaceSummary(props: { runtimeWorkspaceId: string | null }) {
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
+      <div className="text-sm font-medium text-gray-12">{t("config.workspace_config_title")}</div>
+      <div className="text-xs text-gray-10">{t("config.workspace_config_desc")}</div>
+      {props.runtimeWorkspaceId ? (
+        <div className="text-[11px] text-gray-7 font-mono truncate">
+          {t("config.workspace_id_prefix")}
+          {props.runtimeWorkspaceId}
         </div>
-        <div className="text-xs text-gray-10">
-          {t("config.workspace_config_desc")}
-        </div>
-        {props.runtimeWorkspaceId ? (
-          <div className="text-[11px] text-gray-7 font-mono truncate">
-            {t("config.workspace_id_prefix")}
-            {props.runtimeWorkspaceId}
-          </div>
-        ) : null}
+      ) : null}
+    </div>
+  );
+}
+
+function ConfigEngineReloadSection(props: {
+  anyActiveRuns: boolean;
+  reloadBusy: boolean;
+  reloadError: string | null;
+  reloadAvailabilityReason: string | null;
+  reloadButtonTone: "danger" | "secondary";
+  reloadButtonDisabled: boolean;
+  reloadButtonLabel: string;
+  onReload: () => Promise<void>;
+}) {
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+      <div>
+        <div className="text-sm font-medium text-gray-12">{t("config.engine_reload_title")}</div>
+        <div className="text-xs text-gray-10">{t("config.engine_reload_desc")}</div>
       </div>
-
-      <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-        <div>
-          <div className="text-sm font-medium text-gray-12">
-            {t("config.engine_reload_title")}
-          </div>
-          <div className="text-xs text-gray-10">
-            {t("config.engine_reload_desc")}
-          </div>
+      <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm text-gray-12">{t("config.reload_now_title")}</div>
+          <div className="text-xs text-gray-7">{t("config.reload_now_desc")}</div>
+          {props.anyActiveRuns ? <div className="text-[11px] text-amber-11">{t("config.reload_active_tasks_warning")}</div> : null}
+          {props.reloadError ? <div className="text-[11px] text-red-11">{props.reloadError}</div> : null}
+          {props.reloadAvailabilityReason ? <div className="text-[11px] text-gray-9">{props.reloadAvailabilityReason}</div> : null}
         </div>
+        <Button variant={props.reloadButtonTone} className="text-xs h-8 py-0 px-3 shrink-0" onClick={props.onReload} disabled={props.reloadButtonDisabled}>
+          <RefreshCcw size={14} className={props.reloadBusy ? "animate-spin" : ""} />
+          {props.reloadButtonLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
+function ConfigDiagnosticsSection(props: {
+  busy: boolean;
+  diagnosticsBundleJson: string;
+  copyingField: string | null;
+  onCopy: (value: string, field: string) => void | Promise<void>;
+}) {
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-sm font-medium text-gray-12">{t("config.diagnostics_title")}</div>
+          <div className="text-xs text-gray-10">{t("config.diagnostics_desc")}</div>
+        </div>
+        <Button variant="secondary" className="text-xs h-8 py-0 px-3 shrink-0" onClick={() => void props.onCopy(props.diagnosticsBundleJson, "debug-bundle")} disabled={props.busy}>
+          {props.copyingField === "debug-bundle" ? t("config.copied") : t("config.copy")}
+        </Button>
+      </div>
+      <pre className="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1/20 border border-gray-6 rounded-xl p-3">
+        {props.diagnosticsBundleJson}
+      </pre>
+    </div>
+  );
+}
+
+function ConfigServerSharingSection(props: {
+  hostInfo: OpenworkServerInfo;
+  hostConnectUrl: string;
+  hostRemoteAccessEnabled: boolean;
+  hostConnectUrlUsesMdns: boolean;
+  hostStatusLabel: string;
+  hostStatusStyle: string;
+  tokenVisible: Record<TokenVisibilityKey, boolean>;
+  copyingField: string | null;
+  onCopy: (value: string, field: string) => void | Promise<void>;
+  onToggleToken: (key: TokenVisibilityKey) => void;
+}) {
+  const hostUrlHint = !props.hostRemoteAccessEnabled
+    ? t("config.remote_access_off_hint")
+    : props.hostConnectUrlUsesMdns
+      ? t("config.mdns_hint")
+      : t("config.local_ip_hint");
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-sm font-medium text-gray-12">{t("config.server_sharing_title")}</div>
+          <div className="text-xs text-gray-10">{t("config.server_sharing_desc")}</div>
+        </div>
+        <div className={`text-xs px-2 py-1 rounded-full border ${props.hostStatusStyle}`}>{props.hostStatusLabel}</div>
+      </div>
+      <div className="grid gap-3">
         <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="text-sm text-gray-12">
-              {t("config.reload_now_title")}
-            </div>
-            <div className="text-xs text-gray-7">
-              {t("config.reload_now_desc")}
-            </div>
-            {props.anyActiveRuns ? (
-              <div className="text-[11px] text-amber-11">
-                {t("config.reload_active_tasks_warning")}
-              </div>
-            ) : null}
-            {props.reloadError ? (
-              <div className="text-[11px] text-red-11">{props.reloadError}</div>
-            ) : null}
-            {reloadAvailabilityReason ? (
-              <div className="text-[11px] text-gray-9">
-                {reloadAvailabilityReason}
-              </div>
-            ) : null}
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-gray-11">{t("config.server_url_label")}</div>
+            <div className="text-xs text-gray-7 font-mono truncate">{props.hostConnectUrl || t("config.starting_server")}</div>
+            {props.hostConnectUrl ? <div className="text-[11px] text-gray-8 mt-1">{hostUrlHint}</div> : null}
           </div>
-          <Button
-            variant={reloadButtonTone}
-            className="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={props.reloadWorkspaceEngine}
-            disabled={reloadButtonDisabled}
-          >
-            <RefreshCcw
-              size={14}
-              className={props.reloadBusy ? "animate-spin" : ""}
-            />
-            {reloadButtonLabel}
+          <Button variant="outline" className="text-xs h-8 py-0 px-3 shrink-0" onClick={() => props.onCopy(props.hostConnectUrl, "host-url")} disabled={!props.hostConnectUrl}>
+            {props.copyingField === "host-url" ? t("config.copied") : t("config.copy")}
           </Button>
         </div>
+        <TokenRow label={t("config.collaborator_token_label")} tokenValue={props.hostInfo.clientToken} hint={props.hostRemoteAccessEnabled ? t("config.collaborator_token_remote_hint") : t("config.collaborator_token_disabled_hint")} visible={props.tokenVisible.client} toggle={() => props.onToggleToken("client")} copyKey="client-token" copyingField={props.copyingField} onCopy={props.onCopy} />
+        <TokenRow label={t("config.owner_token_label")} tokenValue={props.hostInfo.ownerToken} hint={props.hostRemoteAccessEnabled ? t("config.owner_token_remote_hint") : t("config.owner_token_disabled_hint")} visible={props.tokenVisible.owner} toggle={() => props.onToggleToken("owner")} copyKey="owner-token" copyingField={props.copyingField} onCopy={props.onCopy} />
+        <TokenRow label={t("config.host_admin_token_label")} tokenValue={props.hostInfo.hostToken} hint={t("config.host_admin_token_hint")} visible={props.tokenVisible.host} toggle={() => props.onToggleToken("host")} copyKey="host-token" copyingField={props.copyingField} onCopy={props.onCopy} />
       </div>
+      <div className="text-xs text-gray-9">{t("config.server_sharing_menu_hint")}</div>
+    </div>
+  );
+}
 
-      {props.developerMode ? (
-        <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-sm font-medium text-gray-12">
-                {t("config.diagnostics_title")}
-              </div>
-              <div className="text-xs text-gray-10">
-                {t("config.diagnostics_desc")}
-              </div>
-            </div>
-            <Button
-              variant="secondary"
-              className="text-xs h-8 py-0 px-3 shrink-0"
-              onClick={() =>
-                void handleCopy(diagnosticsBundleJson, "debug-bundle")
-              }
-              disabled={props.busy}
-            >
-              {copyingField === "debug-bundle"
-                ? t("config.copied")
-                : t("config.copy")}
+function ConfigServerConnectionSection(props: {
+  busy: boolean;
+  openworkUrl: string;
+  openworkToken: string;
+  tokenVisible: boolean;
+  openworkStatusLabel: string;
+  openworkStatusStyle: string;
+  resolvedWorkspaceUrl: string;
+  resolvedWorkspaceId: string;
+  openworkTestState: OpenworkTestState;
+  openworkTestMessage: string | null;
+  hasOpenworkChanges: boolean;
+  onUrlChange: (url: string) => void;
+  onTokenChange: (token: string) => void;
+  onToggleToken: () => void;
+  onTestConnection: () => Promise<void>;
+  onSave: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-sm font-medium text-gray-12">{t("config.server_section_title")}</div>
+          <div className="text-xs text-gray-10">{t("config.server_section_desc")}</div>
+        </div>
+        <div className={`text-xs px-2 py-1 rounded-full border ${props.openworkStatusStyle}`}>{props.openworkStatusLabel}</div>
+      </div>
+      <div className="grid gap-3">
+        <TextInput label={t("config.server_url_input_label")} value={props.openworkUrl} onChange={(event) => props.onUrlChange(event.currentTarget.value)} placeholder="http://127.0.0.1:<port>" hint={t("config.server_url_hint")} disabled={props.busy} />
+        <label className="block">
+          <div className="mb-1 text-xs font-medium text-gray-11">{t("config.token_label")}</div>
+          <div className="flex items-center gap-2">
+            <input type={props.tokenVisible ? "text" : "password"} value={props.openworkToken} onChange={(event) => props.onTokenChange(event.currentTarget.value)} placeholder={t("config.token_placeholder")} disabled={props.busy} className="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20" />
+            <Button variant="outline" className="text-xs h-9 px-3 shrink-0" onClick={props.onToggleToken} disabled={props.busy}>
+              {props.tokenVisible ? t("common.hide") : t("common.show")}
             </Button>
           </div>
-          <pre className="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1/20 border border-gray-6 rounded-xl p-3">
-            {diagnosticsBundleJson}
-          </pre>
-        </div>
-      ) : null}
-
-      {hostInfo ? (
-        <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div>
-              <div className="text-sm font-medium text-gray-12">
-                {t("config.server_sharing_title")}
-              </div>
-              <div className="text-xs text-gray-10">
-                {t("config.server_sharing_desc")}
-              </div>
-            </div>
-            <div
-              className={`text-xs px-2 py-1 rounded-full border ${hostStatusStyle}`}
-            >
-              {hostStatusLabel}
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <div className="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-gray-11">
-                  {t("config.server_url_label")}
-                </div>
-                <div className="text-xs text-gray-7 font-mono truncate">
-                  {hostConnectUrl || t("config.starting_server")}
-                </div>
-                {hostConnectUrl ? (
-                  <div className="text-[11px] text-gray-8 mt-1">
-                    {!hostRemoteAccessEnabled
-                      ? t("config.remote_access_off_hint")
-                      : hostConnectUrlUsesMdns
-                        ? t("config.mdns_hint")
-                        : t("config.local_ip_hint")}
-                  </div>
-                ) : null}
-              </div>
-              <Button
-                variant="outline"
-                className="text-xs h-8 py-0 px-3 shrink-0"
-                onClick={() => handleCopy(hostConnectUrl, "host-url")}
-                disabled={!hostConnectUrl}
-              >
-                {copyingField === "host-url"
-                  ? t("config.copied")
-                  : t("config.copy")}
-              </Button>
-            </div>
-
-            <TokenRow
-              label={t("config.collaborator_token_label")}
-              tokenValue={hostInfo?.clientToken}
-              hint={
-                hostRemoteAccessEnabled
-                  ? t("config.collaborator_token_remote_hint")
-                  : t("config.collaborator_token_disabled_hint")
-              }
-              visible={tokenVisible.client}
-              toggle={() => dispatchLocal({ type: "toggleToken", key: "client" })}
-              copyKey="client-token"
-              copyingField={copyingField}
-              onCopy={handleCopy}
-            />
-
-            <TokenRow
-              label={t("config.owner_token_label")}
-              tokenValue={hostInfo?.ownerToken}
-              hint={
-                hostRemoteAccessEnabled
-                  ? t("config.owner_token_remote_hint")
-                  : t("config.owner_token_disabled_hint")
-              }
-              visible={tokenVisible.owner}
-              toggle={() => dispatchLocal({ type: "toggleToken", key: "owner" })}
-              copyKey="owner-token"
-              copyingField={copyingField}
-              onCopy={handleCopy}
-            />
-
-            <TokenRow
-              label={t("config.host_admin_token_label")}
-              tokenValue={hostInfo?.hostToken}
-              hint={t("config.host_admin_token_hint")}
-              visible={tokenVisible.host}
-              toggle={() => dispatchLocal({ type: "toggleToken", key: "host" })}
-              copyKey="host-token"
-              copyingField={copyingField}
-              onCopy={handleCopy}
-            />
-          </div>
-
-          <div className="text-xs text-gray-9">
-            {t("config.server_sharing_menu_hint")}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-sm font-medium text-gray-12">
-              {t("config.server_section_title")}
-            </div>
-            <div className="text-xs text-gray-10">
-              {t("config.server_section_desc")}
-            </div>
-          </div>
-          <div
-            className={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle}`}
-          >
-            {openworkStatusLabel}
-          </div>
-        </div>
-
-        <div className="grid gap-3">
-          <TextInput
-            label={t("config.server_url_input_label")}
-            value={openworkUrl}
-            onChange={(event) =>
-              dispatchLocal({ type: "url", url: event.currentTarget.value })
-            }
-            placeholder="http://127.0.0.1:<port>"
-            hint={t("config.server_url_hint")}
-            disabled={props.busy}
-          />
-
-          <label className="block">
-            <div className="mb-1 text-xs font-medium text-gray-11">
-              {t("config.token_label")}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type={tokenVisible.openwork ? "text" : "password"}
-                value={openworkToken}
-                onChange={(event) =>
-                  dispatchLocal({ type: "token", token: event.currentTarget.value })
-                }
-                placeholder={t("config.token_placeholder")}
-                disabled={props.busy}
-                className="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-              />
-              <Button
-                variant="outline"
-                className="text-xs h-9 px-3 shrink-0"
-                onClick={() => dispatchLocal({ type: "toggleToken", key: "openwork" })}
-                disabled={props.busy}
-              >
-                {tokenVisible.openwork ? t("common.hide") : t("common.show")}
-              </Button>
-            </div>
-            <div className="mt-1 text-xs text-gray-10">
-              {t("config.token_hint")}
-            </div>
-          </label>
-        </div>
-
-        <div className="space-y-1">
-          <div className="text-[11px] text-gray-7 font-mono truncate">
-            {t("config.resolved_worker_url")}
-            {resolvedWorkspaceUrl || t("config.not_set")}
-          </div>
-          <div className="text-[11px] text-gray-8 font-mono truncate">
-            {t("config.worker_id")}
-            {resolvedWorkspaceId || t("config.unavailable")}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => void handleTestConnection()}
-            disabled={props.busy || openworkTestState === "testing"}
-          >
-            {openworkTestState === "testing"
-              ? t("config.testing")
-              : t("config.test_connection")}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() =>
-              props.updateOpenworkServerSettings(buildOpenworkSettings())
-            }
-            disabled={props.busy || !hasOpenworkChanges}
-          >
-            {t("common.save")}
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={props.resetOpenworkServerSettings}
-            disabled={props.busy}
-          >
-            {t("common.reset")}
-          </Button>
-        </div>
-
-        {openworkTestState !== "idle" ? (
-          <div
-            className={`text-xs ${
-              openworkTestState === "success"
-                ? "text-green-11"
-                : openworkTestState === "error"
-                  ? "text-red-11"
-                  : "text-gray-9"
-            }`}
-            role="status"
-            aria-live="polite"
-          >
-            {openworkTestState === "testing"
-              ? t("config.testing_connection")
-              : (openworkTestMessage ?? t("config.connection_status_updated"))}
-          </div>
-        ) : null}
-
-        {openworkStatusLabel !== t("config.status_connected") ? (
-          <div className="text-xs text-gray-9">
-            {t("config.server_needed_hint")}
-          </div>
-        ) : null}
+          <div className="mt-1 text-xs text-gray-10">{t("config.token_hint")}</div>
+        </label>
       </div>
-
-      <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-        <div className="text-sm font-medium text-gray-12">
-          {t("config.messaging_identities_title")}
-        </div>
-        <div className="text-xs text-gray-10">
-          {t("config.messaging_identities_desc")}
-        </div>
+      <div className="space-y-1">
+        <div className="text-[11px] text-gray-7 font-mono truncate">{t("config.resolved_worker_url")}{props.resolvedWorkspaceUrl || t("config.not_set")}</div>
+        <div className="text-[11px] text-gray-8 font-mono truncate">{t("config.worker_id")}{props.resolvedWorkspaceId || t("config.unavailable")}</div>
       </div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => void props.onTestConnection()} disabled={props.busy || props.openworkTestState === "testing"}>{props.openworkTestState === "testing" ? t("config.testing") : t("config.test_connection")}</Button>
+        <Button variant="outline" onClick={props.onSave} disabled={props.busy || !props.hasOpenworkChanges}>{t("common.save")}</Button>
+        <Button variant="ghost" onClick={props.onReset} disabled={props.busy}>{t("common.reset")}</Button>
+      </div>
+      {props.openworkTestState !== "idle" ? <ConfigConnectionTestStatus state={props.openworkTestState} message={props.openworkTestMessage} /> : null}
+      {props.openworkStatusLabel !== t("config.status_connected") ? <div className="text-xs text-gray-9">{t("config.server_needed_hint")}</div> : null}
+    </div>
+  );
+}
 
-      {!isDesktopRuntime() ? (
-        <div className="text-xs text-gray-9">
-          {t("config.desktop_only_hint")}
-        </div>
-      ) : null}
-    </section>
+function ConfigConnectionTestStatus(props: { state: OpenworkTestState; message: string | null }) {
+  return (
+    <div className={`text-xs ${props.state === "success" ? "text-green-11" : props.state === "error" ? "text-red-11" : "text-gray-9"}`} role="status" aria-live="polite">
+      {props.state === "testing" ? t("config.testing_connection") : (props.message ?? t("config.connection_status_updated"))}
+    </div>
+  );
+}
+
+function ConfigMessagingIdentitiesSection() {
+  return (
+    <div className="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
+      <div className="text-sm font-medium text-gray-12">{t("config.messaging_identities_title")}</div>
+      <div className="text-xs text-gray-10">{t("config.messaging_identities_desc")}</div>
+    </div>
   );
 }
