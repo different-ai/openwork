@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { readDevLogs } from "../../../../app/lib/dev-log";
@@ -50,6 +50,87 @@ type OpenworkConnectionState = {
   testMessage: string | null;
 };
 
+type TokenVisibilityKey = "openwork" | "client" | "owner" | "host";
+
+type ConfigLocalState = {
+  openworkConnection: OpenworkConnectionState;
+  tokenVisible: Record<TokenVisibilityKey, boolean>;
+  copyingField: string | null;
+};
+
+type ConfigLocalAction =
+  | { type: "serverSettings"; connection: OpenworkConnectionState }
+  | { type: "url"; url: string }
+  | { type: "token"; token: string }
+  | { type: "testState"; testState: OpenworkTestState; testMessage: string | null }
+  | { type: "toggleToken"; key: TokenVisibilityKey }
+  | { type: "copyingField"; field: string | null };
+
+const initialConfigLocalState: ConfigLocalState = {
+  openworkConnection: {
+    url: "",
+    token: "",
+    testState: "idle",
+    testMessage: null,
+  },
+  tokenVisible: {
+    openwork: false,
+    client: false,
+    owner: false,
+    host: false,
+  },
+  copyingField: null,
+};
+
+function configLocalReducer(
+  state: ConfigLocalState,
+  action: ConfigLocalAction,
+): ConfigLocalState {
+  switch (action.type) {
+    case "serverSettings":
+      return { ...state, openworkConnection: action.connection };
+    case "url":
+      return {
+        ...state,
+        openworkConnection: {
+          ...state.openworkConnection,
+          url: action.url,
+          testState: "idle",
+          testMessage: null,
+        },
+      };
+    case "token":
+      return {
+        ...state,
+        openworkConnection: {
+          ...state.openworkConnection,
+          token: action.token,
+          testState: "idle",
+          testMessage: null,
+        },
+      };
+    case "testState":
+      return {
+        ...state,
+        openworkConnection: {
+          ...state.openworkConnection,
+          testState: action.testState,
+          testMessage: action.testMessage,
+        },
+      };
+    case "toggleToken":
+      return {
+        ...state,
+        tokenVisible: {
+          ...state.tokenVisible,
+          [action.key]: !state.tokenVisible[action.key],
+        },
+      };
+    case "copyingField":
+      return { ...state, copyingField: action.field };
+  }
+}
+
 function TokenRow(props: {
   label: string;
   tokenValue: string | null | undefined;
@@ -92,30 +173,26 @@ function TokenRow(props: {
 }
 
 export function ConfigView(props: ConfigViewProps) {
-  const [openworkConnection, setOpenworkConnection] =
-    useState<OpenworkConnectionState>({
-      url: "",
-      token: "",
-      testState: "idle",
-      testMessage: null,
-    });
+  const [localState, dispatchLocal] = useReducer(
+    configLocalReducer,
+    initialConfigLocalState,
+  );
+  const { openworkConnection, tokenVisible, copyingField } = localState;
   const openworkUrl = openworkConnection.url;
   const openworkToken = openworkConnection.token;
   const openworkTestState = openworkConnection.testState;
   const openworkTestMessage = openworkConnection.testMessage;
-  const [openworkTokenVisible, setOpenworkTokenVisible] = useState(false);
-  const [clientTokenVisible, setClientTokenVisible] = useState(false);
-  const [ownerTokenVisible, setOwnerTokenVisible] = useState(false);
-  const [hostTokenVisible, setHostTokenVisible] = useState(false);
-  const [copyingField, setCopyingField] = useState<string | null>(null);
   const copyTimeoutRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    setOpenworkConnection({
-      url: props.openworkServerSettings.urlOverride ?? "",
-      token: props.openworkServerSettings.token ?? "",
-      testState: "idle",
-      testMessage: null,
+    dispatchLocal({
+      type: "serverSettings",
+      connection: {
+        url: props.openworkServerSettings.urlOverride ?? "",
+        token: props.openworkServerSettings.token ?? "",
+        testState: "idle",
+        testMessage: null,
+      },
     });
   }, [props.openworkServerSettings]);
 
@@ -278,12 +355,12 @@ export function ConfigView(props: ConfigViewProps) {
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      setCopyingField(field);
+      dispatchLocal({ type: "copyingField", field });
       if (copyTimeoutRef.current !== undefined) {
         window.clearTimeout(copyTimeoutRef.current);
       }
       copyTimeoutRef.current = window.setTimeout(() => {
-        setCopyingField(null);
+        dispatchLocal({ type: "copyingField", field: null });
         copyTimeoutRef.current = undefined;
       }, 2000);
     } catch {
@@ -295,30 +372,30 @@ export function ConfigView(props: ConfigViewProps) {
     if (openworkTestState === "testing") return;
     const next = buildOpenworkSettings();
     props.updateOpenworkServerSettings(next);
-    setOpenworkConnection((current) => ({
-      ...current,
+    dispatchLocal({
+      type: "testState",
       testState: "testing",
       testMessage: null,
-    }));
+    });
     try {
       const ok = await props.testOpenworkServerConnection(next);
-      setOpenworkConnection((current) => ({
-        ...current,
+      dispatchLocal({
+        type: "testState",
         testState: ok ? "success" : "error",
         testMessage: ok
           ? t("config.connection_successful")
           : t("config.connection_failed"),
-      }));
+      });
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : t("config.connection_failed_check");
-      setOpenworkConnection((current) => ({
-        ...current,
+      dispatchLocal({
+        type: "testState",
         testState: "error",
         testMessage: message,
-      }));
+      });
     }
   };
 
@@ -473,8 +550,8 @@ export function ConfigView(props: ConfigViewProps) {
                   ? t("config.collaborator_token_remote_hint")
                   : t("config.collaborator_token_disabled_hint")
               }
-              visible={clientTokenVisible}
-              toggle={() => setClientTokenVisible((prev) => !prev)}
+              visible={tokenVisible.client}
+              toggle={() => dispatchLocal({ type: "toggleToken", key: "client" })}
               copyKey="client-token"
               copyingField={copyingField}
               onCopy={handleCopy}
@@ -488,8 +565,8 @@ export function ConfigView(props: ConfigViewProps) {
                   ? t("config.owner_token_remote_hint")
                   : t("config.owner_token_disabled_hint")
               }
-              visible={ownerTokenVisible}
-              toggle={() => setOwnerTokenVisible((prev) => !prev)}
+              visible={tokenVisible.owner}
+              toggle={() => dispatchLocal({ type: "toggleToken", key: "owner" })}
               copyKey="owner-token"
               copyingField={copyingField}
               onCopy={handleCopy}
@@ -499,8 +576,8 @@ export function ConfigView(props: ConfigViewProps) {
               label={t("config.host_admin_token_label")}
               tokenValue={hostInfo?.hostToken}
               hint={t("config.host_admin_token_hint")}
-              visible={hostTokenVisible}
-              toggle={() => setHostTokenVisible((prev) => !prev)}
+              visible={tokenVisible.host}
+              toggle={() => dispatchLocal({ type: "toggleToken", key: "host" })}
               copyKey="host-token"
               copyingField={copyingField}
               onCopy={handleCopy}
@@ -535,12 +612,7 @@ export function ConfigView(props: ConfigViewProps) {
             label={t("config.server_url_input_label")}
             value={openworkUrl}
             onChange={(event) =>
-              setOpenworkConnection((current) => ({
-                ...current,
-                url: event.currentTarget.value,
-                testState: "idle",
-                testMessage: null,
-              }))
+              dispatchLocal({ type: "url", url: event.currentTarget.value })
             }
             placeholder="http://127.0.0.1:<port>"
             hint={t("config.server_url_hint")}
@@ -553,15 +625,10 @@ export function ConfigView(props: ConfigViewProps) {
             </div>
             <div className="flex items-center gap-2">
               <input
-                type={openworkTokenVisible ? "text" : "password"}
+                type={tokenVisible.openwork ? "text" : "password"}
                 value={openworkToken}
                 onChange={(event) =>
-                  setOpenworkConnection((current) => ({
-                    ...current,
-                    token: event.currentTarget.value,
-                    testState: "idle",
-                    testMessage: null,
-                  }))
+                  dispatchLocal({ type: "token", token: event.currentTarget.value })
                 }
                 placeholder={t("config.token_placeholder")}
                 disabled={props.busy}
@@ -570,10 +637,10 @@ export function ConfigView(props: ConfigViewProps) {
               <Button
                 variant="outline"
                 className="text-xs h-9 px-3 shrink-0"
-                onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                onClick={() => dispatchLocal({ type: "toggleToken", key: "openwork" })}
                 disabled={props.busy}
               >
-                {openworkTokenVisible ? t("common.hide") : t("common.show")}
+                {tokenVisible.openwork ? t("common.hide") : t("common.show")}
               </Button>
             </div>
             <div className="mt-1 text-xs text-gray-10">

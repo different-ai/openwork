@@ -1,5 +1,13 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useReducer,
+  useRef,
+  type SetStateAction,
+} from "react";
 import { Eye, EyeOff, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
@@ -24,6 +32,55 @@ const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
 
 type EnvItem = { key: string; value: string; updatedAt: number };
 type ApplyEnvironmentChangesResult = { statusMessage?: string } | void;
+type EnvironmentEditorState = { mode: "add" | "edit"; key: string; value: string } | null;
+
+type EnvironmentLocalState = {
+  items: EnvItem[];
+  loading: boolean;
+  error: string | null;
+  revealed: Record<string, boolean>;
+  editor: EnvironmentEditorState;
+  editorError: string | null;
+  saving: boolean;
+  deleteCandidate: EnvItem | null;
+  deletingKey: string | null;
+  pendingChanges: boolean;
+  applyConfirmOpen: boolean;
+  applyBusy: boolean;
+  applyError: string | null;
+};
+
+type EnvironmentLocalAction<K extends keyof EnvironmentLocalState = keyof EnvironmentLocalState> =
+  | {
+      type: "set";
+      key: K;
+      value: SetStateAction<any>;
+    }
+  | { type: "editingDisabled" };
+
+function environmentLocalReducer(
+  state: EnvironmentLocalState,
+  action: EnvironmentLocalAction,
+): EnvironmentLocalState {
+  if (action.type === "editingDisabled") {
+    return {
+      ...state,
+      editor: null,
+      editorError: null,
+      deleteCandidate: null,
+      deletingKey: null,
+      applyConfirmOpen: false,
+      applyError: null,
+    };
+  }
+  const current = state[action.key];
+  const next =
+    typeof action.value === "function"
+      ? (action.value as (value: typeof current) => typeof current)(current)
+      : action.value;
+  if (Object.is(current, next)) return state;
+  return { ...state, [action.key]: next };
+}
 
 export type EnvironmentViewProps = {
   client: OpenworkServerClient | null;
@@ -64,21 +121,57 @@ export function EnvironmentView(props: EnvironmentViewProps) {
   const canEdit = !isRemoteWorkspace && client !== null;
   const editorTitleId = useId();
 
-  const [items, setItems] = useState<EnvItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [editor, setEditor] = useState<{ mode: "add" | "edit"; key: string; value: string } | null>(null);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
-  const [deletingKey, setDeletingKey] = useState<string | null>(null);
-  const [pendingChanges, setPendingChanges] = useState(() =>
-    readOpenworkEnvPendingChanges(props.runtimeKey),
+  const [localState, setLocalState] = useReducer(
+    environmentLocalReducer,
+    props.runtimeKey,
+    (runtimeKey): EnvironmentLocalState => ({
+      items: [],
+      loading: false,
+      error: null,
+      revealed: {},
+      editor: null,
+      editorError: null,
+      saving: false,
+      deleteCandidate: null,
+      deletingKey: null,
+      pendingChanges: readOpenworkEnvPendingChanges(runtimeKey),
+      applyConfirmOpen: false,
+      applyBusy: false,
+      applyError: null,
+    }),
   );
-  const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
-  const [applyBusy, setApplyBusy] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
+  const {
+    items,
+    loading,
+    error,
+    revealed,
+    editor,
+    editorError,
+    saving,
+    deleteCandidate,
+    deletingKey,
+    pendingChanges,
+    applyConfirmOpen,
+    applyBusy,
+    applyError,
+  } = localState;
+  const updateLocalState = <K extends keyof EnvironmentLocalState>(
+    key: K,
+    value: SetStateAction<EnvironmentLocalState[K]>,
+  ) => setLocalState({ type: "set", key, value });
+  const setItems = (value: SetStateAction<EnvItem[]>) => updateLocalState("items", value);
+  const setLoading = (value: SetStateAction<boolean>) => updateLocalState("loading", value);
+  const setError = (value: SetStateAction<string | null>) => updateLocalState("error", value);
+  const setRevealed = (value: SetStateAction<Record<string, boolean>>) => updateLocalState("revealed", value);
+  const setEditor = (value: SetStateAction<EnvironmentEditorState>) => updateLocalState("editor", value);
+  const setEditorError = (value: SetStateAction<string | null>) => updateLocalState("editorError", value);
+  const setSaving = (value: SetStateAction<boolean>) => updateLocalState("saving", value);
+  const setDeleteCandidate = (value: SetStateAction<EnvItem | null>) => updateLocalState("deleteCandidate", value);
+  const setDeletingKey = (value: SetStateAction<string | null>) => updateLocalState("deletingKey", value);
+  const setPendingChanges = (value: SetStateAction<boolean>) => updateLocalState("pendingChanges", value);
+  const setApplyConfirmOpen = (value: SetStateAction<boolean>) => updateLocalState("applyConfirmOpen", value);
+  const setApplyBusy = (value: SetStateAction<boolean>) => updateLocalState("applyBusy", value);
+  const setApplyError = (value: SetStateAction<string | null>) => updateLocalState("applyError", value);
   const refreshRequestId = useRef(0);
   const applyBlockedReason = props.applyBlocked
     ? props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks")
@@ -117,12 +210,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
 
   useEffect(() => {
     if (canEdit) return;
-    setEditor(null);
-    setEditorError(null);
-    setDeleteCandidate(null);
-    setDeletingKey(null);
-    setApplyConfirmOpen(false);
-    setApplyError(null);
+    setLocalState({ type: "editingDisabled" });
   }, [canEdit]);
 
   const existingKeys = useMemo(() => new Set(items.map((item) => item.key)), [items]);

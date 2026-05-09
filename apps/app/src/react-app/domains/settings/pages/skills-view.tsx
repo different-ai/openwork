@@ -3,8 +3,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useState,
+  useReducer,
   type KeyboardEvent as ReactKeyboardEvent,
+  type SetStateAction,
 } from "react";
 import {
   ArrowLeft,
@@ -140,41 +141,222 @@ export type SkillsViewProps = {
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
 };
 
+type SkillsViewLocalState = {
+  uninstallTarget: SkillCard | null;
+  searchQuery: string;
+  activeFilter: SkillsFilter;
+  customRepoOpen: boolean;
+  customRepoOwner: string;
+  customRepoName: string;
+  customRepoRef: string;
+  customRepoError: string | null;
+  shareTarget: SkillCard | null;
+  shareSubView: ShareSkillSubView;
+  shareBusy: boolean;
+  shareUrl: string | null;
+  shareError: string | null;
+  cloudSessionNonce: number;
+  shareTeamBusy: boolean;
+  shareTeamError: string | null;
+  shareTeamSuccess: string | null;
+  sharePermissionChoice: string;
+  shareHubsLoading: boolean;
+  shareHubsError: string | null;
+  shareManageableHubs: DenOrgSkillHubSummary[];
+  selectedSkill: SkillCard | null;
+  selectedContent: string;
+  selectedLoading: boolean;
+  selectedDirty: boolean;
+  selectedError: string | null;
+  installingSkillCreator: boolean;
+  installingHubSkill: string | null;
+  installingCloudSkillId: string | null;
+  denUiTick: number;
+};
+
+type SkillsViewLocalAction<K extends keyof SkillsViewLocalState = keyof SkillsViewLocalState> =
+  | { type: "set"; key: K; value: SetStateAction<any> }
+  | { type: "denSessionUpdated" }
+  | { type: "resetShareChooser" }
+  | { type: "shareHubsStart" }
+  | { type: "shareHubsLoaded"; hubs: DenOrgSkillHubSummary[] }
+  | { type: "shareHubsFailed"; error: string }
+  | { type: "shareHubsDone" }
+  | { type: "closeShare" }
+  | { type: "openShare"; skill: SkillCard };
+
+const initialSkillsViewLocalState: SkillsViewLocalState = {
+  uninstallTarget: null,
+  searchQuery: "",
+  activeFilter: "all",
+  customRepoOpen: false,
+  customRepoOwner: "",
+  customRepoName: "",
+  customRepoRef: "main",
+  customRepoError: null,
+  shareTarget: null,
+  shareSubView: "chooser",
+  shareBusy: false,
+  shareUrl: null,
+  shareError: null,
+  cloudSessionNonce: 0,
+  shareTeamBusy: false,
+  shareTeamError: null,
+  shareTeamSuccess: null,
+  sharePermissionChoice: "org",
+  shareHubsLoading: false,
+  shareHubsError: null,
+  shareManageableHubs: [],
+  selectedSkill: null,
+  selectedContent: "",
+  selectedLoading: false,
+  selectedDirty: false,
+  selectedError: null,
+  installingSkillCreator: false,
+  installingHubSkill: null,
+  installingCloudSkillId: null,
+  denUiTick: 0,
+};
+
+function skillsViewLocalReducer(
+  state: SkillsViewLocalState,
+  action: SkillsViewLocalAction,
+): SkillsViewLocalState {
+  switch (action.type) {
+    case "set": {
+      const current = state[action.key];
+      const next =
+        typeof action.value === "function"
+          ? (action.value as (value: typeof current) => typeof current)(current)
+          : action.value;
+      if (Object.is(current, next)) return state;
+      return { ...state, [action.key]: next };
+    }
+    case "denSessionUpdated":
+      return {
+        ...state,
+        denUiTick: state.denUiTick + 1,
+        cloudSessionNonce: state.cloudSessionNonce + 1,
+      };
+    case "resetShareChooser":
+      return {
+        ...state,
+        shareSubView: "chooser",
+        shareError: null,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+      };
+    case "shareHubsStart":
+      return { ...state, shareHubsLoading: true, shareHubsError: null };
+    case "shareHubsLoaded":
+      return { ...state, shareManageableHubs: action.hubs };
+    case "shareHubsFailed":
+      return { ...state, shareHubsError: action.error, shareManageableHubs: [] };
+    case "shareHubsDone":
+      return { ...state, shareHubsLoading: false };
+    case "closeShare":
+      return {
+        ...state,
+        shareTarget: null,
+        shareSubView: "chooser",
+        shareBusy: false,
+        shareUrl: null,
+        shareError: null,
+        shareTeamBusy: false,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+        shareManageableHubs: [],
+      };
+    case "openShare":
+      return {
+        ...state,
+        shareTarget: action.skill,
+        shareSubView: "chooser",
+        shareBusy: false,
+        shareUrl: null,
+        shareError: null,
+        shareTeamBusy: false,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+        shareManageableHubs: [],
+        cloudSessionNonce: state.cloudSessionNonce + 1,
+      };
+  }
+}
+
 export function SkillsView(props: SkillsViewProps) {
   const { extensions } = props;
-  const [uninstallTarget, setUninstallTarget] = useState<SkillCard | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState<SkillsFilter>("all");
-  const [customRepoOpen, setCustomRepoOpen] = useState(false);
-  const [customRepoOwner, setCustomRepoOwner] = useState("");
-  const [customRepoName, setCustomRepoName] = useState("");
-  const [customRepoRef, setCustomRepoRef] = useState("main");
-  const [customRepoError, setCustomRepoError] = useState<string | null>(null);
-
-  const [shareTarget, setShareTarget] = useState<SkillCard | null>(null);
-  const [shareSubView, setShareSubView] = useState<ShareSkillSubView>("chooser");
-  const [shareBusy, setShareBusy] = useState(false);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareError, setShareError] = useState<string | null>(null);
-  const [cloudSessionNonce, setCloudSessionNonce] = useState(0);
-  const [shareTeamBusy, setShareTeamBusy] = useState(false);
-  const [shareTeamError, setShareTeamError] = useState<string | null>(null);
-  const [shareTeamSuccess, setShareTeamSuccess] = useState<string | null>(null);
-  const [sharePermissionChoice, setSharePermissionChoice] = useState("org");
-  const [shareHubsLoading, setShareHubsLoading] = useState(false);
-  const [shareHubsError, setShareHubsError] = useState<string | null>(null);
-  const [shareManageableHubs, setShareManageableHubs] = useState<DenOrgSkillHubSummary[]>([]);
-
-  const [selectedSkill, setSelectedSkill] = useState<SkillCard | null>(null);
-  const [selectedContent, setSelectedContent] = useState("");
-  const [selectedLoading, setSelectedLoading] = useState(false);
-  const [selectedDirty, setSelectedDirty] = useState(false);
-  const [selectedError, setSelectedError] = useState<string | null>(null);
-
-  const [installingSkillCreator, setInstallingSkillCreator] = useState(false);
-  const [installingHubSkill, setInstallingHubSkill] = useState<string | null>(null);
-  const [installingCloudSkillId, setInstallingCloudSkillId] = useState<string | null>(null);
-  const [denUiTick, setDenUiTick] = useState(0);
+  const [localState, dispatchLocal] = useReducer(
+    skillsViewLocalReducer,
+    initialSkillsViewLocalState,
+  );
+  const {
+    uninstallTarget,
+    searchQuery,
+    activeFilter,
+    customRepoOpen,
+    customRepoOwner,
+    customRepoName,
+    customRepoRef,
+    customRepoError,
+    shareTarget,
+    shareSubView,
+    shareBusy,
+    shareUrl,
+    shareError,
+    cloudSessionNonce,
+    shareTeamBusy,
+    shareTeamError,
+    shareTeamSuccess,
+    sharePermissionChoice,
+    shareHubsLoading,
+    shareHubsError,
+    shareManageableHubs,
+    selectedSkill,
+    selectedContent,
+    selectedLoading,
+    selectedDirty,
+    selectedError,
+    installingSkillCreator,
+    installingHubSkill,
+    installingCloudSkillId,
+    denUiTick,
+  } = localState;
+  const setLocal = <K extends keyof SkillsViewLocalState>(
+    key: K,
+    value: SetStateAction<SkillsViewLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setUninstallTarget = (value: SetStateAction<SkillCard | null>) => setLocal("uninstallTarget", value);
+  const setSearchQuery = (value: SetStateAction<string>) => setLocal("searchQuery", value);
+  const setActiveFilter = (value: SetStateAction<SkillsFilter>) => setLocal("activeFilter", value);
+  const setCustomRepoOpen = (value: SetStateAction<boolean>) => setLocal("customRepoOpen", value);
+  const setCustomRepoOwner = (value: SetStateAction<string>) => setLocal("customRepoOwner", value);
+  const setCustomRepoName = (value: SetStateAction<string>) => setLocal("customRepoName", value);
+  const setCustomRepoRef = (value: SetStateAction<string>) => setLocal("customRepoRef", value);
+  const setCustomRepoError = (value: SetStateAction<string | null>) => setLocal("customRepoError", value);
+  const setShareTarget = (value: SetStateAction<SkillCard | null>) => setLocal("shareTarget", value);
+  const setShareSubView = (value: SetStateAction<ShareSkillSubView>) => setLocal("shareSubView", value);
+  const setShareBusy = (value: SetStateAction<boolean>) => setLocal("shareBusy", value);
+  const setShareUrl = (value: SetStateAction<string | null>) => setLocal("shareUrl", value);
+  const setShareError = (value: SetStateAction<string | null>) => setLocal("shareError", value);
+  const setShareTeamBusy = (value: SetStateAction<boolean>) => setLocal("shareTeamBusy", value);
+  const setShareTeamError = (value: SetStateAction<string | null>) => setLocal("shareTeamError", value);
+  const setShareTeamSuccess = (value: SetStateAction<string | null>) => setLocal("shareTeamSuccess", value);
+  const setSharePermissionChoice = (value: SetStateAction<string>) => setLocal("sharePermissionChoice", value);
+  const setSelectedSkill = (value: SetStateAction<SkillCard | null>) => setLocal("selectedSkill", value);
+  const setSelectedContent = (value: SetStateAction<string>) => setLocal("selectedContent", value);
+  const setSelectedLoading = (value: SetStateAction<boolean>) => setLocal("selectedLoading", value);
+  const setSelectedDirty = (value: SetStateAction<boolean>) => setLocal("selectedDirty", value);
+  const setSelectedError = (value: SetStateAction<string | null>) => setLocal("selectedError", value);
+  const setInstallingSkillCreator = (value: SetStateAction<boolean>) => setLocal("installingSkillCreator", value);
+  const setInstallingHubSkill = (value: SetStateAction<string | null>) => setLocal("installingHubSkill", value);
+  const setInstallingCloudSkillId = (value: SetStateAction<string | null>) => setLocal("installingCloudSkillId", value);
 
   const showToast = useCallback(
     (title: string, tone: ToastTone = "info") => {
@@ -193,8 +375,7 @@ export function SkillsView(props: SkillsViewProps) {
     void extensions.ensureHubSkillsFresh();
     void extensions.ensureCloudOrgSkillsFresh();
     const onDenSession = () => {
-      setDenUiTick((value) => value + 1);
-      setCloudSessionNonce((value) => value + 1);
+      dispatchLocal({ type: "denSessionUpdated" });
       void extensions.refreshCloudOrgSkills({ force: true });
     };
     window.addEventListener("openwork-den-session-updated", onDenSession);
@@ -207,12 +388,7 @@ export function SkillsView(props: SkillsViewProps) {
       if (event.key !== "Escape") return;
       event.preventDefault();
       if (shareSubView !== "chooser") {
-        setShareSubView("chooser");
-        setShareError(null);
-        setShareTeamError(null);
-        setShareTeamSuccess(null);
-        setSharePermissionChoice("org");
-        setShareHubsError(null);
+        dispatchLocal({ type: "resetShareChooser" });
         return;
       }
       setShareTarget(null);
@@ -246,8 +422,7 @@ export function SkillsView(props: SkillsViewProps) {
 
     let cancelled = false;
     void (async () => {
-      setShareHubsLoading(true);
-      setShareHubsError(null);
+      dispatchLocal({ type: "shareHubsStart" });
       try {
         const settings = readDenSettings();
         const token = settings.authToken?.trim() ?? "";
@@ -264,13 +439,12 @@ export function SkillsView(props: SkillsViewProps) {
         }
         const hubs = await client.listOrgSkillHubSummaries(orgId);
         if (cancelled) return;
-        setShareManageableHubs(hubs.filter((hub) => hub.canManage));
+        dispatchLocal({ type: "shareHubsLoaded", hubs: hubs.filter((hub) => hub.canManage) });
       } catch (error) {
         if (cancelled) return;
-        setShareHubsError(maskError(error));
-        setShareManageableHubs([]);
+        dispatchLocal({ type: "shareHubsFailed", error: maskError(error) });
       } finally {
-        if (!cancelled) setShareHubsLoading(false);
+        if (!cancelled) dispatchLocal({ type: "shareHubsDone" });
       }
     })();
 
@@ -413,26 +587,11 @@ export function SkillsView(props: SkillsViewProps) {
   };
 
   const closeShareLink = useCallback(() => {
-    setShareTarget(null);
-    setShareSubView("chooser");
-    setShareBusy(false);
-    setShareUrl(null);
-    setShareError(null);
-    setShareTeamBusy(false);
-    setShareTeamError(null);
-    setShareTeamSuccess(null);
-    setSharePermissionChoice("org");
-    setShareHubsError(null);
-    setShareManageableHubs([]);
+    dispatchLocal({ type: "closeShare" });
   }, []);
 
   const goBackShareSubView = useCallback(() => {
-    setShareSubView("chooser");
-    setShareError(null);
-    setShareTeamError(null);
-    setShareTeamSuccess(null);
-    setSharePermissionChoice("org");
-    setShareHubsError(null);
+    dispatchLocal({ type: "resetShareChooser" });
   }, []);
 
   const runDesktopAction = useCallback(
@@ -526,18 +685,7 @@ export function SkillsView(props: SkillsViewProps) {
   const openShareLink = useCallback(
     (skill: SkillCard) => {
       if (props.busy) return;
-      setShareTarget(skill);
-      setShareSubView("chooser");
-      setShareBusy(false);
-      setShareUrl(null);
-      setShareError(null);
-      setShareTeamBusy(false);
-      setShareTeamError(null);
-      setShareTeamSuccess(null);
-      setSharePermissionChoice("org");
-      setShareHubsError(null);
-      setShareManageableHubs([]);
-      setCloudSessionNonce((value) => value + 1);
+      dispatchLocal({ type: "openShare", skill });
     },
     [props.busy],
   );
