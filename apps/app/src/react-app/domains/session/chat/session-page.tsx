@@ -45,6 +45,12 @@ import { BrowserPanel } from "../browser/browser-panel";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 import { cn } from "@/lib/utils";
 
+const STARTUP_SKELETON_ROWS = [
+  { id: "intro", titleWidth: "42%", bodyWidth: "88%" },
+  { id: "middle", titleWidth: "56%", bodyWidth: "88%" },
+  { id: "final", titleWidth: "36%", bodyWidth: "74%" },
+];
+
 type StatusBarOverrides = Pick<
   StatusBarProps,
   | "statusLabel"
@@ -484,17 +490,17 @@ export function SessionPage(props: SessionPageProps) {
                       <div className="h-3 w-64 animate-pulse rounded-full bg-dls-hover/60" />
                     </div>
                     <div className="space-y-3">
-                      {[0, 1, 2].map((idx) => (
-                        <div key={idx} className="rounded-2xl border border-dls-border bg-dls-hover/40 p-4">
+                      {STARTUP_SKELETON_ROWS.map((row) => (
+                        <div key={row.id} className="rounded-2xl border border-dls-border bg-dls-hover/40 p-4">
                           <div
                             className="mb-3 h-3 animate-pulse rounded-full bg-dls-hover/80"
-                            style={{ width: idx === 0 ? "42%" : idx === 1 ? "56%" : "36%" }}
+                            style={{ width: row.titleWidth }}
                           />
                           <div className="space-y-2">
                             <div className="h-2.5 animate-pulse rounded-full bg-dls-hover/70" />
                             <div
                               className="h-2.5 animate-pulse rounded-full bg-dls-hover/60"
-                              style={{ width: idx === 2 ? "74%" : "88%" }}
+                              style={{ width: row.bodyWidth }}
                             />
                           </div>
                         </div>
@@ -626,7 +632,7 @@ export function SessionPage(props: SessionPageProps) {
                       const cancelled = todo.status === "cancelled";
                       const active = todo.status === "in_progress";
                       return (
-                        <div key={`${todo.content}-${index}`} className="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
+                        <div key={todo.id} className="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
                           <div className="flex items-center gap-1.5 pt-0.5">
                             <div
                               className={`flex size-4.5 items-center justify-center rounded-full border ${

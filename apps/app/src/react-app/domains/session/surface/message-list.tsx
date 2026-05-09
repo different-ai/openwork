@@ -694,6 +694,210 @@ function StepsContainer(props: {
   );
 }
 
+function messageGroupKey(messageId: string, group: MessageGroup) {
+  if (group.kind === "steps") return `${messageId}:steps:${group.id}`;
+  const partId = "id" in group.part && typeof group.part.id === "string" ? group.part.id : partToText(group.part);
+  return `${messageId}:text:${group.segment}:${partId}`;
+}
+
+function MessageBlockRow(props: {
+  block: MessageBlockItem;
+  blockIndex: number;
+  totalBlocks: number;
+  isNestedVariant: boolean;
+  shouldUseContentVisibility: boolean;
+  expandedStepIds: Set<string>;
+  onExpandedStepIdsChange: (updater: (current: Set<string>) => Set<string>) => void;
+  searchMatchMessageIds?: ReadonlySet<string>;
+  activeSearchMessageId?: string | null;
+  searchHighlightQuery?: string;
+  isStreaming: boolean;
+  latestAssistantMessageId: string;
+}) {
+  const block = props.block;
+  const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
+  const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
+  const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
+  const searchOutlineClass = hasActiveSearchMatch
+    ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
+    : hasSearchMatch
+      ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
+      : "";
+  const perfStyle = props.shouldUseContentVisibility && props.blockIndex < props.totalBlocks - 12
+    ? { contentVisibility: "auto", containIntrinsicSize: "180px" } satisfies CSSProperties
+    : undefined;
+
+  if (block.kind === "steps-cluster") {
+    return (
+      <div
+        className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+        data-message-role={block.isUser ? "user" : "assistant"}
+        data-message-id={block.messageIds[0] ?? ""}
+        style={{ contain: "layout style paint", ...perfStyle }}
+      >
+        <div
+          className={`${
+            block.isUser
+              ? props.isNestedVariant
+                ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
+                : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+              : props.isNestedVariant
+                ? "w-full relative text-[14px] leading-[1.65] text-dls-text group"
+                : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
+          } ${searchOutlineClass}`}
+        >
+          <StepsContainer
+            stepGroups={block.stepGroups}
+            isUser={block.isUser}
+            isNestedVariant={props.isNestedVariant}
+            expandedStepIds={props.expandedStepIds}
+            onExpandedStepIdsChange={props.onExpandedStepIdsChange}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+  const isSyntheticSessionError =
+    !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+
+  if (isSyntheticSessionError) {
+    const messageText = block.renderableParts
+      .map((part) => partToText(part))
+      .join(" ")
+      .replace(/\s*\n+\s*/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    return (
+      <div
+        className="flex group justify-start"
+        data-message-role="assistant"
+        data-message-id={block.messageId}
+        style={{ contain: "layout style paint", ...perfStyle }}
+      >
+        <div className={`w-full relative ${props.isNestedVariant ? "" : "max-w-[650px]"} ${searchOutlineClass}`}>
+          <div
+            className="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
+            role="alert"
+          >
+            <CircleAlert size={14} className="mt-0.5 shrink-0" />
+            <div className="min-w-0 break-words">{messageText}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+      data-message-role={block.isUser ? "user" : "assistant"}
+      data-message-id={block.messageId}
+      style={{ contain: "layout style paint", ...perfStyle }}
+    >
+      <div
+        className={`${
+          block.isUser
+            ? props.isNestedVariant
+              ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
+              : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+            : props.isNestedVariant
+              ? "w-full relative text-[14px] leading-[1.65] text-dls-text antialiased group"
+              : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
+        } ${searchOutlineClass}`}
+      >
+        {block.attachments.length > 0 ? (
+          <div className={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
+            {block.attachments.map((attachment) => (
+              <FileCard
+                key={`${block.messageId}:${attachment.url}`}
+                part={{
+                  filename: attachment.filename,
+                  url: attachment.url,
+                  mediaType: attachment.mime,
+                }}
+                tone={block.isUser ? "user" : "assistant"}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {block.groups.map((group) => {
+          const highlightQuery = hasSearchMatch ? props.searchHighlightQuery : undefined;
+          const isStreamingLatestAssistant =
+            !block.isUser && props.isStreaming && block.messageId === props.latestAssistantMessageId;
+
+          return (
+            <div key={messageGroupKey(block.messageId, group)} className={group === block.groups.at(-1) ? "" : groupSpacing}>
+              {group.kind === "text" ? (() => {
+                if (group.part.type === "file") {
+                  const filePart = group.part as {
+                    filename?: string;
+                    url?: string;
+                    mime?: string;
+                  };
+                  return (
+                    <FileCard
+                      part={{
+                        filename: filePart.filename,
+                        url: filePart.url ?? "",
+                        mediaType: filePart.mime ?? "application/octet-stream",
+                      }}
+                      tone={block.isUser ? "user" : "assistant"}
+                    />
+                  );
+                }
+
+                const text = partToText(group.part);
+                if (block.isUser) {
+                  return (
+                    <HighlightedPlainText
+                      text={text}
+                      className="whitespace-pre-wrap break-words text-gray-12"
+                      highlightQuery={highlightQuery}
+                    />
+                  );
+                }
+
+                return (
+                  <MarkdownBlock
+                    text={text}
+                    streaming={isStreamingLatestAssistant}
+                    highlightQuery={highlightQuery}
+                  />
+                );
+              })() : null}
+
+              {group.kind === "steps" ? (
+                <StepsContainer
+                  stepGroups={[{
+                    id: group.id,
+                    parts: group.parts,
+                    mode: group.mode,
+                  }]}
+                  isUser={block.isUser}
+                  isInline={true}
+                  isNestedVariant={props.isNestedVariant}
+                  expandedStepIds={props.expandedStepIds}
+                  onExpandedStepIdsChange={props.onExpandedStepIdsChange}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+
+        {!props.isNestedVariant ? (
+          <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+            <CopyButton getText={() => messageToText(block.message)} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function SessionTranscriptInner(props: SessionTranscriptProps) {
   const showThinking = props.showThinking ?? props.developerMode;
   const isNestedVariant = props.variant === "nested";
@@ -912,200 +1116,6 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
   // work reduces the chance that one large session makes the UI feel frozen.
   const shouldUseContentVisibility = !shouldVirtualize && messageBlocks.length > 24;
 
-  const blockPerfStyle = (index: number): CSSProperties | undefined => {
-    if (!shouldUseContentVisibility) return undefined;
-    const total = messageBlocks.length;
-      if (index >= total - 12) return undefined;
-      return {
-        contentVisibility: "auto",
-        containIntrinsicSize: "180px",
-      };
-    };
-
-  const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
-    const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
-    const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
-    const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
-    const searchOutlineClass = hasActiveSearchMatch
-      ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
-      : hasSearchMatch
-        ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
-        : "";
-
-    if (block.kind === "steps-cluster") {
-      return (
-        <div
-          key={`steps-${block.id}`}
-          className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-          data-message-role={block.isUser ? "user" : "assistant"}
-          data-message-id={block.messageIds[0] ?? ""}
-          style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
-        >
-          <div
-            className={`${
-              block.isUser
-                ? isNestedVariant
-                  ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
-                  : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-                : isNestedVariant
-                  ? "w-full relative text-[14px] leading-[1.65] text-dls-text group"
-                  : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
-            } ${searchOutlineClass}`}
-          >
-            <StepsContainer
-              stepGroups={block.stepGroups}
-              isUser={block.isUser}
-              isNestedVariant={isNestedVariant}
-              expandedStepIds={expandedStepIds}
-              onExpandedStepIdsChange={onExpandedStepIdsChange}
-            />
-          </div>
-        </div>
-      );
-    }
-
-    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
-    const isSyntheticSessionError =
-      !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
-
-    if (isSyntheticSessionError) {
-      const messageText = block.renderableParts
-        .map((part) => partToText(part))
-        .join(" ")
-        .replace(/\s*\n+\s*/g, " ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-
-      return (
-        <div
-          key={`error-${block.messageId}`}
-          className="flex group justify-start"
-          data-message-role="assistant"
-          data-message-id={block.messageId}
-          style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
-        >
-          <div className={`w-full relative ${isNestedVariant ? "" : "max-w-[650px]"} ${searchOutlineClass}`}>
-            <div
-              className="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
-              role="alert"
-            >
-              <CircleAlert size={14} className="mt-0.5 shrink-0" />
-              <div className="min-w-0 break-words">{messageText}</div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div
-        key={`message-${block.messageId}`}
-        className={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-        data-message-role={block.isUser ? "user" : "assistant"}
-        data-message-id={block.messageId}
-        style={{ contain: "layout style paint", ...blockPerfStyle(blockIndex) }}
-      >
-        <div
-          className={`${
-            block.isUser
-              ? isNestedVariant
-                ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
-                : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-              : isNestedVariant
-                ? "w-full relative text-[14px] leading-[1.65] text-dls-text antialiased group"
-                : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
-          } ${searchOutlineClass}`}
-        >
-          {block.attachments.length > 0 ? (
-            <div className={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
-              {block.attachments.map((attachment) => (
-                <FileCard
-                  key={`${block.messageId}:${attachment.url}`}
-                  part={{
-                    filename: attachment.filename,
-                    url: attachment.url,
-                    mediaType: attachment.mime,
-                  }}
-                  tone={block.isUser ? "user" : "assistant"}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          {block.groups.map((group, index) => {
-            const highlightQuery = hasSearchMatch ? props.searchHighlightQuery : undefined;
-            const isStreamingLatestAssistant =
-              !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId;
-
-            return (
-              <div key={`${block.messageId}:${group.kind}:${index}`} className={index === block.groups.length - 1 ? "" : groupSpacing}>
-                {group.kind === "text" ? (() => {
-                  if (group.part.type === "file") {
-                    const filePart = group.part as {
-                      filename?: string;
-                      url?: string;
-                      mime?: string;
-                    };
-                    return (
-                      <FileCard
-                        part={{
-                          filename: filePart.filename,
-                          url: filePart.url ?? "",
-                          mediaType: filePart.mime ?? "application/octet-stream",
-                        }}
-                        tone={block.isUser ? "user" : "assistant"}
-                      />
-                    );
-                  }
-
-                  const text = partToText(group.part);
-                  if (block.isUser) {
-                    return (
-                      <HighlightedPlainText
-                        text={text}
-                        className="whitespace-pre-wrap break-words text-gray-12"
-                        highlightQuery={highlightQuery}
-                      />
-                    );
-                  }
-
-                  return (
-                    <MarkdownBlock
-                      text={text}
-                      streaming={isStreamingLatestAssistant}
-                      highlightQuery={highlightQuery}
-                    />
-                  );
-                })() : null}
-
-                {group.kind === "steps" ? (
-                  <StepsContainer
-                    stepGroups={[{
-                      id: group.id,
-                      parts: group.parts,
-                      mode: group.mode,
-                    }]}
-                    isUser={block.isUser}
-                    isInline={true}
-                    isNestedVariant={isNestedVariant}
-                    expandedStepIds={expandedStepIds}
-                    onExpandedStepIdsChange={onExpandedStepIdsChange}
-                  />
-                ) : null}
-              </div>
-            );
-          })}
-
-          {!isNestedVariant ? (
-            <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-              <CopyButton getText={() => messageToText(block.message)} />
-            </div>
-          ) : null}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className={isNestedVariant ? "pb-0" : "pb-10"} style={{ contain: "layout paint style" }}>
       {shouldVirtualize ? (
@@ -1138,14 +1148,43 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                {renderBlock(block, virtualRow.index)}
+                <MessageBlockRow
+                  block={block}
+                  blockIndex={virtualRow.index}
+                  totalBlocks={messageBlocks.length}
+                  isNestedVariant={isNestedVariant}
+                  shouldUseContentVisibility={shouldUseContentVisibility}
+                  expandedStepIds={expandedStepIds}
+                  onExpandedStepIdsChange={onExpandedStepIdsChange}
+                  searchMatchMessageIds={props.searchMatchMessageIds}
+                  activeSearchMessageId={props.activeSearchMessageId}
+                  searchHighlightQuery={props.searchHighlightQuery}
+                  isStreaming={props.isStreaming}
+                  latestAssistantMessageId={latestAssistantMessageId}
+                />
               </div>
             );
           })}
         </div>
       ) : (
         <div className={isNestedVariant ? "space-y-3" : "space-y-4"}>
-          {messageBlocks.map((block, index) => renderBlock(block, index))}
+          {messageBlocks.map((block, index) => (
+            <MessageBlockRow
+              key={blockIdentityKey(block)}
+              block={block}
+              blockIndex={index}
+              totalBlocks={messageBlocks.length}
+              isNestedVariant={isNestedVariant}
+              shouldUseContentVisibility={shouldUseContentVisibility}
+              expandedStepIds={expandedStepIds}
+              onExpandedStepIdsChange={onExpandedStepIdsChange}
+              searchMatchMessageIds={props.searchMatchMessageIds}
+              activeSearchMessageId={props.activeSearchMessageId}
+              searchHighlightQuery={props.searchHighlightQuery}
+              isStreaming={props.isStreaming}
+              latestAssistantMessageId={latestAssistantMessageId}
+            />
+          ))}
         </div>
       )}
 

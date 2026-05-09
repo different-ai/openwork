@@ -202,7 +202,10 @@ export function PluginsView(props: PluginsViewProps) {
                   {isGuided && isGuideOpen ? (
                     <div className="rounded-xl border border-gray-6/70 bg-gray-1/60 p-4 space-y-3">
                       {(plugin.steps ?? []).map((step, idx) => (
-                        <div key={`${plugin.packageName}-step-${idx}`} className="space-y-1">
+                        <div
+                          key={`${plugin.packageName}:step:${step.title}:${step.command ?? step.url ?? step.path ?? step.description}`}
+                          className="space-y-1"
+                        >
                           <div className="text-xs font-medium text-gray-11">
                             {idx + 1}. {step.title}
                           </div>

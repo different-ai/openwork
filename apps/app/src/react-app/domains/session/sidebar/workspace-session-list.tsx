@@ -28,6 +28,12 @@ import {
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 
+const WORKSPACE_SESSION_SKELETON_ROWS = [
+  { id: "short", width: "62%" },
+  { id: "medium", width: "78%" },
+  { id: "compact", width: "54%" },
+];
+
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   showInitialLoading?: boolean;
@@ -802,14 +808,14 @@ export function WorkspaceSessionList(props: Props) {
                         />
                       ) : props.showInitialLoading ? (
                         <div className="space-y-2">
-                          {[0, 1, 2].map((idx) => (
+                          {WORKSPACE_SESSION_SKELETON_ROWS.map((row) => (
                             <div
-                              key={`${workspace.id}:skeleton:${idx}`}
+                              key={`${workspace.id}:skeleton:${row.id}`}
                               className="w-full rounded-[15px] border border-dls-border/70 bg-dls-hover/30 px-3 py-2.5"
                             >
                               <div
                                 className="h-2.5 rounded-full bg-dls-hover/80 animate-pulse"
-                                style={{ width: idx === 0 ? "62%" : idx === 1 ? "78%" : "54%" }}
+                                style={{ width: row.width }}
                               />
                             </div>
                           ))}

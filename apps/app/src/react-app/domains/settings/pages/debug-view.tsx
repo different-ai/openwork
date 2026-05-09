@@ -179,8 +179,8 @@ function formatUptime(ms: number) {
   return `${seconds}s`;
 }
 
-function renderLines(lines: string[]) {
-  return lines.map((line, index) => (
+function DebugLines(props: { lines: string[] }) {
+  return props.lines.map((line, index) => (
     <div key={`${line}-${index}`} className="truncate text-[11px] font-mono text-dls-secondary">
       {line}
     </div>
@@ -231,7 +231,7 @@ function ServiceCard(props: ServiceCardProps) {
         </div>
       </div>
 
-      <div className="space-y-1">{renderLines(props.lines)}</div>
+      <div className="space-y-1"><DebugLines lines={props.lines} /></div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -416,10 +416,10 @@ export function DebugView(props: DebugViewProps) {
               {props.opencodeConnectCard.label}
             </div>
           </div>
-          <div className="space-y-1">{renderLines(props.opencodeConnectCard.lines)}</div>
+          <div className="space-y-1"><DebugLines lines={props.opencodeConnectCard.lines} /></div>
           {props.opencodeConnectCard.metricsLines.length > 0 ? (
             <div className="space-y-1 border-t border-dls-border/60 pt-1">
-              {renderLines(props.opencodeConnectCard.metricsLines)}
+              <DebugLines lines={props.opencodeConnectCard.metricsLines} />
             </div>
           ) : null}
           {props.opencodeConnectCard.error ? (
