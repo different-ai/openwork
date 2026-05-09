@@ -1385,7 +1385,7 @@ export function SettingsRoute() {
     return ok;
   }, [openworkServerStore, refreshRouteState]);
 
-  const handleRestartLocalServer = useCallback(async () => {
+  const restartOpenworkServerAndRefresh = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
     try {
       await openworkServerRestart({
@@ -1400,21 +1400,8 @@ export function SettingsRoute() {
     }
   }, [openworkServerStore, refreshRouteState]);
 
-  const handleRestartMessagingWorker = useCallback(async () => {
-    if (!isDesktopRuntime()) return false;
-
-    try {
-      await openworkServerRestart({
-        remoteAccessEnabled:
-          readOpenworkServerSettings().remoteAccessEnabled === true,
-      });
-      await openworkServerStore.reconnectOpenworkServer();
-      await refreshRouteState();
-      return true;
-    } catch {
-      return false;
-    }
-  }, [openworkServerStore, refreshRouteState]);
+  const handleRestartLocalServer = restartOpenworkServerAndRefresh;
+  const handleRestartMessagingWorker = restartOpenworkServerAndRefresh;
 
   const messagingViewProps = useMessagingViewProps({
     busy,
