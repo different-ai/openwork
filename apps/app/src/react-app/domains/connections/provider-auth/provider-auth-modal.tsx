@@ -88,12 +88,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
-  const [autoOpenedPreferredProviderId, setAutoOpenedPreferredProviderId] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
   const oauthAutoPollRef = useRef<number | null>(null);
   const oauthCodeCopiedResetRef = useRef<number | null>(null);
+  const autoOpenedPreferredProviderIdRef = useRef<string | null>(null);
 
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
@@ -268,7 +268,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   useEffect(() => {
     if (!props.open) {
-      setAutoOpenedPreferredProviderId(null);
+      autoOpenedPreferredProviderIdRef.current = null;
       resetState();
     }
   }, [props.open]);
@@ -292,17 +292,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!props.open || props.loading || resolvedView !== "list") return;
 
     const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
-    if (!preferredId || autoOpenedPreferredProviderId === preferredId) return;
+    if (!preferredId || autoOpenedPreferredProviderIdRef.current === preferredId) return;
 
     const entry = entries.find((item) => item.id.trim().toLowerCase() === preferredId);
     if (!entry) return;
 
-    setAutoOpenedPreferredProviderId(preferredId);
+    autoOpenedPreferredProviderIdRef.current = preferredId;
     queueMicrotask(() => {
       handleEntrySelect(entry);
     });
   }, [
-    autoOpenedPreferredProviderId,
     entries,
     props.loading,
     props.open,
