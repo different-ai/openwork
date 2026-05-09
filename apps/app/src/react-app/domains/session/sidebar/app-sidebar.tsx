@@ -14,7 +14,7 @@ import {
   Settings,
   FolderOpen,
 } from "lucide-react";
-import { motion, Reorder, useDragControls } from "motion/react";
+import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -492,31 +492,33 @@ export function AppSidebar(props: AppSidebarProps) {
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
         <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        <motion.div
-          layoutScroll
-          data-slot="sidebar-content"
-          data-sidebar="content"
-          className="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
-        >
-          <Reorder.Group
-            as="div"
-            axis="y"
-            values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
-            onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
-            className="flex flex-col gap-2"
+        <LazyMotion features={domMax}>
+          <m.div
+            layoutScroll
+            data-slot="sidebar-content"
+            data-sidebar="content"
+            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
           >
-            {props.workspaceSessionGroups.map((group, index) => (
-              <WorkspaceReorderItem
-                key={group.workspace.id}
-                group={group}
-                className={cn(index === 0 && "mac:pt-0")}
-                showInitialLoading={props.showInitialLoading}
-                previewCount={previewCount(group.workspace.id)}
-                showMoreSessions={showMoreSessions}
-              />
-            ))}
-          </Reorder.Group>
-        </motion.div>
+            <Reorder.Group
+              as="div"
+              axis="y"
+              values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
+              onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
+              className="flex flex-col gap-2"
+            >
+              {props.workspaceSessionGroups.map((group, index) => (
+                <WorkspaceReorderItem
+                  key={group.workspace.id}
+                  group={group}
+                  className={cn(index === 0 && "mac:pt-0")}
+                  showInitialLoading={props.showInitialLoading}
+                  previewCount={previewCount(group.workspace.id)}
+                  showMoreSessions={showMoreSessions}
+                />
+              ))}
+            </Reorder.Group>
+          </m.div>
+        </LazyMotion>
 
         <SidebarFooter>
           <SidebarMenu>

@@ -1878,15 +1878,6 @@ export function SettingsRoute() {
       <ModelPickerModal
         open={modelPickerOpen}
         options={modelOptions}
-        filteredOptions={modelOptions.filter((opt) => {
-          const q = modelPickerQuery.trim().toLowerCase();
-          if (!q) return true;
-          return (
-            opt.title.toLowerCase().includes(q) ||
-            opt.providerID.toLowerCase().includes(q) ||
-            opt.modelID.toLowerCase().includes(q)
-          );
-        })}
         query={modelPickerQuery}
         setQuery={setModelPickerQuery}
         target="default"

@@ -2372,15 +2372,6 @@ export function SessionRoute() {
     <ModelPickerModal
       open={modelPickerOpen}
       options={allowedModelOptions}
-      filteredOptions={allowedModelOptions.filter((opt) => {
-        const q = modelPickerQuery.trim().toLowerCase();
-        if (!q) return true;
-        return (
-          opt.title.toLowerCase().includes(q) ||
-          opt.providerID.toLowerCase().includes(q) ||
-          opt.modelID.toLowerCase().includes(q)
-        );
-      })}
       query={modelPickerQuery}
       setQuery={setModelPickerQuery}
       target="default"

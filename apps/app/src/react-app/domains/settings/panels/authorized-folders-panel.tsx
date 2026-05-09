@@ -387,12 +387,8 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
             </div>
           ) : null}
 
-          <form
+          <div
             className="flex items-center gap-2 border-t border-gray-5/60 bg-gray-2/60 p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void addAuthorizedFolder();
-            }}
           >
             <div className="relative flex-1">
               <input
@@ -401,6 +397,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                 onChange={(event) => setAuthorizedFolderDraft(event.currentTarget.value)}
                 onPaste={(event) => {
                   event.preventDefault();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && authorizedFolderDraft.trim()) {
+                    void addAuthorizedFolder();
+                  }
                 }}
                 placeholder={t("context_panel.input_placeholder")}
                 disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig}
@@ -421,9 +422,10 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
             ) : null}
 
             <Button
-              type="submit"
+              type="button"
               variant="outline"
               className="h-8 border border-gray-5/60 bg-gray-3 px-3 text-xs text-gray-12 hover:bg-gray-4"
+              onClick={() => void addAuthorizedFolder()}
               disabled={
                 authorizedFoldersLoading ||
                 authorizedFoldersSaving ||
@@ -433,7 +435,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
             >
               {authorizedFoldersSaving ? t("context_panel.adding_button") : t("context_panel.add_button")}
             </Button>
-          </form>
+          </div>
         </div>
       )}
     </div>

@@ -48,7 +48,6 @@ function ProviderIcon({
 export type ModelPickerModalProps = {
   open: boolean;
   options: ModelOption[];
-  filteredOptions: ModelOption[];
   query: string;
   setQuery: (value: string) => void;
   target: "default" | "session";
@@ -73,13 +72,24 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const optionRefs = useRef<HTMLDivElement[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const filteredOptions = useMemo(() => {
+    const q = props.query.trim().toLowerCase();
+    if (!q) return props.options;
+    return props.options.filter(
+      (opt) =>
+        opt.title.toLowerCase().includes(q) ||
+        opt.providerID.toLowerCase().includes(q) ||
+        opt.modelID.toLowerCase().includes(q),
+    );
+  }, [props.options, props.query]);
+
   const otherProviderLinks = useMemo(() => {
     const seen = new Set<string>();
     const items: { providerID: string; title: string; matchCount: number }[] =
       [];
     const counts = new Map<string, number>();
 
-    for (const opt of props.filteredOptions) {
+    for (const opt of filteredOptions) {
       if (opt.isConnected) continue;
       counts.set(opt.providerID, (counts.get(opt.providerID) ?? 0) + 1);
       if (seen.has(opt.providerID)) continue;
@@ -95,10 +105,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       ...item,
       matchCount: counts.get(item.providerID) ?? 1,
     }));
-  }, [props.filteredOptions]);
+  }, [filteredOptions]);
 
   const renderedItems = useMemo<RenderedItem[]>(() => {
-    const models = props.filteredOptions.filter((opt) => opt.isConnected);
+    const models = filteredOptions.filter((opt) => opt.isConnected);
     const recommended = models.filter((opt) => opt.isRecommended);
     const others = models.filter((opt) => !opt.isRecommended);
     return [
@@ -109,7 +119,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         ...item,
       })),
     ];
-  }, [otherProviderLinks, props.filteredOptions]);
+  }, [otherProviderLinks, filteredOptions]);
 
   const activeModelIndex = useMemo(
     () =>
@@ -510,7 +520,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {props.query.trim() ? (
               <div className="mt-2 text-xs text-dls-secondary">
                 {t("settings.showing_models", {
-                  count: props.filteredOptions.length,
+                  count: filteredOptions.length,
                   total: props.options.length,
                 })}
               </div>

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
-import { forwardRef, type ButtonHTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 
-export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+export type ButtonProps = ComponentProps<"button"> & {
   variant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
 };
 
@@ -20,18 +20,16 @@ const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
   danger: "bg-red-3 text-red-11 hover:bg-red-4 border border-red-6",
 };
 
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  function Button({ variant, className, type, disabled, ...rest }, ref) {
-    const effectiveVariant = variant ?? "primary";
-    return (
-      <button
-        ref={ref}
-        type={type ?? "button"}
-        disabled={disabled}
-        aria-disabled={disabled}
-        className={`${base} ${variants[effectiveVariant]} ${className ?? ""}`.trim()}
-        {...rest}
-      />
-    );
-  },
-);
+export function Button({ variant, className, type, disabled, ref, ...rest }: ButtonProps) {
+  const effectiveVariant = variant ?? "primary";
+  return (
+    <button
+      ref={ref}
+      type={type ?? "button"}
+      disabled={disabled}
+      aria-disabled={disabled}
+      className={`${base} ${variants[effectiveVariant]} ${className ?? ""}`.trim()}
+      {...rest}
+    />
+  );
+}
