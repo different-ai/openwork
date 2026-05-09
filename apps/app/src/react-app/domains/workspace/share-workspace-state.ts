@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 
 import {
   buildOpenworkWorkspaceBaseUrl,
@@ -27,16 +27,47 @@ type UseShareWorkspaceStateOptions = {
   workspaceLabel: (workspace: WorkspaceInfo) => string;
 };
 
+type ShareWorkspaceLocalState = {
+  shareWorkspaceId: string | null;
+  shareLocalOpenworkWorkspaceId: string | null;
+};
+
+type ShareWorkspaceLocalAction =
+  | { type: "open"; workspaceId: string }
+  | { type: "close" }
+  | { type: "localOpenworkWorkspace"; workspaceId: string | null };
+
+const initialShareWorkspaceLocalState: ShareWorkspaceLocalState = {
+  shareWorkspaceId: null,
+  shareLocalOpenworkWorkspaceId: null,
+};
+
+function shareWorkspaceLocalReducer(
+  state: ShareWorkspaceLocalState,
+  action: ShareWorkspaceLocalAction,
+): ShareWorkspaceLocalState {
+  switch (action.type) {
+    case "open":
+      return { ...state, shareWorkspaceId: action.workspaceId };
+    case "close":
+      return { ...state, shareWorkspaceId: null };
+    case "localOpenworkWorkspace":
+      return { ...state, shareLocalOpenworkWorkspaceId: action.workspaceId };
+  }
+}
+
 export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
-  const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
-  const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = useState<string | null>(null);
+  const [{ shareWorkspaceId, shareLocalOpenworkWorkspaceId }, dispatchShareWorkspace] = useReducer(
+    shareWorkspaceLocalReducer,
+    initialShareWorkspaceLocalState,
+  );
 
   const openShareWorkspace = useCallback((workspaceId: string) => {
-    setShareWorkspaceId(workspaceId);
+    dispatchShareWorkspace({ type: "open", workspaceId });
   }, []);
 
   const closeShareWorkspace = useCallback(() => {
-    setShareWorkspaceId(null);
+    dispatchShareWorkspace({ type: "close" });
   }, []);
 
   const shareWorkspace = useMemo(() => {
@@ -86,12 +117,12 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
       !baseUrl ||
       !token
     ) {
-      setShareLocalOpenworkWorkspaceId(null);
+      dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
       return;
     }
 
     let cancelled = false;
-    setShareLocalOpenworkWorkspaceId(null);
+    dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
 
     void (async () => {
       try {
@@ -103,9 +134,11 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
         const match = items.find(
           (entry) => normalizeDirectoryPath(entry.path) === targetPath,
         );
-        setShareLocalOpenworkWorkspaceId(match?.id ?? null);
+        dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: match?.id ?? null });
       } catch {
-        if (!cancelled) setShareLocalOpenworkWorkspaceId(null);
+        if (!cancelled) {
+          dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
+        }
       }
     })();
 

@@ -3,8 +3,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
+  type SetStateAction,
 } from "react";
 import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-react";
 
@@ -88,30 +89,124 @@ function workerSecondaryLine(worker: DenWorkerSummary) {
   return parts.join(" · ");
 }
 
+type CreateWorkspaceLocalState = {
+  screen: CreateWorkspaceScreen;
+  selectedFolder: string | null;
+  pickingFolder: boolean;
+  showProgressDetails: boolean;
+  now: number;
+  cloudSettings: ReturnType<typeof readDenSettings>;
+  remoteUrl: string;
+  remoteToken: string;
+  remoteDisplayName: string;
+  remoteTokenVisible: boolean;
+  orgs: DenOrgSummary[];
+  activeOrgId: string;
+  orgsBusy: boolean;
+  orgsError: string | null;
+  workers: DenWorkerSummary[];
+  workersBusy: boolean;
+  workersError: string | null;
+  openingWorkerId: string | null;
+  workerSearch: string;
+};
+
+type CreateWorkspaceLocalAction<K extends keyof CreateWorkspaceLocalState = keyof CreateWorkspaceLocalState> =
+  | { type: "set"; key: K; value: SetStateAction<CreateWorkspaceLocalState[K]> }
+  | { type: "reset"; settings: ReturnType<typeof readDenSettings> };
+
+function createInitialWorkspaceLocalState(settings = readDenSettings()): CreateWorkspaceLocalState {
+  return {
+    screen: "chooser",
+    selectedFolder: null,
+    pickingFolder: false,
+    showProgressDetails: false,
+    now: Date.now(),
+    cloudSettings: settings,
+    remoteUrl: "",
+    remoteToken: "",
+    remoteDisplayName: "",
+    remoteTokenVisible: false,
+    orgs: [],
+    activeOrgId: settings.activeOrgId?.trim() ?? "",
+    orgsBusy: false,
+    orgsError: null,
+    workers: [],
+    workersBusy: false,
+    workersError: null,
+    openingWorkerId: null,
+    workerSearch: "",
+  };
+}
+
+function createWorkspaceLocalReducer(
+  state: CreateWorkspaceLocalState,
+  action: CreateWorkspaceLocalAction,
+): CreateWorkspaceLocalState {
+  if (action.type === "reset") return createInitialWorkspaceLocalState(action.settings);
+  const current = state[action.key];
+  const next =
+    typeof action.value === "function"
+      ? (action.value as (value: typeof current) => typeof current)(current)
+      : action.value;
+  if (Object.is(current, next)) return state;
+  return { ...state, [action.key]: next };
+}
+
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteUrlRef = useRef<HTMLInputElement | null>(null);
   const platform = usePlatform();
 
-  const [screen, setScreen] = useState<CreateWorkspaceScreen>("chooser");
+  const [localState, dispatchLocal] = useReducer(
+    createWorkspaceLocalReducer,
+    undefined,
+    () => createInitialWorkspaceLocalState(),
+  );
+  const {
+    screen,
+    selectedFolder,
+    pickingFolder,
+    showProgressDetails,
+    now,
+    cloudSettings,
+    remoteUrl,
+    remoteToken,
+    remoteDisplayName,
+    remoteTokenVisible,
+    orgs,
+    activeOrgId,
+    orgsBusy,
+    orgsError,
+    workers,
+    workersBusy,
+    workersError,
+    openingWorkerId,
+    workerSearch,
+  } = localState;
+  const setLocal = <K extends keyof CreateWorkspaceLocalState>(
+    key: K,
+    value: SetStateAction<CreateWorkspaceLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setScreen = (value: SetStateAction<CreateWorkspaceScreen>) => setLocal("screen", value);
+  const setSelectedFolder = (value: SetStateAction<string | null>) => setLocal("selectedFolder", value);
+  const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
+  const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
+  const setNow = (value: SetStateAction<number>) => setLocal("now", value);
+  const setCloudSettings = (value: SetStateAction<ReturnType<typeof readDenSettings>>) => setLocal("cloudSettings", value);
+  const setRemoteUrl = (value: SetStateAction<string>) => setLocal("remoteUrl", value);
+  const setRemoteToken = (value: SetStateAction<string>) => setLocal("remoteToken", value);
+  const setRemoteDisplayName = (value: SetStateAction<string>) => setLocal("remoteDisplayName", value);
+  const setRemoteTokenVisible = (value: SetStateAction<boolean>) => setLocal("remoteTokenVisible", value);
+  const setOrgs = (value: SetStateAction<DenOrgSummary[]>) => setLocal("orgs", value);
+  const setActiveOrgId = (value: SetStateAction<string>) => setLocal("activeOrgId", value);
+  const setOrgsBusy = (value: SetStateAction<boolean>) => setLocal("orgsBusy", value);
+  const setOrgsError = (value: SetStateAction<string | null>) => setLocal("orgsError", value);
+  const setWorkers = (value: SetStateAction<DenWorkerSummary[]>) => setLocal("workers", value);
+  const setWorkersBusy = (value: SetStateAction<boolean>) => setLocal("workersBusy", value);
+  const setWorkersError = (value: SetStateAction<string | null>) => setLocal("workersError", value);
+  const setOpeningWorkerId = (value: SetStateAction<string | null>) => setLocal("openingWorkerId", value);
+  const setWorkerSearch = (value: SetStateAction<string>) => setLocal("workerSearch", value);
   const preset = props.defaultPreset ?? "starter";
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-  const [pickingFolder, setPickingFolder] = useState(false);
-  const [showProgressDetails, setShowProgressDetails] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [cloudSettings, setCloudSettings] = useState(() => readDenSettings());
-  const [remoteUrl, setRemoteUrl] = useState("");
-  const [remoteToken, setRemoteToken] = useState("");
-  const [remoteDisplayName, setRemoteDisplayName] = useState("");
-  const [remoteTokenVisible, setRemoteTokenVisible] = useState(false);
-  const [orgs, setOrgs] = useState<DenOrgSummary[]>([]);
-  const [activeOrgId, setActiveOrgId] = useState("");
-  const [orgsBusy, setOrgsBusy] = useState(false);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [workers, setWorkers] = useState<DenWorkerSummary[]>([]);
-  const [workersBusy, setWorkersBusy] = useState(false);
-  const [workersError, setWorkersError] = useState<string | null>(null);
-  const [openingWorkerId, setOpeningWorkerId] = useState<string | null>(null);
-  const [workerSearch, setWorkerSearch] = useState("");
 
   const showClose = props.showClose ?? true;
   const isInline = props.inline ?? false;
@@ -195,19 +290,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    const settings = readDenSettings();
-    setScreen("chooser");
-    setCloudSettings(settings);
-    setRemoteUrl("");
-    setRemoteToken("");
-    setRemoteDisplayName("");
-    setRemoteTokenVisible(false);
-    setWorkerSearch("");
-    setOrgs([]);
-    setWorkers([]);
-    setOrgsError(null);
-    setWorkersError(null);
-    setActiveOrgId(settings.activeOrgId?.trim() ?? "");
+    dispatchLocal({ type: "reset", settings: readDenSettings() });
   }, [props.open]);
 
   // React to Den session changes.

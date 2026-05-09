@@ -5,8 +5,8 @@ import {
   use,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
   type ReactNode,
 } from "react";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -91,10 +91,52 @@ type ServerProviderProps = {
   defaultUrl: string;
 };
 
+type ServerState = {
+  list: string[];
+  active: string;
+  healthy: boolean | undefined;
+};
+
+type ServerAction =
+  | { type: "ready"; list: string[]; active: string }
+  | { type: "active"; active: string }
+  | { type: "add"; url: string }
+  | { type: "remove"; url: string }
+  | { type: "healthy"; healthy: boolean | undefined };
+
+const initialServerState: ServerState = {
+  list: [],
+  active: "",
+  healthy: undefined,
+};
+
+function serverReducer(state: ServerState, action: ServerAction): ServerState {
+  switch (action.type) {
+    case "ready":
+      return { ...state, list: action.list, active: action.active };
+    case "active":
+      return { ...state, active: action.active };
+    case "add":
+      return {
+        ...state,
+        list: state.list.includes(action.url) ? state.list : [...state.list, action.url],
+        active: action.url,
+      };
+    case "remove": {
+      const list = state.list.filter((item) => item !== action.url);
+      return {
+        ...state,
+        list,
+        active: state.active === action.url ? list[0] ?? "" : state.active,
+      };
+    }
+    case "healthy":
+      return { ...state, healthy: action.healthy };
+  }
+}
+
 export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
-  const [list, setList] = useState<string[]>([]);
-  const [active, setActiveRaw] = useState<string>("");
-  const [healthy, setHealthy] = useState<boolean | undefined>(undefined);
+  const [{ list, active, healthy }, dispatchServer] = useReducer(serverReducer, initialServerState);
   const readyRef = useRef(false);
 
   useEffect(() => {
@@ -113,8 +155,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
           import.meta.env.VITE_OPENWORK_URL.trim().length > 0));
 
     if (forceProxy && fallback) {
-      setList([fallback]);
-      setActiveRaw(fallback);
+      dispatchServer({ type: "ready", list: [fallback], active: fallback });
       readyRef.current = true;
       return;
     }
@@ -125,8 +166,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     const initialList = storedList.length ? storedList : fallback ? [fallback] : [];
     const initialActive = storedActive || initialList[0] || fallback || "";
 
-    setList(initialList);
-    setActiveRaw(initialActive);
+    dispatchServer({ type: "ready", list: initialList, active: initialActive });
     readyRef.current = true;
   }, [defaultUrl]);
 
@@ -148,10 +188,10 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       // `/opencode` URLs directly. Ignore old persisted raw OpenCode daemon
       // URLs here; their ephemeral ports go stale across restarts and otherwise
       // produce noisy `/global/health` connection-refused polling forever.
-      setHealthy(undefined);
+      dispatchServer({ type: "healthy", healthy: undefined });
       return;
     }
-    setHealthy(undefined);
+    dispatchServer({ type: "healthy", healthy: undefined });
 
     let cancelled = false;
     let busy = false;
@@ -162,7 +202,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       void checkHealth(active)
         .then((next) => {
           if (cancelled) return;
-          setHealthy(next);
+          dispatchServer({ type: "healthy", healthy: next });
         })
         .finally(() => {
           busy = false;
@@ -181,26 +221,19 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
   const setActive = useCallback((input: string) => {
     const next = normalizeServerUrl(input);
     if (!next) return;
-    setActiveRaw(next);
+    dispatchServer({ type: "active", active: next });
   }, []);
 
   const add = useCallback((input: string) => {
     const next = normalizeServerUrl(input);
     if (!next) return;
-    setList((current) => (current.includes(next) ? current : [...current, next]));
-    setActiveRaw(next);
+    dispatchServer({ type: "add", url: next });
   }, []);
 
   const remove = useCallback((input: string) => {
     const next = normalizeServerUrl(input);
     if (!next) return;
-    setList((current) => current.filter((item) => item !== next));
-    setActiveRaw((current) => {
-      if (current !== next) return current;
-      // Read latest list after the filter above through functional updater.
-      const remaining = readStoredList().filter((item) => item !== next);
-      return remaining[0] ?? "";
-    });
+    dispatchServer({ type: "remove", url: next });
   }, []);
 
   const value = useMemo<ServerContextValue>(

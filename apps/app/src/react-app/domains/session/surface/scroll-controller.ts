@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject, type UIEventHandler } from "react";
+import { useCallback, useEffect, useReducer, useRef, type RefObject, type UIEventHandler } from "react";
 
 const FOLLOW_LATEST_BOTTOM_GAP_PX = 96;
 // Widened from 250ms so a single wheel or trackpad flick isn't missed between
@@ -11,6 +11,35 @@ const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 
 type SessionScrollMode = "follow-latest" | "manual-browse";
 
+type SessionScrollState = {
+  mode: SessionScrollMode;
+  topClippedMessageId: string | null;
+};
+
+type SessionScrollAction =
+  | { type: "mode"; mode: SessionScrollMode }
+  | { type: "topClippedMessage"; id: string | null }
+  | { type: "followLatest" };
+
+const initialSessionScrollState: SessionScrollState = {
+  mode: "follow-latest",
+  topClippedMessageId: null,
+};
+
+function sessionScrollReducer(
+  state: SessionScrollState,
+  action: SessionScrollAction,
+): SessionScrollState {
+  switch (action.type) {
+    case "mode":
+      return { ...state, mode: action.mode };
+    case "topClippedMessage":
+      return { ...state, topClippedMessageId: action.id };
+    case "followLatest":
+      return { mode: "follow-latest", topClippedMessageId: null };
+  }
+}
+
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
   renderedMessages: unknown;
@@ -21,8 +50,10 @@ type SessionScrollControllerOptions = {
 export function useSessionScrollController(
   options: SessionScrollControllerOptions,
 ) {
-  const [mode, setMode] = useState<SessionScrollMode>("follow-latest");
-  const [topClippedMessageId, setTopClippedMessageId] = useState<string | null>(null);
+  const [{ mode, topClippedMessageId }, dispatchScroll] = useReducer(
+    sessionScrollReducer,
+    initialSessionScrollState,
+  );
 
   const lastKnownScrollTopRef = useRef(0);
   const programmaticScrollRef = useRef(false);
@@ -84,7 +115,7 @@ export function useSessionScrollController(
   const refreshTopClippedMessage = useCallback(() => {
     const container = options.containerRef.current;
     if (!container) {
-      setTopClippedMessageId(null);
+      dispatchScroll({ type: "topClippedMessage", id: null });
       return;
     }
 
@@ -113,7 +144,7 @@ export function useSessionScrollController(
       break;
     }
 
-    setTopClippedMessageId(nextId);
+    dispatchScroll({ type: "topClippedMessage", id: nextId });
   }, [options.containerRef]);
 
   const scrollToBottom = useCallback(
@@ -121,8 +152,7 @@ export function useSessionScrollController(
       const container = options.containerRef.current;
       if (!container) return;
 
-      setMode("follow-latest");
-      setTopClippedMessageId(null);
+      dispatchScroll({ type: "followLatest" });
       programmaticScrollRef.current = true;
 
       if (behavior === "smooth") {
@@ -162,7 +192,7 @@ export function useSessionScrollController(
       if (programmaticScrollRef.current && (userGestured || scrolledUp)) {
         programmaticScrollRef.current = false;
         clearProgrammaticScrollReset();
-        setMode("manual-browse");
+        dispatchScroll({ type: "mode", mode: "manual-browse" });
         lastKnownScrollTopRef.current = currentTop;
         refreshTopClippedMessage();
         return;
@@ -185,9 +215,9 @@ export function useSessionScrollController(
 
       const bottomGap = container.scrollHeight - (currentTop + container.clientHeight);
       if (bottomGap <= FOLLOW_LATEST_BOTTOM_GAP_PX) {
-        setMode("follow-latest");
+        dispatchScroll({ type: "mode", mode: "follow-latest" });
       } else if (scrolledUp) {
-        setMode("manual-browse");
+        dispatchScroll({ type: "mode", mode: "manual-browse" });
       }
       lastKnownScrollTopRef.current = currentTop;
       refreshTopClippedMessage();
@@ -214,7 +244,7 @@ export function useSessionScrollController(
       ) as HTMLElement | null;
       if (!target) return;
 
-      setMode("manual-browse");
+      dispatchScroll({ type: "mode", mode: "manual-browse" });
       target.scrollIntoView({ behavior, block: "start" });
     },
     [options.containerRef, topClippedMessageId],
@@ -260,8 +290,7 @@ export function useSessionScrollController(
     previousSessionIdRef.current = options.selectedSessionId;
     if (!options.selectedSessionId) return;
 
-    setMode("follow-latest");
-    setTopClippedMessageId(null);
+    dispatchScroll({ type: "followLatest" });
     observedContentHeightRef.current = 0;
     queueMicrotask(() => {
       const container = options.containerRef.current;
@@ -277,8 +306,8 @@ export function useSessionScrollController(
       const latestHeight = latest.getBoundingClientRect().height;
       const containerHeight = container.getBoundingClientRect().height;
       if (latestHeight > containerHeight) {
-        setMode("manual-browse");
-        setTopClippedMessageId(null);
+        dispatchScroll({ type: "mode", mode: "manual-browse" });
+        dispatchScroll({ type: "topClippedMessage", id: null });
         programmaticScrollRef.current = true;
         latest.scrollIntoView({ block: "start" });
         releaseProgrammaticScrollSoon();
