@@ -308,7 +308,7 @@ export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
-const STORAGE_HOST_TOKEN = "openwork.server.hostToken";
+const STORAGE_HOST_AUTH_KEY = "openwork.server.hostToken";
 const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
@@ -444,7 +444,7 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
-    const hostToken = window.localStorage.getItem(STORAGE_HOST_TOKEN) ?? undefined;
+    const hostToken = window.localStorage.getItem(STORAGE_HOST_AUTH_KEY) ?? undefined;
     const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
@@ -486,9 +486,9 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     }
 
     if (hostToken) {
-      window.localStorage.setItem(STORAGE_HOST_TOKEN, hostToken);
+      window.localStorage.setItem(STORAGE_HOST_AUTH_KEY, hostToken);
     } else {
-      window.localStorage.removeItem(STORAGE_HOST_TOKEN);
+      window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     }
 
     if (remoteAccessEnabled) {
@@ -563,7 +563,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
-    window.localStorage.removeItem(STORAGE_HOST_TOKEN);
+    window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
