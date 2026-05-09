@@ -42,6 +42,93 @@ const displayName = (workspace: WorkspaceInfo, fallback: string): string =>
   workspace.baseUrl?.trim() ||
   fallback;
 
+const subtitle = (workspace: WorkspaceInfo): string => {
+  if (workspace.workspaceType === "local") {
+    return (
+      workspace.path?.trim() ||
+      t("share_skill_destination.local_badge")
+    );
+  }
+  return (
+    workspace.directory?.trim() ||
+    workspace.openworkHostUrl?.trim() ||
+    workspace.baseUrl?.trim() ||
+    workspace.path?.trim() ||
+    t("share_skill_destination.remote_badge")
+  );
+};
+
+const workspaceBadge = (workspace: WorkspaceInfo): string => {
+  if (isSandboxWorkspace(workspace)) {
+    return t("share_skill_destination.sandbox_badge");
+  }
+  if (workspace.workspaceType === "remote") {
+    return t("share_skill_destination.remote_badge");
+  }
+  return t("share_skill_destination.local_badge");
+};
+
+const workspaceCircleClass = (
+  workspace: WorkspaceInfo,
+  selected: boolean,
+): string => {
+  if (selected) {
+    return "bg-indigo-7/15 text-indigo-11 border border-indigo-7/30";
+  }
+  if (isSandboxWorkspace(workspace)) {
+    return "bg-indigo-7/10 text-indigo-11 border border-indigo-7/20";
+  }
+  if (workspace.workspaceType === "remote") {
+    return "bg-sky-7/10 text-sky-11 border border-sky-7/20";
+  }
+  return "bg-amber-7/10 text-amber-11 border border-amber-7/20";
+};
+
+function SkillDestinationFooter(props: {
+  selectedWorkspace: WorkspaceInfo | null;
+  footerBusy: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="border-t border-gray-6 bg-gray-1 px-6 py-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {props.selectedWorkspace ? (
+          <div className="min-w-0 text-sm text-gray-10">
+            <span className="font-medium text-gray-12">
+              {displayName(props.selectedWorkspace, "Worker")}
+            </span>
+            <span className="mx-2 text-gray-8">·</span>
+            <span className="truncate align-middle">
+              {subtitle(props.selectedWorkspace)}
+            </span>
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-end gap-3">
+          <Button variant="ghost" onClick={props.onClose} disabled={props.footerBusy}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={props.onSubmit}
+            disabled={!props.selectedWorkspace || props.footerBusy}
+          >
+            {props.footerBusy ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                {t("share_skill_destination.adding")}
+              </span>
+            ) : (
+              t("share_skill_destination.add_to_workspace")
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SkillDestinationModal(props: SkillDestinationModalProps) {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<
     string | null
@@ -66,48 +153,6 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
       null;
     setSelectedWorkspaceId(activeMatch?.id ?? null);
   }, [props.open, props.selectedWorkspaceId, props.workspaces]);
-
-  const subtitle = (workspace: WorkspaceInfo): string => {
-    if (workspace.workspaceType === "local") {
-      return (
-        workspace.path?.trim() ||
-        t("share_skill_destination.local_badge")
-      );
-    }
-    return (
-      workspace.directory?.trim() ||
-      workspace.openworkHostUrl?.trim() ||
-      workspace.baseUrl?.trim() ||
-      workspace.path?.trim() ||
-      t("share_skill_destination.remote_badge")
-    );
-  };
-
-  const workspaceBadge = (workspace: WorkspaceInfo): string => {
-    if (isSandboxWorkspace(workspace)) {
-      return t("share_skill_destination.sandbox_badge");
-    }
-    if (workspace.workspaceType === "remote") {
-      return t("share_skill_destination.remote_badge");
-    }
-    return t("share_skill_destination.local_badge");
-  };
-
-  const workspaceCircleClass = (
-    workspace: WorkspaceInfo,
-    selected: boolean,
-  ): string => {
-    if (selected) {
-      return "bg-indigo-7/15 text-indigo-11 border border-indigo-7/30";
-    }
-    if (isSandboxWorkspace(workspace)) {
-      return "bg-indigo-7/10 text-indigo-11 border border-indigo-7/20";
-    }
-    if (workspace.workspaceType === "remote") {
-      return "bg-sky-7/10 text-sky-11 border border-sky-7/20";
-    }
-    return "bg-amber-7/10 text-amber-11 border border-amber-7/20";
-  };
 
   const submitSelectedWorkspace = () => {
     const workspaceId = selectedWorkspaceId?.trim();
@@ -342,45 +387,12 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
           ) : null}
         </div>
 
-        <div className="border-t border-gray-6 bg-gray-1 px-6 py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            {selectedWorkspace ? (
-              <div className="min-w-0 text-sm text-gray-10">
-                <span className="font-medium text-gray-12">
-                  {displayName(selectedWorkspace, "Worker")}
-                </span>
-                <span className="mx-2 text-gray-8">·</span>
-                <span className="truncate align-middle">
-                  {subtitle(selectedWorkspace)}
-                </span>
-              </div>
-            ) : null}
-
-            <div className="flex items-center justify-end gap-3">
-              <Button
-                variant="ghost"
-                onClick={props.onClose}
-                disabled={footerBusy}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button
-                variant="primary"
-                onClick={submitSelectedWorkspace}
-                disabled={!selectedWorkspace || footerBusy}
-              >
-                {footerBusy ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 size={16} className="animate-spin" />
-                    {t("share_skill_destination.adding")}
-                  </span>
-                ) : (
-                  t("share_skill_destination.add_to_workspace")
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <SkillDestinationFooter
+          selectedWorkspace={selectedWorkspace}
+          footerBusy={footerBusy}
+          onClose={props.onClose}
+          onSubmit={submitSelectedWorkspace}
+        />
       </div>
     </div>
   );

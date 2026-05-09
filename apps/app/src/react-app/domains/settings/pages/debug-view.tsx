@@ -180,10 +180,17 @@ function formatUptime(ms: number) {
 }
 
 function DebugLines(props: { lines: string[] }) {
-  return props.lines.map((line, index) => (
-    <div key={`${line}-${index}`} className="truncate text-[11px] font-mono text-dls-secondary">
-      {line}
-    </div>
+  let offset = 0;
+  return props.lines.map((line) => (
+    (() => {
+      const key = `${offset}:${line}`;
+      offset += line.length + 1;
+      return (
+        <div key={key} className="truncate text-[11px] font-mono text-dls-secondary">
+          {line}
+        </div>
+      );
+    })()
   ));
 }
 

@@ -438,17 +438,20 @@ function HighlightedPlainText(props: {
 
   // Split on paste tokens and render chips inline.
   const segments = props.text.split(PASTE_TOKEN_RE);
+  let segmentOffset = 0;
   return (
     <div ref={rootRef} className={props.className}>
-      {segments.map((segment, index) => {
+      {segments.map((segment) => {
+        const key = `${segmentOffset}:${segment}`;
+        segmentOffset += segment.length;
         const match = segment.match(/^\[pasted text (.+)\]$/);
         if (match?.[1]) {
           const pastedBody = props.pastedTextMap?.get(match[1]);
           if (pastedBody) {
-            return <PastedTextChip key={index} label={match[1]} text={pastedBody} />;
+            return <PastedTextChip key={key} label={match[1]} text={pastedBody} />;
           }
         }
-        return <span key={index}>{segment}</span>;
+        return <span key={key}>{segment}</span>;
       })}
     </div>
   );

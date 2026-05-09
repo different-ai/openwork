@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MutableRefObject,
+  type RefObject,
 } from "react";
 import { Search, X } from "lucide-react";
 
@@ -19,6 +21,23 @@ export type PaletteItem = {
 };
 
 type PaletteMode = "root" | "sessions";
+
+type PaletteDialogProps = {
+  mode: PaletteMode;
+  query: string;
+  items: PaletteItem[];
+  activeIndex: number;
+  visibleActiveIndex: number;
+  inputRef: RefObject<HTMLInputElement | null>;
+  optionRefs: MutableRefObject<Array<HTMLButtonElement | null>>;
+  placeholder: string;
+  title: string;
+  onBack: () => void;
+  onClose: () => void;
+  onQueryChange: (value: string) => void;
+  onActiveIndexChange: (value: number) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+};
 
 export type SessionOption = {
   workspaceId: string;
@@ -44,6 +63,95 @@ export type CommandPaletteProps = {
   /** Optional: sessions for the second mode. */
   sessions: SessionOption[];
 };
+
+function PaletteDialog(props: PaletteDialogProps) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
+      role="dialog"
+      aria-modal="true"
+      onKeyDown={props.onKeyDown}
+    >
+      <button type="button" className="absolute inset-0 cursor-default border-0 bg-gray-1/60 p-0 backdrop-blur-sm" aria-label={t("common.close")} onClick={props.onClose} />
+      <div className="relative z-10 w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden">
+        <div className="border-b border-dls-border px-4 py-3 space-y-2">
+          <div className="flex items-center gap-2">
+            {props.mode !== "root" ? (
+              <button
+                type="button"
+                className="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                onClick={props.onBack}
+              >
+                {t("common.back")}
+              </button>
+            ) : null}
+            <Search size={14} className="text-dls-secondary shrink-0" />
+            <input
+              ref={props.inputRef}
+              type="text"
+              value={props.query}
+              onChange={(event) => props.onQueryChange(event.currentTarget.value)}
+              placeholder={props.placeholder}
+              className="min-w-0 flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
+              aria-label={props.title}
+            />
+            <button
+              type="button"
+              className="size-8 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors flex items-center justify-center"
+              onClick={props.onClose}
+              aria-label={t("common.close")}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto py-2">
+          {props.items.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-dls-secondary text-center">
+              {t("session.palette_no_matches")}
+            </div>
+          ) : (
+            <ul>
+              {props.items.map((item, index) => (
+                <li key={item.id}>
+                  <button
+                    ref={(element) => {
+                      props.optionRefs.current[index] = element;
+                    }}
+                    type="button"
+                    className={`w-full px-4 py-2.5 flex items-start gap-3 text-left transition-colors ${
+                      index === props.visibleActiveIndex
+                        ? "bg-dls-hover"
+                        : "hover:bg-dls-hover/60"
+                    }`}
+                    onMouseEnter={() => props.onActiveIndexChange(index)}
+                    onClick={() => item.action()}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-dls-text truncate">{item.title}</div>
+                      {item.detail ? (
+                        <div className="text-xs text-dls-secondary truncate">{item.detail}</div>
+                      ) : null}
+                    </div>
+                    {item.meta ? (
+                      <div className="text-[10px] uppercase tracking-wide text-dls-secondary shrink-0">
+                        {item.meta}
+                      </div>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="border-t border-dls-border px-4 py-2 text-[11px] text-dls-secondary flex items-center gap-3">
+          <span>{t("session.palette_hint_navigate")}</span>
+          <span>{t("session.palette_hint_run")}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * React command palette (Cmd/Ctrl+K).
@@ -273,104 +381,34 @@ export function CommandPalette(props: CommandPaletteProps) {
       ? t("session.palette_title_sessions")
       : t("session.palette_title_actions");
 
+  const handleBack = () => {
+    setMode("root");
+    setQuery("");
+    setActiveIndex(0);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+    setActiveIndex(0);
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4"
-      role="dialog"
-      aria-modal="true"
+    <PaletteDialog
+      mode={mode}
+      query={query}
+      items={items}
+      activeIndex={activeIndex}
+      visibleActiveIndex={visibleActiveIndex}
+      inputRef={inputRef}
+      optionRefs={optionRefs}
+      placeholder={placeholder}
+      title={title}
+      onBack={handleBack}
+      onClose={props.onClose}
+      onQueryChange={handleQueryChange}
+      onActiveIndexChange={setActiveIndex}
       onKeyDown={handleKey}
-    >
-      <button type="button" className="absolute inset-0 cursor-default border-0 bg-gray-1/60 p-0 backdrop-blur-sm" aria-label={t("common.close")} onClick={props.onClose} />
-      <div
-        className="relative z-10 w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
-      >
-        <div className="border-b border-dls-border px-4 py-3 space-y-2">
-          <div className="flex items-center gap-2">
-            {mode !== "root" ? (
-              <button
-                type="button"
-                className="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
-                onClick={() => {
-                  setMode("root");
-                  setQuery("");
-                  setActiveIndex(0);
-                  window.setTimeout(() => inputRef.current?.focus(), 0);
-                }}
-              >
-                {t("common.back")}
-              </button>
-            ) : null}
-            <Search size={14} className="text-dls-secondary shrink-0" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.currentTarget.value);
-                setActiveIndex(0);
-              }}
-              placeholder={placeholder}
-              className="min-w-0 flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
-              aria-label={title}
-            />
-            <button
-              type="button"
-              className="size-8 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors flex items-center justify-center"
-              onClick={props.onClose}
-              aria-label={t("common.close")}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto py-2">
-          {items.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-dls-secondary text-center">
-              {t("session.palette_no_matches")}
-            </div>
-          ) : (
-            <ul>
-              {items.map((item, index) => (
-                <li key={item.id}>
-                  <button
-                    ref={(element) => {
-                      optionRefs.current[index] = element;
-                    }}
-                    type="button"
-                    className={`w-full px-4 py-2.5 flex items-start gap-3 text-left transition-colors ${
-                      index === visibleActiveIndex
-                        ? "bg-dls-hover"
-                        : "hover:bg-dls-hover/60"
-                    }`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => item.action()}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-dls-text truncate">
-                        {item.title}
-                      </div>
-                      {item.detail ? (
-                        <div className="text-xs text-dls-secondary truncate">
-                          {item.detail}
-                        </div>
-                      ) : null}
-                    </div>
-                    {item.meta ? (
-                      <div className="text-[10px] uppercase tracking-wide text-dls-secondary shrink-0">
-                        {item.meta}
-                      </div>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="border-t border-dls-border px-4 py-2 text-[11px] text-dls-secondary flex items-center gap-3">
-          <span>{t("session.palette_hint_navigate")}</span>
-          <span>{t("session.palette_hint_run")}</span>
-        </div>
-      </div>
-    </div>
+    />
   );
 }
