@@ -646,7 +646,11 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
   });
 
   const response = await client.listOrgs();
+  const selectedOrgId = settings.activeOrgId?.trim() ?? "";
+  const selectedOrgSlug = settings.activeOrgSlug?.trim() ?? "";
   const targetOrg =
+    response.orgs.find((org) => org.id === selectedOrgId) ??
+    response.orgs.find((org) => org.slug === selectedOrgSlug) ??
     response.orgs.find((org) => org.id === response.activeOrgId) ??
     response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
     response.orgs[0] ??
