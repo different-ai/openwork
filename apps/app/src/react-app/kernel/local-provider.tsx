@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -164,7 +164,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
 }
 
 export function useLocal(): LocalContextValue {
-  const context = useContext(LocalContext);
+  const context = use(LocalContext);
   if (!context) {
     throw new Error("Local context is missing");
   }

@@ -34,7 +34,7 @@ export type SidebarContextValue = {
 export const SidebarContext = React.createContext<SidebarContextValue | null>(null);
 
 export function useSidebarContext() {
-  const context = React.useContext(SidebarContext);
+  const context = React.use(SidebarContext);
   if (!context) throw new Error("useSidebarContext must be used within SidebarProvider");
   return context;
 }

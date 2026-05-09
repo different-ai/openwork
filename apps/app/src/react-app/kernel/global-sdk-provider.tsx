@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import {
   createContext,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -217,7 +217,7 @@ export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
 }
 
 export function useGlobalSDK(): GlobalSDKContextValue {
-  const context = useContext(GlobalSDKContext);
+  const context = use(GlobalSDKContext);
   if (!context) {
     throw new Error("Global SDK context is missing");
   }

@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -397,7 +397,7 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
 }
 
 export function useGlobalSync(): GlobalSyncContextValue {
-  const context = useContext(GlobalSyncContext);
+  const context = use(GlobalSyncContext);
   if (!context) {
     throw new Error("Global sync context is missing");
   }

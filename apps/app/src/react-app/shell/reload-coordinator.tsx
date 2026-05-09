@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -143,7 +143,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 }
 
 export function useReloadCoordinator(): ReloadCoordinatorContextValue {
-  const value = useContext(ReloadCoordinatorContext);
+  const value = use(ReloadCoordinatorContext);
   if (!value) {
     throw new Error("useReloadCoordinator must be used inside <ReloadCoordinatorProvider>");
   }

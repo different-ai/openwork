@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useMemo,
   useState,
   type ReactNode,
@@ -79,7 +79,7 @@ export function RestrictionNoticeProvider({ children }: RestrictionNoticeProvide
 }
 
 export function useRestrictionNotice(): RestrictionNoticeController {
-  const context = useContext(RestrictionNoticeContext);
+  const context = use(RestrictionNoticeContext);
   if (!context) {
     throw new Error(
       "useRestrictionNotice must be used within a RestrictionNoticeProvider",

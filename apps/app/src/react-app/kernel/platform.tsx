@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, use, type ReactNode } from "react";
 
 import { openDesktopUrl, relaunchDesktopApp } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
@@ -47,7 +47,7 @@ export function PlatformProvider({ value, children }: PlatformProviderProps) {
 }
 
 export function usePlatform(): Platform {
-  const context = useContext(PlatformContext);
+  const context = use(PlatformContext);
   if (!context) {
     throw new Error("Platform context is missing");
   }

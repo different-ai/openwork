@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -211,7 +211,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 }
 
 export function useDesktopConfig(): DesktopConfigStore {
-  const context = useContext(DesktopConfigContext);
+  const context = use(DesktopConfigContext);
   if (!context) {
     throw new Error("useDesktopConfig must be used within a DesktopConfigProvider");
   }

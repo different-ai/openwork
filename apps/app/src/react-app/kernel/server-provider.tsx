@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -220,7 +220,7 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
 }
 
 export function useServer(): ServerContextValue {
-  const context = useContext(ServerContext);
+  const context = use(ServerContext);
   if (!context) {
     throw new Error("Server context is missing");
   }

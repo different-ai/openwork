@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import {
   createContext,
-  useContext,
+  use,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -22,7 +22,7 @@ export function OpenworkServerProvider(props: {
 }
 
 export function useOpenworkServer() {
-  const store = useContext(OpenworkServerContext);
+  const store = use(OpenworkServerContext);
   if (!store) {
     throw new Error("useOpenworkServer must be used within an OpenworkServerProvider");
   }
