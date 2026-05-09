@@ -312,7 +312,7 @@ export function McpView(props: McpViewProps) {
     <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
       {showHeader ? (
         <div>
-          <h2 className="text-3xl font-bold text-dls-text">{t("mcp.apps_title")}</h2>
+          <h2 className="text-3xl font-semibold text-dls-text">{t("mcp.apps_title")}</h2>
           <p className="mt-1.5 text-sm text-dls-secondary">{t("mcp.apps_subtitle")}</p>
           {connectedCount > 0 ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
@@ -362,7 +362,7 @@ export function McpView(props: McpViewProps) {
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-dls-secondary">
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
             {t("mcp.available_apps")}
           </h3>
           <span className="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
@@ -442,7 +442,7 @@ export function McpView(props: McpViewProps) {
 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-dls-secondary">
+          <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
             {t("mcp.your_apps")}
           </h3>
           {props.mcpLastUpdatedAt ? (

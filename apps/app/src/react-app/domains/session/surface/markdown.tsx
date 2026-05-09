@@ -65,7 +65,7 @@ const markdownComponents: Components = {
     );
   },
   blockquote({ children }) {
-    return <blockquote className="my-4 border-l-4 border-dls-border pl-4 italic text-gray-11">{children}</blockquote>;
+    return <blockquote className="my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-gray-11">{children}</blockquote>;
   },
   table({ children }) {
     return <table className="my-4 w-full border-collapse">{children}</table>;

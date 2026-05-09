@@ -84,7 +84,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
         <div className="space-y-1">
           {props.showHeader !== false ? (
             <>
-              <h2 className="text-3xl font-bold text-dls-text">
+              <h2 className="text-3xl font-semibold text-dls-text">
                 {t("extensions.title")}
               </h2>
               <p className="text-sm text-dls-secondary mt-1.5">

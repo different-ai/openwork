@@ -172,7 +172,7 @@ export function BundleStartModal(props: BundleStartModalProps) {
               {props.busy ? (
                 <span className="inline-flex items-center gap-2">
                   <Loader2 size={16} className="animate-spin" />
-                  Starting template...
+                  Starting template…
                 </span>
               ) : (
                 "Create workspace"

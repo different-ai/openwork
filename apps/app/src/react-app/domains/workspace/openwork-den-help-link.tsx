@@ -59,7 +59,7 @@ export function OpenWorkDenHelpLink() {
               <li>
                 Use the in-app{" "}
                 <span className="font-medium text-dls-text">Feedback</span>{" "}
-                button to send us a note — we&apos;ll pick it up from there.
+                button to send us a note, and we&apos;ll pick it up from there.
               </li>
             </ul>
           </div>

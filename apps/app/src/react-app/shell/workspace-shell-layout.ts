@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
 const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
@@ -105,10 +105,7 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     );
   }, [maxRightWidth, minRightWidth, rightSidebarExpandedWidth]);
 
-  const rightSidebarWidth = useMemo(
-    () => (rightSidebarExpanded ? rightSidebarExpandedWidth : collapsedRightWidth),
-    [collapsedRightWidth, rightSidebarExpanded, rightSidebarExpandedWidth],
-  );
+  const rightSidebarWidth = rightSidebarExpanded ? rightSidebarExpandedWidth : collapsedRightWidth;
 
   const setRightSidebarExpandedWidth = useCallback(
     (width: number) => {
@@ -154,8 +151,10 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       };
 
       if (typeof document !== "undefined") {
-        document.body.style.cursor = "col-resize";
-        document.body.style.userSelect = "none";
+        Object.assign(document.body.style, {
+          cursor: "col-resize",
+          userSelect: "none",
+        });
       }
 
       event.preventDefault();

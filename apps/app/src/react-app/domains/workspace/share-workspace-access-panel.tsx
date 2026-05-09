@@ -172,7 +172,7 @@ export function ShareWorkspaceAccessPanel(
                 }
                 disabled={props.remoteAccess.busy}
               />
-              <div className="h-6 w-11 rounded-full bg-gray-300 transition-colors peer-checked:bg-[var(--dls-accent)] peer-disabled:opacity-50 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
+              <div className="h-6 w-11 rounded-full bg-zinc-300 transition-colors peer-checked:bg-[var(--dls-accent)] peer-disabled:opacity-50 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5" />
             </label>
           </div>
 

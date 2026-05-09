@@ -680,7 +680,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               </div>
             ) : props.loading ? (
               <div className="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
-                Loading providers...
+                Loading providers…
               </div>
             ) : null}
           </div>
@@ -826,7 +826,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </Button>
                   </div>
                   {isOpencodeZenProvider(selectedEntry.id) ? (
-                    <div className="rounded-lg border border-indigo-5/30 bg-indigo-3/15 px-3 py-2.5 text-xs text-gray-11 space-y-1.5">
+                    <div className="rounded-lg border border-indigo-5/30 bg-indigo-3/15 px-3 py-2.5 text-xs text-indigo-12 space-y-1.5">
                       <div>
                         OpenCode Zen gives you access to the best coding models. Free models keep working without a key.
                       </div>
@@ -865,7 +865,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       onClick={handleApiSubmit}
                       disabled={actionDisabled || !apiKeyInput.trim()}
                     >
-                      {props.submitting ? "Saving..." : "Save key"}
+                      {props.submitting ? "Saving…" : "Save key"}
                     </Button>
                   </div>
                 </div>
@@ -1005,7 +1005,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   ) : (
                     <div className="flex items-center gap-2 text-xs text-gray-9">
                       <Loader2 size={14} className={props.submitting || pollingBusy || oauthAutoBusy ? "animate-spin" : ""} />
-                      <span>Checking connection status automatically...</span>
+                      <span>Checking connection status automatically…</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-3">

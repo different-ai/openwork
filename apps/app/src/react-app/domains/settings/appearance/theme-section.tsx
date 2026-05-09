@@ -78,7 +78,7 @@ function ThemePicker(props: ThemePickerProps) {
         value="dark"
         label={t("settings.theme_dark")}
       >
-        <ThemePreview value="dark" className="bg-black" />
+        <ThemePreview value="dark" className="bg-zinc-950" />
         <ThemePickerLabel>{t("settings.theme_dark")}</ThemePickerLabel>
       </ThemePickerItem>
     </ToggleGroup>
@@ -119,7 +119,7 @@ function ThemePreview(props: ThemePreviewProps) {
       {props.value === "system" && (
         <div className="flex h-full">
           <div className="w-1/2 bg-white" />
-          <div className="w-1/2 bg-black" />
+          <div className="w-1/2 bg-zinc-950" />
         </div>
       )}
     </div>

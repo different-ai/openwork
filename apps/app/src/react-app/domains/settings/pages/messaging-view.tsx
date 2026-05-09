@@ -206,7 +206,7 @@ export function MessagingView(props: MessagingViewProps) {
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           {props.showHeader !== false ? (
-            <h1 className="text-lg font-bold tracking-tight text-gray-12">{t("identities.title")}</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-gray-12">{t("identities.title")}</h1>
           ) : (
             <div />
           )}

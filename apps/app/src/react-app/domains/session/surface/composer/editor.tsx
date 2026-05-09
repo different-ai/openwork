@@ -661,7 +661,7 @@ export function LexicalPromptEditor(props: EditorProps) {
     [],
   );
 
-  const handleChange = useCallback(
+  const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
         const next = serializePromptFromRoot();
@@ -701,7 +701,7 @@ export function LexicalPromptEditor(props: EditorProps) {
           }
           ErrorBoundary={LexicalErrorBoundary}
         />
-        <OnChangePlugin onChange={handleChange} />
+        <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
