@@ -14,6 +14,7 @@ import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
+import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 
 
@@ -91,6 +92,7 @@ export function AppRoot() {
   return (
     <>
       <DevProfiler id="AppRoot">
+        <ShellConfigProvider>
         <OpenworkControlProvider>
           <OpenworkRouteControlActions />
           <DenSigninGate>
@@ -166,6 +168,7 @@ export function AppRoot() {
             </Routes>
           </DenSigninGate>
         </OpenworkControlProvider>
+        </ShellConfigProvider>
         <LoadingOverlay />
       </DevProfiler>
       {/*

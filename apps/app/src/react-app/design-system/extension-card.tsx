@@ -8,7 +8,9 @@ export type ExtensionCardProps = {
   description: string;
   /** Simple Icons slug for brand icon. When set, loads from CDN. */
   iconSlug?: string;
-  /** Lucide icon fallback when no iconSlug is provided. */
+  /** Direct icon URL (e.g. local SVG). Takes priority over iconSlug. */
+  iconSrc?: string;
+  /** Lucide icon fallback when no iconSlug or iconSrc is provided. */
   fallbackIcon?: LucideIcon;
   /** Extension category badge. */
   kind?: ExtensionKind;
@@ -46,6 +48,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     name,
     description,
     iconSlug,
+    iconSrc,
     fallbackIcon: FallbackIcon = Plug2,
     kind = "mcp",
     connected = false,
@@ -77,15 +80,10 @@ export function ExtensionCard(props: ExtensionCardProps) {
             <Loader2 size={18} className="animate-spin text-dls-secondary" />
           ) : connected ? (
             <CheckCircle2 size={18} className="text-green-11" />
+          ) : iconSrc ? (
+            <img src={iconSrc} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
           ) : iconSlug ? (
-            <img
-              src={`https://cdn.simpleicons.org/${iconSlug}`}
-              alt=""
-              width={18}
-              height={18}
-              loading="lazy"
-              style={{ display: "block" }}
-            />
+            <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
           ) : (
             <FallbackIcon size={18} className="text-dls-secondary" />
           )}

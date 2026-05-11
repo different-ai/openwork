@@ -7,6 +7,7 @@ import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 
 const DOCS_URL = "https://openworklabs.com/docs";
@@ -107,6 +108,7 @@ function deriveStatusCopy(props: StatusBarProps): StatusCopy {
 export function StatusBar(props: StatusBarProps) {
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const { config: shellConfig } = useShellConfig();
   const docsButtonRef = useRef<HTMLButtonElement>(null);
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -179,7 +181,7 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!denAuth.isSignedIn && denAuth.status !== "checking" ? (
+          {shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking" ? (
             <button
               type="button"
               className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#011627] px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-black"
@@ -192,30 +194,34 @@ export function StatusBar(props: StatusBarProps) {
               <span>Sign in</span>
             </button>
           ) : null}
-          <button
-            ref={docsButtonRef}
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={() => platform.openLink(DOCS_URL)}
-            title={t("status.open_docs")}
-            aria-label={t("status.open_docs")}
-          >
-            <BookOpen className="size-4" />
-            <span className="text-[11px] font-medium">{t("status.docs")}</span>
-          </button>
-          <button
-            ref={feedbackButtonRef}
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={props.onSendFeedback}
-            title={t("status.send_feedback")}
-            aria-label={t("status.send_feedback")}
-          >
-            <MessageCircle className="size-4" />
-            <span className="text-[11px] font-medium">
-              {t("status.feedback")}
-            </span>
-          </button>
+          {shellConfig.docsButton ? (
+            <button
+              ref={docsButtonRef}
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={() => platform.openLink(DOCS_URL)}
+              title={t("status.open_docs")}
+              aria-label={t("status.open_docs")}
+            >
+              <BookOpen className="size-4" />
+              <span className="text-[11px] font-medium">{t("status.docs")}</span>
+            </button>
+          ) : null}
+          {shellConfig.feedbackButton ? (
+            <button
+              ref={feedbackButtonRef}
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={props.onSendFeedback}
+              title={t("status.send_feedback")}
+              aria-label={t("status.send_feedback")}
+            >
+              <MessageCircle className="size-4" />
+              <span className="text-[11px] font-medium">
+                {t("status.feedback")}
+              </span>
+            </button>
+          ) : null}
           {props.showSettingsButton !== false ? (
             <button
               ref={settingsButtonRef}

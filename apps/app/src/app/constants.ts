@@ -29,6 +29,8 @@ export type McpDirectoryInfo = {
   kind?: ExtensionKind;
   /** Simple Icons slug for brand icon (e.g. "notion", "stripe", "figma"). */
   iconSlug?: string;
+  /** Direct icon URL (e.g. local SVG). Takes priority over iconSlug. */
+  iconSrc?: string;
 };
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
@@ -84,6 +86,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     type: "local",
     oauth: false,
     kind: "mcp",
+    iconSrc: "/openwork-mark.svg",
   },
   {
     get name() { return t("mcp.quick_connect_openwork_ui_title"); },
@@ -92,5 +95,6 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     type: "local",
     oauth: false,
     kind: "mcp",
+    iconSrc: "/openwork-mark.svg",
   },
 ];

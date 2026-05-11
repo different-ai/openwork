@@ -173,6 +173,7 @@ export type SettingsTab =
   | "general"
   | "ai"
   | "permissions"
+  | "shell"
   | "den"
   | "skills"
   | "extensions"

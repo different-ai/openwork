@@ -535,6 +535,7 @@ function McpQuickConnectSection(props: {
               name={entry.name}
               description={entry.description}
               iconSlug={entry.iconSlug}
+              iconSrc={entry.iconSrc}
               fallbackIcon={FallbackIcon}
               kind={entry.kind ?? "mcp"}
               connected={configured}

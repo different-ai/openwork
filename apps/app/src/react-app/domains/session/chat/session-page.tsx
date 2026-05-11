@@ -40,6 +40,7 @@ import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
+import { useShellConfig } from "../../../shell/shell-config";
 import { isElectronRuntime } from "../../../../app/utils";
 import { BrowserPanel } from "../browser/browser-panel";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -179,6 +180,7 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 }
 
 export function SessionPage(props: SessionPageProps) {
+  const { config: shellConfig } = useShellConfig();
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -718,22 +720,24 @@ export function SessionPage(props: SessionPageProps) {
             </div>
           ) : null}
 
-          <StatusBar
-            clientConnected={props.clientConnected}
-            openworkServerStatus={props.openworkServerStatus}
-            developerMode={props.developerMode}
-            settingsOpen={props.statusBar?.settingsOpen ?? false}
-            onSendFeedback={props.onSendFeedback}
-            onOpenSettings={props.onOpenSettings}
-            providerConnectedIds={props.providerConnectedIds}
-            mcpConnectedCount={props.mcpConnectedCount}
-            statusLabel={props.statusBar?.statusLabel}
-            statusDetail={props.statusBar?.statusDetail}
-            statusDotClass={props.statusBar?.statusDotClass}
-            statusPingClass={props.statusBar?.statusPingClass}
-            statusPulse={props.statusBar?.statusPulse}
-            showSettingsButton={props.statusBar?.showSettingsButton}
-          />
+          {shellConfig.statusBar ? (
+            <StatusBar
+              clientConnected={props.clientConnected}
+              openworkServerStatus={props.openworkServerStatus}
+              developerMode={props.developerMode}
+              settingsOpen={props.statusBar?.settingsOpen ?? false}
+              onSendFeedback={props.onSendFeedback}
+              onOpenSettings={props.onOpenSettings}
+              providerConnectedIds={props.providerConnectedIds}
+              mcpConnectedCount={props.mcpConnectedCount}
+              statusLabel={props.statusBar?.statusLabel}
+              statusDetail={props.statusBar?.statusDetail}
+              statusDotClass={props.statusBar?.statusDotClass}
+              statusPingClass={props.statusBar?.statusPingClass}
+              statusPulse={props.statusBar?.statusPulse}
+              showSettingsButton={props.statusBar?.showSettingsButton}
+            />
+          ) : null}
               </main>
             </ResizablePanel>
             {browserPanelOpen ? (

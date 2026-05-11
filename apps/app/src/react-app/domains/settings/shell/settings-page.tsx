@@ -53,6 +53,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
     case "ai":
       return Sparkles;
+    case "shell":
+      return Paintbrush;
     case "permissions":
       return FolderLock;
     case "den":
@@ -82,6 +84,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
     case "ai":
       return "AI";
+    case "shell":
+      return "Customization";
     case "permissions":
       return "Permissions";
     case "den":
@@ -113,6 +117,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
     case "ai":
       return "Models, providers, and reasoning";
+    case "shell":
+      return "Branding, visibility, and shell controls";
     case "permissions":
       return "Authorized folders and file access";
     case "den":
@@ -145,7 +151,7 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "den", "appearance", "environment", "updates", "recovery"];
+  const tabs: SettingsTab[] = ["ai", "shell", "den", "appearance", "environment", "updates", "recovery"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }

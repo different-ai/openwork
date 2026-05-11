@@ -31,6 +31,7 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domain
 import ProviderAuthModal from "../domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "../domains/connections/modals";
 import { AiSettingsView } from "../domains/settings/pages/ai-view";
+import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "../domains/settings/panels/authorized-folders-panel";
 import { SettingsStack } from "../domains/settings/settings-section";
@@ -281,6 +282,7 @@ function parseSettingsPath(pathname: string): {
     case "general":
     case "ai":
     case "permissions":
+    case "shell":
     case "den":
     case "skills":
     case "advanced":
@@ -1501,6 +1503,8 @@ export function SettingsRoute() {
             }}
           />
         );
+      case "shell":
+        return <ShellCustomizationView />;
       case "automations":
         return (
           <AutomationsView
