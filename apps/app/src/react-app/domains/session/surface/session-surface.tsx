@@ -163,10 +163,10 @@ function AssistantWaitingCard() {
       <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
         <div className="thinking-orb relative" style={{ width: 20, height: 20 }}>
           <PaperGrainGradient
-            speed={4}
-            softness={0.15}
+            speed={12}
+            softness={0.1}
             intensity={1}
-            noise={0.08}
+            noise={0.05}
             shape="sphere"
             colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
             colorBack="#ffffff00"

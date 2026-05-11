@@ -489,8 +489,8 @@ select:disabled {
 
 .thinking-orb {
   animation:
-    thinking-orb-pulse 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite,
-    thinking-orb-glow 3.2s ease-in-out infinite;
+    thinking-orb-pulse 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite,
+    thinking-orb-glow 1.6s ease-in-out infinite;
   border-radius: 50%;
   overflow: hidden;
 }
