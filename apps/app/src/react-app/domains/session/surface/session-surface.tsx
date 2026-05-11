@@ -28,6 +28,7 @@ import { useControlAction, type OpenworkControlAction } from "../../../shell/con
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ReactSessionComposer } from "./composer/composer";
 import { DevProfiler } from "../../../shell/dev-profiler";
+import { PaperGrainGradient } from "@openwork/ui/react";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import type { ReactComposerNotice } from "./composer/notice";
@@ -159,7 +160,17 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
 function AssistantWaitingCard() {
   return (
     <div className="flex justify-start py-2" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-3 rounded-full px-3 py-1.5 text-[12px] text-dls-secondary">
+      <div className="inline-flex items-center gap-2.5 rounded-full px-3 py-1.5 text-[12px] text-dls-secondary">
+        <PaperGrainGradient
+          speed={0.4}
+          softness={0.3}
+          intensity={0.8}
+          noise={0.15}
+          shape="sphere"
+          colors={["#6366f1", "#f43f5e", "#fbbf24", "#06b6d4"]}
+          colorBack="#ffffff00"
+          style={{ backgroundColor: "#6366f1", width: 18, height: 18, borderRadius: "50%" }}
+        />
         <OwDotTicker size="sm" />
         <span>Thinking</span>
       </div>
