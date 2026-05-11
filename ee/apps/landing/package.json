@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@openwork/email": "workspace:*",
     "@openwork/ui": "workspace:*",
     "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
