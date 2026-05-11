@@ -179,6 +179,19 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
+          {!denAuth.isSignedIn && denAuth.status !== "checking" ? (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#011627] px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-black"
+              onClick={() => {
+                const baseUrl = readDenBootstrapConfig().baseUrl;
+                platform.openLink(buildDenAuthUrl(baseUrl, "sign-in"));
+              }}
+            >
+              <Cloud className="size-3" />
+              <span>Sign in</span>
+            </button>
+          ) : null}
           <button
             ref={docsButtonRef}
             type="button"
@@ -203,19 +216,6 @@ export function StatusBar(props: StatusBarProps) {
               {t("status.feedback")}
             </span>
           </button>
-          {!denAuth.isSignedIn && denAuth.status !== "checking" ? (
-            <button
-              type="button"
-              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#011627] px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-black"
-              onClick={() => {
-                const baseUrl = readDenBootstrapConfig().baseUrl;
-                platform.openLink(buildDenAuthUrl(baseUrl, "sign-in"));
-              }}
-            >
-              <Cloud className="size-3" />
-              <span>Sign in</span>
-            </button>
-          ) : null}
           {props.showSettingsButton !== false ? (
             <button
               ref={settingsButtonRef}
