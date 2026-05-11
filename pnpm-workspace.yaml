@@ -3,3 +3,12 @@ packages:
   - "packages/*"
   - "ee/apps/*"
   - "ee/packages/*"
+
+catalog:
+  react: 19.2.4
+  react-dom: 19.2.4
+
+catalogs:
+  react18:
+    react: 18.2.0
+    react-dom: 18.2.0
