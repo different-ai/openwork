@@ -22,6 +22,12 @@ export type ShellConfig = {
   welcomePage: boolean;
   /** Show starter task cards in empty sessions. */
   starterCards: boolean;
+  /** Show the model picker / model change UI. */
+  modelPicker: boolean;
+  /** Show the built-in browser panel. */
+  browser: boolean;
+  /** Show the "Add workspace" button. */
+  addWorkspace: boolean;
 };
 
 /* ------------------------------------------------------------------ */
@@ -37,6 +43,9 @@ export const DEFAULT_SHELL_CONFIG: ShellConfig = {
   cloudSignin: true,
   welcomePage: true,
   starterCards: true,
+  modelPicker: true,
+  browser: true,
+  addWorkspace: true,
 };
 
 /* ------------------------------------------------------------------ */
