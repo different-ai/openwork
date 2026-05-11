@@ -9,21 +9,25 @@ export type WorkspaceIconProps = {
 };
 
 /**
- * Bright, vibrant palette families -- no blacks, no dark colors.
- * Each family has 4 colors that blend well as a grain gradient at small sizes.
+ * High-contrast palette families designed to look interesting at small sizes.
+ * Each family uses complementary or split-complementary colors so the gradient
+ * has visible structure even at 16px.
  */
 const palettes = [
-  ["#818cf8", "#c084fc", "#f0abfc", "#e879f9"], // indigo-purple-pink
-  ["#34d399", "#6ee7b7", "#a7f3d0", "#5eead4"], // emerald-teal
-  ["#fb923c", "#fbbf24", "#fde68a", "#f97316"], // orange-amber
-  ["#60a5fa", "#93c5fd", "#7dd3fc", "#38bdf8"], // blue-sky
-  ["#f472b6", "#fb7185", "#fda4af", "#f9a8d4"], // pink-rose
-  ["#a78bfa", "#818cf8", "#c4b5fd", "#ddd6fe"], // violet-lavender
-  ["#4ade80", "#86efac", "#bbf7d0", "#a3e635"], // green-lime
-  ["#fcd34d", "#fde047", "#fef08a", "#fdba74"], // yellow-gold
+  ["#6366f1", "#f43f5e", "#fbbf24", "#06b6d4"], // indigo + rose + amber + cyan
+  ["#8b5cf6", "#10b981", "#f97316", "#ec4899"], // violet + emerald + orange + pink
+  ["#0ea5e9", "#f59e0b", "#ef4444", "#22c55e"], // sky + amber + red + green
+  ["#d946ef", "#14b8a6", "#f97316", "#6366f1"], // fuchsia + teal + orange + indigo
+  ["#f43f5e", "#3b82f6", "#a3e635", "#f59e0b"], // rose + blue + lime + amber
+  ["#06b6d4", "#e879f9", "#fbbf24", "#34d399"], // cyan + pink + gold + emerald
+  ["#8b5cf6", "#f97316", "#06b6d4", "#f43f5e"], // violet + orange + cyan + rose
+  ["#ec4899", "#fbbf24", "#22c55e", "#6366f1"], // pink + amber + green + indigo
+  ["#14b8a6", "#f43f5e", "#a78bfa", "#f59e0b"], // teal + rose + violet + amber
+  ["#3b82f6", "#ef4444", "#10b981", "#f59e0b"], // blue + red + emerald + amber
 ];
 
-const shapes = ["corners", "wave", "dots", "blob", "sphere"] as const;
+/** Shapes that produce the most visible structure at tiny sizes. */
+const shapes = ["corners", "ripple", "sphere", "blob"] as const;
 
 /** Simple deterministic hash (DJB2). */
 function hashSeed(input: string): number {
@@ -37,13 +41,15 @@ function hashSeed(input: string): number {
 
 /**
  * Renders a small rounded circle with a deterministic Paper grain gradient
- * seeded by the workspace identifier. Uses bright, vibrant colors only.
+ * seeded by the workspace identifier. High-contrast complementary colors
+ * ensure the gradient looks interesting even at 16px.
  */
 export function WorkspaceIcon({ seed, sizeClass = "size-4" }: WorkspaceIconProps) {
   const hash = hashSeed(seed);
   const colors = palettes[hash % palettes.length];
-  const shape = shapes[(hash >> 3) % shapes.length];
-  const frame = (hash % 30000) + 5000;
+  const shape = shapes[(hash >> 4) % shapes.length];
+  // Spread frame values wider so each workspace lands on a visually distinct moment
+  const frame = ((hash * 7) % 200000) + 10000;
 
   return (
     <div className={`${sizeClass} shrink-0 overflow-hidden rounded-full`}>
@@ -52,9 +58,9 @@ export function WorkspaceIcon({ seed, sizeClass = "size-4" }: WorkspaceIconProps
         frame={frame}
         colors={colors}
         colorBack="#ffffff00"
-        softness={0.5}
-        intensity={0.6}
-        noise={0.2}
+        softness={0.35}
+        intensity={0.75}
+        noise={0.15}
         shape={shape}
         style={{ backgroundColor: colors[0], width: "100%", height: "100%" }}
       />
