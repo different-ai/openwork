@@ -20,6 +20,49 @@ export type ServeResult = {
   stop: () => void;
 };
 
+function isResponseWritable(nodeRes: ServerResponse): boolean {
+  return !nodeRes.destroyed && !nodeRes.closed && !nodeRes.writableEnded;
+}
+
+function isWriteAfterEndError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ERR_STREAM_WRITE_AFTER_END" || error.message.includes("write after end");
+}
+
+function endResponse(nodeRes: ServerResponse, chunk?: string): void {
+  if (!isResponseWritable(nodeRes)) return;
+  nodeRes.end(chunk);
+}
+
+async function waitForDrainOrClose(nodeRes: ServerResponse): Promise<void> {
+  if (!isResponseWritable(nodeRes)) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      nodeRes.off("drain", done);
+      nodeRes.off("close", done);
+      nodeRes.off("error", fail);
+    };
+    const done = () => {
+      cleanup();
+      resolve();
+    };
+    const fail = (error: Error) => {
+      cleanup();
+      if (isWriteAfterEndError(error)) {
+        resolve();
+        return;
+      }
+      reject(error);
+    };
+
+    nodeRes.once("drain", done);
+    nodeRes.once("close", done);
+    nodeRes.once("error", fail);
+  });
+}
+
 /**
  * Convert a Node.js IncomingMessage into a Web API Request.
  */
@@ -69,10 +112,12 @@ async function writeWebResponse(webRes: Response, nodeRes: ServerResponse): Prom
     }
   });
 
+  if (!isResponseWritable(nodeRes)) return;
+
   nodeRes.writeHead(webRes.status, headersObj);
 
   if (!webRes.body) {
-    nodeRes.end();
+    endResponse(nodeRes);
     return;
   }
 
@@ -81,13 +126,14 @@ async function writeWebResponse(webRes: Response, nodeRes: ServerResponse): Prom
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (!isResponseWritable(nodeRes)) break;
       if (!nodeRes.write(value)) {
-        await new Promise<void>((resolve) => nodeRes.once("drain", resolve));
+        await waitForDrainOrClose(nodeRes);
       }
     }
   } finally {
     reader.releaseLock();
-    nodeRes.end();
+    endResponse(nodeRes);
   }
 }
 
@@ -100,16 +146,25 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
   const { hostname, port, fetch: fetchHandler } = options;
 
   const server = createServer(async (nodeReq, nodeRes) => {
+    nodeRes.on("error", (error) => {
+      if (isWriteAfterEndError(error)) {
+        console.warn("[serve-node] Ignored response write after end");
+        return;
+      }
+      console.error("[serve-node] Response stream error:", error);
+    });
+
     try {
       const webReq = toWebRequest(nodeReq, hostname, boundPort);
       const webRes = await fetchHandler(webReq);
       await writeWebResponse(webRes, nodeRes);
     } catch (error) {
       console.error("[serve-node] Unhandled error:", error);
+      if (!isResponseWritable(nodeRes)) return;
       if (!nodeRes.headersSent) {
         nodeRes.writeHead(500, { "Content-Type": "application/json" });
       }
-      nodeRes.end(JSON.stringify({ error: "internal_error" }));
+      endResponse(nodeRes, JSON.stringify({ error: "internal_error" }));
     }
   });
 
