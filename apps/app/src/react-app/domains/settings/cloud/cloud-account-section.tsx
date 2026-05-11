@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { LogOut } from "lucide-react";
 
-import type { DenOrgSummary, DenUser } from "../../../../app/lib/den";
+import type { DenOrgSummary } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -17,6 +17,7 @@ import {
   SettingsSectionHeaderDescription,
 } from "../settings-section";
 import { t } from "@/i18n";
+import { useCloudSession } from "./cloud-session-provider";
 
 export interface CloudAccountSectionProps {
   activeOrgId: string;
@@ -25,7 +26,6 @@ export interface CloudAccountSectionProps {
   orgsBusy: boolean;
   orgsError: string | null;
   sessionBusy: boolean;
-  user: DenUser | null;
   onActiveOrgChange: (orgId: string) => void;
   onRefreshOrgs: () => void | Promise<void>;
   onSignOut: () => void | Promise<void>;
@@ -38,11 +38,11 @@ export function CloudAccountSection({
   orgsBusy,
   orgsError,
   sessionBusy,
-  user,
   onActiveOrgChange,
   onRefreshOrgs,
   onSignOut,
 }: CloudAccountSectionProps) {
+  const { user } = useCloudSession();
   const activeOrgOptions = orgs.map((org) => ({
     value: org.id,
     label: `${org.name} ${org.role === "owner" ? t("den.org_owner_suffix") : t("den.org_member_suffix")}`,

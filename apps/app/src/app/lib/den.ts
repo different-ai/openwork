@@ -485,6 +485,7 @@ export async function setDenBootstrapConfig(
       apiBaseUrl: normalized.apiBaseUrl,
       requireSignin: normalized.requireSignin,
     });
+    
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig(persisted));
   } else {
     applyDesktopBootstrapConfig(normalized);
@@ -1542,6 +1543,8 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     },
   };
 }
+
+export type DenClient = ReturnType<typeof createDenClient>;
 
 export async function fetchDenOrgSkillsCatalog(
   client: ReturnType<typeof createDenClient>,
