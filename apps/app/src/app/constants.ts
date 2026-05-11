@@ -61,4 +61,18 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     type: "remote",
     oauth: false,
   },
+  {
+    get name() { return t("mcp.quick_connect_openwork_cloud_title"); },
+    get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
+    command: ["npx", "-y", "openwork-ui-mcp"],
+    type: "local",
+    oauth: false,
+  },
+  {
+    get name() { return t("mcp.quick_connect_openwork_ui_title"); },
+    get description() { return t("mcp.quick_connect_openwork_ui_desc"); },
+    command: ["npx", "-y", "openwork-ui-mcp"],
+    type: "local",
+    oauth: false,
+  },
 ];

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Chrome,
   CircleAlert,
+  Cloud,
   Code2,
   CreditCard,
   ExternalLink,
@@ -132,6 +133,8 @@ const serviceIcon = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return MonitorSmartphone;
   }
+  if (lower.includes("openwork") && lower.includes("cloud")) return Cloud;
+  if (lower.includes("openwork") && lower.includes("ui")) return MonitorSmartphone;
   return Plug2;
 };
 
@@ -145,6 +148,7 @@ const serviceColor = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return "text-amber-11";
   }
+  if (lower.includes("openwork")) return "text-gray-12";
   return "text-dls-secondary";
 };
 
@@ -158,6 +162,7 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return "bg-amber-3 border-amber-6";
   }
+  if (lower.includes("openwork")) return "bg-gray-3 border-gray-6";
   return "bg-dls-hover border-dls-border";
 };
 
