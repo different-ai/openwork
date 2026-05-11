@@ -161,7 +161,7 @@ function AssistantWaitingCard() {
   return (
     <div className="flex justify-start" role="status" aria-live="polite">
       <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
-        <div className="thinking-orb relative" style={{ width: 20, height: 20 }}>
+        <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
           <PaperGrainGradient
             speed={12}
             softness={0.1}
