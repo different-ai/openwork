@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
+import { ExtensionCard } from "../../../design-system/extension-card";
 import {
   openDesktopPath,
   readOpencodeConfig,
@@ -522,65 +523,28 @@ function McpQuickConnectSection(props: {
         <span className="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {props.entries.map((entry) => {
           const configured = props.isConfigured(entry);
           const connecting = props.connectingName === entry.name;
-          const Icon = serviceIcon(entry.name);
-          const quickStatus = !configured ? props.statusForEntry(entry) : undefined;
+          const FallbackIcon = serviceIcon(entry.name);
 
           return (
-            <div key={getMcpIdentityKey(entry)} className="relative">
-              <button
-                type="button"
-                disabled={configured || props.busy || connecting}
-                onClick={() => {
-                  if (!configured) props.onConnect(entry);
-                }}
-                className={`group w-full rounded-xl border p-4 text-left transition-all ${
-                  configured
-                    ? "border-green-6 bg-green-2"
-                    : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div
-                    className={`flex size-10 shrink-0 items-center justify-center rounded-lg border ${
-                      configured ? "border-green-6 bg-green-3" : serviceIconBg(entry.name)
-                    }`}
-                  >
-                    {connecting ? (
-                      <Loader2 size={18} className="animate-spin text-dls-secondary" />
-                    ) : configured ? (
-                      <CheckCircle2 size={18} className="text-green-11" />
-                    ) : (
-                      <Icon size={18} className={serviceColor(entry.name)} />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 pr-10">
-                      <h4 className="text-sm font-semibold text-dls-text">{entry.name}</h4>
-                      {configured ? (
-                        <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
-                          {t("mcp.connected_badge")}
-                        </span>
-                      ) : null}
-                      {!configured && quickStatus ? (
-                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${statusBadgeStyle(quickStatus.status)}`}>
-                          {friendlyStatus(quickStatus.status)}
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{entry.description}</p>
-                    {!configured && !connecting ? (
-                      <div className="mt-2 text-[11px] font-medium text-blue-11 transition-colors group-hover:text-blue-12">
-                        {t("mcp.tap_to_connect")}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </button>
-            </div>
+            <ExtensionCard
+              key={getMcpIdentityKey(entry)}
+              name={entry.name}
+              description={entry.description}
+              iconSlug={entry.iconSlug}
+              fallbackIcon={FallbackIcon}
+              kind={entry.kind ?? "mcp"}
+              connected={configured}
+              connecting={connecting}
+              disabled={props.busy}
+              actionLabel={t("mcp.tap_to_connect")}
+              onClick={() => {
+                if (!configured) props.onConnect(entry);
+              }}
+            />
           );
         })}
       </div>
