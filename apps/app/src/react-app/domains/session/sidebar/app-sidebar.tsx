@@ -74,10 +74,10 @@ import {
   getRootSessions,
   workspaceKindLabel,
   workspaceLabel,
-  workspaceSwatchColor,
 } from "./utils";
 import type { SessionListItem, SessionTreeState } from "./utils";
 import { cn } from "@/lib/utils";
+import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 
 const WORKSPACE_MENU_SKELETON_ROWS = ["short", "medium", "compact"];
 
@@ -622,10 +622,7 @@ function WorkspaceHeader({
         handleSelectWorkspace();
       }}
     >
-      <div
-        className="flex size-4 shrink-0 items-center justify-center rounded-full"
-        style={{ backgroundColor: workspaceSwatchColor(workspace.id || workspaceLabel(workspace)) }}
-      />
+      <WorkspaceIcon seed={workspace.id || workspaceLabel(workspace)} sizeClass="size-4" />
       <div
         className={cn(
           "min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/menu-item:pr-12 group-focus-within/menu-item:pr-12 group-hover/workspace-header:pr-12 group-focus-within/workspace-header:pr-12",

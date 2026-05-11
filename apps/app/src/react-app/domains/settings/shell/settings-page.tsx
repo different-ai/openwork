@@ -47,6 +47,7 @@ import {
   SettingsPanelToolbarMessage,
   SettingsPanelToolbarStatus,
 } from "./panel";
+import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -194,10 +195,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
               <DropdownMenuTrigger
                 render={
                   <SidebarMenuButton type="button">
-                    <span
-                      className="size-4 shrink-0 rounded-full"
-                      style={{ backgroundColor: props.selectedWorkspaceColor }}
-                    />
+                    <WorkspaceIcon seed={props.selectedWorkspaceId} sizeClass="size-4" />
                     <span className="truncate">{props.selectedWorkspaceName}</span>
                     <ChevronDown className="ml-auto" />
                   </SidebarMenuButton>
@@ -210,10 +208,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                     onClick={() => props.onSelectWorkspace(workspace.id)}
                     disabled={workspace.id === props.selectedWorkspaceId}
                   >
-                    <span
-                      className="size-4 shrink-0 rounded-full"
-                      style={{ backgroundColor: workspace.color }}
-                    />
+                    <WorkspaceIcon seed={workspace.id} sizeClass="size-4" />
                     <span className="truncate">{workspace.name}</span>
                   </DropdownMenuItem>
                 ))}

@@ -27,6 +27,7 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 
 const WORKSPACE_SESSION_SKELETON_ROWS = [
   { id: "short", width: "62%" },
@@ -172,17 +173,7 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
       : t("workspace.remote_badge")
     : t("workspace.local_badge");
 
-const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
-const workspaceSwatchColor = (seed: string) => {
-  const value = seed.trim() || "workspace";
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(index);
-    hash |= 0;
-  }
-  return WORKSPACE_SWATCHES[Math.abs(hash) % WORKSPACE_SWATCHES.length];
-};
 
 function RemoteConnectionIssueCard(props: {
   message: string;
@@ -619,12 +610,7 @@ export function WorkspaceSessionList(props: Props) {
                     }}
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
-                      <div
-                        className="flex size-5.5 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: workspaceSwatchColor(workspace.id || workspaceLabel(workspace)),
-                        }}
-                      />
+                      <WorkspaceIcon seed={workspace.id || workspaceLabel(workspace)} sizeClass="size-5.5" />
                       <div className="min-w-0 flex-1">
                         <div className="min-w-0 truncate text-[14px] font-normal text-dls-text">
                           {workspaceLabel(workspace)}
