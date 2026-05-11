@@ -11,7 +11,7 @@ type Props = {
   downloadHref?: string;
   mobilePrimaryHref?: string;
   mobilePrimaryLabel?: string;
-  active?: "home" | "download" | "enterprise" | "den";
+  active?: "home" | "download" | "enterprise" | "den" | "pricing" | string;
 };
 
 export function SiteNav(props: Props) {
