@@ -43,7 +43,7 @@ import type { TuiHandle } from "./tui/app.js";
 
 type ApprovalMode = "manual" | "auto";
 
-type SandboxMode = "none" | "auto" | "docker" | "container";
+type SandboxMode = "none" | "auto" | "docker" | "container" | "openshell";
 
 type ResolvedSandboxMode = "none" | "docker" | "container";
 

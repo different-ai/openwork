@@ -4,6 +4,8 @@ import { validateMcpServerName } from "../mcp";
 import { applyWebviewZoom } from "./font-zoom";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
+export type SandboxBackend = "none" | "docker" | "microsandbox" | "openshell";
+
 export const desktopFetch = tauriFetch as unknown as typeof globalThis.fetch;
 
 export async function openDesktopUrl(url: string): Promise<void> {
@@ -142,7 +144,7 @@ export type WorkspaceInfo = {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | "microsandbox" | null;
+  sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
@@ -228,7 +230,7 @@ export async function workspaceCreateRemote(input: {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | "microsandbox" | null;
+  sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -263,7 +265,7 @@ export async function workspaceUpdateRemote(input: {
   openworkWorkspaceName?: string | null;
 
   // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | "microsandbox" | null;
+  sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -459,14 +461,14 @@ export type OrchestratorDetachedHost = {
   ownerToken?: string | null;
   hostToken: string;
   port: number;
-  sandboxBackend?: "docker" | "microsandbox" | null;
+  sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
-  sandboxBackend?: "none" | "docker" | "microsandbox" | null;
+  sandboxBackend?: SandboxBackend | null;
   sandboxImageRef?: string | null;
   runId?: string | null;
   openworkToken?: string | null;

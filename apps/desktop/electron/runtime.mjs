@@ -1470,8 +1470,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     const sandboxBackend = String(options.sandboxBackend ?? "none").trim().toLowerCase();
-    if (!["none", "docker", "microsandbox"].includes(sandboxBackend)) {
-      throw new Error("sandboxBackend must be one of: none, docker, microsandbox");
+    if (!["none", "docker", "microsandbox", "openshell"].includes(sandboxBackend)) {
+      throw new Error("sandboxBackend must be one of: none, docker, microsandbox, openshell");
     }
 
     const wantsDockerSandbox = sandboxBackend === "docker" || sandboxBackend === "microsandbox";
