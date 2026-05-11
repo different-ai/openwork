@@ -85,6 +85,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
+  onCreateTaskWithPrompt?: (workspaceId: string, prompt: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -600,11 +601,67 @@ export function SessionPage(props: SessionPageProps) {
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  ) : props.selectedSessionId ? (
                     <div className="px-6 py-16 text-center text-sm text-dls-secondary">
-                      {props.selectedSessionId
-                        ? t("session.loading_detail")
-                        : t("session.select_or_create_session")}
+                      {t("session.loading_detail")}
+                    </div>
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center px-6 py-16">
+                      <div className="w-full max-w-md space-y-6">
+                        <div className="space-y-1 text-center">
+                          <h2 className="text-lg font-semibold text-dls-text">
+                            {t("session.select_or_create_session")}
+                          </h2>
+                          <p className="text-xs text-dls-secondary">Try one of these to get started:</p>
+                        </div>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => {
+                              props.sidebar.onCreateTaskWithPrompt?.(
+                                props.selectedWorkspaceId,
+                                "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
+                              );
+                            }}
+                          >
+                            <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
+                            <div>
+                              <div className="text-[13px] font-medium text-dls-text">Edit a CSV</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">Create a sample spreadsheet with customer data</div>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => {
+                              props.sidebar.onCreateTaskWithPrompt?.(
+                                props.selectedWorkspaceId,
+                                "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
+                              );
+                            }}
+                          >
+                            <img src="https://cdn.simpleicons.org/googlechrome" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
+                            <div>
+                              <div className="text-[13px] font-medium text-dls-text">Automate a browser task</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
+                            onClick={() => {
+                              props.onOpenSettings?.();
+                            }}
+                          >
+                            <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
+                            <div>
+                              <div className="text-[13px] font-medium text-dls-text">Connect an extension</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">Add MCP servers, plugins, and integrations</div>
+                            </div>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

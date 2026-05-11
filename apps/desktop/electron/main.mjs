@@ -236,6 +236,13 @@ if (Number.isFinite(remoteDebugPort) && remoteDebugPort > 0) {
 }
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
+const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN || (app.isPackaged && !isDevMode);
+
+function envFlagEnabled(name) {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
 
 function envFlagDisabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -700,7 +707,7 @@ function normalizeDesktopBootstrapConfig(input) {
   return {
     baseUrl,
     apiBaseUrl,
-    requireSignin: input?.requireSignin === true,
+    requireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN || input?.requireSignin === true,
   };
 }
 
@@ -712,7 +719,7 @@ async function getDesktopBootstrapConfig() {
     return {
       baseUrl: DEFAULT_DEN_BASE_URL,
       apiBaseUrl: null,
-      requireSignin: false,
+      requireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
     };
   }
 }

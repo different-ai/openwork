@@ -30,6 +30,7 @@ import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../do
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domains/connections/provider-auth/store";
 import ProviderAuthModal from "../domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "../domains/connections/modals";
+import { AiSettingsView } from "../domains/settings/pages/ai-view";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
 import { AdvancedView } from "../domains/settings/pages/advanced-view";
 import { AppearanceView } from "../domains/settings/pages/appearance-view";
@@ -276,6 +277,7 @@ function parseSettingsPath(pathname: string): {
   const [head, tail] = trimmed.split("/");
   switch (head) {
     case "general":
+    case "ai":
     case "den":
     case "skills":
     case "advanced":
@@ -1445,6 +1447,14 @@ export function SettingsRoute() {
                 void connectionsStore.refreshMcpServers();
               },
             }}
+            onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
+            onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
+            onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
+          />
+        );
+      case "ai":
+        return (
+          <AiSettingsView
             busy={busy}
             providerAuthBusy={providerAuthSnapshot.providerAuthBusy}
             providerStatusLabel={providerStatusLabel}
@@ -1479,9 +1489,6 @@ export function SettingsRoute() {
             onToggleAutoCompactContext={() => {
               setRouteError("Auto-compact controls are not wired into the React settings route yet.");
             }}
-            onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
-            onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
-            onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
           />
         );
       case "automations":
@@ -1607,10 +1614,8 @@ export function SettingsRoute() {
             toggleDeveloperMode={() => setDeveloperMode((current) => !current)}
             opencodeDevModeEnabled={false}
             openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
-            opencodeEnableExa={false}
-            toggleOpencodeEnableExa={() => {
-              setRouteError("EXA controls are not wired into the React settings route yet.");
-            }}
+            opencodeEnableExa={true}
+            toggleOpencodeEnableExa={() => {}}
             microsandboxCreateSandboxEnabled={local.prefs.featureFlags.microsandboxCreateSandbox}
             toggleMicrosandboxCreateSandbox={() => {
               local.setPrefs((previous) => ({

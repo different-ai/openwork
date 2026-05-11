@@ -179,12 +179,12 @@ export function AdvancedDeveloperSection(props: {
           type="button"
           className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors duration-150 focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60 ${
             props.developerMode
-              ? "border-blue-7/35 bg-blue-3/20 text-blue-11 hover:bg-blue-3/35 hover:text-blue-11 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
+              ? "border-dls-border bg-dls-hover text-dls-text hover:bg-dls-active focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
               : "border-dls-border bg-dls-surface text-dls-secondary hover:bg-dls-hover hover:text-dls-text focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
           }`}
           onClick={props.onToggleDeveloperMode}
         >
-          <Zap size={14} className={props.developerMode ? "text-blue-10" : "text-dls-secondary"} />
+          <Zap size={14} className={props.developerMode ? "text-dls-text" : "text-dls-secondary"} />
           {props.developerMode ? t("settings.disable_developer_mode") : t("settings.enable_developer_mode")}
         </button>
         <div className="text-xs text-gray-10">

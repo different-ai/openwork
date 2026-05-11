@@ -892,7 +892,48 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   onChangeModel={props.onChangeModel}
                   onOpenModelPicker={props.onModelClick}
                 />
-              ) : null
+              ) : (
+                <div className="flex flex-1 flex-col items-center justify-end px-6 pb-4">
+                  <div className="w-full max-w-[640px]">
+                    <p className="mb-3 text-xs text-dls-secondary">Try one of these:</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
+                        onClick={() => void typeComposerText("Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.")}
+                      >
+                        <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
+                        <div>
+                          <div className="text-[12px] font-medium text-dls-text">Edit a CSV</div>
+                          <div className="text-[11px] text-dls-secondary">Create a sample spreadsheet</div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
+                        onClick={() => void typeComposerText("Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.")}
+                      >
+                        <img src="https://cdn.simpleicons.org/googlechrome" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
+                        <div>
+                          <div className="text-[12px] font-medium text-dls-text">Browse the web</div>
+                          <div className="text-[11px] text-dls-secondary">Search Craigslist for couches</div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
+                        onClick={() => props.onOpenSettingsSection?.("mcps")}
+                      >
+                        <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
+                        <div>
+                          <div className="text-[12px] font-medium text-dls-text">Connect an extension</div>
+                          <div className="text-[11px] text-dls-secondary">Add MCPs and integrations</div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
             ) : (
               <DevProfiler id="SessionTranscript">
                 <>

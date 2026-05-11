@@ -106,7 +106,7 @@ function readEngineSource(): "path" | "sidecar" | "custom" {
 }
 
 function readOpencodeEnableExa(): boolean {
-  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "0") === "1";
+  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "1") === "1";
 }
 
 function statusPill(

@@ -1,5 +1,13 @@
 /** @jsxImportSource react */
-import { ArrowUpRight, Cloud } from "lucide-react";
+import {
+  ArrowUpRight,
+  Cloud,
+  ChevronDown,
+  ChevronUp,
+  Users,
+  Share2,
+} from "lucide-react";
+import { PaperGrainGradient } from "@openwork/ui/react";
 
 import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
@@ -40,6 +48,99 @@ const softNoticeClass =
 const errorBannerClass =
   "rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11";
 
+/* ------------------------------------------------------------------ */
+/*  Brand icon via Simple Icons CDN                                    */
+/* ------------------------------------------------------------------ */
+
+function BrandIcon({ slug, size = 18 }: { slug: string; size?: number }) {
+  return (
+    <img
+      src={`https://cdn.simpleicons.org/${slug}`}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      style={{ display: "block" }}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Right-side showcase: capabilities + team features                  */
+/* ------------------------------------------------------------------ */
+
+const capabilities = [
+  { slug: "googlesheets", title: "Edit spreadsheets", desc: "Create, clean, and transform CSV and Excel files." },
+  { slug: "googlechrome", title: "Control your browser", desc: "Automate Chrome for repetitive web tasks." },
+  { slug: "apple", title: "Organize files", desc: "Read, write, and manage files and folders." },
+  { slug: "zapier", title: "Automate tasks", desc: "Build reusable workflows with skills and commands." },
+  { slug: "medium", title: "Generate content", desc: "Draft documents, emails, and reports." },
+  { slug: "stripe", title: "Connect to APIs", desc: "Plug into external services and tools via MCP." },
+];
+
+function ShowcasePanel() {
+  return (
+    <div className="flex flex-col gap-5">
+      {/* Hero */}
+      <div>
+        <h2 className="text-[20px] font-semibold tracking-[-0.01em] text-dls-text">
+          Your computer,
+          <br />
+          but it works for you.
+        </h2>
+      </div>
+
+      {/* Capabilities */}
+      <div className="grid grid-cols-3 gap-2">
+        {capabilities.map((cap) => (
+          <div
+            key={cap.title}
+            className="flex flex-col gap-1.5 rounded-xl border border-dls-border bg-dls-surface p-3"
+          >
+            <BrandIcon slug={cap.slug} size={18} />
+            <div className="text-[12px] font-medium leading-tight text-dls-text">
+              {cap.title}
+            </div>
+            <div className="text-[11px] leading-snug text-dls-secondary">
+              {cap.desc}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Team features */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
+          <Share2 size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
+          <div>
+            <div className="text-[12px] font-medium text-dls-text">
+              Share in one link
+            </div>
+            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
+              Package skills, MCPs, and configs for your team.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3">
+          <Users size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
+          <div>
+            <div className="text-[12px] font-medium text-dls-text">
+              Provision your team
+            </div>
+            <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
+              Manage workspaces, models, and permissions.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main surface                                                      */
+/* ------------------------------------------------------------------ */
+
 /**
  * React port of the Solid `DenSignInSurface`
  * (`apps/app/src/app/cloud/den-signin-surface.tsx` on dev).
@@ -52,7 +153,8 @@ const errorBannerClass =
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
 
-  const content = (
+  /* -- Panel content (reused by both variants) -- */
+  const panelContent = (
     <div className={`${settingsPanelClass} space-y-4`}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="space-y-2">
@@ -189,16 +291,184 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
     </div>
   );
 
+  /* ---------------------------------------------------------------- */
+  /*  Fullscreen: two-column split layout                             */
+  /* ---------------------------------------------------------------- */
+
   if (variant === "fullscreen") {
     return (
-      <div className="relative min-h-screen bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_42%),linear-gradient(180deg,rgba(248,250,252,1),rgba(241,245,249,0.92))] px-6 py-10 text-dls-text">
-        <div className="absolute inset-x-0 top-0 h-10 mac:titlebar-drag" />
-        <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-3xl items-center justify-center">
-          <div className="w-full space-y-4">{content}</div>
+      <div className="relative min-h-screen bg-[#fafbfc] text-dls-text">
+        {/* Subtle background texture */}
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+          <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
+          <div className="absolute -bottom-[20%] -right-[10%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(ellipse,rgba(255,126,46,0.05),transparent_70%)] blur-3xl" />
+          <div className="absolute left-[30%] top-[60%] h-[40%] w-[40%] rounded-full bg-[radial-gradient(ellipse,rgba(255,227,64,0.04),transparent_70%)] blur-3xl" />
+        </div>
+
+        {/* Titlebar drag region */}
+        <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+
+        <div className="relative z-10 flex min-h-screen">
+          {/* ---- Left: sign-in (transparent on page bg) ---- */}
+          <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
+            <div className="w-full max-w-md space-y-8">
+              <div className="space-y-2">
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                  Welcome to OpenWork
+                </h1>
+                <p className="text-sm text-slate-500">
+                  Sign in to get started with your workspace.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#011627] text-sm font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                onClick={() => props.onOpenBrowserAuth("sign-in")}
+                disabled={props.authBusy || props.sessionBusy}
+              >
+                Sign in with OpenWork Cloud
+                <ArrowUpRight size={15} />
+              </button>
+
+              {props.statusMessage && !props.authError ? (
+                <div className={softNoticeClass}>{props.statusMessage}</div>
+              ) : null}
+
+              {props.authError ? (
+                <div className={errorBannerClass}>{props.authError}</div>
+              ) : null}
+
+              {/* Paste code disclosure */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white/60 px-4 py-2.5 text-left text-xs font-medium text-slate-500 transition-colors hover:bg-white"
+                  onClick={props.onToggleManualAuth}
+                  disabled={props.authBusy || props.sessionBusy}
+                >
+                  {props.manualAuthOpen ? (
+                    <ChevronUp size={14} />
+                  ) : (
+                    <ChevronDown size={14} />
+                  )}
+                  {props.manualAuthOpen
+                    ? t("den.hide_signin_code")
+                    : t("den.paste_signin_code")}
+                </button>
+
+                {props.manualAuthOpen ? (
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <TextInput
+                      label={t("den.signin_link_label")}
+                      value={props.manualAuthInput}
+                      onChange={(event) =>
+                        props.onManualAuthInput(event.currentTarget.value)
+                      }
+                      placeholder={t("den.signin_link_placeholder")}
+                      disabled={props.authBusy || props.sessionBusy}
+                      hint={t("den.signin_link_hint")}
+                    />
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[#011627] px-4 text-xs font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={props.onSubmitManualAuth}
+                      disabled={
+                        props.authBusy ||
+                        props.sessionBusy ||
+                        !props.manualAuthInput.trim()
+                      }
+                    >
+                      {props.authBusy
+                        ? t("den.finishing")
+                        : t("den.finish_signin")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Developer mode */}
+              {props.developerMode ? (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                  <TextInput
+                    label={t("den.cloud_control_plane_url_label")}
+                    value={props.baseUrlDraft}
+                    onChange={(event) =>
+                      props.onBaseUrlDraftInput(event.currentTarget.value)
+                    }
+                    placeholder={DEFAULT_DEN_BASE_URL}
+                    hint={t("den.cloud_control_plane_url_hint")}
+                    disabled={
+                      props.authBusy || props.baseUrlBusy || props.sessionBusy
+                    }
+                  />
+                  {props.baseUrlError ? (
+                    <div className={errorBannerClass}>{props.baseUrlError}</div>
+                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 hover:border-slate-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={props.onResetBaseUrl}
+                      disabled={
+                        props.authBusy || props.baseUrlBusy || props.sessionBusy
+                      }
+                    >
+                      {t("den.cloud_control_plane_reset")}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[#011627] px-3.5 text-xs font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                      onClick={props.onApplyBaseUrl}
+                      disabled={
+                        props.authBusy || props.baseUrlBusy || props.sessionBusy
+                      }
+                    >
+                      {t("den.cloud_control_plane_save")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* ---- Right: shader outer card > white inner card ---- */}
+          <div className="hidden lg:flex lg:w-[55%] lg:items-center lg:justify-center lg:p-6">
+            {/* Outer: shader card */}
+            <div className="relative w-full max-w-xl overflow-hidden rounded-3xl">
+              {/* Shader background */}
+              <div className="absolute inset-0 z-0">
+                <PaperGrainGradient
+                  speed={0}
+                  scale={1}
+                  rotation={0}
+                  offsetX={0}
+                  offsetY={0}
+                  softness={0.5}
+                  intensity={0.5}
+                  noise={0.25}
+                  shape="corners"
+                  frame={37706.748}
+                  colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
+                  colorBack="#00000000"
+                  style={{ backgroundColor: "#FFFFFF", width: "100%", height: "100%" }}
+                />
+              </div>
+
+              {/* Inner: white card with capabilities */}
+              <div className="relative z-10 m-3 rounded-2xl bg-white p-7">
+                <ShowcasePanel />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
-  return content;
+  /* ---------------------------------------------------------------- */
+  /*  Panel variant (settings embed): unchanged                       */
+  /* ---------------------------------------------------------------- */
+
+  return panelContent;
 }

@@ -49,6 +49,8 @@ import {
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
+    case "ai":
+      return Sparkles;
     case "den":
       return Cloud;
     case "skills":
@@ -74,6 +76,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
 
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
+    case "ai":
+      return "AI";
     case "den":
       return t("settings.tab_cloud");
     case "skills":
@@ -99,6 +103,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
+    case "ai":
+      return "Models, providers, and reasoning";
     case "den":
       return t("settings.tab_description_den");
     case "skills":
@@ -127,7 +133,7 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["den", "appearance", "environment", "updates", "recovery"];
+  const tabs: SettingsTab[] = ["ai", "den", "appearance", "environment", "updates", "recovery"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }

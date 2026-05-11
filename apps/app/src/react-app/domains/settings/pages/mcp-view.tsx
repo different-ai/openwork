@@ -349,10 +349,7 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      {/* Connect Chrome card */}
-      {isDesktopRuntime() ? (
-        <McpChromeSetupCard onOpen={() => setChromeSetupOpen(true)} />
-      ) : null}
+      {/* Chrome setup card removed -- built-in browser handles this automatically */}
 
       <McpCustomAppCard onOpen={() => setAddMcpModalOpen(true)} />
 

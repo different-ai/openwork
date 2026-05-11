@@ -60,7 +60,7 @@ const INITIAL_PREFS: LocalPreferences = {
   modelVariant: null,
   defaultModel: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: false },
+  featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,
 };
 

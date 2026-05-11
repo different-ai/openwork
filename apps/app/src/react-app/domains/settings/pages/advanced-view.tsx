@@ -188,11 +188,7 @@ export function AdvancedView(props: AdvancedViewProps) {
         onToggle={props.toggleOpencodeEnableExa}
       />
 
-      <AdvancedFeatureFlagsSection
-        busy={props.busy}
-        microsandboxCreateSandboxEnabled={props.microsandboxCreateSandboxEnabled}
-        onToggleMicrosandboxCreateSandbox={props.toggleMicrosandboxCreateSandbox}
-      />
+      {/* Feature flags section removed -- microsandbox is always on */}
 
       <AdvancedDeveloperSection
         busy={props.busy}

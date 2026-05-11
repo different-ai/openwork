@@ -51,9 +51,9 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #f3f4f6;
-  --dls-accent: var(--blue-9);
-  --dls-accent-hover: var(--blue-10);
-  --dls-accent-rgb: 0 144 255;
+  --dls-accent: #011627;
+  --dls-accent-hover: #000000;
+  --dls-accent-rgb: 1 22 39;
   --dls-secondary-rgb: 96 100 108;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -88,7 +88,7 @@
   --radius: 0.45rem;
   --sidebar: var(--slate-2);
   --sidebar-foreground: var(--slate-12);
-  --sidebar-primary: var(--blue-9);
+  --sidebar-primary: #011627;
   --sidebar-primary-foreground: white;
   --sidebar-accent: var(--slate-3);
   --sidebar-accent-foreground: var(--slate-12);
@@ -105,9 +105,9 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #262626;
-  --dls-accent: var(--blue-8);
-  --dls-accent-hover: var(--blue-9);
-  --dls-accent-rgb: 59 158 255;
+  --dls-accent: #e2e8f0;
+  --dls-accent-hover: #f1f5f9;
+  --dls-accent-rgb: 226 232 240;
   --dls-secondary-rgb: 176 180 186;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -423,7 +423,7 @@ select:disabled {
   --chart-5: var(--purple-9);
   --sidebar: var(--slate-2);
   --sidebar-foreground: var(--slate-12);
-  --sidebar-primary: var(--blue-9);
+  --sidebar-primary: #011627;
   --sidebar-primary-foreground: var(--slate-12);
   --sidebar-accent: var(--slate-3);
   --sidebar-accent-foreground: var(--slate-12);

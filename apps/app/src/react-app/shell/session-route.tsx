@@ -112,6 +112,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "./app-inspector";
+import { saveSessionDraft } from "../domains/session/sync/draft-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
@@ -2335,6 +2336,37 @@ export function SessionRoute() {
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId) => {
           void handleCreateTaskInWorkspace(workspaceId);
+        },
+        onCreateTaskWithPrompt: (workspaceId, prompt) => {
+          void (async () => {
+            const workspace = workspaces.find((item) => item.id === workspaceId);
+            if (!workspace) return;
+            const endpoint = resolveWorkspaceEndpoint(workspace, { baseUrl, token });
+            if (!endpoint?.token) return;
+            const workspaceClient = createClient(
+              endpoint.opencodeBaseUrl,
+              workspace.path?.trim() || undefined,
+              { token: endpoint.token, mode: "openwork" },
+            );
+            try {
+              const session = unwrap(
+                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
+              );
+              saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
+              writeActiveWorkspaceId(workspaceId || null);
+              writeLastSessionFor(workspaceId, session.id);
+              rememberPendingCreatedSession(workspaceId, session.id);
+              setSessionsByWorkspaceId((current) => ({
+                ...current,
+                [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
+              }));
+              navigateToWorkspaceSession(workspaceId, session.id);
+              focusPromptSoon();
+            } catch {
+              // Fall back to normal task creation without prompt
+              void handleCreateTaskInWorkspace(workspaceId);
+            }
+          })();
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
