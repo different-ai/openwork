@@ -161,16 +161,18 @@ function AssistantWaitingCard() {
   return (
     <div className="flex justify-start" role="status" aria-live="polite">
       <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
-        <PaperGrainGradient
-          speed={2}
-          softness={0.25}
-          intensity={0.85}
-          noise={0.1}
-          shape="sphere"
-          colors={["#7c8cf5", "#e8789c", "#e4a853", "#5cb8c4"]}
-          colorBack="#ffffff00"
-          style={{ backgroundColor: "#7c8cf5", width: 16, height: 16, borderRadius: "50%" }}
-        />
+        <div className="thinking-orb relative" style={{ width: 20, height: 20 }}>
+          <PaperGrainGradient
+            speed={4}
+            softness={0.15}
+            intensity={1}
+            noise={0.08}
+            shape="sphere"
+            colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
+            colorBack="#ffffff00"
+            style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
+          />
+        </div>
         <span>Thinking</span>
       </div>
     </div>

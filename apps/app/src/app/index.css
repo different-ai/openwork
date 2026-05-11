@@ -474,6 +474,31 @@ select:disabled {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+@keyframes thinking-orb-pulse {
+  0%, 100% { transform: scale(1) rotate(0deg); filter: brightness(1); }
+  25% { transform: scale(1.15) rotate(45deg); filter: brightness(1.2); }
+  50% { transform: scale(0.9) rotate(90deg); filter: brightness(1.1); }
+  75% { transform: scale(1.1) rotate(135deg); filter: brightness(1.3); }
+}
+
+@keyframes thinking-orb-glow {
+  0%, 100% { box-shadow: 0 0 6px 1px rgba(129, 140, 248, 0.3); }
+  33% { box-shadow: 0 0 10px 2px rgba(251, 113, 133, 0.4); }
+  66% { box-shadow: 0 0 8px 2px rgba(52, 211, 153, 0.35); }
+}
+
+.thinking-orb {
+  animation:
+    thinking-orb-pulse 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite,
+    thinking-orb-glow 3.2s ease-in-out infinite;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-orb { animation: none; }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
