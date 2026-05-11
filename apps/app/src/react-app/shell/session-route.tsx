@@ -461,6 +461,7 @@ export function SessionRoute() {
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
   const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const sessionsByWorkspaceIdRef = useRef<Record<string, any[]>>({});
+  const pendingCreatedSessionIdsRef = useRef<Record<string, Record<string, number>>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
   const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
@@ -536,6 +537,46 @@ export function SessionRoute() {
   );
 
   const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
+  const rememberPendingCreatedSession = useCallback((workspaceId: string, sessionId: string) => {
+    const id = sessionId.trim();
+    if (!workspaceId || !id) return;
+    pendingCreatedSessionIdsRef.current[workspaceId] = {
+      ...(pendingCreatedSessionIdsRef.current[workspaceId] ?? {}),
+      [id]: Date.now(),
+    };
+  }, []);
+  const mergeFetchedSessionsWithPending = useCallback((workspaceId: string, fetched: any[], current: any[]) => {
+    const pending = pendingCreatedSessionIdsRef.current[workspaceId];
+    if (!pending) return fetched;
+
+    const now = Date.now();
+    const fetchedIds = new Set(fetched.flatMap((session: any) => session?.id ? [String(session.id)] : []));
+    const pendingIds = Object.keys(pending);
+
+    for (const id of pendingIds) {
+      if (fetchedIds.has(id)) {
+        delete pending[id];
+      }
+    }
+
+    const preserved = current.filter((session: any) => {
+      const id = String(session?.id ?? "");
+      if (!id || fetchedIds.has(id)) return false;
+      const createdAt = pending[id];
+      if (typeof createdAt !== "number") return false;
+      if (now - createdAt > 30_000) {
+        delete pending[id];
+        return false;
+      }
+      return true;
+    });
+
+    if (Object.keys(pending).length === 0) {
+      delete pendingCreatedSessionIdsRef.current[workspaceId];
+    }
+
+    return preserved.length > 0 ? [...preserved, ...fetched] : fetched;
+  }, []);
   const loadWorkspaceSessionsInBackground = useCallback(
     async (workspaces: RouteWorkspace[]) => {
       const MAX_ATTEMPTS = 6;
@@ -556,7 +597,12 @@ export function SessionRoute() {
                 normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
               )
             : (response.items ?? []);
-          setSessionsByWorkspaceId((current) => ({ ...current, [workspace.id]: items }));
+          setSessionsByWorkspaceId((current) => {
+            const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
+            const next = { ...current, [workspace.id]: nextItems };
+            sessionsByWorkspaceIdRef.current = next;
+            return next;
+          });
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setWorkspaceConnectionOverrides((current) => {
             if (current[workspace.id]?.status !== "error") return current;
@@ -622,7 +668,7 @@ export function SessionRoute() {
 
       await Promise.all(workspaces.map((workspace) => fetchOnce(workspace, 0)));
     },
-    [endpointForWorkspace],
+    [endpointForWorkspace, mergeFetchedSessionsWithPending],
   );
 
   const refreshRouteState = useCallback(async () => {
@@ -666,6 +712,7 @@ export function SessionRoute() {
         setToken("");
         const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
         setWorkspaces(orderedDesktopWorkspaces);
+        sessionsByWorkspaceIdRef.current = {};
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
         setLegacySelectedWorkspaceId(resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "");
@@ -726,7 +773,9 @@ export function SessionRoute() {
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
       setWorkspaces(nextWorkspaces);
-      setSessionsByWorkspaceId(Object.fromEntries(cachedEntries.map((entry) => [entry.workspaceId, entry.sessions])));
+      const nextSessionsByWorkspaceId = Object.fromEntries(cachedEntries.map((entry) => [entry.workspaceId, entry.sessions]));
+      sessionsByWorkspaceIdRef.current = nextSessionsByWorkspaceId;
+      setSessionsByWorkspaceId(nextSessionsByWorkspaceId);
       setErrorsByWorkspaceId((previous) => {
         const next: Record<string, string | null> = {};
         for (const workspace of nextWorkspaces) {
@@ -1857,10 +1906,15 @@ export function SessionRoute() {
       setLegacySelectedWorkspaceId(workspaceId);
       writeActiveWorkspaceId(workspaceId || null);
       writeLastSessionFor(workspaceId, session.id);
-      setSessionsByWorkspaceId((current) => ({
-        ...current,
-        [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
-      }));
+      rememberPendingCreatedSession(workspaceId, session.id);
+      setSessionsByWorkspaceId((current) => {
+        const next = {
+          ...current,
+          [workspaceId]: [session as any, ...(current[workspaceId] ?? [])],
+        };
+        sessionsByWorkspaceIdRef.current = next;
+        return next;
+      });
       navigateToWorkspaceSession(workspaceId, session.id);
       focusPromptSoon();
       void refreshRouteState();
@@ -1878,7 +1932,7 @@ export function SessionRoute() {
         }
       }
     }
-  }, [baseUrl, errorsByWorkspaceId, loading, navigateToWorkspaceSession, refreshRouteState, retryingWorkspaceIds, token, workspaces]);
+  }, [baseUrl, errorsByWorkspaceId, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
   // Global shortcuts:
   //   Cmd/Ctrl+N  -> new task in selected workspace
@@ -2067,10 +2121,15 @@ export function SessionRoute() {
         writeActiveWorkspaceId(targetWorkspaceId);
         if (session?.id) {
           writeLastSessionFor(targetWorkspaceId, session.id);
-          setSessionsByWorkspaceId((current) => ({
-            ...current,
-            [targetWorkspaceId]: [session as any, ...(current[targetWorkspaceId] ?? [])],
-          }));
+          rememberPendingCreatedSession(targetWorkspaceId, session.id);
+          setSessionsByWorkspaceId((current) => {
+            const next = {
+              ...current,
+              [targetWorkspaceId]: [session as any, ...(current[targetWorkspaceId] ?? [])],
+            };
+            sessionsByWorkspaceIdRef.current = next;
+            return next;
+          });
         }
         navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
         if (session?.id) focusPromptSoon();
@@ -2080,7 +2139,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [client, local, navigateToWorkspaceSession, refreshRouteState]);
+  }, [client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;

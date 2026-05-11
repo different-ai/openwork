@@ -7,7 +7,7 @@ import { normalizeEvent } from "../../../../app/utils";
 import type { OpencodeEvent, PendingPermission } from "../../../../app/types";
 import { snapshotToUIMessages } from "./usechat-adapter";
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
-import { mergeSnapshotIntoCachedMessages, messageListContainsAll } from "./message-merge";
+import { mergeSnapshotIntoCachedMessages } from "./message-merge";
 
 type SyncOptions = {
   workspaceId: string;
@@ -623,20 +623,10 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   const incoming = snapshotToUIMessages(snapshot);
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
-  if (
-    existing &&
-    existing.length > 0 &&
-    (
-      snapshot.status.type === "busy" ||
-      snapshot.status.type === "retry" ||
-      (existing.length > incoming.length && messageListContainsAll(existing, incoming))
-    )
-  ) {
-    // During active streaming the server snapshot may have empty/stale text
-    // for in-progress parts while the cache already accumulated text via
-    // deltas.  Merge so we never overwrite longer cached text with shorter
-    // server text. Also preserve a longer cache when a remount first sees an
-    // older snapshot before the fresh snapshot request returns.
+  if (existing && existing.length > 0 && incoming.length > 0) {
+    // Server snapshots can lag the event stream even after OpenCode reports
+    // idle. Merge rather than replace so a just-finished answer cannot vanish
+    // until the next reload reconstructs it from persisted state.
     const merged = mergeSnapshotIntoCachedMessages(incoming, existing);
     queryClient.setQueryData(key, merged);
   } else {
