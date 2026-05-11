@@ -24,6 +24,10 @@ import { startBrowserMcpServers } from "./browser-mcp.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
+import {
+  openworkWorkspaceDisplayName,
+  selectOpenworkWorkspaceForConnection,
+} from "./remote-workspace.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
@@ -860,6 +864,32 @@ function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
   return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
 }
 
+async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
+  const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const headers = new Headers();
+  const bearerToken = String(token ?? "").trim();
+  const hostAuthToken = String(hostToken ?? "").trim();
+  if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
+  if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
+
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
+  const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
+  return selectOpenworkWorkspaceForConnection(list, directory);
+}
+
 async function readWorkspaceOpenworkConfig(workspacePath) {
   const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
   if (!(await pathExists(openworkPath))) {
@@ -1463,25 +1493,44 @@ async function handleDesktopInvoke(event, command, ...args) {
         : remoteType === "openwork"
           ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
           : null;
+      let resolvedOpenworkWorkspaceId = openworkWorkspaceId;
+      let resolvedOpenworkWorkspaceName = input.openworkWorkspaceName ?? null;
+      if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
+        const discovered = await discoverOpenworkWorkspace({
+          hostUrl: openworkHostUrl ?? baseUrl,
+          token: input.openworkToken,
+          hostToken: input.openworkHostToken,
+          directory,
+        });
+        if (!discovered?.id) {
+          throw new Error(
+            directory
+              ? `OpenWork server has no workspace matching ${directory}.`
+              : "OpenWork server returned no workspaces.",
+          );
+        }
+        resolvedOpenworkWorkspaceId = String(discovered.id).trim();
+        resolvedOpenworkWorkspaceName = openworkWorkspaceDisplayName(discovered);
+      }
       const id = remoteType === "openwork"
-        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
+        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, resolvedOpenworkWorkspaceId)
         : remoteWorkspaceId(baseUrl, directory);
       const workspace = normalizeWorkspaceEntry({
         id,
-        name: String(input.displayName ?? input.openworkWorkspaceName ?? "Remote workspace"),
+        name: String(input.displayName ?? resolvedOpenworkWorkspaceName ?? "Remote workspace"),
         displayName: input.displayName ?? null,
         path: directory ?? "",
         preset: "remote",
         workspaceType: "remote",
         remoteType,
-        baseUrl,
+        baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
         directory,
         openworkHostUrl,
         openworkToken: input.openworkToken ?? null,
         openworkClientToken: input.openworkClientToken ?? null,
         openworkHostToken: input.openworkHostToken ?? null,
-        openworkWorkspaceId,
-        openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+        openworkWorkspaceId: resolvedOpenworkWorkspaceId,
+        openworkWorkspaceName: resolvedOpenworkWorkspaceName,
         sandboxBackend: input.sandboxBackend ?? null,
         sandboxRunId: input.sandboxRunId ?? null,
         sandboxContainerName: input.sandboxContainerName ?? null,
@@ -1499,9 +1548,62 @@ async function handleDesktopInvoke(event, command, ...args) {
       const workspaceId = String(input.workspaceId ?? "").trim();
       if (!workspaceId) throw new Error("workspaceId is required");
       const { workspaceId: _workspaceId, ...patch } = input;
-      return mutateWorkspaceState((state) => {
+      return mutateWorkspaceState(async (state) => {
+        const existing = state.workspaces.find((entry) => entry.id === workspaceId);
+        if (!existing) return state;
+
+        let nextWorkspace = { ...existing, ...patch };
+        const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "openwork";
+        if (nextRemoteType === "openwork") {
+          const rawHostUrl = typeof nextWorkspace.openworkHostUrl === "string" && nextWorkspace.openworkHostUrl.trim()
+            ? nextWorkspace.openworkHostUrl.trim()
+            : null;
+          const nextBaseUrl = String(nextWorkspace.baseUrl ?? "").trim();
+          const hostUrl = stripOpenworkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
+          const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
+            ? nextWorkspace.directory.trim()
+            : null;
+          let remoteWorkspaceId = typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
+            ? nextWorkspace.openworkWorkspaceId.trim()
+            : parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
+          if (!remoteWorkspaceId) {
+            const discovered = await discoverOpenworkWorkspace({
+              hostUrl: hostUrl ?? nextBaseUrl,
+              token: nextWorkspace.openworkToken,
+              hostToken: nextWorkspace.openworkHostToken,
+              directory,
+            });
+            if (!discovered?.id) {
+              throw new Error(
+                directory
+                  ? `OpenWork server has no workspace matching ${directory}.`
+                  : "OpenWork server returned no workspaces.",
+              );
+            }
+            remoteWorkspaceId = String(discovered.id).trim();
+            remoteWorkspaceName = openworkWorkspaceDisplayName(discovered);
+          }
+          const nextId = openworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
+          nextWorkspace = normalizeWorkspaceEntry({
+            ...nextWorkspace,
+            id: nextId,
+            baseUrl: hostUrl ?? nextBaseUrl,
+            openworkHostUrl: hostUrl,
+            directory,
+            remoteType: "openwork",
+            openworkWorkspaceId: remoteWorkspaceId,
+            openworkWorkspaceName: remoteWorkspaceName,
+          });
+          if (nextId !== workspaceId) {
+            if (state.selectedId === workspaceId) state.selectedId = nextId;
+            if (state.activeId === workspaceId) state.activeId = nextId;
+            if (state.watchedId === workspaceId) state.watchedId = nextId;
+          }
+        }
+
         state.workspaces = state.workspaces.map((entry) =>
-          entry.id === workspaceId ? { ...entry, ...patch } : entry,
+          entry.id === workspaceId ? nextWorkspace : entry,
         );
         return state;
       });
