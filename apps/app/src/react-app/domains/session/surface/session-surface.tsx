@@ -159,19 +159,18 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
 
 function AssistantWaitingCard() {
   return (
-    <div className="flex justify-start py-2" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-2.5 rounded-full px-3 py-1.5 text-[12px] text-dls-secondary">
+    <div className="flex justify-start" role="status" aria-live="polite">
+      <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
         <PaperGrainGradient
-          speed={0.4}
-          softness={0.3}
-          intensity={0.8}
-          noise={0.15}
+          speed={2}
+          softness={0.25}
+          intensity={0.85}
+          noise={0.1}
           shape="sphere"
-          colors={["#6366f1", "#f43f5e", "#fbbf24", "#06b6d4"]}
+          colors={["#4338ca", "#be185d", "#b45309", "#0e7490"]}
           colorBack="#ffffff00"
-          style={{ backgroundColor: "#6366f1", width: 18, height: 18, borderRadius: "50%" }}
+          style={{ backgroundColor: "#4338ca", width: 16, height: 16, borderRadius: "50%" }}
         />
-        <OwDotTicker size="sm" />
         <span>Thinking</span>
       </div>
     </div>
