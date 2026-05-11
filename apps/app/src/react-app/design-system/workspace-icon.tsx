@@ -1,29 +1,30 @@
 /** @jsxImportSource react */
+import { useMemo } from "react";
 import { PaperGrainGradient } from "@openwork/ui/react";
 
 export type WorkspaceIconProps = {
-  /** Workspace ID or name used to seed the gradient. */
+  /** Workspace name used to seed the gradient. Changes when renamed. */
   seed: string;
   /** CSS size class, e.g. "size-4", "size-5.5". Defaults to "size-4". */
   sizeClass?: string;
 };
 
 /**
- * High-contrast palette families designed to look interesting at small sizes.
- * Each family uses complementary or split-complementary colors so the gradient
- * has visible structure even at 16px.
+ * Deeper, more professional palette families. Each uses complementary
+ * tones with enough contrast to read at 16px but avoids the neon/playful
+ * look of pure saturated colors.
  */
 const palettes = [
-  ["#6366f1", "#f43f5e", "#fbbf24", "#06b6d4"], // indigo + rose + amber + cyan
-  ["#8b5cf6", "#10b981", "#f97316", "#ec4899"], // violet + emerald + orange + pink
-  ["#0ea5e9", "#f59e0b", "#ef4444", "#22c55e"], // sky + amber + red + green
-  ["#d946ef", "#14b8a6", "#f97316", "#6366f1"], // fuchsia + teal + orange + indigo
-  ["#f43f5e", "#3b82f6", "#a3e635", "#f59e0b"], // rose + blue + lime + amber
-  ["#06b6d4", "#e879f9", "#fbbf24", "#34d399"], // cyan + pink + gold + emerald
-  ["#8b5cf6", "#f97316", "#06b6d4", "#f43f5e"], // violet + orange + cyan + rose
-  ["#ec4899", "#fbbf24", "#22c55e", "#6366f1"], // pink + amber + green + indigo
-  ["#14b8a6", "#f43f5e", "#a78bfa", "#f59e0b"], // teal + rose + violet + amber
-  ["#3b82f6", "#ef4444", "#10b981", "#f59e0b"], // blue + red + emerald + amber
+  ["#4338ca", "#be185d", "#b45309", "#0e7490"], // deep indigo + deep rose + dark amber + dark cyan
+  ["#6d28d9", "#047857", "#c2410c", "#be185d"], // deep violet + deep emerald + burnt orange + deep rose
+  ["#0369a1", "#a16207", "#b91c1c", "#15803d"], // deep sky + dark gold + deep red + deep green
+  ["#a21caf", "#0f766e", "#c2410c", "#4338ca"], // deep fuchsia + dark teal + burnt orange + deep indigo
+  ["#be123c", "#1d4ed8", "#4d7c0f", "#a16207"], // deep rose + deep blue + olive + dark gold
+  ["#0e7490", "#86198f", "#a16207", "#047857"], // dark cyan + deep purple + dark gold + deep emerald
+  ["#6d28d9", "#c2410c", "#0e7490", "#be123c"], // deep violet + burnt orange + dark cyan + deep rose
+  ["#9f1239", "#a16207", "#15803d", "#4338ca"], // dark rose + dark gold + deep green + deep indigo
+  ["#0f766e", "#be123c", "#6d28d9", "#a16207"], // dark teal + deep rose + deep violet + dark gold
+  ["#1d4ed8", "#991b1b", "#047857", "#b45309"], // deep blue + dark red + deep emerald + dark amber
 ];
 
 /** Shapes that produce the most visible structure at tiny sizes. */
@@ -41,28 +42,31 @@ function hashSeed(input: string): number {
 
 /**
  * Renders a small rounded circle with a deterministic Paper grain gradient
- * seeded by the workspace identifier. High-contrast complementary colors
- * ensure the gradient looks interesting even at 16px.
+ * seeded by the workspace name. Renaming the workspace changes the gradient.
+ * Uses deeper, more professional color palettes.
  */
 export function WorkspaceIcon({ seed, sizeClass = "size-4" }: WorkspaceIconProps) {
-  const hash = hashSeed(seed);
-  const colors = palettes[hash % palettes.length];
-  const shape = shapes[(hash >> 4) % shapes.length];
-  // Spread frame values wider so each workspace lands on a visually distinct moment
-  const frame = ((hash * 7) % 200000) + 10000;
+  const config = useMemo(() => {
+    const hash = hashSeed(seed);
+    return {
+      colors: palettes[hash % palettes.length],
+      shape: shapes[(hash >> 4) % shapes.length],
+      frame: ((hash * 7) % 200000) + 10000,
+    };
+  }, [seed]);
 
   return (
     <div className={`${sizeClass} shrink-0 overflow-hidden rounded-full`}>
       <PaperGrainGradient
         speed={0}
-        frame={frame}
-        colors={colors}
+        frame={config.frame}
+        colors={config.colors}
         colorBack="#ffffff00"
-        softness={0.35}
-        intensity={0.75}
-        noise={0.15}
-        shape={shape}
-        style={{ backgroundColor: colors[0], width: "100%", height: "100%" }}
+        softness={0.3}
+        intensity={0.8}
+        noise={0.12}
+        shape={config.shape}
+        style={{ backgroundColor: config.colors[0], width: "100%", height: "100%" }}
       />
     </div>
   );

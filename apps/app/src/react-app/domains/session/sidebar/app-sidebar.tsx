@@ -622,7 +622,7 @@ function WorkspaceHeader({
         handleSelectWorkspace();
       }}
     >
-      <WorkspaceIcon seed={workspace.id || workspaceLabel(workspace)} sizeClass="size-4" />
+      <WorkspaceIcon seed={workspaceLabel(workspace)} sizeClass="size-4" />
       <div
         className={cn(
           "min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/menu-item:pr-12 group-focus-within/menu-item:pr-12 group-hover/workspace-header:pr-12 group-focus-within/workspace-header:pr-12",

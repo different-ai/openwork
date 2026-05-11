@@ -610,7 +610,7 @@ export function WorkspaceSessionList(props: Props) {
                     }}
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
-                      <WorkspaceIcon seed={workspace.id || workspaceLabel(workspace)} sizeClass="size-5.5" />
+                      <WorkspaceIcon seed={workspaceLabel(workspace)} sizeClass="size-5.5" />
                       <div className="min-w-0 flex-1">
                         <div className="min-w-0 truncate text-[14px] font-normal text-dls-text">
                           {workspaceLabel(workspace)}
