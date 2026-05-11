@@ -15,16 +15,16 @@ export type WorkspaceIconProps = {
  * look of pure saturated colors.
  */
 const palettes = [
-  ["#4338ca", "#be185d", "#b45309", "#0e7490"], // deep indigo + deep rose + dark amber + dark cyan
-  ["#6d28d9", "#047857", "#c2410c", "#be185d"], // deep violet + deep emerald + burnt orange + deep rose
-  ["#0369a1", "#a16207", "#b91c1c", "#15803d"], // deep sky + dark gold + deep red + deep green
-  ["#a21caf", "#0f766e", "#c2410c", "#4338ca"], // deep fuchsia + dark teal + burnt orange + deep indigo
-  ["#be123c", "#1d4ed8", "#4d7c0f", "#a16207"], // deep rose + deep blue + olive + dark gold
-  ["#0e7490", "#86198f", "#a16207", "#047857"], // dark cyan + deep purple + dark gold + deep emerald
-  ["#6d28d9", "#c2410c", "#0e7490", "#be123c"], // deep violet + burnt orange + dark cyan + deep rose
-  ["#9f1239", "#a16207", "#15803d", "#4338ca"], // dark rose + dark gold + deep green + deep indigo
-  ["#0f766e", "#be123c", "#6d28d9", "#a16207"], // dark teal + deep rose + deep violet + dark gold
-  ["#1d4ed8", "#991b1b", "#047857", "#b45309"], // deep blue + dark red + deep emerald + dark amber
+  ["#7c8cf5", "#e8789c", "#e4a853", "#5cb8c4"], // soft indigo + muted rose + warm gold + soft teal
+  ["#9b8afb", "#5aab8e", "#d98a54", "#d07eb5"], // soft violet + sage + copper + dusty pink
+  ["#5a9fd4", "#d4a44c", "#cc7070", "#6aad7a"], // soft blue + warm gold + dusty red + sage green
+  ["#c27dd8", "#5a9e93", "#d4914e", "#7c8cf5"], // soft purple + muted teal + copper + soft indigo
+  ["#d47580", "#6b8fd4", "#8aad5a", "#d4a44c"], // dusty rose + soft blue + olive + warm gold
+  ["#5cb8c4", "#b572c4", "#d4a44c", "#5aab8e"], // soft teal + muted purple + warm gold + sage
+  ["#9b8afb", "#d4914e", "#5cb8c4", "#d47580"], // soft violet + copper + soft teal + dusty rose
+  ["#c47082", "#d4a44c", "#6aad7a", "#7c8cf5"], // muted rose + warm gold + sage green + soft indigo
+  ["#5a9e93", "#d47580", "#9b8afb", "#d4a44c"], // muted teal + dusty rose + soft violet + warm gold
+  ["#6b8fd4", "#c47070", "#5aab8e", "#d4914e"], // soft blue + muted red + sage + copper
 ];
 
 /** Shapes that produce the most visible structure at tiny sizes. */

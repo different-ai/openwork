@@ -167,9 +167,9 @@ function AssistantWaitingCard() {
           intensity={0.85}
           noise={0.1}
           shape="sphere"
-          colors={["#4338ca", "#be185d", "#b45309", "#0e7490"]}
+          colors={["#7c8cf5", "#e8789c", "#e4a853", "#5cb8c4"]}
           colorBack="#ffffff00"
-          style={{ backgroundColor: "#4338ca", width: 16, height: 16, borderRadius: "50%" }}
+          style={{ backgroundColor: "#7c8cf5", width: 16, height: 16, borderRadius: "50%" }}
         />
         <span>Thinking</span>
       </div>
