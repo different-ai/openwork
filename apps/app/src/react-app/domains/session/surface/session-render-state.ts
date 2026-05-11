@@ -24,7 +24,6 @@ export function resolveRenderedSessionSnapshot(input: {
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
-  includeLiveOnlyMessages?: boolean;
 }) {
   const liveMessages = input.transcriptState ?? [];
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
@@ -36,7 +35,7 @@ export function deriveRenderedSessionMessages(input: {
   if (liveMessages.length > 0 && snapshotMessages.length > 0) {
     if (messageListContainsAll(liveMessages, snapshotMessages)) return liveMessages;
     return mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
-      appendLiveOnlyMessages: input.includeLiveOnlyMessages,
+      appendLiveOnlyMessages: true,
     });
   }
   if (input.snapshot && input.snapshot.messages.length > 0) {
