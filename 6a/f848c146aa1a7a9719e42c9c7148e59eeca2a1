@@ -1,0 +1,143 @@
+apps/app/src/app/types.ts
+  s_7503a2b5af696f::t_ab8fe4f2298673 174-177
+apps/app/src/react-app/domains/settings/cloud/cloud-session-provider.tsx
+  s_c5b4b6d03cf10c::t_79a6a8eaca2a69 10,23-26,45-46,75-78
+  s_c6472d9335e995::t_9d258a6e2f2db0 9,13-14,27-28,47-50,52-59,79-80,84
+  s_5b9c8aa867acce::t_80fc32cb6a5fd4 2-3,5-6,8,11-12,15,17-20,31-41,43,61-63,65-72,83,85-90,93-97
+  s_c5b4b6d03cf10c::t_14c51be577bf90 21-22,29-30,44,73-74,81-82
+  s_5b9c8aa867acce::t_d82a1c9b0208a9 42
+apps/app/src/react-app/domains/settings/pages/cloud-workers-view.tsx
+  s_e61d70aa322364::t_501a02dd2ce759 8,119
+  s_7503a2b5af696f::t_3654fb880b37aa 1,4-6,10-12,19-20,118,120-138,145-148
+  s_00d302045abfdf::t_886f9b1404a8fe 2-3,7,9,13-18,21-25,27-31,33-35,37-44,46-51,53-54,56-65,67-69,71,73-75,77-84,86-115,117,139-144
+  s_c6472d9335e995::t_5cb659f710d389 26,32,36,45,52,55,66,70,72,76,85,116
+apps/app/src/i18n/locales/es.ts
+  s_7503a2b5af696f::t_4297715f2138de 987,1114-1117,1122-1125
+apps/app/src/i18n/locales/zh.ts
+  s_7503a2b5af696f::t_f475f4654ae4fa 967,1094-1097,1102-1105
+apps/app/src/react-app/domains/settings/cloud/use-den-session.tsx
+  s_00d302045abfdf::t_4b0008f201a215 412-421,423-432
+  s_7503a2b5af696f::t_6ddcac4a1e6b87 7,15,23,26,34,66-69,94,101,103,105-106,108-111,114-119,149-150,168-169,173,181,268,272,318-319,340,370,401,411,433
+  s_c6472d9335e995::t_80fe41a19bf84b 135-136,138
+  s_c5b4b6d03cf10c::t_7dee68d56130b6 79-81
+  s_7503a2b5af696f::t_86e731fde64623 28-32,291,294,296,301,303-304,309-310,313-314
+  s_5b9c8aa867acce::t_79648eabf148ad 24,85,160,216,239,320
+  s_c6472d9335e995::t_98fae3865d82df 75
+  s_c5b4b6d03cf10c::t_7575c1c4de4758 71-74,76-78,82,133-134
+  s_00d302045abfdf::t_e348e09acd1fb6 422
+  s_00d302045abfdf::t_e89e916ec2b17d 104,107,112
+apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx
+  s_7503a2b5af696f::t_c1b9c7e5d982d6 1,6-8,12-14,20-21,25,28-29,207,209-227,237-240
+  s_c6472d9335e995::t_a91e2989ec0418 17,45,51,91,102-103,117-118,126,128
+  s_00d302045abfdf::t_afb46d87d6dd44 2-5,9,11,19,22-24,30-44,46-50,52-90,92-101,104-116,120-125,127,129-206,228-236
+  s_00d302045abfdf::t_4d7ae738961e04 26-27
+  s_e61d70aa322364::t_15da4bfd52cbe6 10,15-16,18,119,208
+apps/app/src/i18n/locales/ru.ts
+  s_7503a2b5af696f::t_5ad574864ed188 1108,1261-1264,1269-1272
+apps/app/src/i18n/locales/pt-BR.ts
+  s_7503a2b5af696f::t_de5799481d965e 969,1096-1099,1104-1107
+apps/app/src/react-app/domains/settings/cloud/cloud-account-section.tsx
+  s_e61d70aa322364::t_14abf0a1814f56 20,45
+  s_e61d70aa322364::t_1b56dd4dc10d0b 4
+apps/app/src/react-app/domains/settings/shell/settings-page.tsx
+  s_7503a2b5af696f::t_d73c6f1750ad44 7,9,15,17,55-62,86-93,117-124,149,160,270-286
+  s_9a63faa80c0c03::t_5290457d8a7488 146,154-159,187,189
+apps/app/src/react-app/domains/settings/cloud/sections.tsx
+  s_e61d70aa322364::t_d85c4cb5237843 40,548,662,793,826,1023
+  s_e61d70aa322364::t_8cc4569fa35c60 911
+apps/app/src/i18n/locales/ca.ts
+  s_7503a2b5af696f::t_02fe033152f6d8 987,1114-1117,1122-1125
+apps/app/src/i18n/locales/en.ts
+  s_7503a2b5af696f::t_fc3cab9c830aa2 1022,1175-1178,1182-1185
+apps/app/src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx
+  s_7503a2b5af696f::t_ce1eac611f4bd5 1,6-8,12-14,28-29,31-33,127,129-147,158-161
+  s_00d302045abfdf::t_6039a11b8d5fca 2-5,9,11,15,20-27,30,34-39,41-45,47-67,69-79,82-94,98-103,105,107-126,148-157
+  s_e61d70aa322364::t_78ef9b4f32d322 10,16-17,19,97,128
+  s_c6472d9335e995::t_2fac2675b54029 18,40,46,68,80-81,95-96,104,106
+apps/app/src/react-app/shell/settings-route.tsx
+  s_7503a2b5af696f::t_3069b9a6c65e87 1109
+  s_7503a2b5af696f::t_069c60d45715e1 292-298
+  s_7503a2b5af696f::t_f151815ba5927b 36-39,52
+  s_5b9c8aa867acce::t_8234ffc5d43ace 51,373,1925-1930
+  s_7503a2b5af696f::t_23cb14a036a702 1446-1449
+  s_00d302045abfdf::t_a87fc6e079c0bd 1608,1623,1628
+  s_7503a2b5af696f::t_b48079983e7203 1597,1599,1602-1606,1609-1614,1616-1621,1625
+  s_00d302045abfdf::t_6c594f652e91ae 1601
+  s_7503a2b5af696f::t_51b35b152ddfe3 684-688
+apps/app/src/i18n/locales/ja.ts
+  s_7503a2b5af696f::t_4ff97d792b8f94 963,1090-1093,1098-1101
+apps/app/src/react-app/domains/settings/pages/cloud-account-view.tsx
+  s_c6472d9335e995::t_d5a5647459bed9 162,206
+  s_7503a2b5af696f::t_b48808e030b6a4 1-15,17-30,54-161,164-175,177,179-199,202-203,205,207-220,222-233
+  s_e61d70aa322364::t_21cb451c97f710 16,31-53,163,176,178,200-201,204,221
+apps/app/src/i18n/locales/fr.ts
+  s_7503a2b5af696f::t_3515ef864d17b8 987,1114-1117,1122-1125
+apps/app/src/i18n/locales/th.ts
+  s_7503a2b5af696f::t_4b8ac31d730d81 964,1091-1094,1099-1102
+apps/app/src/i18n/locales/vi.ts
+  s_7503a2b5af696f::t_e03f69bb4878c0 964,1091-1094,1099-1102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "6af848c146aa1a7a9719e42c9c7148e59eeca2a1",
+  "prompts": {},
+  "sessions": {
+    "s_00d302045abfdf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "df8bfcc1-7fb3-44a4-b715-70ed63856880",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_5b9c8aa867acce": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8aa9f317-802a-4dce-89f4-ec1c34c0c5f0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_7503a2b5af696f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "df049e79-9457-48f1-afad-a982ee39b001",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_9a63faa80c0c03": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "239719e5-0da1-4650-b341-77733de3199a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_c5b4b6d03cf10c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "eb4b85df-214f-41ce-aaed-1fc96c722ce6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_c6472d9335e995": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cf9b675a-f244-4cee-acc4-0541c73cc5b7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e61d70aa322364": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "48880d07-57ce-402d-98c9-a26e68b1deb7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
