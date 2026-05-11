@@ -14,6 +14,17 @@ const WELL_KNOWN_VARIANT_ORDER = [
   "max",
 ] as const;
 
+const VARIANT_DEFAULT_TARGET = 3;
+const VARIANT_DEFAULT_SCORE: Record<string, number> = {
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: VARIANT_DEFAULT_TARGET,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+};
+
 function defaultBehaviorOption(): ModelBehaviorOption {
   return {
     value: null,
@@ -70,6 +81,30 @@ const sortVariantKeys = (keys: string[]) =>
     }
     return a.localeCompare(b);
   });
+
+const getDefaultVariantKey = (keys: string[]) => {
+  let selected: string | null = null;
+  let selectedScore: number | null = null;
+
+  for (const key of keys) {
+    const score = VARIANT_DEFAULT_SCORE[key];
+    if (score == null) continue;
+    if (selectedScore == null) {
+      selected = key;
+      selectedScore = score;
+      continue;
+    }
+
+    const distance = Math.abs(score - VARIANT_DEFAULT_TARGET);
+    const selectedDistance = Math.abs(selectedScore - VARIANT_DEFAULT_TARGET);
+    if (distance < selectedDistance || (distance === selectedDistance && score > selectedScore)) {
+      selected = key;
+      selectedScore = score;
+    }
+  }
+
+  return selected ?? keys[0] ?? null;
+};
 
 const providerFamily = (providerID: string, providerName?: string | null) => {
   const normalizedId = providerID.trim().toLowerCase();
@@ -167,6 +202,9 @@ export const getModelBehaviorOptions = (
   ];
 };
 
+const getDefaultModelBehaviorValue = (model: ProviderModel) =>
+  getDefaultVariantKey(sortVariantKeys(getVariantKeys(model)));
+
 export const sanitizeModelBehaviorValue = (
   providerID: string,
   model: ProviderModel,
@@ -188,7 +226,8 @@ export const getModelBehaviorSummary = (
 ) => {
   const options = getModelBehaviorOptions(providerID, model, providerName);
   const sanitized = sanitizeModelBehaviorValue(providerID, model, value, providerName);
-  const selected = options.find((option) => option.value === sanitized) ?? options[0] ?? null;
+  const selectedValue = sanitized ?? getDefaultModelBehaviorValue(model);
+  const selected = options.find((option) => option.value === selectedValue) ?? options[0] ?? null;
   const title = getBehaviorTitle(providerID, model, getVariantKeys(model), providerName);
 
   if (options.length > 0) {
@@ -196,6 +235,7 @@ export const getModelBehaviorSummary = (
       title,
       label: selected?.label ?? defaultBehaviorOption().label,
       description: selected?.description ?? defaultBehaviorOption().description,
+      value: selected?.value ?? null,
       options,
     };
   }
@@ -205,6 +245,7 @@ export const getModelBehaviorSummary = (
       title,
       label: t("model_behavior.label_builtin"),
       description: t("model_behavior.desc_builtin"),
+      value: null,
       options,
     };
   }
@@ -213,6 +254,7 @@ export const getModelBehaviorSummary = (
     title,
     label: t("model_behavior.label_standard"),
     description: t("model_behavior.desc_standard"),
+    value: null,
     options,
   };
 };

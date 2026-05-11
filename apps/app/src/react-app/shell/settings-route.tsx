@@ -1872,7 +1872,13 @@ export function SettingsRoute() {
           local.prefs.defaultModel ?? { providerID: "", modelID: "" }
         }
         onSelect={(next: ModelRef) => {
-          local.setPrefs((prev) => ({ ...prev, defaultModel: next }));
+          local.setPrefs((prev) => ({
+            ...prev,
+            defaultModel: next,
+            modelVariant: prev.defaultModel?.providerID === next.providerID && prev.defaultModel.modelID === next.modelID
+              ? prev.modelVariant
+              : null,
+          }));
           setModelPickerOpen(false);
         }}
         onBehaviorChange={() => {}}

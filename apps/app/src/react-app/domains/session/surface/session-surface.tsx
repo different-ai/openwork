@@ -17,6 +17,7 @@ import type {
   ComposerPart,
   McpServerEntry,
   McpStatusMap,
+  ModelRef,
   SkillCard,
 } from "../../../../app/types";
 import {
@@ -65,6 +66,10 @@ export type SessionSurfaceProps = {
   developerMode: boolean;
   modelLabel: string;
   onModelClick: () => void;
+  modelPickerOpen: boolean;
+  selectedModel: ModelRef;
+  onModelPickerOpenChange: (open: boolean) => void;
+  onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft) => void;
   onDraftChange: (draft: ComposerDraft) => void;
   attachmentsEnabled: boolean;
@@ -953,8 +958,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         busy={chatStreaming}
         disabled={model.transitionState !== "idle"}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
-        modelLabel={props.modelLabel}
-        onModelClick={props.onModelClick}
+        modelPickerOpen={props.modelPickerOpen}
+        selectedModel={props.selectedModel}
+        onModelPickerOpenChange={props.onModelPickerOpenChange}
+        onModelChange={props.onModelChange}
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}

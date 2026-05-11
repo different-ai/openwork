@@ -1,5 +1,13 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
   AgentPartInput,
@@ -12,6 +20,7 @@ import type {
 import { createClient, unwrap } from "../../app/lib/opencode";
 import { listCommands, shellInSession } from "../../app/lib/opencode-session";
 import {
+  buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   readOpenworkServerSettings,
   type OpenworkServerClient,
@@ -114,6 +123,7 @@ import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
 import { useSessionControlActions } from "../domains/session/control/session-control-actions";
 import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { WorkspaceProvider } from "./workspace-provider";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -204,6 +214,7 @@ function focusPromptSoon() {
 }
 
 const emptyPendingPermissions: PendingPermission[] = [];
+const emptyModelBehaviorOptions: { value: string | null; label: string }[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
   const queryClient = getReactQueryClient();
@@ -477,6 +488,7 @@ export function SessionRoute() {
   // session "Pick a model" button navigated to /settings/general, which is a
   // dead-end). Loads providers lazily when the modal opens.
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [compactModelPickerOpen, setCompactModelPickerOpen] = useState(false);
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
@@ -1392,18 +1404,30 @@ export function SessionRoute() {
 
   // Compute behavior (reasoning/thinking variant) options for the current
   // default model. This is what the composer renders as its variant pill.
-  const { modelVariantLabel, modelBehaviorOptions } = useMemo(() => {
+  const { modelVariantLabel, modelBehaviorOptions, modelVariantValue } = useMemo(() => {
     const ref = local.prefs.defaultModel;
     const variant = local.prefs.modelVariant ?? null;
     if (!ref) {
-      return { modelVariantLabel: t("settings.default_label"), modelBehaviorOptions: [] as { value: string | null; label: string }[] };
+      return {
+        modelVariantLabel: t("settings.default_label"),
+        modelBehaviorOptions: emptyModelBehaviorOptions,
+        modelVariantValue: null,
+      };
     }
     const model = providerCatalog[ref.providerID]?.[ref.modelID];
     if (!model) {
-      return { modelVariantLabel: variant ?? t("settings.default_label"), modelBehaviorOptions: [] as { value: string | null; label: string }[] };
+      return {
+        modelVariantLabel: variant ?? t("settings.default_label"),
+        modelBehaviorOptions: emptyModelBehaviorOptions,
+        modelVariantValue: variant,
+      };
     }
     const summary = getModelBehaviorSummary(ref.providerID, model, variant);
-    return { modelVariantLabel: summary.label, modelBehaviorOptions: summary.options };
+    return {
+      modelVariantLabel: summary.label,
+      modelBehaviorOptions: summary.options,
+      modelVariantValue: summary.value,
+    };
   }, [local.prefs.defaultModel, local.prefs.modelVariant, providerCatalog]);
 
   // Load the picker list lazily the first time the modal opens. Uses the
@@ -1537,6 +1561,19 @@ export function SessionRoute() {
         setModelPickerQuery("");
         setModelPickerOpen(true);
       },
+      modelPickerOpen: compactModelPickerOpen,
+      selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
+      onModelPickerOpenChange: setCompactModelPickerOpen,
+      onModelChange: (model: ModelRef) => {
+        local.setPrefs((previous) => ({
+          ...previous,
+          defaultModel: model,
+          modelVariant: previous.defaultModel?.providerID === model.providerID && previous.defaultModel.modelID === model.modelID
+            ? previous.modelVariant
+            : null,
+        }));
+        setCompactModelPickerOpen(false);
+      },
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins") => {
         handleOpenSettings(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : "/settings/general");
       },
@@ -1576,7 +1613,7 @@ export function SessionRoute() {
           parts,
           model: local.prefs.defaultModel ?? undefined,
           agent: selectedAgent ?? undefined,
-          ...(local.prefs.modelVariant ? { variant: local.prefs.modelVariant } : {}),
+          ...(modelVariantValue ? { variant: modelVariantValue } : {}),
           ...(envSystemContext ? { system: envSystemContext } : {}),
         });
         if (result.error) {
@@ -1589,7 +1626,7 @@ export function SessionRoute() {
       attachmentsEnabled: true,
       attachmentsDisabledReason: null,
       modelVariantLabel,
-      modelVariant: local.prefs.modelVariant ?? null,
+      modelVariant: modelVariantValue,
       modelBehaviorOptions,
       onModelVariantChange: (value: string | null) => {
         local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
@@ -1619,15 +1656,25 @@ export function SessionRoute() {
       isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
       isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
       onChangeModel: (model: { providerID: string; modelID: string }) => {
-        local.setPrefs((previous) => ({ ...previous, defaultModel: model }));
+        local.setPrefs((previous) => ({
+          ...previous,
+          defaultModel: model,
+          modelVariant: previous.defaultModel?.providerID === model.providerID && previous.defaultModel.modelID === model.modelID
+            ? previous.modelVariant
+            : null,
+        }));
       },
     };
   }, [
     client,
+    compactModelPickerOpen,
     handleOpenSettings,
     local,
     listSlashCommands,
+    modelBehaviorOptions,
     modelLabel,
+    modelVariantLabel,
+    modelVariantValue,
     navigate,
     opencodeBaseUrl,
     opencodeClient,
@@ -2120,7 +2167,7 @@ export function SessionRoute() {
   }, [local, refreshRouteState]);
 
   return (
-    <>
+    <WorkspaceProvider client={opencodeClient} selectedWorkspaceRoot={selectedWorkspaceRoot}>
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
         // Use the server-side workspace id (the one without the `rem_`
@@ -2379,7 +2426,13 @@ export function SessionRoute() {
       target="default"
       current={local.prefs.defaultModel ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
       onSelect={(next: ModelRef) => {
-        local.setPrefs((previous) => ({ ...previous, defaultModel: next }));
+        local.setPrefs((previous) => ({
+          ...previous,
+          defaultModel: next,
+          modelVariant: previous.defaultModel?.providerID === next.providerID && previous.defaultModel.modelID === next.modelID
+            ? previous.modelVariant
+            : null,
+        }));
         setModelPickerOpen(false);
       }}
       onBehaviorChange={() => {}}
@@ -2389,6 +2442,6 @@ export function SessionRoute() {
       }}
       onClose={() => setModelPickerOpen(false)}
     />
-    </>
+    </WorkspaceProvider>
   );
 }

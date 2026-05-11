@@ -1,0 +1,282 @@
+"use client";
+
+import * as React from "react";
+import { ChevronDown } from "lucide-react";
+
+import type { ModelOption, ModelRef } from "@/app/types";
+import { ProviderIcon } from "@/react-app/design-system/provider-icon";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { unwrap } from "@/app/lib/opencode";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
+import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+
+function getProviderDisplayName(providerId: string) {
+  return providerId
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function useModelOptions() {
+  const { client, selectedWorkspaceRoot } = useWorkspace();
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+
+  const { data } = useQuery({
+    queryKey: ["model-options", selectedWorkspaceRoot],
+    enabled: Boolean(client),
+    queryFn: async () => {
+      if (!client) {
+        return [];
+      }
+
+      const data = unwrap(
+        await client.config.providers({
+          directory: selectedWorkspaceRoot,
+        }),
+      );
+
+      if (!data.providers) {
+        return [];
+      }
+
+      return data.providers.flatMap((provider) =>
+        Object.entries(provider.models).map(([id, model]) => ({
+          providerID: provider.id,
+          modelID: id,
+          title: model.name,
+          description: provider.name,
+          behaviorTitle: "Reasoning",
+          behaviorLabel: "Default",
+          behaviorDescription: "",
+          behaviorValue: null,
+          isFree: false,
+          isConnected: true,
+        })),
+      );
+    },
+  });
+
+  // Apply org-level restrictions (dev #1505) on top of the raw model list
+  // so the picker never surfaces blocked options:
+  //   - `blockZenModel` hides the built-in OpenCode provider entries
+  //   - `disallowNonCloudModels` hides providers that aren't currently
+  //     connected via cloud (a provider with models[] filled counts as
+  //     connected in this list — see the loader above)
+  return React.useMemo(() => {
+    const restrictToCloud = checkDesktopRestriction({
+      restriction: "disallowNonCloudModels",
+    });
+
+    return (data ?? []).filter((option) => {
+      if (
+        isDesktopProviderBlocked({
+          providerId: option.providerID,
+          checkRestriction: checkDesktopRestriction,
+        })
+      ) {
+        return false;
+      }
+
+      if (restrictToCloud && !option.isConnected) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [checkDesktopRestriction, data]);
+}
+
+function groupByProvider(modelOptions: ModelOption[]) {
+  const groups = new Map<string, ModelOption[]>();
+
+  for (const option of modelOptions) {
+    const providerLabel = option.description ?? getProviderDisplayName(option.providerID);
+    const existing = groups.get(providerLabel);
+
+    if (existing) {
+      existing.push(option);
+      continue;
+    }
+
+    groups.set(providerLabel, [option]);
+  }
+
+  return [...groups.entries()].map(([providerLabel, options]) => ({
+    providerLabel,
+    options,
+  }));
+}
+
+function isSameModel(a: ModelRef, b: ModelRef) {
+  return a.providerID === b.providerID && a.modelID === b.modelID;
+}
+
+interface ModelSelectProps {
+  open: boolean;
+  value: ModelRef;
+  onOpenChange: (open: boolean) => void;
+  onChange: (model: ModelRef) => void;
+  disabled?: boolean;
+}
+
+export function ModelSelect({
+  open,
+  value,
+  onOpenChange,
+  onChange,
+  disabled = false,
+}: ModelSelectProps) {
+  const [search, setSearch] = React.useState("");
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const modelOptions = useModelOptions();
+
+  const focusSearchInput = React.useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const input = searchInputRef.current;
+
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.select();
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    focusSearchInput();
+  }, [focusSearchInput, open]);
+
+  const selectedOption = modelOptions?.find((option) =>
+    isSameModel(value, {
+      providerID: option.providerID,
+      modelID: option.modelID,
+    }),
+  );
+
+  const groups = React.useMemo(
+    () => groupByProvider(modelOptions ?? []),
+    [modelOptions],
+  );
+
+  const handleSelect = (option: ModelOption) => {
+    onChange({ providerID: option.providerID, modelID: option.modelID });
+    setSearch("");
+    onOpenChange(false);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen);
+
+        if (!nextOpen) {
+          setSearch("");
+        }
+      }}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              type="button"
+              disabled={disabled}
+              aria-label="Change model"
+              aria-keyshortcuts="Meta+Alt+/"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
+            />
+          }
+        >
+          <span className="max-w-48 truncate">
+            {selectedOption?.title ?? value.modelID ?? "Select model"}
+          </span>
+          <ChevronDown className="h-3 w-3" />
+        </TooltipTrigger>
+        <TooltipContent>
+          Change model
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        className="w-72 gap-0 p-0"
+        align="start"
+        initialFocus={false}
+      >
+        <Command
+          value={`${value.providerID}:${value.modelID}`}
+          filter={(value, search, keywords) => {
+            const haystack = (keywords ?? []).join(" ").toLowerCase();
+
+            return haystack.includes(search.toLowerCase()) ? 1 : 0;
+          }}
+        >
+          <CommandInput
+            ref={searchInputRef}
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search models..."
+          />
+          <CommandList>
+            <CommandEmpty>No models found.</CommandEmpty>
+            {groups.map((group) => (
+              <CommandGroup
+                key={group.providerLabel}
+                heading={group.providerLabel}
+              >
+                {group.options.map((option) => (
+                  <CommandItem
+                    key={`${option.providerID}:${option.modelID}`}
+                    value={`${option.providerID}:${option.modelID}`}
+                    keywords={[option.title, group.providerLabel]}
+                    onSelect={() => handleSelect(option)}
+                    data-checked={isSameModel(value, option)}
+                  >
+                    <ProviderIcon
+                      providerId={option.providerID}
+                      providerName={option.description}
+                      className="size-3.5 opacity-70"
+                      size={14}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-foreground">
+                        {option.title}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {option.description ??
+                          getProviderDisplayName(option.providerID)}
+                      </span>
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}

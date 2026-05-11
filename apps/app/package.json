@@ -55,6 +55,7 @@
     "ai": "^6.0.146",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "fuzzysort": "^3.1.0",
     "jsonc-parser": "^3.2.1",
     "lexical": "^0.35.0",
