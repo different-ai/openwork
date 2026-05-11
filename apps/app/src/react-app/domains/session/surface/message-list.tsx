@@ -3,7 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type Re
 import { isToolUIPart, type DynamicToolUIPart, type UIMessage } from "ai";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, ChevronDown, CircleAlert, Copy, File as FileIcon } from "lucide-react";
+import { Check, ChevronDown, CircleAlert, Copy, File as FileIcon, GitFork, Undo2 } from "lucide-react";
 
 import { openDesktopPath, revealDesktopItemInDir } from "../../../../app/lib/desktop";
 import {
@@ -143,6 +143,10 @@ type SessionTranscriptProps = {
   ) => void;
   footer?: ReactNode;
   variant?: "default" | "nested";
+  /** Revert to this message (undo everything after it). */
+  onRevertToMessage?: (messageId: string) => void;
+  /** Fork the conversation at this message into a new session. */
+  onForkAtMessage?: (messageId: string) => void;
 };
 
 // 500 was too high for real-world OpenWork sessions: a handful of giant
@@ -716,6 +720,8 @@ function MessageBlockRow(props: {
   searchHighlightQuery?: string;
   isStreaming: boolean;
   latestAssistantMessageId: string;
+  onRevertToMessage?: (messageId: string) => void;
+  onForkAtMessage?: (messageId: string) => void;
 }) {
   const block = props.block;
   const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
@@ -892,7 +898,29 @@ function MessageBlockRow(props: {
         })}
 
         {!props.isNestedVariant ? (
-          <div className="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+          <div className="absolute bottom-2 right-2 flex items-center gap-0.5 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none rounded-lg border border-dls-border bg-dls-surface p-0.5">
+            {props.onRevertToMessage ? (
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                onClick={() => props.onRevertToMessage?.(block.messageId)}
+                title="Revert to here"
+                aria-label="Revert to this message"
+              >
+                <Undo2 size={14} />
+              </button>
+            ) : null}
+            {props.onForkAtMessage ? (
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                onClick={() => props.onForkAtMessage?.(block.messageId)}
+                title="Fork from here"
+                aria-label="Fork conversation from this message"
+              >
+                <GitFork size={14} />
+              </button>
+            ) : null}
             <CopyButton getText={() => messageToText(block.message)} />
           </div>
         ) : null}
@@ -1164,6 +1192,8 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
                   searchHighlightQuery={props.searchHighlightQuery}
                   isStreaming={props.isStreaming}
                   latestAssistantMessageId={latestAssistantMessageId}
+                  onRevertToMessage={props.onRevertToMessage}
+                  onForkAtMessage={props.onForkAtMessage}
                 />
               </div>
             );
@@ -1186,6 +1216,8 @@ function SessionTranscriptInner(props: SessionTranscriptProps) {
               searchHighlightQuery={props.searchHighlightQuery}
               isStreaming={props.isStreaming}
               latestAssistantMessageId={latestAssistantMessageId}
+              onRevertToMessage={props.onRevertToMessage}
+              onForkAtMessage={props.onForkAtMessage}
             />
           ))}
         </div>

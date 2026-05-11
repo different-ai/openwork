@@ -92,6 +92,8 @@ export type SessionSurfaceProps = {
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
+  onRevertToMessage?: (messageId: string) => void;
+  onForkAtMessage?: (messageId: string) => void;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -957,6 +959,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     developerMode={props.developerMode}
                     showThinking={showThinking}
                     scrollElement={() => scrollRef.current}
+                    onRevertToMessage={props.onRevertToMessage}
+                    onForkAtMessage={props.onForkAtMessage}
                   />
                   {error ? (
                     <SessionErrorCard

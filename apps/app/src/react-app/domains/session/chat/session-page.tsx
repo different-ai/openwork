@@ -446,40 +446,7 @@ export function SessionPage(props: SessionPageProps) {
                   <span className="hidden @lg/titlebar:inline">Browser</span>
                 </button>
               ) : null}
-              {props.history ? (
-                <>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => void props.history?.onUndo()}
-                    disabled={!props.history.canUndo || props.history.busyAction !== null}
-                    title={t("session.undo_title")}
-                    aria-label={t("session.undo_label")}
-                  >
-                    {props.history.busyAction === "undo" ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Undo2 size={16} />
-                    )}
-                    <span className="hidden @lg/titlebar:inline">{t("session.revert_label")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => void props.history?.onRedo()}
-                    disabled={!props.history.canRedo || props.history.busyAction !== null}
-                    title={t("session.redo_title")}
-                    aria-label={t("session.redo_aria_label")}
-                  >
-                    {props.history.busyAction === "redo" ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Redo2 size={16} />
-                    )}
-                    <span className="hidden @lg/titlebar:inline">{t("session.redo_label")}</span>
-                  </button>
-                </>
-              ) : null}
+              {/* Revert/redo moved to per-message actions */}
             </div>
           </header>
 
