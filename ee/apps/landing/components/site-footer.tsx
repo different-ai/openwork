@@ -14,40 +14,24 @@ export function SiteFooter() {
             className="inline-flex items-center gap-3 text-gray-500 transition-colors hover:text-gray-800"
           >
             <OpenCodeLogo className="h-3 w-auto" />
+            <span>Everything from OpenCode just works.</span>
           </a>
         </div>
 
         <div className="flex flex-wrap items-center gap-4 md:gap-8">
-          <Link href="/docs" target="_blank" className="transition-colors hover:text-gray-800">
+          <Link href="/docs" className="transition-colors hover:text-gray-800">
             Docs
           </Link>
-          <Link href="/pricing" className="transition-colors hover:text-gray-800">
-            Pricing
-          </Link>
           <Link href="/download" className="transition-colors hover:text-gray-800">
-            Desktop
+            Download
           </Link>
-          <a
-            href="https://app.openworklabs.com"
-            target="_blank"
-            rel="noreferrer"
-            className="transition-colors hover:text-gray-800"
-          >
-            Cloud
-          </a>
           <Link href="/enterprise" className="transition-colors hover:text-gray-800">
             Enterprise
           </Link>
-          <Link href="/trust" className="transition-colors hover:text-gray-800">
-            Trust Center
+          <Link href="/den" className="transition-colors hover:text-gray-800">
+            Den
           </Link>
-          <Link href="/privacy" className="transition-colors hover:text-gray-800">
-            Privacy
-          </Link>
-          <Link href="/terms" className="transition-colors hover:text-gray-800">
-            Terms
-          </Link>
-          <div>© 2026 Different AI</div>
+          <div>© 2026 OpenWork Project.</div>
         </div>
       </div>
     </footer>

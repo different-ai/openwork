@@ -1,19 +1,6 @@
 import "./globals.css";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
-import { BotIdClient } from "botid/client";
-import { WebMcpProvider } from "../components/webmcp-provider";
-import { StructuredData } from "../components/structured-data";
-
-const organizationSchema = {
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  name: "OpenWork",
-  legalName: "Different AI",
-  url: "https://openworklabs.com",
-  logo: "https://openworklabs.com/openwork-mark.svg",
-  sameAs: ["https://github.com/different-ai/openwork"]
-};
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,33 +15,21 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata = {
-  metadataBase: new URL("https://openworklabs.com"),
-  title: "OpenWork — Open source Claude Cowork alternative for teams",
+  metadataBase: new URL("https://openwork.software"),
+  title: "OpenWork — The open source Claude Cowork alternative",
   description:
     "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
-  alternates: {
-    canonical: "/"
-  },
-  robots: {
-    index: true,
-    follow: true
-  },
   openGraph: {
-    type: "website",
-    siteName: "OpenWork",
-    locale: "en_US",
     images: ["/og-image-clean.png"]
   },
   twitter: {
     card: "summary_large_image",
     images: ["/og-image-clean.png"]
+  },
+  icons: {
+    icon: "/openwork-mark.svg"
   }
 };
-
-const protectedRoutes = [
-  { path: "/api/enterprise-contact", method: "POST" as const },
-  { path: "/api/app-feedback", method: "POST" as const },
-];
 
 export default function RootLayout({
   children
@@ -64,8 +39,6 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
-        <StructuredData data={organizationSchema} />
-        <BotIdClient protect={protectedRoutes} />
         <Script
           id="posthog"
           strategy="beforeInteractive"
@@ -79,8 +52,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="overflow-x-hidden antialiased">
-        <WebMcpProvider />
+      <body className="antialiased">
         {children}
       </body>
     </html>
