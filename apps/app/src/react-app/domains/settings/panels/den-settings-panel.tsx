@@ -10,7 +10,6 @@ import {
   type DenOrgMarketplaceResolved,
   type DenOrgLlmProvider,
   type DenOrgPlugin,
-  type DenOrgSkillHub,
   type DenUser,
   createDenClient,
   ensureDenActiveOrganization,
@@ -24,8 +23,7 @@ import {
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
-import type { CloudImportedPlugin, CloudImportedProvider, CloudImportedSkill, CloudImportedSkillHub } from "../../../../app/cloud/import-state";
-import type { DenOrgSkillCard, SkillCard } from "../../../../app/types";
+import type { CloudImportedPlugin, CloudImportedProvider } from "../../../../app/cloud/import-state";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,14 +35,10 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   CloudProvidersSection,
-  CloudSkillsSection,
   CloudWorkersSection,
   MarketplacePluginsSection,
-  SkillHubsSection,
   type CloudPluginRow,
   type CloudProviderRow,
-  type CloudSkillHubRow,
-  type CloudSkillRow,
 } from "../cloud/sections";
 import { CloudAccountSection } from "../cloud/cloud-account-section";
 import { CloudDevMode } from "../cloud/dev-mode";
@@ -66,21 +60,6 @@ import { t } from "@/i18n";
 type AsyncResult = { ok: boolean; message: string };
 
 export type DenSettingsExtensionsStore = {
-  skills: () => SkillCard[];
-  cloudOrgSkills: () => DenOrgSkillCard[];
-  cloudOrgSkillsStatus: () => string | null;
-  importedCloudSkills: () => Record<string, CloudImportedSkill>;
-  refreshCloudOrgSkills: (options?: { force?: boolean }) => Promise<unknown>;
-  installCloudOrgSkill: (skill: DenOrgSkillCard) => Promise<AsyncResult>;
-  removeCloudOrgSkill: (cloudSkillId: string) => Promise<AsyncResult>;
-  syncCloudOrgSkill: (skill: DenOrgSkillCard) => Promise<AsyncResult>;
-  cloudOrgSkillHubs: () => DenOrgSkillHub[];
-  cloudOrgSkillHubsStatus: () => string | null;
-  importedCloudSkillHubs: () => Record<string, CloudImportedSkillHub>;
-  refreshCloudOrgSkillHubs: (options?: { force?: boolean }) => Promise<unknown>;
-  importCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
-  removeCloudOrgSkillHub: (hubId: string) => Promise<AsyncResult>;
-  syncCloudOrgSkillHub: (hub: DenOrgSkillHub) => Promise<AsyncResult>;
   cloudOrgMarketplaces: () => DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: () => string | null;
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
@@ -289,18 +268,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   >([]);
   const [workersError, setWorkersError] = React.useState<string | null>(null);
 
-  // Skill hubs
-  const [skillHubsBusy, setSkillHubsBusy] = React.useState(false);
-  const [skillHubActionId, setSkillHubActionId] = React.useState<string | null>(null);
-  const [skillHubActionKind, setSkillHubActionKind] = React.useState<"import" | "remove" | "sync" | null>(null);
-  const [skillHubActionError, setSkillHubActionError] = React.useState<string | null>(null);
-
-  // Skills
-  const [skillsBusy, setSkillsBusy] = React.useState(false);
-  const [skillActionId, setSkillActionId] = React.useState<string | null>(null);
-  const [skillActionKind, setSkillActionKind] = React.useState<"import" | "remove" | "sync" | null>(null);
-  const [skillActionError, setSkillActionError] = React.useState<string | null>(null);
-
   // Marketplaces and plugins
   const [marketplacesBusy, setMarketplacesBusy] = React.useState(false);
   const [activeMarketplaceId, setActiveMarketplaceId] = React.useState<string | null>(null);
@@ -328,99 +295,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
   }, [activeOrg, activeOrgId, authToken, baseUrl]);
 
   // Derived extension rows
-  const installedSkillNames = React.useMemo(
-    () => new Set(props.extensions.skills().map((skill) => skill.name)),
-    [props.extensions],
-  );
-
-  const skillHubImports = props.extensions.importedCloudSkillHubs();
-  const liveSkillHubs = props.extensions.cloudOrgSkillHubs();
-  const liveSkills = props.extensions.cloudOrgSkills();
-  const importedSkills = props.extensions.importedCloudSkills();
   const liveMarketplaces = props.extensions.cloudOrgMarketplaces();
   const importedPlugins = props.extensions.importedCloudPlugins();
-
-  const skillHubRows = React.useMemo<CloudSkillHubRow[]>(() => {
-    const rows: CloudSkillHubRow[] = liveSkillHubs.map((hub) => {
-      const imported = skillHubImports[hub.id] ?? null;
-      const currentSkillIds = sortStrings(hub.skills.map((skill) => skill.id));
-      const importedSkillIds = sortStrings(imported?.skillIds ?? []);
-      const status = !imported
-        ? "available"
-        : sameStringList(currentSkillIds, importedSkillIds)
-          ? "imported"
-          : "out_of_sync";
-      return {
-        key: `live:${hub.id}`,
-        hubId: hub.id,
-        name: hub.name,
-        hub,
-        imported,
-        status,
-        liveSkillCount: hub.skills.length,
-        importedSkillCount: imported?.skillNames.length ?? 0,
-      };
-    });
-
-    for (const imported of Object.values(skillHubImports)) {
-      if (liveSkillHubs.some((hub) => hub.id === imported.hubId)) continue;
-      rows.push({
-        key: `imported:${imported.hubId}`,
-        hubId: imported.hubId,
-        name: imported.name,
-        hub: null,
-        imported,
-        status: "removed_from_cloud",
-        liveSkillCount: 0,
-        importedSkillCount: imported.skillNames.length,
-      });
-    }
-
-    return rows;
-  }, [liveSkillHubs, skillHubImports]);
-
-  const skillRows = React.useMemo<CloudSkillRow[]>(() => {
-    const rows: CloudSkillRow[] = liveSkills.map((skill) => {
-      const imported = importedSkills[skill.id] ?? null;
-      const remoteUpdatedAt = skill.updatedAt ? Date.parse(skill.updatedAt) : Number.NaN;
-      const importedUpdatedAt = imported?.updatedAt ? Date.parse(imported.updatedAt) : Number.NaN;
-      const installedName = imported?.installedName?.trim() || null;
-      const installedLocally = installedName ? installedSkillNames.has(installedName) : false;
-      const status = !imported
-        ? "available"
-        : !installedLocally
-          ? "out_of_sync"
-          : Number.isFinite(remoteUpdatedAt) &&
-              (!Number.isFinite(importedUpdatedAt) || remoteUpdatedAt > importedUpdatedAt)
-            ? "out_of_sync"
-            : "installed";
-
-      return {
-        key: `live:${skill.id}`,
-        cloudSkillId: skill.id,
-        skill,
-        imported,
-        status,
-        title: skill.title,
-        installedName,
-      };
-    });
-
-    for (const imported of Object.values(importedSkills)) {
-      if (liveSkills.some((skill) => skill.id === imported.cloudSkillId)) continue;
-      rows.push({
-        key: `imported:${imported.cloudSkillId}`,
-        cloudSkillId: imported.cloudSkillId,
-        skill: null,
-        imported,
-        status: "removed_from_cloud",
-        title: imported.title,
-        installedName: imported.installedName,
-      });
-    }
-
-    return rows.sort((a, b) => a.title.localeCompare(b.title));
-  }, [importedSkills, installedSkillNames, liveSkills]);
 
   const providerRows = React.useMemo<CloudProviderRow[]>(() => {
     const rows: CloudProviderRow[] = props.cloudOrgProviders.map((provider) => {
@@ -480,10 +356,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       authError ||
       workersError ||
       orgsError ||
-      skillActionError ||
       pluginActionError ||
-      providerActionError ||
-      skillHubActionError
+      providerActionError
     ) {
       return "error" as const;
     }
@@ -491,10 +365,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       sessionBusy ||
       orgsBusy ||
       workersBusy ||
-      skillsBusy ||
       marketplacesBusy ||
-      providersBusy ||
-      skillHubsBusy
+      providersBusy
     ) {
       return "warning" as const;
     }
@@ -510,10 +382,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     providersBusy,
     pluginActionError,
     sessionBusy,
-    skillActionError,
-    skillHubActionError,
-    skillHubsBusy,
-    skillsBusy,
     workersBusy,
     workersError,
   ]);
@@ -534,10 +402,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     setActiveMarketplaceId(null);
     setOrgsError(null);
     setWorkersError(null);
-    setSkillHubActionError(null);
     setPluginActionError(null);
     setProviderActionError(null);
-    setSkillHubActionKind(null);
     setProviderActionKind(null);
   }, []);
 
@@ -550,10 +416,8 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
       }
       setAuthToken("");
       setOpeningWorkerId(null);
-      setSkillHubActionId(null);
       setPluginActionId(null);
       setProviderActionId(null);
-      setSkillHubActionKind(null);
       setProviderActionKind(null);
       clearSessionState();
       setBaseUrlError(null);
@@ -743,87 +607,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     if (!user || !activeOrgId.trim()) return;
     void refreshWorkers(true);
   }, [activeOrgId, refreshWorkers, user]);
-
-  // Skill hubs query candidate: skillHubsBusy, skillHubActionError
-  const refreshSkillHubs = React.useCallback(
-    async (quiet = false) => {
-      const orgId = activeOrgId.trim();
-      if (!authToken.trim() || !orgId) return;
-
-      setSkillHubsBusy(true);
-      if (!quiet) setSkillHubActionError(null);
-
-      try {
-        syncCurrentDenSettings();
-        await props.extensions.refreshCloudOrgSkillHubs({ force: true });
-        if (!quiet) {
-          const count = props.extensions.cloudOrgSkillHubs().length;
-          showToast({
-            title: count > 0
-              ? `Loaded ${count} cloud skill hub${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
-              : `No cloud skill hubs are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
-            tone: "info",
-          });
-        }
-      } catch (error) {
-        if (!quiet) {
-          setSkillHubActionError(
-            error instanceof Error ? error.message : "Failed to load cloud skill hubs.",
-          );
-        }
-      } finally {
-        setSkillHubsBusy(false);
-      }
-    },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
-  );
-
-  React.useEffect(() => {
-    if (!user || !activeOrgId.trim()) return;
-    void refreshSkillHubs(true);
-  }, [activeOrgId, refreshSkillHubs, user]);
-
-  // Skills query candidate: skillsBusy, skillActionError
-  const refreshSkills = React.useCallback(
-    async (quiet = false) => {
-      const orgId = activeOrgId.trim();
-      if (!authToken.trim() || !orgId) return;
-
-      setSkillsBusy(true);
-      if (!quiet) setSkillActionError(null);
-
-      try {
-        syncCurrentDenSettings();
-        await props.extensions.refreshCloudOrgSkills({ force: true });
-        if (!quiet) {
-          const count = props.extensions.cloudOrgSkills().length;
-          showToast({
-            title: count > 0
-              ? t("den.status_loaded_skills", {
-                  count,
-                  name: activeOrg?.name ?? t("den.active_org_title"),
-                })
-              : t("den.status_no_skills", {
-                  name: activeOrg?.name ?? t("den.active_org_title"),
-                }),
-            tone: "info",
-          });
-        }
-      } catch (error) {
-        if (!quiet) {
-          setSkillActionError(error instanceof Error ? error.message : t("den.error_load_skills"));
-        }
-      } finally {
-        setSkillsBusy(false);
-      }
-    },
-    [activeOrg, activeOrgId, authToken, props.extensions, syncCurrentDenSettings],
-  );
-
-  React.useEffect(() => {
-    if (!user || !activeOrgId.trim()) return;
-    void refreshSkills(true);
-  }, [activeOrgId, refreshSkills, user]);
 
   // Marketplaces query candidate: marketplacesBusy, pluginActionError
   const refreshMarketplaces = React.useCallback(
@@ -1075,151 +858,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
     [activeOrgId, client, props, showToast],
   );
 
-  // Skill hub mutations
-  const handleImportSkillHub = React.useCallback(
-    async (hubId: string) => {
-      const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
-      if (!hub || skillHubActionId) return;
-
-      setSkillHubActionId(hub.id);
-      setSkillHubActionKind("import");
-      setSkillHubActionError(null);
-
-      try {
-        const result = await props.extensions.importCloudOrgSkillHub(hub);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillHubActionError(error instanceof Error ? error.message : `Failed to import ${hub.name}.`);
-      } finally {
-        setSkillHubActionId(null);
-        setSkillHubActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillHubActionId],
-  );
-
-  const handleRemoveSkillHub = React.useCallback(
-    async (hubId: string) => {
-      const imported = props.extensions.importedCloudSkillHubs()[hubId];
-      if (!imported || skillHubActionId) return;
-
-      setSkillHubActionId(hubId);
-      setSkillHubActionKind("remove");
-      setSkillHubActionError(null);
-
-      try {
-        const result = await props.extensions.removeCloudOrgSkillHub(hubId);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillHubActionError(error instanceof Error ? error.message : `Failed to remove ${imported.name}.`);
-      } finally {
-        setSkillHubActionId(null);
-        setSkillHubActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillHubActionId],
-  );
-
-  const handleSyncSkillHub = React.useCallback(
-    async (hubId: string) => {
-      const hub = props.extensions.cloudOrgSkillHubs().find((entry) => entry.id === hubId);
-      if (!hub || skillHubActionId) return;
-
-      setSkillHubActionId(hub.id);
-      setSkillHubActionKind("sync");
-      setSkillHubActionError(null);
-
-      try {
-        const result = await props.extensions.syncCloudOrgSkillHub(hub);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillHubActionError(error instanceof Error ? error.message : `Failed to sync ${hub.name}.`);
-      } finally {
-        setSkillHubActionId(null);
-        setSkillHubActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillHubActionId],
-  );
-
-  // Skill mutations
-  const handleImportSkill = React.useCallback(
-    async (cloudSkillId: string, title: string) => {
-      const skill = props.extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
-      if (!skill || skillActionId) return;
-
-      setSkillActionId(cloudSkillId);
-      setSkillActionKind("import");
-      setSkillActionError(null);
-
-      try {
-        const result = await props.extensions.installCloudOrgSkill(skill);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillActionError(
-          error instanceof Error ? error.message : t("den.import_skill_failed", { name: title }),
-        );
-      } finally {
-        setSkillActionId(null);
-        setSkillActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillActionId],
-  );
-
-  const handleRemoveSkill = React.useCallback(
-    async (cloudSkillId: string, title: string) => {
-      if (skillActionId) return;
-
-      setSkillActionId(cloudSkillId);
-      setSkillActionKind("remove");
-      setSkillActionError(null);
-
-      try {
-        const result = await props.extensions.removeCloudOrgSkill(cloudSkillId);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillActionError(
-          error instanceof Error ? error.message : t("den.remove_skill_failed", { name: title }),
-        );
-      } finally {
-        setSkillActionId(null);
-        setSkillActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillActionId],
-  );
-
-  const handleSyncSkill = React.useCallback(
-    async (cloudSkillId: string, title: string) => {
-      const skill = props.extensions.cloudOrgSkills().find((entry) => entry.id === cloudSkillId);
-      if (!skill || skillActionId) return;
-
-      setSkillActionId(cloudSkillId);
-      setSkillActionKind("sync");
-      setSkillActionError(null);
-
-      try {
-        const result = await props.extensions.syncCloudOrgSkill(skill);
-        if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
-      } catch (error) {
-        setSkillActionError(
-          error instanceof Error ? error.message : t("den.sync_skill_failed", { name: title }),
-        );
-      } finally {
-        setSkillActionId(null);
-        setSkillActionKind(null);
-      }
-    },
-    [props.extensions, showToast, skillActionId],
-  );
-
   // Marketplace plugin mutations
   const handleImportPlugin = React.useCallback(
     async (marketplaceId: string | null, plugin: DenOrgPlugin) => {
@@ -1393,23 +1031,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
         />
       ) : (
         <div className="flex flex-col gap-y-8">
-          <CloudSkillsSection
-            actionError={skillActionError}
-            actionId={skillActionId}
-            actionKind={skillActionKind}
-            activeOrgName={activeOrgName}
-            busy={skillsBusy}
-            hasActiveOrg={Boolean(activeOrgId.trim())}
-            rows={skillRows}
-            statusError={props.extensions.cloudOrgSkillsStatus()}
-            onImportSkill={handleImportSkill}
-            onRefresh={refreshSkills}
-            onRemoveSkill={handleRemoveSkill}
-            onSyncSkill={handleSyncSkill}
-          />
-
-          <Separator />
-
           <MarketplacePluginsSection
             actionError={pluginActionError}
             actionId={pluginActionId}
@@ -1436,23 +1057,6 @@ export function DenSettingsPanel(props: DenSettingsPanelProps) {
             workersError={workersError}
             onOpenWorker={handleOpenWorker}
             onRefreshWorkers={refreshWorkers}
-          />
-
-          <Separator />
-
-          <SkillHubsSection
-            actionError={skillHubActionError}
-            actionId={skillHubActionId}
-            actionKind={skillHubActionKind}
-            activeOrgName={activeOrgName}
-            busy={skillHubsBusy}
-            hasActiveOrg={Boolean(activeOrgId.trim())}
-            rows={skillHubRows}
-            statusError={props.extensions.cloudOrgSkillHubsStatus()}
-            onImport={handleImportSkillHub}
-            onRefresh={refreshSkillHubs}
-            onRemove={handleRemoveSkillHub}
-            onSync={handleSyncSkillHub}
           />
 
           <Separator />
