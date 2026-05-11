@@ -1678,30 +1678,16 @@ export function SettingsRoute() {
         return (
           <RecoveryView
             anyActiveRuns={false}
-            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/opencode.json` : ""}
-            revealConfigBusy={revealConfigBusy}
-            onRevealWorkspaceConfig={async () => {
-              setRevealConfigBusy(true);
-              setConfigActionStatus("Reveal workspace config is not wired into the React settings route yet.");
-              setRevealConfigBusy(false);
-            }}
+            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
             resetConfigBusy={resetConfigBusy}
-            onResetAppConfigDefaults={async () => {
-              setResetConfigBusy(true);
-              setConfigActionStatus("Reset app config defaults is not wired into the React settings route yet.");
-              setResetConfigBusy(false);
-            }}
+            onResetAppConfigDefaults={() => {}}
             configActionStatus={configActionStatus}
             cacheRepairBusy={false}
             cacheRepairResult={null}
-            onRepairOpencodeCache={() => {
-              setRouteError("Cache repair is not wired into the React settings route yet.");
-            }}
+            onRepairOpencodeCache={() => {}}
             dockerCleanupBusy={false}
             dockerCleanupResult={null}
-            onCleanupOpenworkDockerContainers={() => {
-              setRouteError("Docker cleanup is not wired into the React settings route yet.");
-            }}
+            onCleanupOpenworkDockerContainers={() => {}}
           />
         );
       case "environment":
