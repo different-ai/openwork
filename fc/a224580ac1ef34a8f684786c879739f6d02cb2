@@ -1,0 +1,139 @@
+apps/app/package.json
+  s_30142376e4b52f::t_711ff7a7870db2 58
+apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+  s_da9de42d9cb9fa::t_ac8e445608393c 44,46,1398-1400,1402
+  s_c4cfd6c3029453::t_dc97bb883d4623 9
+  s_c4cfd6c3029453::t_906870f0882a39 1404-1410
+  h_2169b0bd9b5c87 1329,1394
+apps/app/src/react-app/shell/workspace-provider.ts
+  s_bd40ab1e97af32::t_6e23a7a7a90ce1 2,4-6,8-9,11-13,16-17,23,25-27,30-32,34-35
+  h_2169b0bd9b5c87 1,3,10,15,19,24,28,33
+  s_bd40ab1e97af32::t_8580141b6578c7 7,14,18,20-22
+apps/app/src/components/model-select.tsx
+  s_b526af133cc167::t_ead397398bca41 20-42,90-106
+  s_f87130e096ce35::t_e6007777c151df 203-219,223
+  s_f87130e096ce35::t_3c932a5ecfa34c 220,222
+  s_f87130e096ce35::t_0c2ff0d4236fb5 221
+  s_f87130e096ce35::t_96c89ea4c40dba 13-17
+  s_e7986c4a60b27c::t_a10520f1b3d35a 253
+  s_e7986c4a60b27c::t_a034d53357d012 229-236
+AGENTS.md
+  h_2169b0bd9b5c87 1,3,5-7,9,11-13,15,17-19,21,23,25,27-33,36,38
+apps/app/src/components/ui/select.tsx
+  s_adbd46135bfb3a::t_0e6802424e22f0 42,50
+apps/app/src/react-app/shell/settings-route.tsx
+  s_937dc621c7dc54::t_964a9ec9e61211 1875-1881
+apps/app/src/components/model-behavior-select.tsx
+  s_f87130e096ce35::t_9e2a7f58460349 13-17
+  s_c4cfd6c3029453::t_024c6d7c7dee4d 1-8,10-12,18-45,47-48,50-56,59,63-65,81-82,84-93
+  s_f87130e096ce35::t_1f46f799744528 66-80
+apps/app/src/react-app/shell/session-route.tsx
+  s_bd40ab1e97af32::t_a7b3bb21cfb702 2-10
+  s_937dc621c7dc54::t_e3dbb932ce9d9a 217,1413,1421
+  s_937dc621c7dc54::t_dd621983cbabfe 1568-1574,1659-1665,2429-2435
+  s_bd40ab1e97af32::t_0ffc28c31a7bea 126
+  s_bd40ab1e97af32::t_c35a5e5856c6dd 2445
+  s_bd40ab1e97af32::t_4b5bea19fcfcca 2170
+  s_d5c29beb81c7ce::t_20bb6a81f78342 1674,1676
+  s_937dc621c7dc54::t_37de36d0db5c17 1407,1411-1412,1414-1415,1419-1420,1422-1423,1426-1430
+  s_937dc621c7dc54::t_2aa5e9d43fe1d4 1616,1629,1677
+  s_da9de42d9cb9fa::t_a68ffbfad5b142 1565,1567,1576
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_da9de42d9cb9fa::t_f82c59b979a15c 20,69-70,72,961-962,964
+apps/app/src/app/lib/model-behavior.ts
+  s_937dc621c7dc54::t_bebabc6a9c87db 17-27,85-107,206-207,229-230,238,248,257
+  s_937dc621c7dc54::t_3d64b0ac66cb33 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "fca224580ac1ef34a8f684786c879739f6d02cb2",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_30142376e4b52f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "fe92b38d-d92a-4917-a021-72643c15e852",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_937dc621c7dc54": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "fcde93c6-f850-4498-8823-f5f0f52d1848",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_adbd46135bfb3a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "38db9f38-30f0-4bfa-9ec2-7d3e17b52f36",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_b526af133cc167": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d2a14526-4def-42b8-b589-492da8be8939",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_bd40ab1e97af32": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "97e8589e-0a9c-4665-aa29-596fdd33c3e5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_c4cfd6c3029453": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1895b295-7e56-45e5-b3ee-701958199983",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_d5c29beb81c7ce": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "44671703-d5cc-40b4-9edd-3c9071cc128b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_da9de42d9cb9fa": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c8e2e636-ac15-4ef3-8eab-b2cc18ec7086",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e7986c4a60b27c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7406ed5d-ddd9-460e-a139-c8f808ea15c9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_f87130e096ce35": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d4b75b82-e9c8-425c-93c7-3649f3b4a7fb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
