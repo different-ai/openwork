@@ -9,18 +9,17 @@ import {
   Loader2,
   Puzzle,
   Server,
-  Sparkles,
 } from "lucide-react";
 
 import {
   createDenClient,
-  fetchDenOrgSkillsCatalog,
   readDenSettings,
+  resolveDenBaseUrls,
   type DenOrgLlmProvider,
   type DenOrgMarketplace,
   type DenWorkerSummary,
 } from "../../../app/lib/den";
-import type { DenOrgSkillCard } from "../../../app/types";
+import { usePlatform } from "../../kernel/platform";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "../../../app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
@@ -31,7 +30,6 @@ type OrgResources = {
   providers: DenOrgLlmProvider[];
   marketplaces: DenOrgMarketplace[];
   workers: DenWorkerSummary[];
-  skills: DenOrgSkillCard[];
 };
 
 /**
@@ -43,6 +41,7 @@ type OrgResources = {
  */
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
+  const platform = usePlatform();
   const settings = useMemo(() => readDenSettings(), []);
   const orgId = settings.activeOrgId?.trim() ?? "";
   const orgName = settings.activeOrgName?.trim() ?? "";
@@ -52,7 +51,6 @@ export function OrgOnboardingPage() {
     providers: [],
     marketplaces: [],
     workers: [],
-    skills: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,11 +82,10 @@ export function OrgOnboardingPage() {
       client.listOrgLlmProviders(orgId).catch(() => [] as DenOrgLlmProvider[]),
       client.listOrgMarketplaces(orgId).catch(() => [] as DenOrgMarketplace[]),
       client.listWorkers(orgId).catch(() => [] as DenWorkerSummary[]),
-      fetchDenOrgSkillsCatalog(client, orgId).catch(() => [] as DenOrgSkillCard[]),
     ])
-      .then(([providers, marketplaces, workers, skills]) => {
+      .then(([providers, marketplaces, workers]) => {
         if (cancelled) return;
-        setResources({ providers, marketplaces, workers, skills });
+        setResources({ providers, marketplaces, workers });
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
@@ -113,16 +110,9 @@ export function OrgOnboardingPage() {
     navigate("/session", { replace: true });
   }, [navigate, selectedDefault]);
 
-  const { providers, marketplaces, workers, skills } = resources;
+  const { providers, marketplaces, workers } = resources;
   const totalModels = providers.reduce((sum, p) => sum + p.models.length, 0);
-  const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0 || skills.length > 0;
-
-  // Build summary counts
-  const summaryParts: string[] = [];
-  if (providers.length > 0) summaryParts.push(`${providers.length} AI provider${providers.length > 1 ? "s" : ""}`);
-  if (marketplaces.length > 0) summaryParts.push(`${marketplaces.length} marketplace${marketplaces.length > 1 ? "s" : ""}`);
-  if (workers.length > 0) summaryParts.push(`${workers.length} worker${workers.length > 1 ? "s" : ""}`);
-  if (skills.length > 0) summaryParts.push(`${skills.length} skill${skills.length > 1 ? "s" : ""}`);
+  const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0;
 
   return (
     <div className="relative min-h-screen bg-dls-background text-dls-text">
@@ -152,24 +142,42 @@ export function OrgOnboardingPage() {
               <p className="text-sm text-red-11">{error}</p>
             ) : hasResources ? (
               <p className="text-sm text-dls-secondary">
-                {summaryParts.join(", ")} available for your workspace.
+                You have access to the following resources.
               </p>
-            ) : (
-              <p className="text-sm text-dls-secondary">
-                No resources are configured for this organization yet.
-              </p>
-            )}
+            ) : null}
           </div>
 
           {loading ? (
             <div className="flex justify-center py-8">
               <Loader2 size={24} className="animate-spin text-dls-secondary" />
             </div>
+          ) : !hasResources ? (
+            <div className="rounded-2xl border border-dls-border bg-dls-surface px-6 py-10 text-center">
+              <p className="text-sm text-dls-secondary">
+                No resources have been configured for this organization yet.
+              </p>
+              <p className="mt-2 text-xs text-dls-secondary">
+                Add AI providers, marketplaces, or workers from the{" "}
+                <button
+                  type="button"
+                  className="font-medium text-dls-text underline underline-offset-2"
+                  onClick={() => platform.openLink(resolveDenBaseUrls(settings.baseUrl).baseUrl)}
+                >
+                  OpenWork Cloud dashboard
+                </button>
+                .
+              </p>
+            </div>
           ) : (
             <div className="space-y-6">
               {/* AI Providers */}
               {providers.length > 0 ? (
-                <Section icon={<Cloud size={16} />} title="AI Providers" count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}>
+                <Section
+                  icon={<Cloud size={16} />}
+                  title="AI Providers"
+                  description="Models you can use in your workspace."
+                  count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
+                >
                   {providers.map((provider) => (
                     <ProviderCard
                       key={provider.id}
@@ -183,7 +191,12 @@ export function OrgOnboardingPage() {
 
               {/* Marketplaces */}
               {marketplaces.length > 0 ? (
-                <Section icon={<Puzzle size={16} />} title="Marketplaces" count={`${marketplaces.length}`}>
+                <Section
+                  icon={<Puzzle size={16} />}
+                  title="Marketplaces"
+                  description="App stores with extensions and plugins for your workspace."
+                  count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
+                >
                   {marketplaces.map((mp) => (
                     <div key={mp.id} className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
                       <Puzzle size={16} className="shrink-0 text-dls-secondary" />
@@ -201,39 +214,23 @@ export function OrgOnboardingPage() {
 
               {/* Workers */}
               {workers.length > 0 ? (
-                <Section icon={<Server size={16} />} title="Cloud Workers" count={`${workers.length}`}>
+                <Section
+                  icon={<Server size={16} />}
+                  title="Cloud Workers"
+                  description="Remote machines that can run tasks for you."
+                  count={`${workers.length} worker${workers.length === 1 ? "" : "s"}`}
+                >
                   {workers.map((worker) => (
                     <div key={worker.workerId} className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
                       <Server size={16} className="shrink-0 text-dls-secondary" />
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium text-dls-text">{worker.workerName}</div>
                         <div className="mt-0.5 text-xs text-dls-secondary">
-                          {worker.status} {worker.provider ? `· ${worker.provider}` : ""}
+                          {worker.status}{worker.provider ? ` · ${worker.provider}` : ""}
                         </div>
                       </div>
                     </div>
                   ))}
-                </Section>
-              ) : null}
-
-              {/* Skills */}
-              {skills.length > 0 ? (
-                <Section icon={<Sparkles size={16} />} title="Shared Skills" count={`${skills.length}`}>
-                  <div className="flex flex-wrap gap-1.5">
-                    {skills.slice(0, 8).map((skill) => (
-                      <span
-                        key={skill.id}
-                        className="inline-flex items-center rounded-lg border border-dls-border bg-dls-surface px-2.5 py-1 text-xs text-dls-text"
-                      >
-                        {skill.title}
-                      </span>
-                    ))}
-                    {skills.length > 8 ? (
-                      <span className="inline-flex items-center px-2.5 py-1 text-xs text-dls-secondary">
-                        +{skills.length - 8} more
-                      </span>
-                    ) : null}
-                  </div>
                 </Section>
               ) : null}
             </div>
@@ -245,6 +242,13 @@ export function OrgOnboardingPage() {
               <Check size={14} className="mr-1 inline" />
               {selectedDefault.label} will be set as your default model.
             </div>
+          ) : null}
+
+          {/* Footer hint */}
+          {!loading && hasResources ? (
+            <p className="text-center text-xs text-dls-secondary">
+              Providers are added to your workspace automatically. Marketplaces and workers are available from Cloud settings.
+            </p>
           ) : null}
 
           {/* Continue button */}
@@ -272,20 +276,25 @@ export function OrgOnboardingPage() {
 function Section({
   icon,
   title,
+  description,
   count,
   children,
 }: {
   icon: React.ReactNode;
   title: string;
+  description: string;
   count: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-dls-secondary">
-        {icon}
-        {title}
-        <span className="text-dls-secondary/60">{count}</span>
+      <div>
+        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-dls-secondary">
+          {icon}
+          {title}
+          <span className="text-dls-secondary/60">{count}</span>
+        </div>
+        <div className="mt-0.5 pl-6 text-xs text-dls-secondary/80">{description}</div>
       </div>
       <div className="space-y-2">{children}</div>
     </div>
