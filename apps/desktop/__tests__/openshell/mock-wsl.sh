@@ -15,9 +15,14 @@ if [ -n "${MOCK_WSL_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$MOCK_WSL_LOG"
 fi
 
-if [ -n "${MOCK_WSL_DELAY_MS:-}" ]; then
-  # Bash sleep accepts fractions; convert ms.
-  sleep "$(awk "BEGIN { print $MOCK_WSL_DELAY_MS / 1000 }")"
+# Order: emit stdout/stderr first, THEN optionally sleep. This lets tests
+# verify that consumers detect a readiness line while the child stays
+# alive (e.g. `openshell sandbox create` reports ready then keeps the
+# port-forward open). Tests that need pre-emit delay can use
+# MOCK_WSL_DELAY_BEFORE_MS.
+
+if [ -n "${MOCK_WSL_DELAY_BEFORE_MS:-}" ]; then
+  sleep "$(awk "BEGIN { print $MOCK_WSL_DELAY_BEFORE_MS / 1000 }")"
 fi
 
 if [ -n "${MOCK_WSL_STDOUT_FILE:-}" ]; then
@@ -28,6 +33,10 @@ fi
 
 if [ -n "${MOCK_WSL_STDERR:-}" ]; then
   printf '%s' "$MOCK_WSL_STDERR" >&2
+fi
+
+if [ -n "${MOCK_WSL_DELAY_MS:-}" ]; then
+  sleep "$(awk "BEGIN { print $MOCK_WSL_DELAY_MS / 1000 }")"
 fi
 
 exit "${MOCK_WSL_EXIT:-0}"
