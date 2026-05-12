@@ -85,7 +85,9 @@ export function CloudAccountSection({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex flex-col gap-y-1">
             <div className="text-sm font-medium text-dls-text">{t("den.active_org_title")}</div>
-            <div className=" text-xs text-muted-foreground">{t("den.active_org_hint")}</div>
+            <div className="text-xs text-muted-foreground">
+              {activeOrgId ? "Sign out and sign back in to switch organizations." : t("den.active_org_hint")}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <div className="w-[260px] max-w-full">
@@ -93,7 +95,7 @@ export function CloudAccountSection({
                 value={activeOrgId}
                 items={activeOrgOptions}
                 onValueChange={handleActiveOrgChange}
-                disabled={[orgsBusy, orgs.length === 0].some(Boolean)}
+                disabled={!!activeOrgId || orgsBusy || orgs.length === 0}
               >
                 <SelectTrigger
                   className="w-full"

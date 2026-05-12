@@ -1632,7 +1632,25 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         );
       };
     }
-    void refreshImportedCloudProviders();
+    void refreshImportedCloudProviders().then((imported) => {
+      // Startup cleanup: if no auth token but cloud imports exist, remove them.
+      // Handles orphaned providers from a previous sign-out that didn't clean up.
+      if (!hasCloudProviderSyncPrerequisites() && imported && Object.keys(imported).length > 0) {
+        void (async () => {
+          for (const cloudId of Object.keys(imported)) {
+            try {
+              await removeCloudProviderInternal(cloudId, { silent: true });
+            } catch {}
+          }
+          mutateState((current) => ({
+            ...current,
+            importedCloudProviders: {},
+          }));
+          refreshSnapshot();
+          emitChange();
+        })();
+      }
+    });
     refreshSnapshot();
     emitChange();
   };
