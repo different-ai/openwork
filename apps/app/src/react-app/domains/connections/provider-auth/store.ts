@@ -730,6 +730,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return request;
   };
 
+  // Track whether the provider list has been loaded at least once.
+  // The first load (app startup) populates the initial state — we don't
+  // want to fire "new provider" events for providers that were already
+  // there. After the first load, any new provider IS genuinely new.
+  let providerListInitialized = false;
+
   const applyProviderListState = (value: ProviderListResponse, opts?: { suppressNewProviderEvent?: boolean }) => {
     const prevConnected = new Set(options.providerConnectedIds());
     const nextConnected = value.connected ?? [];
@@ -740,9 +746,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshSnapshot();
     emitChange();
 
+    if (!providerListInitialized) {
+      providerListInitialized = true;
+      return;
+    }
+
     // Detect newly connected providers and fire a global event so
     // the NewProvidersToast shows — regardless of which route is active.
-    if (!opts?.suppressNewProviderEvent && prevConnected.size > 0) {
+    if (!opts?.suppressNewProviderEvent) {
       const newIds = nextConnected.filter((id) => !prevConnected.has(id));
       if (newIds.length > 0) {
         const infos = newIds.map((id) => {

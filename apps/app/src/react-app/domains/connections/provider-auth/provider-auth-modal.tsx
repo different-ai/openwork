@@ -524,6 +524,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      // Close the modal after a successful save
+      props.onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
       setLocalError(message);
@@ -536,6 +538,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onConnectCloudProvider(selectedCloudMethod.cloudProviderId);
+      props.onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect organization provider";
       setLocalError(message);

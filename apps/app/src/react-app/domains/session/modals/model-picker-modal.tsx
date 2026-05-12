@@ -10,49 +10,22 @@ import { Check, ChevronDown, ChevronRight, Search, Star, X } from "lucide-react"
 
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
+import { isDefaultVisibleModel, isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { t } from "../../../../i18n";
-
-const RECOMMENDED_MODEL_PATTERNS = [
-  "claude-opus-4",
-  "gpt-5.5",
-  "kimi-k2.6",
-];
-
-function isRecommendedModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  return RECOMMENDED_MODEL_PATTERNS.some((p) => lower.includes(p));
-}
 
 const HIDDEN_MODELS_KEY = "openwork.hiddenModels";
 const HIDDEN_MODELS_SEEDED_KEY = "openwork.hiddenModelsSeeded";
 
 /**
- * Models that are visible by default for large providers.
- * Everything else from these providers is hidden on first run.
- * Users can always toggle them back on via "Available models".
- */
-const DEFAULT_VISIBLE_MODELS: Record<string, string[]> = {
-  openai: ["gpt-5.5", "gpt-5.4", "o3", "o4-mini", "gpt-4o"],
-  anthropic: ["claude-opus-4-6", "claude-sonnet-4-7"],
-};
-
-/** Check if a model ID matches any of the visible patterns for its provider. */
-function isDefaultVisible(providerId: string, modelId: string): boolean {
-  const patterns = DEFAULT_VISIBLE_MODELS[providerId.toLowerCase()];
-  if (!patterns) return true; // providers without a curated list show everything
-  const lower = modelId.toLowerCase();
-  return patterns.some((p) => lower.includes(p));
-}
-
-/**
  * Seed the hidden models set on first run. For providers with curated
- * lists (OpenAI, Anthropic), hide everything except the top picks.
+ * default-visible lists (OpenAI, Anthropic), hide everything except
+ * the top picks defined in app/defaults/models.ts.
  */
 function seedHiddenModels(options: ModelOption[]): Set<string> {
   const hidden = new Set<string>();
   for (const opt of options) {
-    if (!isDefaultVisible(opt.providerID, opt.modelID)) {
+    if (!isDefaultVisibleModel(opt.providerID, opt.modelID)) {
       hidden.add(`${opt.providerID}/${opt.modelID}`);
     }
   }
