@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, ChevronRight, Search, Star, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Search, Star, X } from "lucide-react";
 
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
@@ -26,6 +26,24 @@ const RECOMMENDED_MODEL_PATTERNS = [
 function isRecommendedModel(modelId: string): boolean {
   const lower = modelId.toLowerCase();
   return RECOMMENDED_MODEL_PATTERNS.some((p) => lower.includes(p));
+}
+
+const HIDDEN_MODELS_KEY = "openwork.hiddenModels";
+
+/** Read hidden model keys ("providerId/modelId") from localStorage. */
+export function readHiddenModels(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_MODELS_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeHiddenModels(hidden: Set<string>): void {
+  try {
+    window.localStorage.setItem(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]));
+  } catch {}
 }
 
 export type ModelPickerModalProps = {
@@ -59,11 +77,27 @@ type ProviderGroup = {
 export function ModelPickerModal(props: ModelPickerModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => readHiddenModels());
+
+  const toggleModelVisibility = useCallback((providerID: string, modelID: string) => {
+    const key = `${providerID}/${modelID}`;
+    setHiddenModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      writeHiddenModels(next);
+      return next;
+    });
+  }, []);
 
   // Reset when modal opens
   useEffect(() => {
     if (props.open) {
       props.setQuery("");
+      setHiddenModels(readHiddenModels());
     }
   }, [props.open]);
 
@@ -233,9 +267,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   group={group}
                   expanded={expandedProviders.has(group.id)}
                   current={props.current}
+                  hiddenModels={hiddenModels}
                   canToggleProvider={!!props.onToggleProvider}
                   onToggleExpand={() => toggleProvider(group.id)}
                   onToggleProvider={props.onToggleProvider}
+                  onToggleModelVisibility={toggleModelVisibility}
                   onSelect={handleSelectModel}
                 />
               ))
@@ -266,17 +302,21 @@ function ProviderAccordion({
   group,
   expanded,
   current,
+  hiddenModels,
   canToggleProvider,
   onToggleExpand,
   onToggleProvider,
+  onToggleModelVisibility,
   onSelect,
 }: {
   group: ProviderGroup;
   expanded: boolean;
   current: ModelRef;
+  hiddenModels: Set<string>;
   canToggleProvider: boolean;
   onToggleExpand: () => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
+  onToggleModelVisibility: (providerID: string, modelID: string) => void;
   onSelect: (opt: ModelOption) => void;
 }) {
   const totalModels = group.recommended.length + group.other.length;
@@ -347,7 +387,15 @@ function ProviderAccordion({
                 Recommended
               </div>
               {group.recommended.map((opt) => (
-                <ModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
+                <ModelRow
+                  key={opt.modelID}
+                  opt={opt}
+                  current={current}
+                  hidden={hiddenModels.has(`${opt.providerID}/${opt.modelID}`)}
+                  onSelect={onSelect}
+                  onToggleVisibility={onToggleModelVisibility}
+                  recommended
+                />
               ))}
             </>
           ) : null}
@@ -359,7 +407,14 @@ function ProviderAccordion({
                 </div>
               ) : null}
               {group.other.map((opt) => (
-                <ModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} />
+                <ModelRow
+                  key={opt.modelID}
+                  opt={opt}
+                  current={current}
+                  hidden={hiddenModels.has(`${opt.providerID}/${opt.modelID}`)}
+                  onSelect={onSelect}
+                  onToggleVisibility={onToggleModelVisibility}
+                />
               ))}
             </>
           ) : null}
@@ -376,12 +431,16 @@ function ProviderAccordion({
 function ModelRow({
   opt,
   current,
+  hidden,
   onSelect,
+  onToggleVisibility,
   recommended,
 }: {
   opt: ModelOption;
   current: ModelRef;
+  hidden: boolean;
   onSelect: (opt: ModelOption) => void;
+  onToggleVisibility: (providerID: string, modelID: string) => void;
   recommended?: boolean;
 }) {
   const active = modelEquals(current, {
@@ -390,30 +449,42 @@ function ModelRow({
   });
 
   return (
-    <button
-      type="button"
+    <div
       className={[
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+        "group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+        hidden ? "opacity-40" : "",
         active ? "bg-green-3/50" : "hover:bg-dls-hover",
       ].join(" ")}
-      onClick={() => onSelect(opt)}
     >
+      {/* Visibility toggle */}
+      <button
+        type="button"
+        className="shrink-0 rounded p-0.5 text-dls-secondary opacity-0 transition-opacity hover:text-dls-text group-hover:opacity-100"
+        onClick={(e) => { e.stopPropagation(); onToggleVisibility(opt.providerID, opt.modelID); }}
+        title={hidden ? "Show in model selector" : "Hide from model selector"}
+        style={hidden ? { opacity: 1 } : undefined}
+      >
+        {hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+      </button>
       {recommended ? (
         <Star size={12} className="shrink-0 text-amber-9" />
-      ) : (
-        <div className="w-3 shrink-0" />
-      )}
-      <div className="min-w-0 flex-1">
+      ) : null}
+      {/* Clickable model name — sets as default */}
+      <button
+        type="button"
+        className="min-w-0 flex-1 text-left"
+        onClick={() => onSelect(opt)}
+      >
         <span className={["text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")}>
           {opt.title}
         </span>
         <span className="ml-2 font-mono text-[10px] text-dls-secondary/60">
           {opt.modelID}
         </span>
-      </div>
+      </button>
       {active ? (
         <Check size={14} className="shrink-0 text-green-11" />
       ) : null}
-    </button>
+    </div>
   );
 }
