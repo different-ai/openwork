@@ -117,6 +117,8 @@ import { saveSessionDraft } from "../domains/session/sync/draft-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { useProviderChangeDetection } from "./use-provider-change-detection";
+import { readDenSettings } from "../../app/lib/den";
+import { denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -497,6 +499,13 @@ export function SessionRoute() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
+  // Bump to re-filter provider list when den session changes (sign-in/out)
+  const [denSessionVersion, setDenSessionVersion] = useState(0);
+  useEffect(() => {
+    const handler = () => setDenSessionVersion((v) => v + 1);
+    window.addEventListener(denSessionUpdatedEvent, handler);
+    return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+  }, []);
   const providerChangeDetection = useProviderChangeDetection(providerConnectedIds, providers as any);
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -1365,8 +1374,20 @@ export function SessionRoute() {
 
     const applyProviderState = (value: ProviderListResponse) => {
       if (cancelled) return;
-      setProviders((value.all ?? []) as ProviderListItem[]);
-      setProviderConnectedIds(value.connected ?? []);
+      // When not signed in, filter out cloud-managed providers (lpr_*)
+      // so stale entries from a previous session don't appear.
+      const hasCloudAuth = !!readDenSettings().authToken?.trim();
+      const isCloudProvider = (id: string) => /^lpr_/i.test(id);
+      const all = hasCloudAuth
+        ? ((value.all ?? []) as ProviderListItem[])
+        : ((value.all ?? []) as ProviderListItem[]).filter(
+            (p) => !isCloudProvider(p.id ?? ""),
+          );
+      const connected = hasCloudAuth
+        ? (value.connected ?? [])
+        : (value.connected ?? []).filter((id) => !isCloudProvider(id));
+      setProviders(all);
+      setProviderConnectedIds(connected);
     };
 
     void (async () => {
@@ -1421,7 +1442,7 @@ export function SessionRoute() {
     return () => {
       cancelled = true;
     };
-  }, [opencodeClient, selectedWorkspaceRoot]);
+  }, [opencodeClient, selectedWorkspaceRoot, denSessionVersion]);
 
   const modelLabel = local.prefs.defaultModel
     ? resolveModelDisplayName(local.prefs.defaultModel.modelID)

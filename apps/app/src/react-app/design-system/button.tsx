@@ -10,9 +10,9 @@ const base =
 
 const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
   primary:
-    "bg-[#011627] text-white hover:bg-black border border-transparent",
+    "bg-dls-accent text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)] border border-transparent",
   secondary:
-    "bg-[#011627] text-white hover:bg-black border border-transparent",
+    "bg-dls-accent text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)] border border-transparent",
   ghost:
     "bg-transparent text-dls-secondary hover:text-dls-text hover:bg-dls-hover",
   outline:

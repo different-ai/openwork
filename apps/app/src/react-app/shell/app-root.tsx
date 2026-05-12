@@ -3,8 +3,8 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { readDenBootstrapConfig } from "../../app/lib/den";
-import { denSettingsChangedEvent } from "../../app/lib/den-session-events";
+import { readDenBootstrapConfig, readDenSettings } from "../../app/lib/den";
+import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
@@ -66,7 +66,14 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       if (!denAuth.isSignedIn && !onSignin) {
         navigate("/signin", { replace: true });
       } else if (denAuth.isSignedIn && onSignin) {
-        navigate("/session", { replace: true });
+        // Signed in -- check if an org is selected. If not, send the user
+        // to Cloud > Account so they can pick one before proceeding.
+        const settings = readDenSettings();
+        if (!settings.activeOrgId?.trim()) {
+          navigate("/settings/cloud-account", { replace: true });
+        } else {
+          navigate("/session", { replace: true });
+        }
       }
     } else if (onSignin) {
       navigate("/session", { replace: true });
@@ -78,6 +85,24 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     navigate,
     requireSignin,
   ]);
+
+  // After a fresh sign-in with no org selected, redirect to org picker.
+  // This handles the case where sign-in completes via the web-app callback
+  // while the user is already on /session (not on /signin).
+  useEffect(() => {
+    const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      if (event.detail?.status !== "success") return;
+      // Small delay: let orgs load first, then check if one was auto-selected.
+      setTimeout(() => {
+        const settings = readDenSettings();
+        if (settings.authToken?.trim() && !settings.activeOrgId?.trim()) {
+          navigate("/settings/cloud-account", { replace: true });
+        }
+      }, 1500);
+    };
+    window.addEventListener(denSessionUpdatedEvent, handler);
+    return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+  }, [navigate]);
 
   if (requireSignin && denAuth.status === "checking") {
     return <ForcedSigninPage developerMode={false} />;

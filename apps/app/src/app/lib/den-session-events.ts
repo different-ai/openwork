@@ -4,7 +4,7 @@ export const denSessionUpdatedEvent = "openwork-den-session-updated";
 export const denSettingsChangedEvent = "openwork-den-settings-changed";
 
 export type DenSessionUpdatedDetail = {
-  status?: "success" | "error";
+  status?: "success" | "error" | "signed_out";
   baseUrl?: string | null;
   token?: string | null;
   user?: DenUser | null;

@@ -260,9 +260,20 @@ export function useDenSession({
         const response = await client.listOrgs();
         setOrgs(response.orgs);
         const current = activeOrgId.trim();
-        const fallback = response.defaultOrgId ?? response.orgs[0]?.id ?? "";
-        const next = response.orgs.some((org) => org.id === current) ? current : fallback;
-        const nextOrg = response.orgs.find((org) => org.id === next) ?? null;
+
+        // Determine the next org to select:
+        // - If the user already had an org selected and it still exists, keep it.
+        // - If there's exactly one org, auto-select it (no choice needed).
+        // - Otherwise, leave blank so the user is prompted to choose.
+        let next = "";
+        if (current && response.orgs.some((org) => org.id === current)) {
+          next = current;
+        } else if (response.orgs.length === 1) {
+          next = response.orgs[0].id;
+        }
+        // else: leave next = "" so the org picker is shown
+
+        const nextOrg = next ? (response.orgs.find((org) => org.id === next) ?? null) : null;
         setActiveOrgId(next);
         writeDenSettings({
           baseUrl,
@@ -429,11 +440,17 @@ export function useDenSession({
     [authToken, baseUrl, client, orgs, showToast],
   );
 
+  // User is signed in, orgs loaded, multiple orgs available, but none selected yet.
+  // The UI should prompt the user to pick an org before cloud features activate.
+  const needsOrgSelection =
+    !!authToken.trim() && !!user && !orgsBusy && orgs.length > 1 && !activeOrgId;
+
   return {
     authBusy,
     authError,
     baseUrlDraft,
     baseUrlError,
+    needsOrgSelection,
     orgs,
     orgsBusy,
     orgsError,

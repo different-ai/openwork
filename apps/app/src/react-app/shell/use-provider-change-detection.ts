@@ -77,6 +77,7 @@ export function useProviderChangeDetection(
         return {
           id,
           name: provider?.name ?? resolveProviderDisplayName(id),
+          recommended: false as boolean,
           recommendedModel: firstModelName,
         };
       });

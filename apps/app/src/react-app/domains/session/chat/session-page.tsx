@@ -459,23 +459,17 @@ export function SessionPage(props: SessionPageProps) {
                 </button>
               ) : null}
               {/* Revert/redo moved to per-message actions */}
-              {props.developerMode ? (
-                <>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-                    onClick={() => setShowProviderOnboarding(true)}
-                  >
-                    Test onboarding
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-                    onClick={() => setShowProviderToast(true)}
-                  >
-                    Test toast
-                  </button>
-                </>
+              {props.developerMode && providerNotif ? (
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                  onClick={() => {
+                    try { window.localStorage.removeItem("openwork.acknowledgedProviders"); } catch {}
+                  }}
+                  title="Clears acknowledged providers so onboarding triggers on next provider change"
+                >
+                  Reset provider notifications
+                </button>
               ) : null}
             </div>
           </header>

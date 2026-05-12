@@ -363,9 +363,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         workspacePath: root,
         config: config as never,
       });
-      if (!result.ok) {
+      const typed = result as { ok: boolean; stderr?: string; stdout?: string };
+      if (!typed.ok) {
         throw new Error(
-          result.stderr || result.stdout || "Failed to write .opencode/openwork.json",
+          typed.stderr || typed.stdout || "Failed to write .opencode/openwork.json",
         );
       }
       return true;
@@ -450,7 +451,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         openworkWorkspaceId,
         "project",
         content,
-      );
+      ) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
@@ -458,7 +459,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await writeOpencodeConfig("project", root, content);
+      const result = await writeOpencodeConfig("project", root, content) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
@@ -472,7 +473,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     updater: (raw: string) => string,
     fallbackUpdate?: (config: Record<string, unknown>) => Record<string, unknown>,
   ) => {
-    const configFile = await readProjectConfigFile();
+    const configFile = await readProjectConfigFile() as { content?: string } | null;
     if (configFile) {
       const raw = configFile.content?.trim()
         ? configFile.content
@@ -549,7 +550,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     if (previousProviderId && previousProviderId !== localProviderId) {
       updated = removeCloudProviderComment(updated, previousProviderId);
-      const previousEdits = modify(updated, ["provider", previousProviderId], {
+      const previousEdits = modify(updated, ["provider", previousProviderId], undefined, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       });
       updated = applyEdits(updated, previousEdits);
@@ -579,7 +580,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       ? raw
       : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
     updated = removeCloudProviderComment(updated, providerId);
-    const providerEdits = modify(updated, ["provider", providerId], {
+    const providerEdits = modify(updated, ["provider", providerId], undefined, {
       formattingOptions: { insertSpaces: true, tabSize: 2 },
     });
     updated = applyEdits(updated, providerEdits);
@@ -597,7 +598,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   // list of provider IDs that were removed so callers can also clear their
   // auth credentials.
   const sweepOrphanCloudProvidersFromConfig = async (): Promise<string[]> => {
-    const configFile = await readProjectConfigFile();
+    const configFile = await readProjectConfigFile() as { content?: string } | null;
     if (!configFile?.content?.trim()) return [];
     const parsed = parse(configFile.content);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
@@ -647,7 +648,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       );
     }
 
-    const configFile = await readProjectConfigFile();
+    const configFile = await readProjectConfigFile() as { content?: string } | null;
     if (!configFile?.content?.trim() || existingImported) {
       return;
     }

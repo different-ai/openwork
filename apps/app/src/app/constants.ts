@@ -1,7 +1,6 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 import { t } from "../i18n";
 import { readDenBootstrapConfig } from "./lib/den";
-import { readDenBootstrapConfig } from "./lib/den";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";

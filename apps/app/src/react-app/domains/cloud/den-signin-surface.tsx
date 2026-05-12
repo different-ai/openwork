@@ -297,7 +297,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
   if (variant === "fullscreen") {
     return (
-      <div className="relative min-h-screen bg-[#fafbfc] text-dls-text">
+      <div className="relative min-h-screen bg-dls-background text-dls-text">
         {/* Subtle background texture */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
           <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
@@ -313,17 +313,17 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
             <div className="w-full max-w-md space-y-8">
               <div className="space-y-2">
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                <h1 className="text-2xl font-semibold tracking-tight text-dls-text">
                   Welcome to OpenWork
                 </h1>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-dls-secondary">
                   Sign in to get started with your workspace.
                 </p>
               </div>
 
               <button
                 type="button"
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#011627] text-sm font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-dls-accent text-sm font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
                 onClick={() => props.onOpenBrowserAuth("sign-in")}
                 disabled={props.authBusy || props.sessionBusy}
               >
@@ -343,7 +343,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
               <div className="space-y-3">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white/60 px-4 py-2.5 text-left text-xs font-medium text-slate-500 transition-colors hover:bg-white"
+                   className="flex w-full items-center gap-2 rounded-xl border border-dls-border bg-dls-surface/60 px-4 py-2.5 text-left text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-surface"
                   onClick={props.onToggleManualAuth}
                   disabled={props.authBusy || props.sessionBusy}
                 >
@@ -358,7 +358,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 </button>
 
                 {props.manualAuthOpen ? (
-                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="space-y-3 rounded-xl border border-dls-border bg-dls-surface p-4">
                     <TextInput
                       label={t("den.signin_link_label")}
                       value={props.manualAuthInput}
@@ -371,7 +371,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                     />
                     <button
                       type="button"
-                      className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[#011627] px-4 text-xs font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full bg-dls-accent px-4 text-xs font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
                       onClick={props.onSubmitManualAuth}
                       disabled={
                         props.authBusy ||
@@ -389,7 +389,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
 
               {/* Developer mode */}
               {props.developerMode ? (
-                <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="space-y-3 rounded-xl border border-dls-border bg-dls-surface p-4">
                   <TextInput
                     label={t("den.cloud_control_plane_url_label")}
                     value={props.baseUrlDraft}
@@ -408,7 +408,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 hover:border-slate-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-dls-border bg-dls-surface px-3.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-hover hover:border-dls-border disabled:opacity-60 disabled:cursor-not-allowed"
                       onClick={props.onResetBaseUrl}
                       disabled={
                         props.authBusy || props.baseUrlBusy || props.sessionBusy
@@ -418,7 +418,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                     </button>
                     <button
                       type="button"
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[#011627] px-3.5 text-xs font-semibold text-white transition-all hover:bg-black disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-dls-accent px-3.5 text-xs font-semibold text-[var(--dls-accent-fg)] transition-all hover:bg-[var(--dls-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed"
                       onClick={props.onApplyBaseUrl}
                       disabled={
                         props.authBusy || props.baseUrlBusy || props.sessionBusy
@@ -455,8 +455,8 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 />
               </div>
 
-              {/* Inner: white card with capabilities */}
-              <div className="relative z-10 m-3 rounded-2xl bg-white p-7">
+              {/* Inner: card with capabilities */}
+              <div className="relative z-10 m-3 rounded-2xl bg-dls-surface p-7">
                 <ShowcasePanel />
               </div>
             </div>

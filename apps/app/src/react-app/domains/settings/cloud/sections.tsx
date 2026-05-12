@@ -435,7 +435,7 @@ interface CloudProviderListItemProps {
   actionKind: ResourceActionKind | null;
   row: CloudProviderRow;
   onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onRemove: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 
@@ -1005,7 +1005,7 @@ export interface CloudProvidersSectionProps {
   rows: CloudProviderRow[];
   onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
-  onRemove: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 

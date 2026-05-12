@@ -22,6 +22,7 @@ import { useCloudSession } from "./cloud-session-provider";
 export interface CloudAccountSectionProps {
   activeOrgId: string;
   authBusy: boolean;
+  needsOrgSelection?: boolean;
   orgs: DenOrgSummary[];
   orgsBusy: boolean;
   orgsError: string | null;
@@ -34,6 +35,7 @@ export interface CloudAccountSectionProps {
 export function CloudAccountSection({
   activeOrgId,
   authBusy,
+  needsOrgSelection,
   orgs,
   orgsBusy,
   orgsError,
@@ -86,7 +88,11 @@ export function CloudAccountSection({
           <div className="min-w-0 flex flex-col gap-y-1">
             <div className="text-sm font-medium text-dls-text">{t("den.active_org_title")}</div>
             <div className="text-xs text-muted-foreground">
-              {activeOrgId ? "Sign out and sign back in to switch organizations." : t("den.active_org_hint")}
+              {activeOrgId
+                ? t("den.active_org_hint")
+                : orgs.length > 1
+                  ? "Select the organization to use. Sign out to switch later."
+                  : t("den.active_org_hint")}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -95,7 +101,7 @@ export function CloudAccountSection({
                 value={activeOrgId}
                 items={activeOrgOptions}
                 onValueChange={handleActiveOrgChange}
-                disabled={!!activeOrgId || orgsBusy || orgs.length === 0}
+                disabled={orgsBusy || orgs.length === 0}
               >
                 <SelectTrigger
                   className="w-full"
@@ -124,6 +130,12 @@ export function CloudAccountSection({
           </div>
         </div>
       </div>
+
+      {needsOrgSelection ? (
+        <div className="rounded-xl border border-amber-6/40 bg-amber-2/50 px-4 py-3 text-sm text-amber-11">
+          Select an organization to continue. Cloud providers and settings will be loaded for the selected org.
+        </div>
+      ) : null}
 
       {orgsError ? <SettingsNotice tone="error">{orgsError}</SettingsNotice> : null}
     </section>

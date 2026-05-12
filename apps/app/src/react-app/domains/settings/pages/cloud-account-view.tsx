@@ -34,6 +34,7 @@ type CloudAccountSession = Pick<
   | "authError"
   | "baseUrlDraft"
   | "baseUrlError"
+  | "needsOrgSelection"
   | "orgs"
   | "orgsBusy"
   | "orgsError"
@@ -205,6 +206,7 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
           <CloudAccountSection
             activeOrgId={activeOrganization?.id ?? ""}
             authBusy={session.authBusy}
+            needsOrgSelection={session.needsOrgSelection}
             orgs={session.orgs}
             orgsBusy={session.orgsBusy}
             orgsError={session.orgsError}
