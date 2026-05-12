@@ -137,8 +137,8 @@ export function OrgOnboardingPage() {
       {/* Titlebar drag region */}
       <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
 
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16">
-        <div className="w-full max-w-lg space-y-8">
+      <div className="relative z-10 min-h-screen overflow-y-auto px-6 py-16">
+        <div className="mx-auto w-full max-w-lg space-y-8">
           {/* Header */}
           <div className="space-y-3 text-center">
             <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
