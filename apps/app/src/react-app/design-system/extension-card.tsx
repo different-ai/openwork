@@ -80,9 +80,13 @@ export function ExtensionCard(props: ExtensionCardProps) {
             {connecting ? (
               <Loader2 size={18} className="animate-spin text-dls-secondary" />
             ) : iconSrc ? (
-              <img src={iconSrc} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
+              <div className="flex size-6 items-center justify-center rounded-md bg-white">
+                <img src={iconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
+              </div>
             ) : iconSlug ? (
-              <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
+              <div className="flex size-6 items-center justify-center rounded-md bg-white">
+                <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
+              </div>
             ) : (
               <FallbackIcon size={18} className="text-dls-secondary" />
             )}

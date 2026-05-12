@@ -19,7 +19,7 @@ const buttonBaseClass =
   "inline-flex items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
 
 const buttonClasses = {
-  primary: `${buttonBaseClass} bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]`,
+  primary: `${buttonBaseClass} bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]`,
   secondary: `${buttonBaseClass} bg-gray-12 text-gray-1 hover:bg-gray-11`,
   ghost: `${buttonBaseClass} bg-transparent text-dls-secondary hover:bg-[var(--dls-hover)] hover:text-dls-text`,
   outline: `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`,

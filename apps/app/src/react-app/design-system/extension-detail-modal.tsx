@@ -140,9 +140,13 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                 }`}
               >
                 {iconSrc ? (
-                  <img src={iconSrc} alt="" width={24} height={24} loading="lazy" style={{ display: "block" }} />
+                  <div className="flex size-8 items-center justify-center rounded-md bg-white">
+                    <img src={iconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
+                  </div>
                 ) : iconSlug ? (
-                  <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={24} height={24} loading="lazy" style={{ display: "block" }} />
+                  <div className="flex size-8 items-center justify-center rounded-md bg-white">
+                    <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
+                  </div>
                 ) : (
                   <FallbackIcon size={24} className="text-dls-secondary" />
                 )}

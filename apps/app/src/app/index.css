@@ -51,9 +51,10 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #f3f4f6;
-  --dls-accent: #011627;
+  --dls-accent: var(--slate-12);
   --dls-accent-hover: #000000;
-  --dls-accent-rgb: 1 22 39;
+  --dls-accent-fg: var(--slate-1);
+  --dls-accent-rgb: 28 32 36;
   --dls-secondary-rgb: 96 100 108;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -107,9 +108,10 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #262626;
-  --dls-accent: #e2e8f0;
-  --dls-accent-hover: #f1f5f9;
-  --dls-accent-rgb: 226 232 240;
+  --dls-accent: var(--slate-12);
+  --dls-accent-hover: #ffffff;
+  --dls-accent-fg: var(--slate-1);
+  --dls-accent-rgb: 237 238 240;
   --dls-secondary-rgb: 176 180 186;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);

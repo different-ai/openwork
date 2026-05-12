@@ -592,6 +592,38 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return updated.endsWith("\n") ? updated : `${updated}\n`;
   };
 
+  // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
+  // opencode.jsonc regardless of importedCloudProviders state. Returns the
+  // list of provider IDs that were removed so callers can also clear their
+  // auth credentials.
+  const sweepOrphanCloudProvidersFromConfig = async (): Promise<string[]> => {
+    const configFile = await readProjectConfigFile();
+    if (!configFile?.content?.trim()) return [];
+    const parsed = parse(configFile.content);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const providerSection = (parsed as Record<string, unknown>).provider;
+    if (
+      !providerSection ||
+      typeof providerSection !== "object" ||
+      Array.isArray(providerSection)
+    ) {
+      return [];
+    }
+    const orphanIds = Object.keys(providerSection as Record<string, unknown>).filter(
+      (key) => /^lpr_/i.test(key),
+    );
+    if (orphanIds.length === 0) return [];
+
+    await updateProjectConfigFile((raw) => {
+      let next = raw;
+      for (const id of orphanIds) {
+        next = formatConfigWithoutCloudProvider(next, id);
+      }
+      return next;
+    });
+    return orphanIds;
+  };
+
   const assertCloudProviderImportSafe = async (
     provider: DenOrgLlmProviderConnection,
   ) => {
@@ -1609,6 +1641,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
                 // Ignore individual removal failures during sign-out cleanup
               }
             }
+            // Final sweep: remove any orphan `lpr_*` provider keys that remain
+            // in opencode.jsonc but weren't tracked in importedCloudProviders
+            // (e.g. from a previous failed cleanup or external edit).
+            try {
+              const orphans = await sweepOrphanCloudProvidersFromConfig();
+              for (const providerId of orphans) {
+                try {
+                  await removeProviderAuthCredentials(providerId);
+                } catch {
+                  // Ignore auth removal failures for orphans
+                }
+              }
+              if (orphans.length > 0) {
+                options.markOpencodeConfigReloadRequired();
+              }
+            } catch {
+              // Ignore sweep failures during sign-out cleanup
+            }
             // Clear state AFTER cleanup so the records are available during removal
             mutateState((current) => ({
               ...current,
@@ -1633,15 +1683,31 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       };
     }
     void refreshImportedCloudProviders().then((imported) => {
-      // Startup cleanup: if no auth token but cloud imports exist, remove them.
-      // Handles orphaned providers from a previous sign-out that didn't clean up.
-      if (!hasCloudProviderSyncPrerequisites() && imported && Object.keys(imported).length > 0) {
+      // Startup cleanup: if no auth token, remove any cloud providers that
+      // were left behind. Handles orphans from a previous sign-out that
+      // didn't clean up (e.g. crash, force-quit, external edit).
+      if (!hasCloudProviderSyncPrerequisites()) {
         void (async () => {
-          for (const cloudId of Object.keys(imported)) {
-            try {
-              await removeCloudProviderInternal(cloudId, { silent: true });
-            } catch {}
+          // First: remove anything tracked in import state
+          if (imported && Object.keys(imported).length > 0) {
+            for (const cloudId of Object.keys(imported)) {
+              try {
+                await removeCloudProviderInternal(cloudId, { silent: true });
+              } catch {}
+            }
           }
+          // Then: sweep any `lpr_*` keys that remain in opencode.jsonc
+          try {
+            const orphans = await sweepOrphanCloudProvidersFromConfig();
+            for (const providerId of orphans) {
+              try {
+                await removeProviderAuthCredentials(providerId);
+              } catch {}
+            }
+            if (orphans.length > 0) {
+              options.markOpencodeConfigReloadRequired();
+            }
+          } catch {}
           mutateState((current) => ({
             ...current,
             importedCloudProviders: {},

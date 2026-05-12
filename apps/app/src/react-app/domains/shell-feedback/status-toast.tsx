@@ -70,7 +70,7 @@ export function StatusToast(props: StatusToastProps) {
             <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-full bg-[var(--dls-accent)] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)]"
+                className="inline-flex items-center justify-center rounded-full bg-[var(--dls-accent)] px-3 py-1.5 text-xs font-medium text-[var(--dls-accent-fg)] transition-colors hover:bg-[var(--dls-accent-hover)]"
                 onClick={() => props.onAction?.()}
               >
                 {props.actionLabel}

@@ -156,6 +156,11 @@ export function useDenSession({
       setBaseUrlError(null);
       setAuthError(null);
       setStatusMessage(message ?? null);
+      // Clear acknowledged-providers cache so onboarding modal triggers
+      // again on next sign-in (providers will be re-imported).
+      try {
+        window.localStorage.removeItem("openwork.acknowledgedProviders");
+      } catch {}
       // Notify provider auth store so it can clean up cloud-imported providers
       dispatchDenSessionUpdated({ status: "signed_out" });
     },
