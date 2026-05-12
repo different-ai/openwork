@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "Ajouter",
   "context_panel.add_folder_hint": "Ajoutez un dossier pour permettre à cet espace de travail de lire et modifier des fichiers en dehors de son répertoire racine.",
   "context_panel.adding_button": "Ajout...",
-  "context_panel.always_available": "Toujours disponible",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Dossiers autorisés",
   "context_panel.authorized_folders_desc": "Accordez à cet espace de travail l'accès en lecture et écriture à des répertoires situés hors de sa racine.",
   "context_panel.authorized_folders_no_access": "Connectez-vous à un espace de travail de serveur OpenWork accessible en écriture pour modifier les dossiers autorisés.",

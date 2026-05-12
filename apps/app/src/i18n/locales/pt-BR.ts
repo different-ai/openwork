@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "Adicionar",
   "context_panel.add_folder_hint": "Adicione uma pasta para permitir que este workspace leia e edite arquivos fora do diretório raiz.",
   "context_panel.adding_button": "Adicionando...",
-  "context_panel.always_available": "Sempre disponível",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Pastas autorizadas",
   "context_panel.authorized_folders_desc": "Conceda a este workspace acesso para ler e editar arquivos em diretórios fora da raiz.",
   "context_panel.authorized_folders_no_access": "Conecte a um workspace OpenWork com permissão de escrita para editar as pastas autorizadas.",

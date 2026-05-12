@@ -164,7 +164,7 @@ export default {
   "context_panel.add_button": "添加",
   "context_panel.add_folder_hint": "添加文件夹以允许此工作区读写其根目录以外的文件。",
   "context_panel.adding_button": "添加中…",
-  "context_panel.always_available": "始终可用",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "已授权文件夹",
   "context_panel.authorized_folders_desc": "授予此工作区访问权限，以读取和编辑根目录之外的文件夹。",
   "context_panel.authorized_folders_no_access": "连接可写的OpenWork服务器工作区以编辑已授权文件夹。",

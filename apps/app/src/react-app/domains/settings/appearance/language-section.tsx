@@ -7,28 +7,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LANGUAGE_OPTIONS, t } from "../../../../i18n";
+import { LANGUAGE_OPTIONS, t } from "@/i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderTitle,
-} from "../settings-section";
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+} from "../settings-layout";
 
 interface LanguageSectionProps extends Pick<AppearanceViewProps, "busy" | "language" | "setLanguage"> {}
 
 export function LanguageSection(props: LanguageSectionProps) {
   return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{t("settings.language")}</SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("settings.language.description")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
+    <LayoutSectionItem>
+      <LayoutSectionItemHeader>
+        <LayoutSectionItemTitle>{t("settings.language")}</LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>{t("settings.language.description")}</LayoutSectionItemDescription>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <LayoutSectionItemHeaderActions>
           <div className="w-64 max-w-full">
             <Select
               value={props.language}
@@ -52,8 +50,8 @@ export function LanguageSection(props: LanguageSectionProps) {
               </SelectContent>
             </Select>
           </div>
-        </div>
-      </SettingsSectionHeader>
-    </SettingsSection>
+        </LayoutSectionItemHeaderActions>
+      </LayoutSectionItemHeader>
+    </LayoutSectionItem>
   );
 }

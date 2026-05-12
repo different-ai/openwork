@@ -2,15 +2,15 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
-import { t } from "../../../../i18n";
+import { t } from "@/i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderTitle,
-} from "../settings-section";
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemFootnote,
+  LayoutSectionItemHeader,
+  LayoutSectionItemTitle,
+} from "../settings-layout";
 
 type ThemeMode = AppearanceViewProps["themeMode"];
 
@@ -19,13 +19,11 @@ interface ThemeSectionProps
 
 export function ThemeSection(props: ThemeSectionProps) {
   return (
-    <SettingsSection className="items-center">
-      <SettingsSectionHeader className="w-full">
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{t("settings.appearance_title")}</SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("settings.appearance_hint")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-      </SettingsSectionHeader>
+    <LayoutSectionItem className="items-center">
+      <LayoutSectionItemHeader className="w-full">
+        <LayoutSectionItemTitle>{t("settings.theme_title")}</LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>{t("settings.appearance_hint")}</LayoutSectionItemDescription>
+      </LayoutSectionItemHeader>
 
       <ThemePicker
         className="pt-1"
@@ -34,8 +32,8 @@ export function ThemeSection(props: ThemeSectionProps) {
         setThemeMode={props.setThemeMode}
       />
 
-      <div className="text-xs text-muted-foreground">{t("settings.theme_system_hint")}</div>
-    </SettingsSection>
+      <LayoutSectionItemFootnote>{t("settings.theme_system_hint")}</LayoutSectionItemFootnote>
+    </LayoutSectionItem>
   );
 }
 

@@ -162,7 +162,7 @@ export default {
   "context_panel.add_button": "Добавить",
   "context_panel.add_folder_hint": "Добавьте папку, чтобы позволить этому рабочему пространству читать и редактировать файлы вне корневого каталога.",
   "context_panel.adding_button": "Добавление...",
-  "context_panel.always_available": "Всегда доступно",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Авторизованные папки",
   "context_panel.authorized_folders_desc": "Предоставьте этому рабочему пространству доступ на чтение и редактирование файлов в каталогах вне его корня.",
   "context_panel.authorized_folders_no_access": "Подключитесь к доступному на запись рабочему пространству сервера OpenWork, чтобы редактировать авторизованные папки.",

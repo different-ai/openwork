@@ -69,6 +69,7 @@
   --card-foreground: var(--slate-12);
   --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
+  --primary: var(--blue-9);
   --primary-foreground: white;
   --secondary: var(--slate-3);
   --secondary-foreground: var(--slate-12);
@@ -77,6 +78,7 @@
   --accent: var(--slate-3);
   --accent-foreground: var(--slate-12);
   --destructive: var(--red-9);
+  --warning: var(--amber-11);
   --border: var(--slate-5);
   --input: var(--slate-6);
   --ring: var(--slate-8);
@@ -88,7 +90,7 @@
   --radius: 0.45rem;
   --sidebar: var(--slate-2);
   --sidebar-foreground: var(--slate-12);
-  --sidebar-primary: #011627;
+  --sidebar-primary: var(--blue-9);
   --sidebar-primary-foreground: white;
   --sidebar-accent: var(--slate-3);
   --sidebar-accent-foreground: var(--slate-12);
@@ -405,6 +407,7 @@ select:disabled {
   --card-foreground: var(--slate-12);
   --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
+  --primary: var(--blue-8);
   --primary-foreground: var(--slate-12);
   --secondary: var(--slate-3);
   --secondary-foreground: var(--slate-12);
@@ -413,6 +416,7 @@ select:disabled {
   --accent: var(--slate-3);
   --accent-foreground: var(--slate-12);
   --destructive: var(--red-9);
+  --warning: var(--amber-11);
   --border: var(--slate-3);
   --input: var(--slate-6);
   --ring: var(--slate-8);
@@ -423,7 +427,7 @@ select:disabled {
   --chart-5: var(--purple-9);
   --sidebar: var(--slate-2);
   --sidebar-foreground: var(--slate-12);
-  --sidebar-primary: #011627;
+  --sidebar-primary: var(--blue-9);
   --sidebar-primary-foreground: var(--slate-12);
   --sidebar-accent: var(--slate-3);
   --sidebar-accent-foreground: var(--slate-12);
@@ -451,6 +455,7 @@ select:disabled {
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -458,7 +463,7 @@ select:disabled {
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--dls-accent);
+  --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);

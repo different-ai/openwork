@@ -1,29 +1,48 @@
 /** @jsxImportSource react */
-import type { ReactNode } from "react";
-import { CircleAlert, Cpu, RefreshCcw, Server, Zap } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
+import { CircleAlert, Cpu, Info, RefreshCcw, Server } from "lucide-react";
 
-import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
-import type { EngineInfo } from "../../../../app/lib/desktop";
-import { isDesktopRuntime } from "../../../../app/utils";
-import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import type { OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { EngineInfo } from "@/app/lib/desktop-types";
+import { isDesktopRuntime } from "@/app/utils";
+import { t } from "@/i18n";
+import {
+  SettingsInset,
+  SettingsNotice,
+  SettingsStatusBadge,
+} from "../settings-section";
+import {
+  LayoutSection,
+  LayoutSectionDescription,
+  LayoutSectionHeader,
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemFootnote,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+  LayoutSectionTitle,
+} from "../settings-layout";
 
-const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
-const settingsPanelSoftClass = "rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4";
+type SettingsTone = ComponentProps<typeof SettingsStatusBadge>["tone"];
 
-type RuntimeStatusCardProps = {
+interface RuntimeStatusCardProps {
   icon: ReactNode;
   title: string;
   description: string;
   statusLabel: string;
-  statusStyle: string;
-  statusDot: string;
+  tone: SettingsTone;
   detailLines?: string[];
-};
+}
 
 function RuntimeStatusCard(props: RuntimeStatusCardProps) {
   return (
-    <div className={`${settingsPanelSoftClass} space-y-3`}>
+    <SettingsInset className="space-y-3">
       <div className="flex items-start gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
           {props.icon}
@@ -33,12 +52,7 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
           <div className="text-xs text-gray-9">{props.description}</div>
         </div>
       </div>
-      <div
-        className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${props.statusStyle}`}
-      >
-        <span className={`size-2 rounded-full ${props.statusDot}`} />
-        {props.statusLabel}
-      </div>
+      <SettingsStatusBadge className="inline-flex min-h-0 justify-start px-0 py-0" tone={props.tone} label={props.statusLabel} />
       {props.detailLines?.length ? (
         <div className="space-y-1 border-t border-gray-6/50 pt-2 text-[11px] text-gray-9">
           {props.detailLines.map((line) => (
@@ -48,7 +62,7 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
           ))}
         </div>
       ) : null}
-    </div>
+    </SettingsInset>
   );
 }
 
@@ -59,21 +73,21 @@ function formatOpencodeBinary(info: EngineInfo | null) {
   return source ? `${binary} (${source})` : binary;
 }
 
-export function AdvancedRuntimeSection(props: {
+interface AdvancedRuntimeSectionProps {
   engineInfo: EngineInfo | null;
   clientStatusLabel: string;
-  clientStatusStyle: string;
-  clientStatusDot: string;
+  clientTone: SettingsTone;
   openworkStatusLabel: string;
-  openworkStatusStyle: string;
-  openworkStatusDot: string;
-}) {
+  openworkTone: SettingsTone;
+}
+
+export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   return (
-    <div className={`${settingsPanelClass} space-y-4`}>
-      <div>
-        <div className="text-sm font-medium text-gray-12">{t("settings.runtime_title")}</div>
-        <div className="text-xs text-gray-9">{t("settings.runtime_desc")}</div>
-      </div>
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.runtime_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.runtime_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <RuntimeStatusCard
@@ -81,8 +95,7 @@ export function AdvancedRuntimeSection(props: {
           title={t("settings.opencode_engine_label")}
           description={t("settings.opencode_engine_desc")}
           statusLabel={props.clientStatusLabel}
-          statusStyle={props.clientStatusStyle}
-          statusDot={props.clientStatusDot}
+          tone={props.clientTone}
           detailLines={[
             t("settings.diag_opencode_binary", undefined, {
               binary: formatOpencodeBinary(props.engineInfo),
@@ -94,70 +107,87 @@ export function AdvancedRuntimeSection(props: {
           title={t("settings.openwork_server_label")}
           description={t("settings.openwork_server_desc")}
           statusLabel={props.openworkStatusLabel}
-          statusStyle={props.openworkStatusStyle}
-          statusDot={props.openworkStatusDot}
+          tone={props.openworkTone}
         />
       </div>
-    </div>
+    </LayoutSection>
   );
 }
 
-export function AdvancedOpencodeSection(props: { busy: boolean; enabled: boolean; onToggle: () => void }) {
+interface AdvancedOpencodeSectionProps {
+  busy: boolean;
+  enabled: boolean;
+  onToggle: () => void;
+}
+
+export function AdvancedOpencodeSection(props: AdvancedOpencodeSectionProps) {
   return (
-    <div className={`${settingsPanelClass} space-y-3`}>
-      <div>
-        <div className="text-sm font-medium text-gray-12">{t("settings.opencode_section_label")}</div>
-        <div className="text-xs text-gray-9">{t("settings.opencode_engine_desc")}</div>
-      </div>
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>
+          {t("settings.opencode_section_label")}
+        </LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.opencode_engine_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
 
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
-        <div className="min-w-0">
-          <div className="text-sm text-gray-12">{t("settings.enable_exa")}</div>
-          <div className="text-xs text-gray-7">{t("settings.enable_exa_desc")}</div>
-        </div>
-        <Button variant="outline" className="h-8 shrink-0 px-3 py-0 text-xs" onClick={props.onToggle} disabled={props.busy}>
-          {props.enabled ? t("settings.on") : t("settings.off")}
-        </Button>
-      </div>
-
-      <div className="text-[11px] text-gray-7">{t("settings.exa_restart_hint")}</div>
-    </div>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.enable_exa")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.enable_exa_desc")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              aria-label={t("settings.enable_exa")}
+              checked={props.enabled}
+              disabled
+              onCheckedChange={props.onToggle}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        <Alert>
+          <Info />
+          <AlertDescription>{t("settings.exa_unavailable")}</AlertDescription>
+        </Alert>
+        <LayoutSectionItemFootnote>{t("settings.exa_restart_hint")}</LayoutSectionItemFootnote>
+      </LayoutSectionItem>
+    </LayoutSection>
   );
 }
 
-export function AdvancedFeatureFlagsSection(props: {
+interface AdvancedFeatureFlagsSectionProps {
   busy: boolean;
   microsandboxCreateSandboxEnabled: boolean;
   onToggleMicrosandboxCreateSandbox: () => void;
-}) {
-  return (
-    <div className={`${settingsPanelClass} space-y-3`}>
-      <div>
-        <div className="text-sm font-medium text-gray-12">Feature flags</div>
-        <div className="text-xs text-gray-9">Experimental controls for sandbox and workspace behaviors.</div>
-      </div>
+}
 
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
-        <div className="min-w-0">
-          <div className="text-sm text-gray-12">Create Sandbox uses microsandbox image</div>
-          <div className="text-xs text-gray-7">
+export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionProps) {
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Feature flags</LayoutSectionTitle>
+        <LayoutSectionDescription>Experimental controls for sandbox and workspace behaviors.</LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Create Sandbox uses microsandbox image</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
             When enabled, Create Sandbox launches the detached worker with the microsandbox image flow instead of the default Docker image flow.
-          </div>
-        </div>
-        <Button
-          variant="outline"
-          className="h-8 shrink-0 px-3 py-0 text-xs"
-          onClick={props.onToggleMicrosandboxCreateSandbox}
-          disabled={props.busy || !isDesktopRuntime()}
-        >
-          {props.microsandboxCreateSandboxEnabled ? "On" : "Off"}
-        </Button>
-      </div>
-    </div>
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              aria-label="Create Sandbox uses microsandbox image"
+              checked={props.microsandboxCreateSandboxEnabled}
+              disabled={props.busy || !isDesktopRuntime()}
+              onCheckedChange={props.onToggleMicrosandboxCreateSandbox}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+    </LayoutSection>
   );
 }
 
-export function AdvancedDeveloperSection(props: {
+interface AdvancedDeveloperSectionProps {
   busy: boolean;
   developerMode: boolean;
   opencodeDevModeEnabled: boolean;
@@ -169,77 +199,82 @@ export function AdvancedDeveloperSection(props: {
   onToggleDeepLink: () => void;
   onDeepLinkInput: (input: string) => void;
   onSubmitDeepLink: () => Promise<void>;
-}) {
+}
+
+export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
   return (
-    <div className={`${settingsPanelClass} space-y-3`}>
-      <div className="text-sm font-medium text-gray-12">{t("settings.developer_mode_title")}</div>
-      <div className="text-xs text-gray-9">{t("settings.developer_mode_desc")}</div>
-      <div className="flex flex-wrap items-center gap-3 pt-1">
-        <button
-          type="button"
-          className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors duration-150 focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60 ${
-            props.developerMode
-              ? "border-dls-border bg-dls-hover text-dls-text hover:bg-dls-active focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
-              : "border-dls-border bg-dls-surface text-dls-secondary hover:bg-dls-hover hover:text-dls-text focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
-          }`}
-          onClick={props.onToggleDeveloperMode}
-        >
-          <Zap size={14} className={props.developerMode ? "text-dls-text" : "text-dls-secondary"} />
-          {props.developerMode ? t("settings.disable_developer_mode") : t("settings.enable_developer_mode")}
-        </button>
-        <div className="text-xs text-gray-10">
-          {props.developerMode ? t("settings.developer_panel_enabled") : t("settings.developer_panel_disabled")}
-        </div>
-      </div>
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.developer")}</LayoutSectionTitle>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.developer_mode_title")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.developer_mode_desc")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              aria-label={t("settings.developer_mode_title")}
+              checked={props.developerMode}
+              onCheckedChange={props.onToggleDeveloperMode}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+      </LayoutSectionItem>
 
       {isDesktopRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
-        <div className={`${settingsPanelSoftClass} space-y-3`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-medium text-gray-12">{t("settings.open_deeplink_title")}</div>
-              <div className="text-xs text-gray-9">{t("settings.open_deeplink_desc")}</div>
-            </div>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={props.onToggleDeepLink}
-              disabled={props.busy || props.deepLinkBusy}
-            >
-              {props.deepLinkOpen ? t("common.hide") : t("settings.open_deeplink_button")}
-            </button>
-          </div>
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.open_deeplink_title")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.open_deeplink_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={props.onToggleDeepLink}
+                disabled={props.busy || props.deepLinkBusy}
+              >
+                {props.deepLinkOpen ? t("common.hide") : t("settings.open_deeplink_button")}
+              </Button>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
 
           {props.deepLinkOpen ? (
             <div className="space-y-3">
-              <textarea
-                value={props.deepLinkInput}
-                onChange={(event) => props.onDeepLinkInput(event.currentTarget.value)}
-                rows={3}
-                placeholder="openwork://..."
-                className="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
-              />
+              <Field>
+                <FieldLabel htmlFor="advanced-debug-deep-link">{t("settings.open_deeplink_title")}</FieldLabel>
+                <Textarea
+                  id="advanced-debug-deep-link"
+                  value={props.deepLinkInput}
+                  onChange={(event) => props.onDeepLinkInput(event.currentTarget.value)}
+                  rows={3}
+                  placeholder="openwork://..."
+                  className="font-mono text-xs"
+                />
+              </Field>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="secondary"
-                  className="h-8 px-3 py-0 text-xs"
+                  size="sm"
                   onClick={() => void props.onSubmitDeepLink()}
                   disabled={props.busy || props.deepLinkBusy || !props.deepLinkInput.trim()}
                 >
                   {props.deepLinkBusy ? t("settings.opening") : t("settings.open_deeplink_action")}
                 </Button>
-                <div className="text-[11px] text-gray-8">{t("settings.deeplink_hint")}</div>
+                <div className="text-xs text-gray-8">{t("settings.deeplink_hint")}</div>
               </div>
             </div>
           ) : null}
 
-          {props.deepLinkStatus ? <div className="text-xs text-gray-10">{props.deepLinkStatus}</div> : null}
-        </div>
+          {props.deepLinkStatus ? <SettingsNotice>{props.deepLinkStatus}</SettingsNotice> : null}
+        </LayoutSectionItem>
       ) : null}
-    </div>
+    </LayoutSection>
   );
 }
 
-export function AdvancedConnectionSection(props: {
+interface AdvancedConnectionSectionProps {
   busy: boolean;
   headerStatus: string;
   baseUrl: string;
@@ -255,63 +290,74 @@ export function AdvancedConnectionSection(props: {
   onReconnect: () => Promise<void>;
   onRestart: () => Promise<void>;
   onStopHost: () => void;
-}) {
+}
+
+export function AdvancedConnectionSection(props: AdvancedConnectionSectionProps) {
   return (
-    <div className={`${settingsPanelClass} space-y-3`}>
-      <div className="text-sm font-medium text-gray-12">{t("settings.connection_title")}</div>
-      <div className="text-xs text-gray-9">{props.headerStatus}</div>
-      <div className="break-all font-mono text-xs text-gray-8">{props.baseUrl}</div>
-      <div className="flex flex-wrap gap-2 pt-2">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={() => void props.onReconnect()}
-          disabled={props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()}
-        >
-          <RefreshCcw size={14} className={`text-dls-secondary ${props.openworkReconnectBusy ? "animate-spin" : ""}`} />
-          {props.openworkReconnectBusy ? t("settings.reconnecting") : t("settings.reconnect_server")}
-        </button>
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.connection_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{props.headerStatus}</LayoutSectionDescription>
+      </LayoutSectionHeader>
 
-        {props.isLocalEngineRunning ? (
-          <button
+      <LayoutSectionItem className="gap-3">
+        <div className="break-all font-mono text-xs text-gray-8">{props.baseUrl}</div>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <Button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => void props.onRestart()}
-            disabled={props.busy || props.restartBusy}
+            variant="outline"
+            size="sm"
+            onClick={() => void props.onReconnect()}
+            disabled={props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()}
           >
-            <RefreshCcw size={14} className={`text-dls-secondary ${props.restartBusy ? "animate-spin" : ""}`} />
-            {props.restartBusy ? t("settings.restarting") : t("settings.restart_openwork_server")}
-          </button>
-        ) : null}
+            <RefreshCcw size={14} className={props.openworkReconnectBusy ? "animate-spin" : ""} />
+            {props.openworkReconnectBusy ? t("settings.reconnecting") : t("settings.reconnect_server")}
+          </Button>
 
-        {props.isLocalEngineRunning ? (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-red-7/35 bg-red-3/25 px-3 py-1.5 text-xs font-medium text-red-11 transition-colors duration-150 hover:border-red-7/50 hover:bg-red-3/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={props.onStopHost}
-            disabled={props.busy}
-          >
-            <CircleAlert size={14} />
-            {t("settings.stop_local_server")}
-          </button>
-        ) : null}
+          {props.isLocalEngineRunning ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void props.onRestart()}
+              disabled={props.busy || props.restartBusy}
+            >
+              <RefreshCcw size={14} className={props.restartBusy ? "animate-spin" : ""} />
+              {props.restartBusy ? t("settings.restarting") : t("settings.restart_openwork_server")}
+            </Button>
+          ) : null}
 
-        {!props.isLocalEngineRunning && props.openworkServerStatus === "connected" ? (
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={props.onStopHost}
-            disabled={props.busy}
-          >
-            {t("settings.disconnect_server")}
-          </button>
-        ) : null}
-      </div>
+          {props.isLocalEngineRunning ? (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={props.onStopHost}
+              disabled={props.busy}
+            >
+              <CircleAlert size={14} />
+              {t("settings.stop_local_server")}
+            </Button>
+          ) : null}
 
-      {props.reconnectStatus ? <div className="text-xs text-gray-10">{props.reconnectStatus}</div> : null}
-      {props.reconnectError ? <div className="text-xs text-red-11">{props.reconnectError}</div> : null}
-      {props.restartStatus ? <div className="text-xs text-gray-10">{props.restartStatus}</div> : null}
-      {props.restartError ? <div className="text-xs text-red-11">{props.restartError}</div> : null}
-    </div>
+          {!props.isLocalEngineRunning && props.openworkServerStatus === "connected" ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={props.onStopHost}
+              disabled={props.busy}
+            >
+              {t("settings.disconnect_server")}
+            </Button>
+          ) : null}
+        </div>
+
+        {props.reconnectStatus ? <SettingsNotice>{props.reconnectStatus}</SettingsNotice> : null}
+        {props.reconnectError ? <SettingsNotice tone="error">{props.reconnectError}</SettingsNotice> : null}
+        {props.restartStatus ? <SettingsNotice>{props.restartStatus}</SettingsNotice> : null}
+        {props.restartError ? <SettingsNotice tone="error">{props.restartError}</SettingsNotice> : null}
+      </LayoutSectionItem>
+    </LayoutSection>
   );
 }

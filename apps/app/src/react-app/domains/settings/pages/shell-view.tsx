@@ -1,19 +1,25 @@
 /** @jsxImportSource react */
-import { AlertTriangle, Cloud, Lock, RotateCcw } from "lucide-react";
+import { AlertTriangle, Lock, RotateCcw } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
-import { Button } from "../../../design-system/button";
 import {
-  SettingsStack,
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderTitle,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderActions,
-  SettingsInset,
-  SettingsNotice,
-} from "../settings-section";
+  LayoutSection,
+  LayoutSectionDescription,
+  LayoutSectionHeader,
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+  LayoutSectionTitle,
+  LayoutStack,
+} from "../settings-layout";
 import { useShellConfig, DEFAULT_SHELL_CONFIG, type ShellConfig } from "../../../shell/shell-config";
 
 /* ------------------------------------------------------------------ */
@@ -171,67 +177,42 @@ type ToggleRowProps = {
   disabled?: boolean;
   warning?: string | null;
   cloudOnly?: boolean;
+  className?: string;
 };
 
-function ToggleRow(props: ToggleRowProps) {
+function CloudOnlyBadge() {
   return (
-    <SettingsInset className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-dls-text">{props.label}</span>
-          {props.cloudOnly ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium text-dls-secondary">
-              <Lock size={9} />
-              Cloud only
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-0.5 text-[12px] text-dls-secondary">{props.description}</div>
-        {props.warning && !props.checked ? (
-          <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-11">
-            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-            <span>{props.warning}</span>
-          </div>
-        ) : null}
-      </div>
-      <Button
-        variant="outline"
-        className="h-8 shrink-0 px-3 py-0 text-xs"
-        onClick={() => props.onChange(!props.checked)}
-        disabled={props.disabled || props.cloudOnly}
-      >
-        {props.checked ? "On" : "Off"}
-      </Button>
-    </SettingsInset>
+    <span className="inline-flex items-center gap-1 rounded-md bg-dls-hover size-5 justify-center text-xs font-medium text-dls-secondary" aria-label="Cloud only">
+      <Lock className="size-3" />
+    </span>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Text input row                                                     */
-/* ------------------------------------------------------------------ */
-
-type TextRowProps = {
-  label: string;
-  description: string;
-  value: string;
-  placeholder: string;
-  onChange: (value: string) => void;
-};
-
-function TextRow(props: TextRowProps) {
+function ToggleRow(props: ToggleRowProps) {
   return (
-    <SettingsInset className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-dls-text">{props.label}</div>
-        <div className="mt-0.5 text-[12px] text-dls-secondary">{props.description}</div>
-      </div>
-      <input
-        className="h-8 w-40 shrink-0 rounded-lg border border-dls-border bg-dls-surface px-3 text-xs text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-        value={props.value}
-        placeholder={props.placeholder}
-        onChange={(e) => props.onChange(e.currentTarget.value)}
-      />
-    </SettingsInset>
+    <LayoutSectionItem className={cn("gap-3", props.className)}>
+      <LayoutSectionItemHeader>
+        <LayoutSectionItemTitle>
+          {props.label}
+          {props.cloudOnly ? <CloudOnlyBadge /> : null}
+        </LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>{props.description}</LayoutSectionItemDescription>
+        <LayoutSectionItemHeaderActions>
+          <Switch
+            aria-label={props.label}
+            checked={props.checked}
+            disabled={props.disabled || props.cloudOnly}
+            onCheckedChange={props.onChange}
+          />
+        </LayoutSectionItemHeaderActions>
+      </LayoutSectionItemHeader>
+      {props.warning && !props.checked ? (
+        <Alert variant="warning">
+          <AlertTriangle />
+          <AlertDescription>{props.warning}</AlertDescription>
+        </Alert>
+      ) : null}
+    </LayoutSectionItem>
   );
 }
 
@@ -247,150 +228,149 @@ export function ShellCustomizationView() {
   );
 
   return (
-    <SettingsStack>
+    <LayoutStack>
       {/* ---- Branding ---- */}
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>
-              Branding
-            </SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>
-              Customize the app name shown in the title bar, sidebar, and welcome page.
-            </SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-        </SettingsSectionHeader>
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>Branding</LayoutSectionTitle>
+          <LayoutSectionDescription>
+            Customize the name your users see across the app.
+          </LayoutSectionDescription>
+        </LayoutSectionHeader>
 
-        <TextRow
-          label="App name"
-          description="Shown in the title bar, sidebar header, and welcome screen."
-          value={config.appName}
-          placeholder="OpenWork"
-          onChange={(value) => update({ appName: value || DEFAULT_SHELL_CONFIG.appName })}
-        />
-      </SettingsSection>
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>Change application name</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              Appears in the title bar, sidebar, and welcome screen.
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Field className="w-64 max-w-full gap-0">
+               <FieldLabel className="sr-only" htmlFor="shell-app-name">
+                  App name
+                </FieldLabel>
+                <Input
+                  id="shell-app-name"
+                  className="h-8 text-xs"
+                  value={config.appName}
+                  placeholder="OpenWork"
+                  onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
+                />
+              </Field>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
 
       <Separator />
 
       {/* ---- Visibility ---- */}
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>
-              Shell visibility
-            </SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>
-              Control which parts of the app shell are visible. Hidden elements can still be accessed via the command palette (Cmd+K).
-            </SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-        </SettingsSectionHeader>
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>Layout</LayoutSectionTitle>
+          <LayoutSectionDescription>
+            Customize what's visible in the interface.
+          </LayoutSectionDescription>
+        </LayoutSectionHeader>
 
-        <SettingsInset className="p-4">
+        <Alert>
+          <AlertDescription>
+            Anything you hide is still available via the command palette (Cmd+K).
+          </AlertDescription>
+        </Alert>
+
+        <LayoutSectionItem className="rounded-2xl border border-dls-border p-4">
           <ShellWireframe config={config} />
-        </SettingsInset>
+        </LayoutSectionItem>
 
         <ToggleRow
-          label="Sidebar"
-          description="The left panel with workspace and session list."
+          label="Display sidebar"
+          description="Browse workspaces and past sessions from a side panel."
           checked={config.sidebar}
           onChange={(v) => update({ sidebar: v })}
         />
 
         <ToggleRow
-          label="Status bar"
-          description="The bottom bar showing connection status and quick actions."
+          label="Display status bar"
+          description="Quick access to status, settings, and actions along the bottom edge."
           checked={config.statusBar}
           onChange={(v) => update({ statusBar: v })}
           warning="When hidden, the only way to access settings is via Cmd+K."
         />
 
         {config.statusBar ? (
-          <SettingsInset className="ml-6 space-y-0 divide-y divide-dls-border p-0">
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="min-w-0">
-                <span className="text-[13px] font-medium text-dls-text">Docs button</span>
-                <div className="text-[11px] text-dls-secondary">Link to documentation.</div>
-              </div>
-              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ docsButton: !config.docsButton })}>
-                {config.docsButton ? "On" : "Off"}
-              </Button>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="min-w-0">
-                <span className="text-[13px] font-medium text-dls-text">Feedback button</span>
-                <div className="text-[11px] text-dls-secondary">Send feedback link.</div>
-              </div>
-              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ feedbackButton: !config.feedbackButton })}>
-                {config.feedbackButton ? "On" : "Off"}
-              </Button>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
-              <div className="min-w-0">
-                <span className="text-[13px] font-medium text-dls-text">Cloud sign-in</span>
-                <div className="text-[11px] text-dls-secondary">Sign-in button when not connected.</div>
-              </div>
-              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ cloudSignin: !config.cloudSignin })}>
-                {config.cloudSignin ? "On" : "Off"}
-              </Button>
-            </div>
-          </SettingsInset>
+          <div className="ml-6 flex flex-col gap-3 border border-dls-border px-4 py-4 rounded-2xl -mr-4">
+            <ToggleRow
+              label="Display documentation link"
+              description="Show a link to your documentation."
+              checked={config.docsButton}
+              onChange={(value) => update({ docsButton: value })}
+            />
+            <ToggleRow
+              label="Display feedback button"
+              description="Show a button for submitting feedback."
+              checked={config.feedbackButton}
+              onChange={(value) => update({ feedbackButton: value })}
+            />
+            <ToggleRow
+              label="Display cloud sign-in"
+              description="Show a sign-in prompt for users who aren't logged in."
+              checked={config.cloudSignin}
+              onChange={(value) => update({ cloudSignin: value })}
+            />
+          </div>
         ) : null}
 
         <ToggleRow
-          label="Welcome page"
-          description="Onboarding screen shown to new users."
-          checked={config.welcomePage}
-          onChange={(v) => update({ welcomePage: v })}
-        />
-
-        <ToggleRow
-          label="Starter cards"
-          description="Suggested task cards in empty sessions."
+          label="Display task suggestions"
+          description="Show task suggestions to help users get started."
           checked={config.starterCards}
           onChange={(v) => update({ starterCards: v })}
         />
 
         <ToggleRow
-          label="Model picker"
-          description="Allow users to change the default model."
+          label="Display model picker"
+          description="Let users choose which AI model to use."
           checked={config.modelPicker}
           onChange={(v) => update({ modelPicker: v })}
         />
 
         <ToggleRow
-          label="Browser panel"
-          description="Show the built-in browser panel toggle."
+          label="Display browser panel"
+          description="A built-in browser for viewing web content alongside sessions."
           checked={config.browser}
           onChange={(v) => update({ browser: v })}
         />
 
         <ToggleRow
-          label="Add workspace"
-          description="Allow creating or connecting new workspaces."
+          label="Display new workspace button"
+          description="Let users create or join additional workspaces."
           checked={config.addWorkspace}
           onChange={(v) => update({ addWorkspace: v })}
         />
-      </SettingsSection>
+      </LayoutSection>
 
       <Separator />
 
       {/* ---- Cloud-managed (grayed out) ---- */}
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>
-              <Cloud size={16} />
-              Cloud-managed
-            </SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>
-              These settings are managed by your organization via OpenWork Cloud. Contact your admin to change them.
-            </SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-        </SettingsSectionHeader>
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>Organization-wide settings</LayoutSectionTitle>
+          <LayoutSectionDescription>
+            These settings are managed by your organization via OpenWork Cloud.
+          </LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <Alert variant="warning">
+          <Lock />
+          <AlertDescription>
+            These settings can only be changed by your organization admin. Contact your admin to make changes.
+          </AlertDescription>
+        </Alert>
 
         <ToggleRow
           label="Settings access"
-          description="Whether the settings panel is accessible from the UI."
+          description="Let users open the settings panel."
           checked={true}
           onChange={() => {}}
           cloudOnly
@@ -398,7 +378,7 @@ export function ShellCustomizationView() {
 
         <ToggleRow
           label="Model restrictions"
-          description="Restrict which models and providers are available."
+          description="Limit which AI models and providers users can choose from."
           checked={false}
           onChange={() => {}}
           cloudOnly
@@ -406,23 +386,32 @@ export function ShellCustomizationView() {
 
         <ToggleRow
           label="Extension restrictions"
-          description="Control which MCPs, plugins, and skills can be installed."
+          description="Limit which extensions, plugins, and skills users can install."
           checked={false}
           onChange={() => {}}
           cloudOnly
         />
-      </SettingsSection>
+
+        <ToggleRow
+          label="Enable welcome page"
+          description="A getting-started screen for first-time users."
+          checked={config.welcomePage}
+          onChange={(v) => update({ welcomePage: v })}
+          cloudOnly
+          disabled
+        />
+      </LayoutSection>
 
       <Separator />
 
       {/* ---- Reset ---- */}
       <div className="flex items-center justify-between">
-        <div className="text-xs text-dls-secondary">
+        <div className="text-sm text-dls-secondary">
           {isDefault ? "All settings are at their defaults." : "Some settings have been customized."}
         </div>
         <Button
           variant="outline"
-          className="h-8 px-3 text-xs"
+          size="sm"
           onClick={reset}
           disabled={isDefault}
         >
@@ -430,6 +419,6 @@ export function ShellCustomizationView() {
           Reset to defaults
         </Button>
       </div>
-    </SettingsStack>
+    </LayoutStack>
   );
 }

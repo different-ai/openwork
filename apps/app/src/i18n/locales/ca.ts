@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "Afegeix",
   "context_panel.add_folder_hint": "Afegeix una carpeta per permetre que aquest workspace llegeixi i editi fitxers fora del seu directori arrel.",
   "context_panel.adding_button": "S'està afegint...",
-  "context_panel.always_available": "Sempre disponible",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Carpetes autoritzades",
   "context_panel.authorized_folders_desc": "Concedeix accés a aquest workspace per llegir i editar fitxers en directoris fora de la seva arrel.",
   "context_panel.authorized_folders_no_access": "Connecta't a un workspace d'un servidor OpenWork amb permisos d'escriptura per editar les carpetes autoritzades.",

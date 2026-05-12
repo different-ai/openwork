@@ -6,20 +6,18 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { revealDesktopItemInDir } from "../../../../app/lib/desktop";
-import { isDesktopRuntime, isMacPlatform, isWindowsPlatform } from "../../../../app/utils";
-import { t } from "../../../../i18n";
+import { revealDesktopItemInDir } from "@/app/lib/desktop";
+import { isDesktopRuntime, isMacPlatform, isWindowsPlatform } from "@/app/utils";
+import { t } from "@/i18n";
+import { SettingsInset, SettingsNotice } from "../settings-section";
 import {
-  SettingsInset,
-  SettingsNotice,
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderActions,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderTitle,
-  SettingsStack,
-} from "../settings-section";
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+  LayoutStack,
+} from "../settings-layout";
 
 export type RecoveryViewProps = {
   anyActiveRuns: boolean;
@@ -41,7 +39,7 @@ export function RecoveryView(props: RecoveryViewProps) {
   });
 
   return (
-    <SettingsStack>
+    <LayoutStack>
       {!isDesktopRuntime() && (
         <Alert>
           <Info />
@@ -49,13 +47,11 @@ export function RecoveryView(props: RecoveryViewProps) {
           <AlertDescription>{t("settings.recovery_requires_desktop")}</AlertDescription>
         </Alert>
       )}
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>{t("settings.workspace_config_title")}</SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>{t("settings.workspace_config_desc")}</SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-          <SettingsSectionHeaderActions>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.workspace_config_title")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.workspace_config_desc")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
             <Button
               variant="outline"
               size="sm"
@@ -85,8 +81,8 @@ export function RecoveryView(props: RecoveryViewProps) {
                 <TooltipContent>{t("settings.stop_runs_before_reset_config")}</TooltipContent>
               )}
             </Tooltip>
-          </SettingsSectionHeaderActions>
-        </SettingsSectionHeader>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
 
         <SettingsInset className="break-all font-mono text-[11px] text-muted-foreground">
           {props.workspaceConfigPath || t("settings.no_active_workspace")}
@@ -103,17 +99,15 @@ export function RecoveryView(props: RecoveryViewProps) {
               : props.configActionStatus}
           </SettingsNotice>
         ) : null}
-      </SettingsSection>
+      </LayoutSectionItem>
 
       <Separator />
 
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>{t("settings.opencode_cache")}</SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>{t("settings.opencode_cache_description")}</SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-          <SettingsSectionHeaderActions>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.opencode_cache")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.opencode_cache_description")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
             <Button
               variant="secondary"
               size="sm"
@@ -124,25 +118,23 @@ export function RecoveryView(props: RecoveryViewProps) {
             >
               {props.cacheRepairBusy ? t("settings.repairing_cache") : t("settings.repair_cache")}
             </Button>
-          </SettingsSectionHeaderActions>
-        </SettingsSectionHeader>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
 
         <Alert>
           <Info />
           <AlertDescription>{t("settings.recovery_cache_repair_unavailable")}</AlertDescription>
         </Alert>
         {props.cacheRepairResult ? <SettingsNotice>{props.cacheRepairResult}</SettingsNotice> : null}
-      </SettingsSection>
+      </LayoutSectionItem>
 
       <Separator />
 
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>{t("settings.docker_containers_title")}</SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>{t("settings.docker_containers_desc")}</SettingsSectionHeaderDescription>
-          </SettingsSectionHeaderContent>
-          <SettingsSectionHeaderActions>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>{t("settings.docker_containers_title")}</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>{t("settings.docker_containers_desc")}</LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" />}>
                 <Button
@@ -162,15 +154,15 @@ export function RecoveryView(props: RecoveryViewProps) {
                 <TooltipContent>{t("settings.stop_runs_before_cleanup")}</TooltipContent>
               )}
             </Tooltip>
-          </SettingsSectionHeaderActions>
-        </SettingsSectionHeader>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
 
         <Alert>
           <Info />
           <AlertDescription>{t("settings.recovery_docker_cleanup_unavailable")}</AlertDescription>
         </Alert>
         {props.dockerCleanupResult ? <SettingsNotice>{props.dockerCleanupResult}</SettingsNotice> : null}
-      </SettingsSection>
-    </SettingsStack>
+      </LayoutSectionItem>
+    </LayoutStack>
   );
 }

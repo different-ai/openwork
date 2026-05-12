@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "Añadir",
   "context_panel.add_folder_hint": "Añade una carpeta para que este espacio de trabajo pueda leer y editar archivos fuera de su directorio raíz.",
   "context_panel.adding_button": "Añadiendo...",
-  "context_panel.always_available": "Siempre disponible",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Carpetas autorizadas",
   "context_panel.authorized_folders_desc": "Permite que este espacio de trabajo lea y edite archivos en directorios fuera de su carpeta raíz.",
   "context_panel.authorized_folders_no_access": "Conéctate a un espacio de trabajo editable del servidor de OpenWork para modificar las carpetas autorizadas.",

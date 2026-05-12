@@ -160,7 +160,7 @@ export default {
   "context_panel.add_button": "追加",
   "context_panel.add_folder_hint": "フォルダを追加して、このワークスペースがルートディレクトリ外のファイルを読み書きできるようにします。",
   "context_panel.adding_button": "追加中…",
-  "context_panel.always_available": "常に利用可能",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "許可されたフォルダ",
   "context_panel.authorized_folders_desc": "このワークスペースにルートディレクトリ外のファイルへの読み書きアクセスを許可します。",
   "context_panel.authorized_folders_no_access": "許可されたフォルダを編集するには、書き込み可能なOpenWorkサーバーワークスペースに接続してください。",

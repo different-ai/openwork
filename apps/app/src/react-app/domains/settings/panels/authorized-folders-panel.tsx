@@ -1,9 +1,18 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useReducer, type SetStateAction } from "react";
-import { Folder, FolderLock, FolderSearch, X } from "lucide-react";
+import { Folder, Info, Plus, X } from "lucide-react";
 
-import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { t } from "@/i18n";
 import type {
   OpenworkServerCapabilities,
   OpenworkServerClient,
@@ -25,14 +34,15 @@ import {
   type AuthorizedFoldersState,
 } from "./authorized-folders-panel-state";
 import {
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderTitle,
-  SettingsSectionHeaderDescription,
-  SettingsInset,
   SettingsNotice,
 } from "../settings-section";
+import {
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+} from "../settings-layout";
 
 export type AuthorizedFoldersPanelProps = {
   openworkServerClient: OpenworkServerClient | null;
@@ -44,6 +54,70 @@ export type AuthorizedFoldersPanelProps = {
   onConfigUpdated: () => void;
 };
 
+type AuthorizedFolderItemProps = {
+  folder: string;
+  workspaceRootFolder: string;
+  authorizedFoldersLoading: boolean;
+  authorizedFoldersSaving: boolean;
+  canWriteConfig: boolean;
+  onRemove: (folder: string) => Promise<void>;
+};
+
+function getFolderName(folder: string) {
+  // Split on POSIX "/" and Windows "\" separators, then use the last path segment as the folder name.
+  return folder.split(/[\/\\]/).filter(Boolean).pop() || folder;
+}
+
+function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
+  const isWorkspaceRoot = props.folder === props.workspaceRootFolder;
+  const folderName = getFolderName(props.folder);
+
+  return (
+    <li className="flex flex-row items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3">
+      <div className="flex min-w-0 gap-3">
+        <div className="min-w-0 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Folder size={16} className="shrink-0 text-muted-foreground" />
+            <span className="truncate text-sm font-medium text-dls-text">{folderName}</span>
+            {isWorkspaceRoot ? (
+              <span className="shrink-0 rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {t("context_panel.workspace_root_badge")}
+              </span>
+            ) : null}
+          </div>
+          <span className="truncate font-mono text-xs text-muted-foreground ps-6">{props.folder}</span>
+        </div>
+      </div>
+      {!isWorkspaceRoot ? (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={() => void props.onRemove(props.folder)}
+          disabled={props.authorizedFoldersLoading || props.authorizedFoldersSaving || !props.canWriteConfig}
+          aria-label={t("context_panel.remove_folder", undefined, { name: folderName })}
+        >
+          <X size={14} />
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <span
+                className="inline-flex shrink-0 items-center text-muted-foreground mr-2"
+                tabIndex={0}
+              >
+                <Info className="size-4" />
+              </span>
+            )}
+          />
+          <TooltipContent>{t("context_panel.always_available")}</TooltipContent>
+        </Tooltip>
+      )}
+    </li>
+  );
+}
+
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
@@ -51,7 +125,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   );
   const {
     folders: authorizedFolders,
-    draft: authorizedFolderDraft,
     loading: authorizedFoldersLoading,
     saving: authorizedFoldersSaving,
     status: authorizedFoldersStatus,
@@ -62,7 +135,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     value: SetStateAction<AuthorizedFoldersState[K]>,
   ) => dispatchFolderState({ type: "set", key, value });
   const setAuthorizedFolders = (value: SetStateAction<string[]>) => setFolderState("folders", value);
-  const setAuthorizedFolderDraft = (value: SetStateAction<string>) => setFolderState("draft", value);
   const setAuthorizedFoldersSaving = (value: SetStateAction<boolean>) => setFolderState("saving", value);
   const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => setFolderState("status", value);
   const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => setFolderState("error", value);
@@ -178,29 +250,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     }
   }, [canWriteConfig, props]);
 
-  const addAuthorizedFolder = useCallback(async () => {
-    const normalized = normalizeAuthorizedFolderPath(authorizedFolderDraft);
-    const workspaceRoot = normalizeAuthorizedFolderPath(workspaceRootFolder);
-    if (!normalized) return;
-    if (workspaceRoot && normalized === workspaceRoot) {
-      setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus(t("context_panel.workspace_root_available"));
-      setAuthorizedFoldersError(null);
-      return;
-    }
-    if (authorizedFolders.includes(normalized)) {
-      setAuthorizedFolderDraft("");
-      setAuthorizedFoldersStatus(t("context_panel.folder_already_authorized"));
-      setAuthorizedFoldersError(null);
-      return;
-    }
-
-    const ok = await persistAuthorizedFolders([...authorizedFolders, normalized]);
-    if (ok) {
-      setAuthorizedFolderDraft("");
-    }
-  }, [authorizedFolderDraft, authorizedFolders, persistAuthorizedFolders, workspaceRootFolder]);
-
   const removeAuthorizedFolder = useCallback(async (folder: string) => {
     const nextFolders = authorizedFolders.filter((entry) => entry !== folder);
     await persistAuthorizedFolders(nextFolders);
@@ -221,9 +270,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
       const normalized = normalizeAuthorizedFolderPath(folder);
       const workspaceRoot = normalizeAuthorizedFolderPath(workspaceRootFolder);
       if (!normalized) return;
-      setAuthorizedFolderDraft(normalized);
       if (workspaceRoot && normalized === workspaceRoot) {
-        setAuthorizedFolderDraft("");
         setAuthorizedFoldersStatus(t("context_panel.workspace_root_available"));
         setAuthorizedFoldersError(null);
         return;
@@ -233,10 +280,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         setAuthorizedFoldersError(null);
         return;
       }
-      const ok = await persistAuthorizedFolders([...authorizedFolders, normalized]);
-      if (ok) {
-        setAuthorizedFolderDraft("");
-      }
+      await persistAuthorizedFolders([...authorizedFolders, normalized]);
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setAuthorizedFoldersError(message);
@@ -244,18 +288,24 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   }, [authorizedFolders, persistAuthorizedFolders, workspaceRootFolder]);
 
   return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>
-            <FolderLock size={16} />
-            {t("context_panel.authorized_folders")}
-          </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>
-            {t("context_panel.authorized_folders_desc")}
-          </SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-      </SettingsSectionHeader>
+    <LayoutSectionItem className="gap-6">
+      <LayoutSectionItemHeader>
+        <LayoutSectionItemTitle>
+          {t("context_panel.authorized_folders")}
+        </LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>
+          {t("context_panel.authorized_folders_desc")}
+        </LayoutSectionItemDescription>
+        <LayoutSectionItemHeaderActions>
+          <Button
+            onClick={() => void pickAuthorizedFolder()}
+            disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+          >
+            <Plus className="size-4" />
+            Add folder
+          </Button>
+        </LayoutSectionItemHeaderActions>
+      </LayoutSectionItemHeader>
 
       {!canReadConfig ? (
         <SettingsNotice>
@@ -265,56 +315,42 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         <>
           {/* Folder list */}
           {visibleAuthorizedFolders.length > 0 ? (
-            <div className="space-y-2">
-              {visibleAuthorizedFolders.map((folder) => {
-                const isWorkspaceRoot = folder === workspaceRootFolder;
-                const folderName = folder.split(/[\/\\]/).filter(Boolean).pop() || folder;
-                return (
-                  <SettingsInset
-                    key={folder}
-                    className="flex items-center justify-between gap-3 px-4 py-3"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Folder size={16} className="shrink-0 text-dls-secondary" />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium text-dls-text">{folderName}</span>
-                          {isWorkspaceRoot ? (
-                            <span className="shrink-0 rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-medium text-dls-secondary">
-                              {t("context_panel.workspace_root_badge")}
-                            </span>
-                          ) : null}
-                        </div>
-                        <span className="truncate font-mono text-[10px] text-muted-foreground">{folder}</span>
-                      </div>
-                    </div>
-                    {!isWorkspaceRoot ? (
-                      <Button
-                        variant="ghost"
-                        className="size-7 shrink-0 !rounded-full !p-0 text-muted-foreground hover:text-red-11"
-                        onClick={() => void removeAuthorizedFolder(folder)}
-                        disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig}
-                        aria-label={t("context_panel.remove_folder", undefined, { name: folderName })}
-                      >
-                        <X size={14} />
-                      </Button>
-                    ) : (
-                      <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
-                        {t("context_panel.always_available")}
-                      </span>
-                    )}
-                  </SettingsInset>
-                );
-              })}
-            </div>
+            <ul className="flex flex-col gap-2">
+              {visibleAuthorizedFolders.map((folder) => (
+                <AuthorizedFolderItem
+                  key={folder}
+                  folder={folder}
+                  workspaceRootFolder={workspaceRootFolder}
+                  authorizedFoldersLoading={authorizedFoldersLoading}
+                  authorizedFoldersSaving={authorizedFoldersSaving}
+                  canWriteConfig={canWriteConfig}
+                  onRemove={removeAuthorizedFolder}
+                />
+              ))}
+            </ul>
           ) : (
-            <SettingsInset className="flex flex-col items-center justify-center py-8 text-center">
-              <Folder size={20} className="mb-2 text-muted-foreground" />
-              <div className="text-sm font-medium text-dls-text">{t("context_panel.no_external_folders")}</div>
-              <div className="mt-1 max-w-[40ch] text-[11px] text-muted-foreground">
-                {t("context_panel.add_folder_hint")}
-              </div>
-            </SettingsInset>
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia>
+                  <Folder className="text-muted-foreground" />
+                </EmptyMedia>
+                <EmptyTitle>
+                  {t("context_panel.no_external_folders")}
+                </EmptyTitle>
+                <EmptyDescription>
+                  {t("context_panel.add_folder_hint")}
+                </EmptyDescription>
+              </EmptyHeader>
+            <EmptyContent>
+              <Button
+                onClick={() => void pickAuthorizedFolder()}
+                disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+              >
+                <Plus className="size-4" />
+                Add folder
+              </Button>
+            </EmptyContent>
+            </Empty>
           )}
 
           {/* Status / error */}
@@ -324,43 +360,8 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
           {authorizedFoldersError ? (
             <SettingsNotice tone="error">{authorizedFoldersError}</SettingsNotice>
           ) : null}
-
-          {/* Input row */}
-          <SettingsInset className="flex items-center gap-2 px-3 py-2.5">
-            <input
-              className="flex-1 rounded-lg border border-dls-border bg-dls-surface px-3 py-1.5 text-xs text-dls-text placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] disabled:opacity-50"
-              value={authorizedFolderDraft}
-              onChange={(event) => setAuthorizedFolderDraft(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && authorizedFolderDraft.trim()) {
-                  void addAuthorizedFolder();
-                }
-              }}
-              placeholder={t("context_panel.input_placeholder")}
-              disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig}
-            />
-            {canPickAuthorizedFolder ? (
-              <Button
-                variant="outline"
-                className="h-8 px-3 text-xs"
-                onClick={() => void pickAuthorizedFolder()}
-                disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig}
-              >
-                <FolderSearch size={13} className="mr-1.5" />
-                {t("context_panel.browse_button")}
-              </Button>
-            ) : null}
-            <Button
-              variant="primary"
-              className="h-8 px-3 text-xs"
-              onClick={() => void addAuthorizedFolder()}
-              disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canWriteConfig || !authorizedFolderDraft.trim()}
-            >
-              {authorizedFoldersSaving ? t("context_panel.adding_button") : t("context_panel.add_button")}
-            </Button>
-          </SettingsInset>
         </>
       )}
-    </SettingsSection>
+    </LayoutSectionItem>
   );
 }

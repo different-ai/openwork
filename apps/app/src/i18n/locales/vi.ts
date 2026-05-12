@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "Thêm",
   "context_panel.add_folder_hint": "Thêm thư mục để workspace có thể đọc và chỉnh sửa tệp ngoài thư mục gốc.",
   "context_panel.adding_button": "Đang thêm...",
-  "context_panel.always_available": "Luôn khả dụng",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "Thư mục được phép",
   "context_panel.authorized_folders_desc": "Cấp quyền cho workspace này đọc và chỉnh sửa tệp trong thư mục bên ngoài thư mục gốc.",
   "context_panel.authorized_folders_no_access": "Kết nối workspace máy chủ OpenWork có quyền ghi để chỉnh sửa thư mục được phép.",

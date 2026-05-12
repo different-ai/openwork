@@ -161,7 +161,7 @@ export default {
   "context_panel.add_button": "เพิ่ม",
   "context_panel.add_folder_hint": "เพิ่มโฟลเดอร์เพื่อให้พื้นที่ทำงานนี้อ่านและแก้ไขไฟล์นอกไดเรกทอรีรูท",
   "context_panel.adding_button": "กำลังเพิ่ม...",
-  "context_panel.always_available": "พร้อมใช้งานเสมอ",
+  "context_panel.always_available": "Workspace root folder can't be removed",
   "context_panel.authorized_folders": "โฟลเดอร์ที่อนุญาต",
   "context_panel.authorized_folders_desc": "ให้พื้นที่ทำงานนี้เข้าถึงอ่านและแก้ไขไฟล์ในไดเรกทอรีนอกรูท",
   "context_panel.authorized_folders_no_access": "เชื่อมต่อพื้นที่ทำงาน OpenWork server ที่เขียนได้เพื่อแก้ไขโฟลเดอร์ที่อนุญาต",

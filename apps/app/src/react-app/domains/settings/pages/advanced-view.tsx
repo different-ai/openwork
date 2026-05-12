@@ -1,10 +1,13 @@
 /** @jsxImportSource react */
 import { useReducer } from "react";
 
-import type { OpencodeConnectStatus } from "../../../../app/types";
-import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
-import type { EngineInfo } from "../../../../app/lib/desktop";
-import { t } from "../../../../i18n";
+import { Separator } from "@/components/ui/separator";
+
+import type { OpencodeConnectStatus } from "@/app/types";
+import type { OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { EngineInfo } from "@/app/lib/desktop-types";
+import { t } from "@/i18n";
+import { LayoutStack } from "../settings-layout";
 
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
@@ -40,6 +43,8 @@ export type AdvancedViewProps = {
   configView: ConfigViewProps;
 };
 
+type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
+
 export function AdvancedView(props: AdvancedViewProps) {
   const [localState, dispatchLocal] = useReducer(
     advancedLocalReducer,
@@ -64,20 +69,11 @@ export function AdvancedView(props: AdvancedViewProps) {
     return props.clientConnected ? t("status.connected") : t("config.status_not_connected");
   })();
 
-  const clientStatusStyle = (() => {
+  const clientTone: AdvancedStatusTone = (() => {
     const status = props.opencodeConnectStatus?.status;
-    if (status === "connecting") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-    if (status === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
-    return props.clientConnected
-      ? "bg-green-7/10 text-green-11 border-green-7/20"
-      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
-  })();
-
-  const clientStatusDot = (() => {
-    const status = props.opencodeConnectStatus?.status;
-    if (status === "connecting") return "bg-amber-9";
-    if (status === "error") return "bg-red-9";
-    return props.clientConnected ? "bg-green-9" : "bg-gray-6";
+    if (status === "connecting") return "warning";
+    if (status === "error") return "error";
+    return props.clientConnected ? "ready" : "neutral";
   })();
 
   const openworkStatusLabel = (() => {
@@ -91,25 +87,14 @@ export function AdvancedView(props: AdvancedViewProps) {
     }
   })();
 
-  const openworkStatusStyle = (() => {
+  const openworkTone: AdvancedStatusTone = (() => {
     switch (props.openworkServerStatus) {
       case "connected":
-        return "bg-green-7/10 text-green-11 border-green-7/20";
+        return "ready";
       case "limited":
-        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+        return "warning";
       default:
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    }
-  })();
-
-  const openworkStatusDot = (() => {
-    switch (props.openworkServerStatus) {
-      case "connected":
-        return "bg-green-9";
-      case "limited":
-        return "bg-amber-9";
-      default:
-        return "bg-gray-6";
+        return "neutral";
     }
   })();
 
@@ -171,22 +156,24 @@ export function AdvancedView(props: AdvancedViewProps) {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl w-full">
+    <LayoutStack>
       <AdvancedRuntimeSection
         engineInfo={props.engineInfo}
         clientStatusLabel={clientStatusLabel}
-        clientStatusStyle={clientStatusStyle}
-        clientStatusDot={clientStatusDot}
+        clientTone={clientTone}
         openworkStatusLabel={openworkStatusLabel}
-        openworkStatusStyle={openworkStatusStyle}
-        openworkStatusDot={openworkStatusDot}
+        openworkTone={openworkTone}
       />
+
+      <Separator />
 
       <AdvancedOpencodeSection
         busy={props.busy}
         enabled={props.opencodeEnableExa}
         onToggle={props.toggleOpencodeEnableExa}
       />
+
+      <Separator />
 
       {/* Feature flags section removed -- microsandbox is always on */}
 
@@ -203,6 +190,8 @@ export function AdvancedView(props: AdvancedViewProps) {
         onDeepLinkInput={(input) => dispatchLocal({ type: "deepLinkInput", input })}
         onSubmitDeepLink={submitDebugDeepLink}
       />
+
+      <Separator />
 
       <AdvancedConnectionSection
         busy={props.busy}
@@ -222,7 +211,12 @@ export function AdvancedView(props: AdvancedViewProps) {
         onStopHost={props.stopHost}
       />
 
-      {props.developerMode ? <ConfigView {...props.configView} /> : null}
-    </div>
+      {props.developerMode ? (
+        <>
+          <Separator />
+          <ConfigView {...props.configView} />
+        </>
+      ) : null}
+    </LayoutStack>
   );
 }
