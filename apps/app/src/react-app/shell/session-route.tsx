@@ -1562,10 +1562,19 @@ export function SessionRoute() {
           };
         }).data;
         if (cancelled || !data?.providers) return;
+        // Read seen-provider set so we can flag recently added models
+        let seenIds: Set<string>;
+        try {
+          const raw = window.localStorage.getItem("openwork.seenProviderIds");
+          seenIds = new Set(raw ? JSON.parse(raw) : []);
+        } catch {
+          seenIds = new Set();
+        }
         const options: ModelOption[] = [];
         for (const provider of data.providers) {
           const modelIds = Object.keys(provider.models);
           const hasModels = modelIds.length > 0;
+          const isNew = !seenIds.has(provider.id);
           for (const id of modelIds) {
             const model = provider.models[id];
             options.push({
@@ -1579,6 +1588,7 @@ export function SessionRoute() {
               behaviorValue: null,
               isFree: false,
               isConnected: hasModels,
+              isRecommended: isNew,
             });
           }
         }

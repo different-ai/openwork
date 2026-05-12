@@ -770,10 +770,18 @@ function SettingsRouteContent() {
         });
         const data = (res as { data?: { providers?: Array<{ id: string; name: string; source?: string; models: Record<string, { id: string; name: string }> }> } }).data;
         if (cancelled || !data?.providers) return;
+        let seenIds: Set<string>;
+        try {
+          const raw = window.localStorage.getItem("openwork.seenProviderIds");
+          seenIds = new Set(raw ? JSON.parse(raw) : []);
+        } catch {
+          seenIds = new Set();
+        }
         const options: ModelOption[] = [];
         for (const provider of data.providers) {
           const modelIds = Object.keys(provider.models);
           const hasModels = modelIds.length > 0;
+          const isNew = !seenIds.has(provider.id);
           for (const id of modelIds) {
             const model = provider.models[id];
             options.push({
@@ -787,6 +795,7 @@ function SettingsRouteContent() {
               behaviorValue: null,
               isFree: false,
               isConnected: hasModels,
+              isRecommended: isNew,
             });
           }
         }
