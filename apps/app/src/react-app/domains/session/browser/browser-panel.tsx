@@ -47,11 +47,17 @@ function getElectronBrowser() {
 function computeBounds(el: HTMLElement, toolbar: HTMLElement) {
   const rect = el.getBoundingClientRect();
   const toolbarRect = toolbar.getBoundingClientRect();
+  // Electron's WebContentsView.setBounds() uses the parent contentView's
+  // coordinate space (CSS pixels at zoom=1). If the app has a font-zoom /
+  // zoom factor, getBoundingClientRect() returns *zoomed* CSS pixels.
+  // Dividing by the zoom factor gives the unzoomed coordinates that the
+  // native view expects.
+  const zoom = (window as Window & { __OPENWORK_ZOOM_FACTOR__?: number }).__OPENWORK_ZOOM_FACTOR__ ?? 1;
   return {
-    x: Math.round(rect.x),
-    y: Math.round(rect.y + toolbarRect.height),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height - toolbarRect.height),
+    x: Math.round(rect.x / zoom),
+    y: Math.round((rect.y + toolbarRect.height) / zoom),
+    width: Math.round(rect.width / zoom),
+    height: Math.round((rect.height - toolbarRect.height) / zoom),
   };
 }
 

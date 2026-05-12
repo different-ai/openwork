@@ -21,6 +21,11 @@ export function useDesktopFontZoomBehavior() {
       const next = normalizeFontZoom(value);
       persistFontZoom(window.localStorage, next);
 
+      // Expose the zoom factor so the browser panel's computeBounds can
+      // convert zoomed CSS pixels back to the native coordinate space
+      // that Electron's WebContentsView.setBounds() expects.
+      (window as Window & { __OPENWORK_ZOOM_FACTOR__?: number }).__OPENWORK_ZOOM_FACTOR__ = next;
+
       void setDesktopZoomFactor(next)
         .then((applied) => {
           if (applied) {

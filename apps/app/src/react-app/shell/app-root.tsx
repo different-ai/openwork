@@ -7,6 +7,7 @@ import { readDenBootstrapConfig, readDenSettings } from "../../app/lib/den";
 import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
+import { OrgOnboardingPage, hasSeenOnboarding } from "../domains/cloud/org-onboarding-page";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
@@ -62,21 +63,23 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     const path = location.pathname.toLowerCase();
     const onSignin = path === "/signin" || path.startsWith("/signin/");
 
+    const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
+
     if (requireSignin) {
       if (!denAuth.isSignedIn && !onSignin) {
         navigate("/signin", { replace: true });
       } else if (denAuth.isSignedIn && onSignin) {
-        // Signed in -- check if an org is selected. If not, send the user
-        // to Cloud > Account so they can pick one before proceeding.
-        const settings = readDenSettings();
-        if (!settings.activeOrgId?.trim()) {
-          navigate("/settings/cloud-account", { replace: true });
-        } else {
-          navigate("/session", { replace: true });
-        }
+        // Signed in — route to onboarding (it will skip to /session
+        // automatically if the user has already seen it for this org).
+        navigate("/onboarding", { replace: true });
       }
     } else if (onSignin) {
       navigate("/session", { replace: true });
+    }
+
+    // If on /onboarding but not signed in, bounce to signin
+    if (onOnboarding && !denAuth.isSignedIn) {
+      navigate("/signin", { replace: true });
     }
   }, [
     denAuth.isSignedIn,
@@ -86,17 +89,17 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     requireSignin,
   ]);
 
-  // After a fresh sign-in with no org selected, redirect to org picker.
-  // This handles the case where sign-in completes via the web-app callback
-  // while the user is already on /session (not on /signin).
+  // After a fresh sign-in, navigate to the onboarding page so the
+  // user sees what their org provides. The onboarding page handles
+  // "already seen" skipping internally.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
-      // Small delay: let orgs load first, then check if one was auto-selected.
+      // Small delay: let orgs load / auto-select first.
       setTimeout(() => {
         const settings = readDenSettings();
-        if (settings.authToken?.trim() && !settings.activeOrgId?.trim()) {
-          navigate("/settings/cloud-account", { replace: true });
+        if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
+          navigate("/onboarding", { replace: true });
         }
       }, 1500);
     };
@@ -127,6 +130,14 @@ export function AppRoot() {
                 element={
                   <DevProfiler id="SigninRoute">
                     <ForcedSigninPage developerMode={false} />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/onboarding"
+                element={
+                  <DevProfiler id="OrgOnboarding">
+                    <OrgOnboardingPage />
                   </DevProfiler>
                 }
               />
