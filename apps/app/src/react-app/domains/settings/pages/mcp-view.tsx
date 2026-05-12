@@ -440,7 +440,7 @@ export function McpView(props: McpViewProps) {
           if (props.readSkill) {
             void props.readSkill(skill.name).then((result) => {
               if (result?.content) {
-                setDetailSkillContent(result.content.slice(0, 800));
+                setDetailSkillContent(result.content.slice(0, 2000));
               }
             });
           }

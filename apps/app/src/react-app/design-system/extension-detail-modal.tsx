@@ -56,6 +56,37 @@ const kindDesc: Record<ExtensionKind, string> = {
   skill: "A reusable workflow that your agent can execute on demand.",
 };
 
+/**
+ * Strip YAML-like frontmatter lines (name:, description:, trigger:) from
+ * the beginning of a skill content string, returning only the body.
+ */
+function stripSkillFrontmatter(content: string): string {
+  const lines = content.split("\n");
+  let startIndex = 0;
+
+  // Skip leading blank lines
+  while (startIndex < lines.length && !lines[startIndex].trim()) {
+    startIndex++;
+  }
+
+  // Skip frontmatter lines (key: value pattern at the top)
+  while (startIndex < lines.length) {
+    const line = lines[startIndex].trim();
+    if (/^(name|description|trigger)\s*:/i.test(line)) {
+      startIndex++;
+    } else {
+      break;
+    }
+  }
+
+  // Skip blank lines after frontmatter
+  while (startIndex < lines.length && !lines[startIndex].trim()) {
+    startIndex++;
+  }
+
+  return lines.slice(startIndex).join("\n");
+}
+
 export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
   const {
     open,
@@ -187,16 +218,20 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
               </div>
             ) : null}
 
-            {kind === "skill" && contentPreview ? (
-              <div className={`${surfaceCardClass} space-y-2 p-4`}>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-                  Skill preview
+            {kind === "skill" && contentPreview ? (() => {
+              const body = stripSkillFrontmatter(contentPreview);
+              if (!body.trim()) return null;
+              return (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                    Skill content
+                  </div>
+                  <div className="max-h-[300px] overflow-y-auto rounded-xl border border-dls-border bg-dls-surface p-4 text-[13px] leading-relaxed text-dls-text">
+                    <MarkdownBlock text={body} />
+                  </div>
                 </div>
-                <div className="max-h-[240px] overflow-y-auto rounded-lg bg-dls-hover p-3 text-[12px] leading-relaxed text-dls-text">
-                  <MarkdownBlock text={contentPreview} />
-                </div>
-              </div>
-            ) : null}
+              );
+            })() : null}
 
             {/* What this enables (generic, for non-skills or skills without preview) */}
             {kind !== "skill" || (!trigger && !contentPreview) ? (
