@@ -53,13 +53,13 @@ export function useProviderChangeDetection(
 ) {
   const [onboarding, setOnboarding] = useState<ProviderOnboardingState>({ show: false, providers: [] });
   const [toast, setToast] = useState<ProviderToastState>({ show: false, providerName: "", providerId: "" });
-  const hasCheckedRef = useRef(false);
+  const shownRef = useRef(false);
 
   useEffect(() => {
     if (connectedProviderIds.length === 0) return;
-    // Only check once per mount cycle to avoid flicker
-    if (hasCheckedRef.current) return;
-    hasCheckedRef.current = true;
+    // Once we've shown a notification this session, don't show again
+    // (user can dismiss and it won't re-appear until next new provider)
+    if (shownRef.current) return;
 
     const acknowledged = readAcknowledged();
     const newIds = connectedProviderIds.filter((id) => !acknowledged.includes(id));
@@ -84,6 +84,7 @@ export function useProviderChangeDetection(
       if (onboardingProviders.length > 0) {
         onboardingProviders[0].recommended = true;
       }
+      shownRef.current = true;
       setOnboarding({ show: true, providers: onboardingProviders });
     } else {
       // Already had providers, show toast for the first new one
@@ -93,6 +94,7 @@ export function useProviderChangeDetection(
       const modelName = firstModelId
         ? provider?.models?.[firstModelId]?.name ?? resolveModelDisplayName(firstModelId)
         : undefined;
+      shownRef.current = true;
       setToast({
         show: true,
         providerName: provider?.name ?? resolveProviderDisplayName(newId),
