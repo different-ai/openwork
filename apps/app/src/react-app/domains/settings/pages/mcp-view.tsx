@@ -61,6 +61,7 @@ export type ReactMcpStatus =
 export type SkillItem = {
   name: string;
   description?: string;
+  trigger?: string;
   path: string;
 };
 
@@ -72,6 +73,8 @@ export type McpViewProps = {
   installedSkills?: SkillItem[];
   /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
+  /** Read skill content by name. */
+  readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
@@ -185,6 +188,7 @@ export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
   const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
+  const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionFilter>("all");
 
@@ -430,7 +434,17 @@ export function McpView(props: McpViewProps) {
         statusForEntry={quickConnectStatus}
         onConnect={props.connectMcp}
         onDetail={setDetailEntry}
-        onSkillDetail={setDetailSkill}
+        onSkillDetail={(skill) => {
+          setDetailSkill(skill);
+          setDetailSkillContent(null);
+          if (props.readSkill) {
+            void props.readSkill(skill.name).then((result) => {
+              if (result?.content) {
+                setDetailSkillContent(result.content.slice(0, 800));
+              }
+            });
+          }
+        }}
       />
 
       <McpConfiguredServersSection
@@ -546,12 +560,14 @@ export function McpView(props: McpViewProps) {
       {detailSkill ? (
         <ExtensionDetailModal
           open={!!detailSkill}
-          onClose={() => setDetailSkill(null)}
+          onClose={() => { setDetailSkill(null); setDetailSkillContent(null); }}
           name={detailSkill.name}
           description={detailSkill.description ?? "Installed skill"}
           kind="skill"
           connected={true}
           path={detailSkill.path}
+          trigger={detailSkill.trigger}
+          contentPreview={detailSkillContent ?? undefined}
           onUninstall={props.uninstallSkill ? () => {
             props.uninstallSkill?.(detailSkill.name);
             setDetailSkill(null);

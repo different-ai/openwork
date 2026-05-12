@@ -33,6 +33,10 @@ export type ExtensionDetailModalProps = {
   oauth?: boolean;
   /** Filesystem path (for skills). */
   path?: string;
+  /** Skill trigger phrase (e.g. "when user asks to create an agent"). */
+  trigger?: string;
+  /** Skill content preview (first ~500 chars of the SKILL.md). */
+  contentPreview?: string;
   /** Connect handler. */
   onConnect?: () => void;
   /** Uninstall/disconnect handler. Shown when connected. */
@@ -66,6 +70,8 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     url,
     oauth,
     path,
+    trigger,
+    contentPreview,
     onConnect,
     onUninstall,
   } = props;
@@ -168,15 +174,40 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
               </div>
             </div>
 
-            {/* What this enables */}
-            <div className={`${surfaceCardClass} space-y-2 p-4`}>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-                What this enables
+            {/* Skill-specific: trigger + content preview */}
+            {kind === "skill" && trigger ? (
+              <div className={`${surfaceCardClass} space-y-2 p-4`}>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                  Trigger
+                </div>
+                <div className="text-[13px] leading-relaxed text-dls-text">
+                  {trigger}
+                </div>
               </div>
-              <div className="text-[13px] leading-relaxed text-dls-secondary">
-                {kindDesc[kind]}
+            ) : null}
+
+            {kind === "skill" && contentPreview ? (
+              <div className={`${surfaceCardClass} space-y-2 p-4`}>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                  Skill preview
+                </div>
+                <div className="max-h-[200px] overflow-y-auto rounded-lg bg-dls-hover p-3 font-mono text-[11px] leading-relaxed text-dls-secondary whitespace-pre-wrap">
+                  {contentPreview}
+                </div>
               </div>
-            </div>
+            ) : null}
+
+            {/* What this enables (generic, for non-skills or skills without preview) */}
+            {kind !== "skill" || (!trigger && !contentPreview) ? (
+              <div className={`${surfaceCardClass} space-y-2 p-4`}>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                  What this enables
+                </div>
+                <div className="text-[13px] leading-relaxed text-dls-secondary">
+                  {kindDesc[kind]}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
