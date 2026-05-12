@@ -23,6 +23,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_advanced");
     case "appearance":
       return t("settings.tab_appearance");
+    case "sandbox":
+      return t("settings.tab_sandbox");
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -48,6 +50,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_advanced");
     case "appearance":
       return t("settings.tab_description_appearance");
+    case "sandbox":
+      return t("settings.tab_description_sandbox");
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -64,7 +68,14 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["den", "appearance", "environment", "updates", "recovery"];
+  const tabs: SettingsTab[] = [
+    "den",
+    "sandbox",
+    "appearance",
+    "environment",
+    "updates",
+    "recovery",
+  ];
   if (developerMode) tabs.push("debug");
   return tabs;
 }

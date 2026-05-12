@@ -18,6 +18,7 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
+import type { SandboxBackend } from "../../../app/lib/desktop";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
@@ -106,6 +107,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const [screen, setScreen] = useState<CreateWorkspaceScreen>("chooser");
   const preset = props.defaultPreset ?? "starter";
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [sandboxBackend, setSandboxBackend] = useState<SandboxBackend | undefined>(
+    props.defaultSandboxBackend,
+  );
   const [pickingFolder, setPickingFolder] = useState(false);
   const [showProgressDetails, setShowProgressDetails] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -419,7 +423,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    props.onConfirm(preset, selectedFolder);
+    props.onConfirm(preset, selectedFolder, sandboxBackend);
   };
 
   if (!props.open && !isInline) {
@@ -513,6 +517,26 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 </button>
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {screen === "local" && props.defaultSandboxBackend ? (
+        <div className="mb-4 rounded-2xl border border-dls-border bg-dls-surface p-3">
+          <div className="mb-2 text-xs font-medium text-gray-11">Sandbox backend</div>
+          <select
+            className="w-full rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-sm"
+            value={sandboxBackend ?? props.defaultSandboxBackend}
+            onChange={(e) => setSandboxBackend(e.target.value as SandboxBackend)}
+          >
+            <option value="none">No sandbox — agents run on this laptop</option>
+            <option value="docker">Docker — container isolation</option>
+            <option value="microsandbox">microsandbox — Apple container (arm64 macOS)</option>
+            <option value="openshell">OpenShell — VM-level isolation (Windows)</option>
+          </select>
+          <div className="mt-1 text-[11px] text-gray-9">
+            Defaults to your Settings → Sandbox preference. The backend is fixed for the lifetime of
+            this workspace.
           </div>
         </div>
       ) : null}

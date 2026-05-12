@@ -1,3 +1,4 @@
+import type { SandboxBackend } from "../../../app/lib/desktop";
 import type { WorkspacePreset } from "../../../app/types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
@@ -29,7 +30,14 @@ export type CreateWorkspaceProgress = {
 export type CreateWorkspaceModalProps = {
   open: boolean;
   onClose: () => void;
-  onConfirm: (preset: WorkspacePreset, folder: string | null) => void;
+  /** sandboxBackend is appended when the user explicitly picks one in the
+   *  local-creation flow; existing callers that don't surface that choice
+   *  can ignore it. */
+  onConfirm: (
+    preset: WorkspacePreset,
+    folder: string | null,
+    sandboxBackend?: SandboxBackend,
+  ) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;
   onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
@@ -58,6 +66,11 @@ export type CreateWorkspaceModalProps = {
   submittingProgress?: CreateWorkspaceProgress | null;
   localDisabled?: boolean;
   localDisabledReason?: string | null;
+  /** Default sandbox backend pre-selected in the local-creation flow.
+   *  When undefined, the selector is hidden and the workspace is created
+   *  without a sandboxBackend override (the host falls back to whatever
+   *  the user configured globally). */
+  defaultSandboxBackend?: SandboxBackend;
 };
 
 export type CreateRemoteWorkspaceModalProps = {

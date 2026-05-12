@@ -177,6 +177,7 @@ export type SettingsTab =
   | "environment"
   | "advanced"
   | "appearance"
+  | "sandbox"
   | "updates"
   | "recovery"
   | "debug";

@@ -13,6 +13,7 @@ import {
 import { THINKING_PREF_KEY } from "../../app/constants";
 import { coerceReleaseChannel } from "../../app/lib/release-channels";
 import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
+import type { SandboxBackend } from "../../app/lib/desktop";
 import { readStoredDefaultModel } from "./model-config";
 
 export type LocalUIState = {
@@ -39,6 +40,11 @@ export type LocalPreferences = {
    * workspace list is empty, the app redirects to /welcome.
    */
   hasCompletedOnboarding: boolean;
+  /**
+   * Default sandbox backend used when creating new workspaces. The user
+   * can override per-workspace in the create-workspace flow.
+   */
+  preferredSandboxBackend: SandboxBackend;
 };
 
 type LocalContextValue = {
@@ -62,6 +68,7 @@ const INITIAL_PREFS: LocalPreferences = {
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: false },
   hasCompletedOnboarding: false,
+  preferredSandboxBackend: "docker",
 };
 
 function readPersisted<T>(key: string, fallback: T): T {

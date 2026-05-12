@@ -31,8 +31,10 @@ import { EnvironmentView } from "../domains/settings/pages/environment-view";
 import { ExtensionsView } from "../domains/settings/pages/extensions-view";
 import { McpView } from "../domains/settings/pages/mcp-view";
 import { RecoveryView } from "../domains/settings/pages/recovery-view";
+import { SandboxView } from "../domains/settings/pages/sandbox-view";
 import { SkillsView } from "../domains/settings/pages/skills-view";
 import { UpdatesView } from "../domains/settings/pages/updates-view";
+import { useOpenShellState } from "../domains/settings/state/openshell-state";
 import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
 import { useElectronUpdaterState } from "../domains/settings/state/electron-updater-state";
 import { useBootState } from "./boot-state";
@@ -313,6 +315,7 @@ export function SettingsRoute() {
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
   const route = parseSettingsPath(location.pathname);
+  const openshellState = useOpenShellState({ active: route.tab === "sandbox" });
 
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
@@ -1240,6 +1243,28 @@ export function SettingsRoute() {
             toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
           />
         );
+      case "sandbox":
+        return (
+          <SandboxView
+            selectedBackend={local.prefs.preferredSandboxBackend}
+            onSelectBackend={(next) =>
+              local.setPrefs((previous) => ({ ...previous, preferredSandboxBackend: next }))
+            }
+            doctor={openshellState.doctor}
+            doctorLoading={openshellState.doctorLoading}
+            doctorError={openshellState.doctorError}
+            installStatus={openshellState.installStatus}
+            progressLog={openshellState.progressLog}
+            policies={openshellState.policies}
+            actionBusy={openshellState.actionBusy}
+            actionError={openshellState.actionError}
+            onStartInstall={() => void openshellState.startInstall()}
+            onCancelInstall={() => void openshellState.cancelInstall()}
+            onRestartGateway={() => void openshellState.restartGateway()}
+            onRefreshDoctor={() => void openshellState.refreshDoctor()}
+            os={platform.os}
+          />
+        );
       case "updates":
         return (
           <UpdatesView
@@ -1393,6 +1418,7 @@ export function SettingsRoute() {
         localError={createWorkspaceError}
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
+        defaultSandboxBackend={local.prefs.preferredSandboxBackend}
       />
       <ConnectionsModals
         client={activeClient}

@@ -42,6 +42,17 @@ declare global {
         download?: () => Promise<{ ok: boolean; reason?: string }>;
         installAndRestart?: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      openshell?: {
+        onInstallProgress?: (
+          callback: (data: {
+            phase: string;
+            status?: string;
+            message?: string | null;
+            percent?: number;
+            error?: string | null;
+          }) => void,
+        ) => () => void;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
