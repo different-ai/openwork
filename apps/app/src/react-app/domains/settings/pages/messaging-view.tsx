@@ -1004,7 +1004,7 @@ export function MessagingView(props: MessagingViewProps) {
                       {props.sendTest.result.failures?.length ? ` failures=${props.sendTest.result.failures.length}` : ""}
                       {props.sendTest.result.reason?.trim() ? ` reason=${props.sendTest.result.reason}` : ""}
                     </div>
-                    {props.sendTest.result.failures?.map((failure) => (
+                    {props.sendTest.result.failures?.map((failure: { identityId: string; peerId: string; error: string }) => (
                       <div key={`${failure.identityId}:${failure.peerId}:${failure.error}`} className="text-red-11">
                         {failure.identityId}/{failure.peerId}: {failure.error}
                       </div>

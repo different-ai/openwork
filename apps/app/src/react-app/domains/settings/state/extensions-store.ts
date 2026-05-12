@@ -447,10 +447,10 @@ export function createExtensionsStore(options: {
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await workspaceOpenworkWrite({
+      const result = (await workspaceOpenworkWrite({
         workspacePath: root,
         config: config as never,
-      });
+      })) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write .opencode/openwork.json");
       }
@@ -590,9 +590,9 @@ export function createExtensionsStore(options: {
       throw new Error(t("skills.pick_workspace_first"));
     }
 
-    const result = await installSkillTemplate(root, name, content, {
+    const result = (await installSkillTemplate(root, name, content, {
       overwrite: optionsOverride?.overwrite ?? false,
-    });
+    })) as { ok: boolean; stderr?: string; stdout?: string };
     if (!result.ok) {
       throw new Error(result.stderr || result.stdout || t("skills.install_failed"));
     }
@@ -660,7 +660,7 @@ export function createExtensionsStore(options: {
       throw new Error(t("skills.pick_workspace_first"));
     }
 
-    const result = await uninstallSkillCommand(root, name);
+    const result = (await uninstallSkillCommand(root, name)) as { ok: boolean; stderr?: string; stdout?: string };
     if (!result.ok) {
       throw new Error(result.stderr || result.stdout || t("skills.uninstall_failed"));
     }
@@ -1756,9 +1756,9 @@ export function createExtensionsStore(options: {
     try {
       mutateState((current) => ({ ...current, pluginStatus: null, sidebarPluginStatus: null }));
       if (refreshPluginsAborted) return;
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       if (refreshPluginsAborted) return;
-      mutateState((current) => ({ ...current, pluginConfig: config, pluginConfigPath: config.path ?? null }));
+      mutateState((current) => ({ ...current, pluginConfig: (config as OpencodeConfigFile | null), pluginConfigPath: config.path ?? null }));
 
       if (!config.exists) {
         mutateState((current) => ({
@@ -1783,7 +1783,7 @@ export function createExtensionsStore(options: {
       const nextPluginNames: string[] = [];
       let nextPluginStatus: string | null = null;
       loadPluginsFromConfigHelpers(
-        config,
+        config as never,
         (value) => {
           nextPluginNames.splice(0, nextPluginNames.length, ...applyStateAction(nextPluginNames, value));
         },
@@ -1875,7 +1875,7 @@ export function createExtensionsStore(options: {
 
     try {
       setStateField("pluginStatus", null);
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       const raw = config.content ?? "";
 
       if (!raw.trim()) {
@@ -1962,7 +1962,7 @@ export function createExtensionsStore(options: {
 
     try {
       setStateField("pluginStatus", null);
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       const raw = config.content ?? "";
       if (!raw.trim()) {
         setStateField("pluginStatus", "No plugins configured yet.");
@@ -2011,7 +2011,7 @@ export function createExtensionsStore(options: {
       const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!sourceDir) return;
       const inferredName = sourceDir.split(/[\\/]/).filter(Boolean).pop();
-      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
+      const result = (await importSkill(targetDir, sourceDir, { overwrite: false })) as { ok: boolean; stderr?: string; stdout?: string; status?: number };
       if (!result.ok) {
         setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
@@ -2089,7 +2089,7 @@ export function createExtensionsStore(options: {
     options.setError(null);
     setStateField("skillsStatus", t("skills.installing_skill_creator"));
     try {
-      const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
+      const result = (await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false })) as { ok: boolean; stderr: string; stdout: string };
       if (!result.ok && /already exists/i.test(result.stderr)) {
         const message = t("skills.skill_creator_already_installed");
         setStateField("skillsStatus", message);
@@ -2224,7 +2224,7 @@ export function createExtensionsStore(options: {
 
     try {
       setStateField("skillsStatus", null);
-      const result = await readLocalSkill(root, trimmed);
+      const result = (await readLocalSkill(root, trimmed)) as { path: string; content: string };
       return { name: trimmed, path: result.path, content: result.content };
     } catch (error) {
       setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.failed_to_load"));
@@ -2291,7 +2291,7 @@ export function createExtensionsStore(options: {
     options.setError(null);
     setStateField("skillsStatus", null);
     try {
-      const result = await writeLocalSkill(root, trimmed, input.content);
+      const result = (await writeLocalSkill(root, trimmed, input.content)) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         setStateField("skillsStatus", result.stderr || result.stdout || t("skills.unknown_error"));
       } else {
