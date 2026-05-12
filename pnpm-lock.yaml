@@ -22,7 +22,7 @@ catalogs:
 
 patchedDependencies:
   '@solidjs/router@0.15.4':
-    hash: 1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770
+    hash: jemhmawr7cxme5fg5da56o2m7m
     path: patches/@solidjs__router@0.15.4.patch
 
 importers:
@@ -37,7 +37,7 @@ importers:
     dependencies:
       '@ai-sdk/react':
         specifier: ^3.0.148
-        version: 3.0.148(react@19.2.4)(zod@4.3.6)
+        version: 3.0.148(react@19.2.4)(zod@3.25.76)
       '@base-ui/react':
         specifier: ^1.4.1
         version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -66,8 +66,8 @@ importers:
         specifier: ^0.35.0
         version: 0.35.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(yjs@13.6.30)
       '@opencode-ai/sdk':
-        specifier: ^1.14.48
-        version: 1.14.48
+        specifier: 1.14.38
+        version: 1.14.38
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -85,7 +85,7 @@ importers:
         version: 3.13.23(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       ai:
         specifier: ^6.0.146
-        version: 6.0.146(zod@4.3.6)
+        version: 6.0.146(zod@3.25.76)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -400,7 +400,7 @@ importers:
         version: 4.3.3(solid-js@1.9.9)
       '@solidjs/router':
         specifier: ^0.15.4
-        version: 0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.9)
+        version: 0.15.4(patch_hash=jemhmawr7cxme5fg5da56o2m7m)(solid-js@1.9.9)
       '@tanstack/solid-virtual':
         specifier: ^3.13.19
         version: 3.13.19(solid-js@1.9.9)
@@ -2838,9 +2838,6 @@ packages:
   '@opencode-ai/sdk@1.14.38':
     resolution: {integrity: sha512-0BNDR/xQHF4k17ocSVtwk3GM5jHAym0lOnuT25K3Z7XZoHxwQG1zVe+jhJrK459oZH3gUKp2FrCk6G6OB/Fn6A==}
 
-  '@opencode-ai/sdk@1.14.48':
-    resolution: {integrity: sha512-wKM86jCzV/ZApyWrdm3uP8XdWcS0LMbu3FV+OWz1ChiGGg1wiIWNGMJs5CY8/QX2/rUuZrd1Q1DqvdamZ0zLeg==}
-
   '@opentelemetry/api-logs@0.207.0':
     resolution: {integrity: sha512-lAb0jQRVyleQQGiuuvCOTDVspc14nx6XJjP4FspJ1sNARo3Regq4ZZbrc3rN4b1TYSuUCvgH+UXUPug4SLOqEQ==}
     engines: {node: '>=8.0.0'}
@@ -3029,22 +3026,18 @@ packages:
 
   '@opentui/core-darwin-arm64@0.1.77':
     resolution: {integrity: sha512-SNqmygCMEsPCW7xWjzCZ5caBf36xaprwVdAnFijGDOuIzLA4iaDa6um8cj3TJh7awenN3NTRsuRc7OuH42UH+g==}
-    cpu: [arm64]
     os: [darwin]
 
   '@opentui/core-darwin-x64@0.1.77':
     resolution: {integrity: sha512-/8fsa03swEHTQt/9NrGm98kemlU+VuTURI/OFZiH53vPDRrOYIYoa4Jyga/H7ZMcG+iFhkq97zIe+0Kw95LGmA==}
-    cpu: [x64]
     os: [darwin]
 
   '@opentui/core-linux-arm64@0.1.77':
     resolution: {integrity: sha512-QfUXZJPc69OvqoMu+AlLgjqXrwu4IeqcBuUWYMuH8nPTeLsVUc3CBbXdV2lv9UDxWzxzrxdS4ALPaxvmEv9lsQ==}
-    cpu: [arm64]
     os: [linux]
 
   '@opentui/core-linux-x64@0.1.77':
     resolution: {integrity: sha512-Kmfx0yUKnPj67AoXYIgL7qQo0QVsUG5Iw8aRtv6XFzXqa5SzBPhaKkKZ9yHPjOmTalZquUs+9zcCRNKpYYuL7A==}
-    cpu: [x64]
     os: [linux]
 
   '@opentui/core-win32-arm64@0.1.77':
@@ -3054,7 +3047,6 @@ packages:
 
   '@opentui/core-win32-x64@0.1.77':
     resolution: {integrity: sha512-c7GijsbvVgnlzd2murIbwuwrGbcv76KdUw6WlVv7a0vex50z6xJCpv1keGzpe0QfxrZ/6fFEFX7JnwGLno0wjA==}
-    cpu: [x64]
     os: [win32]
 
   '@opentui/core@0.1.77':
@@ -9125,28 +9117,28 @@ snapshots:
 
   7zip-bin@5.2.0: {}
 
-  '@ai-sdk/gateway@3.0.88(zod@4.3.6)':
+  '@ai-sdk/gateway@3.0.88(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 3.0.8
-      '@ai-sdk/provider-utils': 4.0.22(zod@4.3.6)
+      '@ai-sdk/provider-utils': 4.0.22(zod@3.25.76)
       '@vercel/oidc': 3.1.0
-      zod: 4.3.6
+      zod: 3.25.76
 
-  '@ai-sdk/provider-utils@4.0.22(zod@4.3.6)':
+  '@ai-sdk/provider-utils@4.0.22(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 3.0.8
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.6
-      zod: 4.3.6
+      zod: 3.25.76
 
   '@ai-sdk/provider@3.0.8':
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/react@3.0.148(react@19.2.4)(zod@4.3.6)':
+  '@ai-sdk/react@3.0.148(react@19.2.4)(zod@3.25.76)':
     dependencies:
-      '@ai-sdk/provider-utils': 4.0.22(zod@4.3.6)
-      ai: 6.0.146(zod@4.3.6)
+      '@ai-sdk/provider-utils': 4.0.22(zod@3.25.76)
+      ai: 6.0.146(zod@3.25.76)
       react: 19.2.4
       swr: 2.4.1(react@19.2.4)
       throttleit: 2.1.0
@@ -11486,10 +11478,6 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
-  '@opencode-ai/sdk@1.14.48':
-    dependencies:
-      cross-spawn: 7.0.6
-
   '@opentelemetry/api-logs@0.207.0':
     dependencies:
       '@opentelemetry/api': 1.9.0
@@ -12624,7 +12612,7 @@ snapshots:
     dependencies:
       solid-js: 1.9.9
 
-  '@solidjs/router@0.15.4(patch_hash=1db11a7c28fe4da76187d42efaffc6b9a70ad370462fffb794ff90e67744d770)(solid-js@1.9.9)':
+  '@solidjs/router@0.15.4(patch_hash=jemhmawr7cxme5fg5da56o2m7m)(solid-js@1.9.9)':
     dependencies:
       solid-js: 1.9.9
 
@@ -13138,13 +13126,13 @@ snapshots:
       clean-stack: 2.2.0
       indent-string: 4.0.0
 
-  ai@6.0.146(zod@4.3.6):
+  ai@6.0.146(zod@3.25.76):
     dependencies:
-      '@ai-sdk/gateway': 3.0.88(zod@4.3.6)
+      '@ai-sdk/gateway': 3.0.88(zod@3.25.76)
       '@ai-sdk/provider': 3.0.8
-      '@ai-sdk/provider-utils': 4.0.22(zod@4.3.6)
+      '@ai-sdk/provider-utils': 4.0.22(zod@3.25.76)
       '@opentelemetry/api': 1.9.0
-      zod: 4.3.6
+      zod: 3.25.76
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
