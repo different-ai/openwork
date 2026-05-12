@@ -1593,24 +1593,11 @@ export function SettingsRoute() {
                     : undefined
                 }
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
+                installedSkills={extensionsStore.skills()}
                 showHeader={false}
               />
             }
-            skillsView={
-              <SkillsView
-                workspaceName={selectedWorkspaceName}
-                busy={busy}
-                canInstallSkillCreator={canWriteWorkspaceSkills}
-                canUseDesktopTools={!isRemoteWorkspace}
-                accessHint={skillsAccessHint}
-                extensions={extensionsStore}
-                onOpenLink={(url) => platform.openLink(url)}
-                createSessionAndOpen={async () => {
-                  navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
-                  return undefined;
-                }}
-              />
-            }
+
           />
         );
       case "den":

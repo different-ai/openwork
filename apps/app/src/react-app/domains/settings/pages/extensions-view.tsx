@@ -36,8 +36,8 @@ export type ExtensionsViewProps = {
   suggestedPlugins: SuggestedPlugin[];
   extensions: PluginsExtensionsStore;
   mcpConnectedAppsCount: number;
+  /** The MCP view (quick-connect grid + configured servers). Skills are injected into it. */
   mcpView: ReactNode;
-  skillsView?: ReactNode;
   onRefresh: () => void;
   initialSection?: ExtensionsSection;
   setSectionRoute?: (tab: "mcp" | "skills" | "plugins") => void;
@@ -45,29 +45,10 @@ export type ExtensionsViewProps = {
 };
 
 export function ExtensionsView(props: ExtensionsViewProps) {
-  const [section, setSection] = useState<ExtensionsSection>(
-    props.initialSection ?? "all",
-  );
-
-  useEffect(() => {
-    if (!props.initialSection || props.initialSection === section) return;
-    setSection(props.initialSection);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.initialSection]);
-
   const pluginCount = useMemo(
     () => props.extensions.pluginList().length,
     [props.extensions],
   );
-
-  const selectSection = (nextSection: ExtensionsSection) => {
-    setSection(nextSection);
-    if (nextSection === "mcp" || nextSection === "skills" || nextSection === "plugins") {
-      props.setSectionRoute?.(nextSection);
-    }
-  };
-
-  const showAdvanced = section === "all" || section === "plugins";
 
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
@@ -104,12 +85,11 @@ export function ExtensionsView(props: ExtensionsViewProps) {
         </div>
       </div>
 
-      {/* MCPs and Skills together -- they're the same level of abstraction */}
+      {/* All extensions: MCPs + skills in one view */}
       {props.mcpView}
-      {props.skillsView ?? null}
 
       {/* OpenCode plugins -- advanced, collapsed */}
-      {pluginCount > 0 || showAdvanced ? (
+      {pluginCount > 0 ? (
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
             <Cpu size={14} />

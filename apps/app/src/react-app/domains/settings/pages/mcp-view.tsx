@@ -57,10 +57,18 @@ export type ReactMcpStatus =
   | "disabled"
   | "disconnected";
 
+export type SkillItem = {
+  name: string;
+  description?: string;
+  path: string;
+};
+
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
+  /** Installed skills to render alongside MCPs in the grid. */
+  installedSkills?: SkillItem[];
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
@@ -363,6 +371,7 @@ export function McpView(props: McpViewProps) {
 
       <McpQuickConnectSection
         entries={quickConnectList}
+        installedSkills={props.installedSkills}
         busy={props.busy}
         connectingName={props.mcpConnectingName}
         isConfigured={isQuickConnectConfigured}
@@ -532,6 +541,7 @@ function McpCustomAppCard(props: { onOpen: () => void }) {
 
 function McpQuickConnectSection(props: {
   entries: McpDirectoryInfo[];
+  installedSkills?: SkillItem[];
   busy: boolean;
   connectingName: string | null;
   isConfigured: (entry: McpDirectoryInfo) => boolean;
@@ -549,6 +559,7 @@ function McpQuickConnectSection(props: {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* MCP entries */}
         {props.entries.map((entry) => {
           const configured = props.isConfigured(entry);
           const connecting = props.connectingName === entry.name;
@@ -571,6 +582,18 @@ function McpQuickConnectSection(props: {
             />
           );
         })}
+
+        {/* Installed skills */}
+        {(props.installedSkills ?? []).map((skill) => (
+          <ExtensionCard
+            key={`skill:${skill.name}`}
+            name={skill.name}
+            description={skill.description ?? "Installed skill"}
+            kind="skill"
+            connected={true}
+            actionLabel="Installed"
+          />
+        ))}
       </div>
     </div>
   );
