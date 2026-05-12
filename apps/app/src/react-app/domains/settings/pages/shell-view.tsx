@@ -32,8 +32,9 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
         {/* Window frame */}
         <rect x="0" y="0" width="400" height="240" rx="12" fill="none" stroke="var(--dls-border)" strokeWidth="1.5" />
 
-        {/* Title bar */}
+        {/* Title bar: two rects to avoid rounded-bottom-corner gap */}
         <rect x="1" y="1" width="398" height="28" rx="11" className="fill-dls-hover" />
+        <rect x="1" y="16" width="398" height="13" className="fill-dls-hover" />
         {/* Traffic lights */}
         <circle cx="16" cy="15" r="4" className="fill-red-9 opacity-40" />
         <circle cx="28" cy="15" r="4" className="fill-amber-9 opacity-40" />
