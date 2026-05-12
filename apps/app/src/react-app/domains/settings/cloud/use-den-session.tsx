@@ -156,10 +156,25 @@ export function useDenSession({
       setBaseUrlError(null);
       setAuthError(null);
       setStatusMessage(message ?? null);
-      // Clear acknowledged-providers cache so onboarding modal triggers
-      // again on next sign-in (providers will be re-imported).
+      // Remove ONLY the cloud (lpr_*) provider IDs from the acknowledged
+      // list. Local providers (openai, opencode) stay acknowledged so they
+      // don't re-trigger the onboarding modal. When the user signs in
+      // again, fresh cloud providers will be detected as new and surface
+      // the toast (which is the intended behavior).
       try {
-        window.localStorage.removeItem("openwork.acknowledgedProviders");
+        const raw = window.localStorage.getItem("openwork.acknowledgedProviders");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            const kept = parsed.filter(
+              (id: unknown) => typeof id === "string" && !/^lpr_/i.test(id),
+            );
+            window.localStorage.setItem(
+              "openwork.acknowledgedProviders",
+              JSON.stringify(kept),
+            );
+          }
+        }
       } catch {}
       // Notify provider auth store so it can clean up cloud-imported providers
       dispatchDenSessionUpdated({ status: "signed_out" });

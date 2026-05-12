@@ -501,12 +501,23 @@ export function SessionRoute() {
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
+  const [isDenSignedIn, setIsDenSignedIn] = useState<boolean>(() => !!readDenSettings().authToken?.trim());
   useEffect(() => {
-    const handler = () => setDenSessionVersion((v) => v + 1);
+    const handler = () => {
+      setDenSessionVersion((v) => v + 1);
+      setIsDenSignedIn(!!readDenSettings().authToken?.trim());
+    };
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
   }, []);
-  const providerChangeDetection = useProviderChangeDetection(providerConnectedIds, providers as any);
+  // Provider notifications are only shown while signed in. After sign-out
+  // we clear acknowledgedProviders, so without this gate the modal would
+  // re-trigger every time local providers (openai, opencode) re-appear.
+  const providerChangeDetection = useProviderChangeDetection(
+    providerConnectedIds,
+    providers as any,
+    isDenSignedIn,
+  );
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
@@ -2321,6 +2332,7 @@ export function SessionRoute() {
       providers={providers}
       providerNotifications={{
         ...providerChangeDetection,
+        orgName: readDenSettings().activeOrgName?.trim() ?? "",
         switchDefault: (providerId: string, modelId: string) => {
           local.setPrefs((prev) => ({
             ...prev,

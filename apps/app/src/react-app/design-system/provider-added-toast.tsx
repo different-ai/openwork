@@ -29,8 +29,8 @@ export function ProviderAddedToast(props: ProviderAddedToastProps) {
           </div>
           <div className="text-[11px] text-dls-secondary">
             {props.modelName
-              ? `Your team added ${props.providerName}. Switch to ${props.modelName}?`
-              : `Your team added ${props.providerName}. Switch to it?`}
+              ? `Use ${props.modelName} as your default?`
+              : `Use ${props.providerName} as your default?`}
           </div>
         </div>
 

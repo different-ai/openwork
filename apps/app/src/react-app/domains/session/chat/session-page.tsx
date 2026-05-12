@@ -158,6 +158,7 @@ export type SessionPageProps = {
   providerNotifications?: {
     onboarding: import("../../../shell/use-provider-change-detection").ProviderOnboardingState;
     toast: import("../../../shell/use-provider-change-detection").ProviderToastState;
+    orgName?: string;
     acknowledgeAll: () => void;
     switchDefault: (providerId: string, modelId: string) => void;
     dismissOnboarding: () => void;
@@ -814,7 +815,7 @@ export function SessionPage(props: SessionPageProps) {
           <ProviderOnboardingModal
             open={providerNotif.onboarding.show}
             onClose={providerNotif.dismissOnboarding}
-            orgName=""
+            orgName={providerNotif.orgName ?? ""}
             providers={providerNotif.onboarding.providers}
             onAcceptDefaults={() => {
               const rec = providerNotif.onboarding.providers.find((p) => p.recommended);

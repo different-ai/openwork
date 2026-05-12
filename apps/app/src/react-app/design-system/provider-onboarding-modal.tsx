@@ -51,12 +51,16 @@ export function ProviderOnboardingModal(props: ProviderOnboardingModalProps) {
         <div className={modalHeaderClass}>
           <div className="flex min-w-0 items-start gap-4">
             <div className="flex size-12 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
-              <Sparkles size={24} className="text-dls-accent" />
+              <Sparkles size={24} className="text-dls-text" />
             </div>
             <div className="min-w-0">
-              <h3 className={modalTitleClass}>Your team is ready</h3>
+              <h3 className={modalTitleClass}>
+                {props.orgName ? `${props.orgName} is ready` : "AI providers ready"}
+              </h3>
               <p className={modalSubtitleClass}>
-                {props.orgName} has set up AI providers for you.
+                {props.providers.length === 1
+                  ? "1 provider is configured for this workspace."
+                  : `${props.providers.length} providers are configured for this workspace.`}
               </p>
             </div>
           </div>
@@ -88,20 +92,14 @@ export function ProviderOnboardingModal(props: ProviderOnboardingModalProps) {
                       ) : null}
                     </div>
                   </div>
-                  {provider.recommended ? (
-                    <span className="shrink-0 rounded-full bg-dls-accent/10 px-2.5 py-0.5 text-[10px] font-semibold text-dls-accent">
-                      Recommended
-                    </span>
-                  ) : (
-                    <CheckCircle2 size={16} className="shrink-0 text-green-11" />
-                  )}
+                  <CheckCircle2 size={16} className="shrink-0 text-green-11" />
                 </div>
               ))}
             </div>
 
-            {recommended ? (
+            {recommended?.recommendedModel ? (
               <div className="rounded-xl border border-dls-border bg-dls-hover/50 px-4 py-3 text-[13px] text-dls-secondary">
-                Your team recommends <span className="font-medium text-dls-text">{recommended.recommendedModel ?? recommended.name}</span> as the default model.
+                Use <span className="font-medium text-dls-text">{recommended.recommendedModel}</span> as your default model.
               </div>
             ) : null}
           </div>
@@ -111,10 +109,10 @@ export function ProviderOnboardingModal(props: ProviderOnboardingModalProps) {
         <div className={modalFooterClass}>
           <div className="flex justify-end gap-3">
             <button type="button" className={pillGhostClass} onClick={props.onConfigureManually}>
-              I&apos;ll configure manually
+              Skip
             </button>
             <button type="button" className={pillPrimaryClass} onClick={props.onAcceptDefaults}>
-              Use team defaults
+              {recommended?.recommendedModel ? `Use ${recommended.recommendedModel}` : "Continue"}
             </button>
           </div>
         </div>
