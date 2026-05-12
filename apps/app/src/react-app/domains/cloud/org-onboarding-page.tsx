@@ -25,27 +25,7 @@ import { resolveModelDisplayName, resolveProviderDisplayName } from "../../../ap
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
 
-const STORAGE_KEY = "openwork.orgOnboardingSeen";
 
-function markOnboardingSeen(orgId: string): void {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    const existing: string[] = raw ? JSON.parse(raw) : [];
-    if (!existing.includes(orgId)) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...existing, orgId]));
-    }
-  } catch {}
-}
-
-export function hasSeenOnboarding(orgId: string): boolean {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    return list.includes(orgId);
-  } catch {
-    return false;
-  }
-}
 
 type OrgResources = {
   providers: DenOrgLlmProvider[];
@@ -82,19 +62,12 @@ export function OrgOnboardingPage() {
     label: string;
   } | null>(null);
 
-  // Redirect if no auth or no org
+  // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
     if (!authToken || !orgId) {
       navigate("/session", { replace: true });
     }
   }, [authToken, navigate, orgId]);
-
-  // Already seen? Skip to session.
-  useEffect(() => {
-    if (orgId && hasSeenOnboarding(orgId)) {
-      navigate("/session", { replace: true });
-    }
-  }, [navigate, orgId]);
 
   // Fetch all org resources in parallel
   useEffect(() => {
@@ -137,9 +110,8 @@ export function OrgOnboardingPage() {
         modelID: selectedDefault.modelId,
       });
     }
-    if (orgId) markOnboardingSeen(orgId);
     navigate("/session", { replace: true });
-  }, [navigate, orgId, selectedDefault]);
+  }, [navigate, selectedDefault]);
 
   const { providers, marketplaces, workers, skills } = resources;
   const totalModels = providers.reduce((sum, p) => sum + p.models.length, 0);

@@ -42,6 +42,7 @@ import {
   withWorkspaceCloudImports,
   type CloudImportedProvider,
 } from "../../../../app/cloud/import-state";
+import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason = "sign_in" | "app_launch" | "interval" | "settings_cloud_opened";
@@ -1425,14 +1426,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await refreshProviders({ dispose: true }).catch(() => null);
     }
 
-    // Notify the UI about newly imported cloud providers so a global
-    // toast can be shown regardless of which route is active.
-    if (newlyImported.length > 0 && typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("openwork-cloud-providers-imported", {
-          detail: { providers: newlyImported, reason },
-        }),
-      );
+    // Notify the UI about newly imported providers so the global toast
+    // can be shown regardless of which route is active.
+    if (newlyImported.length > 0) {
+      dispatchNewProviders({
+        providers: newlyImported,
+        source: reason === "sign_in" ? "sign_in" : "cloud_sync",
+      });
     }
 
     if (failures.length > 0) {

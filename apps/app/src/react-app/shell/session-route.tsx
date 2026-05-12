@@ -119,6 +119,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import { readDenSettings } from "../../app/lib/den";
 import { denSessionUpdatedEvent } from "../../app/lib/den-session-events";
+import { dispatchNewProviders } from "../../app/lib/provider-events";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -1386,8 +1387,38 @@ export function SessionRoute() {
       const connected = hasCloudAuth
         ? (value.connected ?? [])
         : (value.connected ?? []).filter((id) => !isCloudProvider(id));
+
+      // Detect newly connected providers (local config changes).
+      // Cloud-imported providers are already notified by the provider
+      // auth store, so we only fire for non-lpr_ IDs here.
+      setProviderConnectedIds((prev) => {
+        const prevSet = new Set(prev);
+        const newLocal = connected.filter(
+          (id) => !prevSet.has(id) && !isCloudProvider(id),
+        );
+        if (newLocal.length > 0) {
+          const newProviderInfos = newLocal.map((id) => {
+            const provider = all.find((p) => (p.id ?? "") === id);
+            const models = provider?.models ?? {};
+            const firstModelId = Object.keys(models)[0];
+            return {
+              id,
+              name: provider?.name ?? id,
+              providerId: id,
+              firstModelId,
+              firstModelName: firstModelId
+                ? (models[firstModelId]?.name ?? firstModelId)
+                : undefined,
+            };
+          });
+          dispatchNewProviders({
+            providers: newProviderInfos,
+            source: "local_config",
+          });
+        }
+        return connected;
+      });
       setProviders(all);
-      setProviderConnectedIds(connected);
     };
 
     void (async () => {
