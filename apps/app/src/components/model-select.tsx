@@ -181,14 +181,16 @@ export function ModelSelect({
     }),
   );
 
-  // Filter out models the user has hidden via the "Available models" tab
+  // Filter out models the user has hidden via the "Available models" tab.
+  // Re-read localStorage when the popover opens so changes from the
+  // model picker modal are picked up immediately.
   const visibleOptions = React.useMemo(() => {
     const hidden = readHiddenModels();
     if (hidden.size === 0) return modelOptions ?? [];
     return (modelOptions ?? []).filter(
       (opt) => !hidden.has(`${opt.providerID}/${opt.modelID}`),
     );
-  }, [modelOptions]);
+  }, [modelOptions, open]);
 
   const groups = React.useMemo(
     () => groupByProvider(visibleOptions),
