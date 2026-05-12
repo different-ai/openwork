@@ -1187,7 +1187,7 @@ export default {
   "settings.tab_advanced": "Advanced",
   "settings.tab_appearance": "Appearance",
   "settings.tab_cloud_account": "Account",
-  "settings.tab_cloud_marketplaces": "Marketplaces & Plugins",
+  "settings.tab_cloud_marketplaces": "Marketplace",
   "settings.tab_cloud_providers": "Cloud Providers",
   "settings.tab_cloud_workers": "Cloud Workers",
   "settings.tab_debug": "Debug",

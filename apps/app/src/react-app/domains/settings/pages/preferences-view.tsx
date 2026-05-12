@@ -1,0 +1,98 @@
+/** @jsxImportSource react */
+import { Info } from "lucide-react";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+
+import { t } from "@/i18n";
+import {
+  LayoutSection,
+  LayoutSectionDescription,
+  LayoutSectionHeader,
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+  LayoutSectionTitle,
+  LayoutStack,
+} from "../settings-layout";
+
+export type PreferencesViewProps = {
+  busy: boolean;
+  defaultModelLabel: string;
+  defaultModelRef: string;
+  onChangeDefaultModel: () => void;
+  showThinking: boolean;
+  onToggleShowThinking: () => void;
+  autoCompactContext: boolean;
+  autoCompactContextBusy: boolean;
+  onToggleAutoCompactContext: () => void;
+};
+
+export function PreferencesView(props: PreferencesViewProps) {
+  return (
+    <LayoutStack>
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.model_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.model_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        {/* Default model */}
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{props.defaultModelLabel}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription className="truncate font-mono">{props.defaultModelRef}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Button
+                variant="outline"
+                onClick={props.onChangeDefaultModel}
+                disabled={props.busy}
+              >
+                {t("settings.change")}
+              </Button>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        {/* Show reasoning */}
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.show_model_reasoning")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.show_model_reasoning_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.show_model_reasoning")}
+                checked={props.showThinking}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleShowThinking}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        {/* Auto context compaction */}
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.auto_compact")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.auto_compact_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.auto_compact")}
+                checked={props.autoCompactContext}
+                disabled
+                onCheckedChange={props.onToggleAutoCompactContext}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+          <Alert>
+            <Info />
+            <AlertDescription>{t("settings.auto_compact_unavailable")}</AlertDescription>
+          </Alert>
+        </LayoutSectionItem>
+      </LayoutSection>
+    </LayoutStack>
+  );
+}

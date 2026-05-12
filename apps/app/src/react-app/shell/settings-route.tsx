@@ -31,6 +31,7 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domain
 import ProviderAuthModal from "../domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "../domains/connections/modals";
 import { AiSettingsView } from "../domains/settings/pages/ai-view";
+import { PreferencesView } from "../domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "../domains/settings/panels/authorized-folders-panel";
@@ -286,9 +287,9 @@ function parseSettingsPath(pathname: string): {
   switch (head) {
     case "general":
     case "ai":
+    case "preferences":
     case "permissions":
     case "shell":
-    case "skills":
     case "advanced":
     case "appearance":
     case "environment":
@@ -308,8 +309,6 @@ function parseSettingsPath(pathname: string): {
       if (tail === "skills") return { tab: "extensions", redirectPath: null, extensionsSection: "skills" };
       if (tail === "plugins") return { tab: "extensions", redirectPath: null, extensionsSection: "plugins" };
       return { tab: "extensions", redirectPath: null, extensionsSection: "all" };
-    case "skills":
-      return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "skills" };
     default:
       return { tab: "general", redirectPath: "general" };
   }
@@ -1508,6 +1507,12 @@ function SettingsRouteContent() {
               await providerAuthStore.disconnectProvider(providerId);
             }}
             canDisconnectProvider={() => true}
+          />
+        );
+      case "preferences":
+        return (
+          <PreferencesView
+            busy={busy}
             defaultModelLabel={defaultModelLabel}
             defaultModelRef={defaultModelRef}
             onChangeDefaultModel={() => {
@@ -1518,8 +1523,6 @@ function SettingsRouteContent() {
             onToggleShowThinking={() => {
               local.setPrefs((previous) => ({ ...previous, showThinking: !previous.showThinking }));
             }}
-            defaultModelVariantLabel={defaultModelVariantLabel}
-            onConfigureModelBehavior={() => {}}
             autoCompactContext={false}
             autoCompactContextBusy={false}
             onToggleAutoCompactContext={() => {}}

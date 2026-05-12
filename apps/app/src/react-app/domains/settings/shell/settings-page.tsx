@@ -8,15 +8,18 @@ import {
   Cog,
   Container,
   FolderLock,
+  Layout,
   Paintbrush,
   Puzzle,
   RefreshCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Store,
   Terminal,
   UserCircle,
   Wrench,
+  Zap,
 } from "lucide-react";
 
 import {
@@ -55,9 +58,11 @@ import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return Sparkles;
+      return Zap;
+    case "preferences":
+      return SlidersHorizontal;
     case "shell":
-      return Paintbrush;
+      return Layout;
     case "permissions":
       return FolderLock;
     case "cloud-account":
@@ -92,7 +97,9 @@ export function getSettingsTabIcon(tab: SettingsTab) {
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return "AI";
+      return "AI Providers";
+    case "preferences":
+      return "Preferences";
     case "shell":
       return "Customization";
     case "permissions":
@@ -131,7 +138,9 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return "Models, providers, and reasoning";
+      return "Connect services that provide AI models";
+    case "preferences":
+      return "Default model, reasoning, and compaction";
     case "shell":
       return "Branding, visibility, and shell controls";
     case "permissions":
@@ -168,7 +177,7 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["permissions", "extensions", "advanced"];
+  return ["preferences", "permissions", "extensions", "advanced"];
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
