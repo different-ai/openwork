@@ -473,16 +473,29 @@ export function createConnectionsStore(options: {
     try {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
 
+      // Resolve dynamic URLs for built-in MCPs
+      let resolvedUrl = entry.url;
+      if (!resolvedUrl && entry.serverName === "openwork-ui") {
+        try {
+          const bridgeInfo = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          if (bridgeInfo?.baseUrl) {
+            resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
+          }
+        } catch {
+          // Bridge not available
+        }
+      }
+
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
         enabled: true,
       };
 
       if (entryType === "remote") {
-        if (!entry.url) {
-          throw new Error("Missing MCP URL.");
+        if (!resolvedUrl) {
+          throw new Error("Missing MCP URL. Is the OpenWork desktop app running?");
         }
-        mcpEntryConfig["url"] = entry.url;
+        mcpEntryConfig["url"] = resolvedUrl;
         if (entry.oauth) {
           mcpEntryConfig["oauth"] = {};
         }

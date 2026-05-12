@@ -1767,6 +1767,13 @@ async function handleDesktopInvoke(event, command, ...args) {
         buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
       };
+    case "getUiControlBridgeInfo":
+      try {
+        const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
     case "getDesktopBootstrapConfig":
       return getDesktopBootstrapConfig();
     case "setDesktopBootstrapConfig":
