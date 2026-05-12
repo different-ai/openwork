@@ -22,6 +22,10 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import * as openshellClient from "./openshell/client.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
+import {
+  installOpenShellStack,
+  loadInstallerState as loadOpenShellInstallerState,
+} from "./openshell/installer.mjs";
 import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, wslRun } from "./openshell/wsl.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -170,6 +174,36 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+
+// OpenShell installer singleton. Only one install can run at a time; the
+// renderer drives it via openshellInstallStart / openshellInstallStatus /
+// openshellInstallCancel.
+const openshellInstaller = {
+  /** @type {Promise<unknown> | null} */ promise: null,
+  /** @type {AbortController | null} */ abortController: null,
+  /** @type {{ status: string, phase?: string, message?: string, error?: string } | null} */
+  lastEvent: null,
+  /** Most recent terminal status: "idle" | "running" | "ready" | "reboot_required" | "cancelled" | "failed". */
+  status: "idle",
+};
+
+function resolveOpenShellRootfsPath() {
+  // Bundled by electron-builder as an extraResource (Phase 9 wires this
+  // into electron-builder.yml). Allow env override for dev workflows.
+  const override = process.env.OPENWORK_OPENSHELL_ROOTFS;
+  if (override) return override;
+  const base = process.resourcesPath || path.join(__dirname, "..", "resources");
+  return path.join(base, "openshell", "ubuntu-24.04-openshell.tar.gz");
+}
+
+function emitOpenShellInstallProgress(payload) {
+  openshellInstaller.lastEvent = payload;
+  try {
+    mainWindow?.webContents.send("openshell:install-progress", payload);
+  } catch {
+    // Window may have closed mid-install; the next status query still works.
+  }
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -1342,12 +1376,80 @@ async function handleDesktopInvoke(event, command, ...args) {
       // and electron-builder.yml will map them to a known extraResource path.
       // Returning an empty array keeps the IPC contract stable until then.
       return [];
-    case "openshellInstallStart":
-    case "openshellInstallStatus":
-    case "openshellInstallCancel":
-      throw new Error(
-        "OpenShell installer is not implemented yet — wired in Phase 6 (installer.mjs).",
-      );
+    case "openshellInstallStart": {
+      if (openshellInstaller.promise) {
+        return { status: "running", lastEvent: openshellInstaller.lastEvent };
+      }
+      // UAC heads-up: only meaningful on Windows and only when WSL is not
+      // already installed (= first run). Phase 6's installer detects that
+      // case itself and elevates inline; this dialog gives the banker a
+      // clear "you'll see a UAC prompt" warning before it fires.
+      if (process.platform === "win32") {
+        await dialog.showMessageBox(activeWindowFromEvent(event), {
+          type: "info",
+          title: "OpenShell setup",
+          message: "OpenShell installs WSL2, Ubuntu, Docker, and the OpenShell CLI.",
+          detail:
+            "Windows will ask for admin permission once. Your laptop may also ask for a " +
+            "BitLocker recovery key after the first reboot — get this from IT before " +
+            "continuing if you do not have it.",
+          buttons: ["Continue", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+        });
+      }
+      const ac = new AbortController();
+      openshellInstaller.abortController = ac;
+      openshellInstaller.status = "running";
+      openshellInstaller.lastEvent = { phase: "preflight", status: "starting" };
+      openshellInstaller.promise = installOpenShellStack({
+        rootfsPath: resolveOpenShellRootfsPath(),
+        signal: ac.signal,
+        onPhase: (phase, status, err) =>
+          emitOpenShellInstallProgress({
+            phase,
+            status,
+            message: err?.message ?? null,
+          }),
+        onProgress: (evt) => emitOpenShellInstallProgress(evt),
+      })
+        .then((result) => {
+          openshellInstaller.status = result.status;
+          emitOpenShellInstallProgress({
+            phase: "done",
+            status: result.status,
+          });
+          return result;
+        })
+        .catch((err) => {
+          openshellInstaller.status = "failed";
+          emitOpenShellInstallProgress({
+            phase: "error",
+            status: "failed",
+            error: err?.message ?? String(err),
+          });
+        })
+        .finally(() => {
+          openshellInstaller.promise = null;
+          openshellInstaller.abortController = null;
+        });
+      return { status: "running" };
+    }
+    case "openshellInstallStatus": {
+      const persisted = await loadOpenShellInstallerState();
+      return {
+        status: openshellInstaller.status,
+        lastEvent: openshellInstaller.lastEvent,
+        state: persisted,
+      };
+    }
+    case "openshellInstallCancel": {
+      if (!openshellInstaller.promise) {
+        return { status: openshellInstaller.status };
+      }
+      openshellInstaller.abortController?.abort();
+      return { status: "cancelling" };
+    }
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
