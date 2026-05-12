@@ -28,6 +28,9 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { readHiddenModels } from "@/react-app/domains/session/modals/model-picker-modal";
+import { Settings2 } from "lucide-react";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -178,9 +181,18 @@ export function ModelSelect({
     }),
   );
 
+  // Filter out models the user has hidden via the "Available models" tab
+  const visibleOptions = React.useMemo(() => {
+    const hidden = readHiddenModels();
+    if (hidden.size === 0) return modelOptions ?? [];
+    return (modelOptions ?? []).filter(
+      (opt) => !hidden.has(`${opt.providerID}/${opt.modelID}`),
+    );
+  }, [modelOptions]);
+
   const groups = React.useMemo(
-    () => groupByProvider(modelOptions ?? []),
-    [modelOptions],
+    () => groupByProvider(visibleOptions),
+    [visibleOptions],
   );
 
   const handleSelect = (option: ModelOption) => {
@@ -275,6 +287,21 @@ export function ModelSelect({
               </CommandGroup>
             ))}
           </CommandList>
+          {/* Link to full model picker */}
+          <div className="border-t border-border px-2 py-1.5">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                onOpenChange(false);
+                setSearch("");
+                window.dispatchEvent(new CustomEvent(openModelPickerEvent));
+              }}
+            >
+              <Settings2 className="size-3.5" />
+              Browse all models
+            </button>
+          </div>
         </Command>
       </PopoverContent>
     </Popover>

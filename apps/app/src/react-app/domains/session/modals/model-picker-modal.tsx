@@ -25,6 +25,39 @@ function isRecommendedModel(modelId: string): boolean {
 }
 
 const HIDDEN_MODELS_KEY = "openwork.hiddenModels";
+const HIDDEN_MODELS_SEEDED_KEY = "openwork.hiddenModelsSeeded";
+
+/**
+ * Models that are visible by default for large providers.
+ * Everything else from these providers is hidden on first run.
+ * Users can always toggle them back on via "Available models".
+ */
+const DEFAULT_VISIBLE_MODELS: Record<string, string[]> = {
+  openai: ["gpt-5.5", "gpt-5.4", "o3", "o4-mini", "gpt-4o"],
+  anthropic: ["claude-opus-4-6", "claude-sonnet-4-7"],
+};
+
+/** Check if a model ID matches any of the visible patterns for its provider. */
+function isDefaultVisible(providerId: string, modelId: string): boolean {
+  const patterns = DEFAULT_VISIBLE_MODELS[providerId.toLowerCase()];
+  if (!patterns) return true; // providers without a curated list show everything
+  const lower = modelId.toLowerCase();
+  return patterns.some((p) => lower.includes(p));
+}
+
+/**
+ * Seed the hidden models set on first run. For providers with curated
+ * lists (OpenAI, Anthropic), hide everything except the top picks.
+ */
+function seedHiddenModels(options: ModelOption[]): Set<string> {
+  const hidden = new Set<string>();
+  for (const opt of options) {
+    if (!isDefaultVisible(opt.providerID, opt.modelID)) {
+      hidden.add(`${opt.providerID}/${opt.modelID}`);
+    }
+  }
+  return hidden;
+}
 
 export function readHiddenModels(): Set<string> {
   try {
@@ -38,6 +71,20 @@ export function readHiddenModels(): Set<string> {
 function writeHiddenModels(hidden: Set<string>): void {
   try {
     window.localStorage.setItem(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]));
+  } catch {}
+}
+
+function hasSeededHiddenModels(): boolean {
+  try {
+    return window.localStorage.getItem(HIDDEN_MODELS_SEEDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markSeededHiddenModels(): void {
+  try {
+    window.localStorage.setItem(HIDDEN_MODELS_SEEDED_KEY, "1");
   } catch {}
 }
 
@@ -80,14 +127,21 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     [props.disabledProviders],
   );
 
-  // Reset on open
+  // Reset on open + seed defaults on first run
   useEffect(() => {
     if (props.open) {
       setTab("default");
       props.setQuery("");
-      setHiddenModels(readHiddenModels());
+      if (!hasSeededHiddenModels() && props.options.length > 0) {
+        const seeded = seedHiddenModels(props.options);
+        writeHiddenModels(seeded);
+        markSeededHiddenModels();
+        setHiddenModels(seeded);
+      } else {
+        setHiddenModels(readHiddenModels());
+      }
     }
-  }, [props.open]);
+  }, [props.open, props.options]);
 
   // Focus search
   useEffect(() => {
@@ -176,6 +230,23 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
+  const batchToggleProvider = useCallback((providerID: string, showAll: boolean) => {
+    setHiddenModels((prev) => {
+      const next = new Set(prev);
+      const models = filteredOptions.filter((o) => o.providerID === providerID);
+      for (const m of models) {
+        const key = `${m.providerID}/${m.modelID}`;
+        if (showAll) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+      }
+      writeHiddenModels(next);
+      return next;
+    });
+  }, [filteredOptions]);
+
   const handleSelect = useCallback(
     (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
     [props.onSelect],
@@ -259,6 +330,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   onToggleExpand={() => toggleProvider(group.id)}
                   onToggleProvider={props.onToggleProvider}
                   onToggleModelVisible={toggleModelVisible}
+                  onBatchToggle={batchToggleProvider}
                   onSelect={handleSelect}
                 />
               ))
@@ -316,6 +388,7 @@ function ProviderAccordion({
   onToggleExpand,
   onToggleProvider,
   onToggleModelVisible,
+  onBatchToggle,
   onSelect,
 }: {
   group: ProviderGroup;
@@ -327,6 +400,7 @@ function ProviderAccordion({
   onToggleExpand: () => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onToggleModelVisible: (providerID: string, modelID: string) => void;
+  onBatchToggle: (providerID: string, showAll: boolean) => void;
   onSelect: (opt: ModelOption) => void;
 }) {
   const totalModels = group.recommended.length + group.other.length;
@@ -384,6 +458,26 @@ function ProviderAccordion({
       {/* Models */}
       {expanded && !group.isDisabled ? (
         <div className="ml-9 space-y-0.5 pb-2 pt-0.5">
+          {/* Select all / none for Available tab */}
+          {tab === "available" ? (
+            <div className="flex gap-2 px-2 pb-1">
+              <button
+                type="button"
+                className="text-[10px] font-medium text-dls-secondary underline-offset-2 hover:text-dls-text hover:underline"
+                onClick={() => onBatchToggle(group.id, true)}
+              >
+                Select all
+              </button>
+              <span className="text-[10px] text-dls-secondary/40">|</span>
+              <button
+                type="button"
+                className="text-[10px] font-medium text-dls-secondary underline-offset-2 hover:text-dls-text hover:underline"
+                onClick={() => onBatchToggle(group.id, false)}
+              >
+                Unselect all
+              </button>
+            </div>
+          ) : null}
           {group.recommended.length > 0 ? (
             <>
               <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
@@ -471,9 +565,9 @@ function AvailableModelRow({
       {/* Checkbox */}
       <div className={[
         "flex size-4 shrink-0 items-center justify-center rounded border transition-colors",
-        hidden ? "border-dls-border bg-transparent" : "border-green-9 bg-green-9",
+        hidden ? "border-dls-border bg-transparent" : "border-dls-text bg-dls-text",
       ].join(" ")}>
-        {!hidden ? <Check size={10} className="text-white" /> : null}
+        {!hidden ? <Check size={10} className="text-dls-surface" /> : null}
       </div>
       {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : null}
       <div className="min-w-0 flex-1">
