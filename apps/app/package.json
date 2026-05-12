@@ -46,7 +46,7 @@
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@lexical/react": "^0.35.0",
-    "@opencode-ai/sdk": "^1.14.38",
+    "@opencode-ai/sdk": "^1.14.48",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@radix-ui/colors": "^3.0.0",

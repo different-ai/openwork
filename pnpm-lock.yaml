@@ -50,8 +50,8 @@ importers:
         specifier: ^0.35.0
         version: 0.35.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(yjs@13.6.30)
       '@opencode-ai/sdk':
-        specifier: ^1.14.38
-        version: 1.14.38
+        specifier: ^1.14.48
+        version: 1.14.48
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -2559,6 +2559,9 @@ packages:
 
   '@opencode-ai/sdk@1.14.38':
     resolution: {integrity: sha512-0BNDR/xQHF4k17ocSVtwk3GM5jHAym0lOnuT25K3Z7XZoHxwQG1zVe+jhJrK459oZH3gUKp2FrCk6G6OB/Fn6A==}
+
+  '@opencode-ai/sdk@1.14.48':
+    resolution: {integrity: sha512-wKM86jCzV/ZApyWrdm3uP8XdWcS0LMbu3FV+OWz1ChiGGg1wiIWNGMJs5CY8/QX2/rUuZrd1Q1DqvdamZ0zLeg==}
 
   '@opentelemetry/api-logs@0.207.0':
     resolution: {integrity: sha512-lAb0jQRVyleQQGiuuvCOTDVspc14nx6XJjP4FspJ1sNARo3Regq4ZZbrc3rN4b1TYSuUCvgH+UXUPug4SLOqEQ==}
@@ -10631,6 +10634,10 @@ snapshots:
   '@open-draft/until@2.1.0': {}
 
   '@opencode-ai/sdk@1.14.38':
+    dependencies:
+      cross-spawn: 7.0.6
+
+  '@opencode-ai/sdk@1.14.48':
     dependencies:
       cross-spawn: 7.0.6
 

@@ -21,25 +21,44 @@ export function resolveRenderedSessionSnapshot(input: {
   return null;
 }
 
+/**
+ * Truncate a message list at the revert cursor. OpenCode's session.revert
+ * sets a messageID on the session but the snapshot still returns all messages.
+ * The UI must hide messages after the revert point.
+ */
+function applyRevertCursor(messages: UIMessage[], revertMessageId: string | null | undefined): UIMessage[] {
+  if (!revertMessageId || messages.length === 0) return messages;
+  const idx = messages.findIndex((m) => m.id === revertMessageId);
+  if (idx < 0) return messages;
+  // Keep messages up to and including the revert point
+  return messages.slice(0, idx + 1);
+}
+
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
 }) {
+  const revertMessageId = (input.snapshot?.session as any)?.revert?.messageID ?? null;
+
   const liveMessages = input.transcriptState ?? [];
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
     ? snapshotToUIMessages(input.snapshot)
     : [];
 
-  if (liveMessages.length > 0 && snapshotMessages.length === 0) return liveMessages;
-  if (liveMessages.length === 0 && snapshotMessages.length > 0) return snapshotMessages;
-  if (liveMessages.length > 0 && snapshotMessages.length > 0) {
-    if (messageListContainsAll(liveMessages, snapshotMessages)) return liveMessages;
-    return mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
+  let result: UIMessage[];
+
+  if (liveMessages.length > 0 && snapshotMessages.length === 0) result = liveMessages;
+  else if (liveMessages.length === 0 && snapshotMessages.length > 0) result = snapshotMessages;
+  else if (liveMessages.length > 0 && snapshotMessages.length > 0) {
+    if (messageListContainsAll(liveMessages, snapshotMessages)) result = liveMessages;
+    else result = mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
       appendLiveOnlyMessages: true,
     });
+  } else if (input.snapshot && input.snapshot.messages.length > 0) {
+    result = snapshotMessages;
+  } else {
+    result = input.transcriptState ?? [];
   }
-  if (input.snapshot && input.snapshot.messages.length > 0) {
-    return snapshotMessages;
-  }
-  return input.transcriptState ?? [];
+
+  return applyRevertCursor(result, revertMessageId);
 }
