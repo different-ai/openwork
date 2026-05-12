@@ -21,109 +21,138 @@ import { useShellConfig, DEFAULT_SHELL_CONFIG, type ShellConfig } from "../../..
 /* ------------------------------------------------------------------ */
 
 function ShellWireframe({ config }: { config: ShellConfig }) {
-  const on = "fill-dls-text opacity-100 transition-all duration-300";
-  const off = "fill-dls-secondary opacity-15 transition-all duration-300";
-  const onStroke = "stroke-dls-text opacity-60 transition-all duration-300";
-  const offStroke = "stroke-dls-secondary opacity-10 transition-all duration-300";
+  const cx = config.sidebar ? 102 : 1;
+  const cw = config.sidebar ? 297 : 398;
 
   return (
     <div className="mx-auto mb-2 w-full max-w-md">
-      <svg viewBox="0 0 400 240" className="w-full" aria-hidden="true">
+      <svg viewBox="0 0 400 260" className="w-full" aria-hidden="true">
         {/* Window frame */}
-        <rect x="0" y="0" width="400" height="240" rx="12" fill="none" stroke="var(--dls-border)" strokeWidth="1.5" />
+        <rect x="0" y="0" width="400" height="260" rx="10" fill="var(--dls-surface)" stroke="var(--dls-border)" strokeWidth="1" />
 
-        {/* Title bar: two rects to avoid rounded-bottom-corner gap */}
-        <rect x="1" y="1" width="398" height="28" rx="11" className="fill-dls-hover" />
-        <rect x="1" y="16" width="398" height="13" className="fill-dls-hover" />
-        {/* Traffic lights */}
-        <circle cx="16" cy="15" r="4" className="fill-red-9 opacity-40" />
-        <circle cx="28" cy="15" r="4" className="fill-amber-9 opacity-40" />
-        <circle cx="40" cy="15" r="4" className="fill-green-9 opacity-40" />
-        {/* App name */}
-        <text x="200" y="19" textAnchor="middle" className="fill-dls-secondary text-[9px] font-medium">
+        {/* Title bar */}
+        <rect x="0.5" y="0.5" width="399" height="30" rx="10" fill="var(--dls-hover)" />
+        <rect x="0.5" y="18" width="399" height="13" fill="var(--dls-hover)" />
+        <line x1="0" y1="30" x2="400" y2="30" stroke="var(--dls-border)" strokeWidth="0.5" />
+        <circle cx="14" cy="15" r="3.5" fill="#ff5f57" opacity="0.6" />
+        <circle cx="26" cy="15" r="3.5" fill="#febc2e" opacity="0.6" />
+        <circle cx="38" cy="15" r="3.5" fill="#28c840" opacity="0.6" />
+        <text x="200" y="19" textAnchor="middle" fontSize="8" fontWeight="600" fill="var(--dls-text-secondary)" opacity="0.7">
           {config.appName}
         </text>
 
         {/* Sidebar */}
-        <rect
-          x="1" y="29" width="100" height="180"
-          className={config.sidebar ? on : off}
-          style={{ fill: config.sidebar ? "var(--dls-hover)" : "var(--dls-surface)" }}
-        />
-        <line x1="101" y1="29" x2="101" y2="209" className={config.sidebar ? onStroke : offStroke} strokeWidth="1" />
-        {/* Sidebar items */}
-        {config.sidebar ? (
-          <>
-            <rect x="12" y="40" width="60" height="6" rx="3" className="fill-dls-secondary opacity-30" />
-            <rect x="12" y="54" width="76" height="6" rx="3" className="fill-dls-secondary opacity-20" />
-            <rect x="12" y="68" width="50" height="6" rx="3" className="fill-dls-secondary opacity-20" />
-            <rect x="12" y="82" width="68" height="6" rx="3" className="fill-dls-secondary opacity-15" />
-            <rect x="12" y="96" width="55" height="6" rx="3" className="fill-dls-secondary opacity-15" />
-            {config.addWorkspace ? (
-              <rect x="12" y="175" width="76" height="14" rx="7" className="fill-dls-accent opacity-20" />
-            ) : null}
-          </>
-        ) : null}
+        <g className="transition-all duration-300" style={{ opacity: config.sidebar ? 1 : 0.1 }}>
+          <rect x="0.5" y="31" width="100" height="195" fill="var(--dls-hover)" />
+          <line x1="101" y1="31" x2="101" y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
 
-        {/* Main content area */}
-        <rect
-          x={config.sidebar ? "102" : "1"} y="29"
-          width={config.sidebar ? "297" : "398"} height="180"
-          className="fill-dls-surface"
-        />
-        {/* Chat bubbles */}
-        <rect x={config.sidebar ? "260" : "200"} y="50" width="110" height="20" rx="10" className="fill-dls-hover" />
-        <rect x={config.sidebar ? "120" : "20"} y="85" width="160" height="14" rx="3" className="fill-dls-secondary opacity-15" />
-        <rect x={config.sidebar ? "120" : "20"} y="105" width="120" height="14" rx="3" className="fill-dls-secondary opacity-10" />
+          {/* Workspace header */}
+          <circle cx="16" cy="44" r="5" fill="var(--dls-accent)" opacity="0.3" />
+          <text x="26" y="47" fontSize="6.5" fontWeight="600" fill="var(--dls-text-primary)" opacity="0.7">Workspace</text>
+
+          {/* Session list */}
+          <rect x="8" y="58" width="85" height="16" rx="4" fill="var(--dls-surface)" opacity="0.6" />
+          <text x="14" y="68" fontSize="5.5" fill="var(--dls-text-primary)" opacity="0.5">Meeting brief</text>
+
+          <rect x="8" y="78" width="85" height="16" rx="4" fill="transparent" />
+          <text x="14" y="88" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">Contract review</text>
+
+          <rect x="8" y="98" width="85" height="16" rx="4" fill="transparent" />
+          <text x="14" y="108" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">Outreach CRM</text>
+
+          {/* New session button */}
+          <text x="14" y="130" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.3">+ New session</text>
+
+          {/* Add workspace */}
+          {config.addWorkspace ? (
+            <g>
+              <rect x="8" y="200" width="85" height="16" rx="8" fill="var(--dls-accent)" opacity="0.15" />
+              <text x="50" y="210" textAnchor="middle" fontSize="5.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.6">Add workspace</text>
+            </g>
+          ) : null}
+        </g>
+
+        {/* Main content */}
+        <rect x={cx} y="31" width={cw} height="195" fill="var(--dls-surface)" />
+
+        {/* User message bubble */}
+        <rect x={cx + cw - 130} y="46" width="120" height="22" rx="11" fill="var(--dls-hover)" />
+        <text x={cx + cw - 70} y="60" textAnchor="middle" fontSize="6" fill="var(--dls-text-primary)" opacity="0.5">
+          Hey, help me with this
+        </text>
+
+        {/* Assistant response */}
+        <text x={cx + 12} y="86" fontSize="5.5" fill="var(--dls-text-primary)" opacity="0.4">Sure! Here&apos;s what I found...</text>
+        <rect x={cx + 12} y="92" width={cw * 0.6} height="4" rx="2" fill="var(--dls-text-secondary)" opacity="0.08" />
+        <rect x={cx + 12} y="100" width={cw * 0.45} height="4" rx="2" fill="var(--dls-text-secondary)" opacity="0.06" />
 
         {/* Starter cards */}
-        {config.starterCards ? (
-          <g>
-            <rect x={config.sidebar ? "120" : "20"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
-            <rect x={config.sidebar ? "210" : "110"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
-            <rect x={config.sidebar ? "300" : "200"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
-          </g>
-        ) : null}
+        <g className="transition-all duration-300" style={{ opacity: config.starterCards ? 1 : 0 }}>
+          {[
+            { x: cx + 12, icon: "\u{1F4CA}", label: "Edit a CSV" },
+            { x: cx + 12 + (cw - 36) / 3 + 6, icon: "\u{1F310}", label: "Browse web" },
+            { x: cx + 12 + ((cw - 36) / 3 + 6) * 2, icon: "\u{1F50C}", label: "Extensions" },
+          ].map((card, i) => {
+            const w = (cw - 36) / 3;
+            return (
+              <g key={i}>
+                <rect x={card.x} y="120" width={w} height="34" rx="5" fill="none" stroke="var(--dls-border)" strokeWidth="0.5" />
+                <text x={card.x + 6} y="133" fontSize="7">{card.icon}</text>
+                <text x={card.x + 16} y="133" fontSize="5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.5">{card.label}</text>
+                <rect x={card.x + 6} y="140" width={w - 16} height="3" rx="1.5" fill="var(--dls-text-secondary)" opacity="0.06" />
+              </g>
+            );
+          })}
+        </g>
 
         {/* Composer */}
-        <rect
-          x={config.sidebar ? "112" : "12"} y="185"
-          width={config.sidebar ? "276" : "376"} height="18"
-          rx="9" fill="none" stroke="var(--dls-border)" strokeWidth="1"
-        />
+        <rect x={cx + 10} y="196" width={cw - 20} height="22" rx="11" fill="none" stroke="var(--dls-border)" strokeWidth="0.75" />
+        <text x={cx + 24} y="210" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.3">Describe your task...</text>
+        {/* Send button */}
+        <rect x={cx + cw - 42} y="200" width="24" height="14" rx="7" fill="var(--dls-accent)" opacity="0.2" />
+        <text x={cx + cw - 30} y="210" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">Run</text>
 
-        {/* Status bar */}
-        <rect
-          x="1" y="209" width="398" height="30" rx="0"
-          className={config.statusBar ? "transition-all duration-300" : off}
-          style={{ fill: config.statusBar ? "var(--dls-hover)" : "var(--dls-surface)" }}
-        />
-        <rect x="1" y="228" width="398" height="12" rx="0" className="fill-dls-surface" style={{ clipPath: "inset(0 0 0 0 round 0 0 11px 11px)" }} />
-
-        {config.statusBar ? (
-          <>
-            {/* Status dot */}
-            <circle cx="14" cy="222" r="3" className="fill-green-9 opacity-50" />
-            <rect x="22" y="219" width="40" height="6" rx="3" className="fill-dls-secondary opacity-25" />
-            {/* Right side buttons */}
-            {config.cloudSignin ? (
-              <rect x="290" y="216" width="36" height="12" rx="6" className="fill-dls-accent opacity-25" />
-            ) : null}
-            {config.docsButton ? (
-              <rect x="332" y="219" width="20" height="6" rx="3" className="fill-dls-secondary opacity-20" />
-            ) : null}
-            {config.feedbackButton ? (
-              <rect x="358" y="219" width="24" height="6" rx="3" className="fill-dls-secondary opacity-20" />
-            ) : null}
-          </>
+        {/* Model picker */}
+        {config.modelPicker ? (
+          <text x={cx + 14} y="174" fontSize="4.5" fill="var(--dls-text-secondary)" opacity="0.3">big-pickle</text>
         ) : null}
 
-        {/* Browser panel indicator */}
+        {/* Status bar */}
+        <g className="transition-all duration-300" style={{ opacity: config.statusBar ? 1 : 0.08 }}>
+          <line x1="0" y1="226" x2="400" y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
+          <rect x="0.5" y="226" width="399" height="33.5" rx="0" fill="var(--dls-hover)" />
+          {/* Bottom corners */}
+          <rect x="0.5" y="250" width="399" height="10" rx="10" fill="var(--dls-hover)" />
+
+          {/* Status dot + label */}
+          <circle cx="14" cy="242" r="2.5" fill="#28c840" opacity="0.5" />
+          <text x="22" y="245" fontSize="5.5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.5">Ready</text>
+
+          {/* Cloud sign-in */}
+          {config.cloudSignin ? (
+            <g>
+              <rect x="280" y="236" width="32" height="12" rx="6" fill="var(--dls-accent)" opacity="0.2" />
+              <text x="296" y="244" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">Sign in</text>
+            </g>
+          ) : null}
+
+          {/* Docs */}
+          {config.docsButton ? (
+            <text x="326" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Docs</text>
+          ) : null}
+
+          {/* Feedback */}
+          {config.feedbackButton ? (
+            <text x="350" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Feedback</text>
+          ) : null}
+
+          {/* Settings gear */}
+          <text x="388" y="245" textAnchor="middle" fontSize="7" fill="var(--dls-text-secondary)" opacity="0.3">{"\u2699"}</text>
+        </g>
+
+        {/* Browser panel edge */}
         {config.browser ? (
-          <line
-            x1="399" y1="29" x2="399" y2="209"
-            stroke="var(--dls-accent)" strokeWidth="2" opacity="0.2"
-          />
+          <line x1="399" y1="31" x2="399" y2="226" stroke="var(--dls-accent)" strokeWidth="2" opacity="0.15" strokeDasharray="4 3" />
         ) : null}
       </svg>
     </div>
