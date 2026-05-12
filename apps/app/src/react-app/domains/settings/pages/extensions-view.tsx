@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Box, Cpu, Sparkles } from "lucide-react";
+import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
@@ -26,10 +26,6 @@ type SuggestedPlugin = {
   }>;
 };
 
-// The Solid ExtensionsView pulled the MCP-connected count from
-// useConnections(). In React we let the parent pass that plus an
-// already-rendered MCP view so we can ship this page before the full
-// connections provider is ported.
 export type ExtensionsViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
@@ -56,7 +52,6 @@ export function ExtensionsView(props: ExtensionsViewProps) {
   useEffect(() => {
     if (!props.initialSection || props.initialSection === section) return;
     setSection(props.initialSection);
-    // Intentional: only react to incoming prop changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.initialSection]);
 
@@ -72,12 +67,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     }
   };
 
-  const pillClass = (active: boolean) =>
-    `px-3 py-1 rounded-full text-xs font-medium border transition-colors flex items-center gap-2 ${
-      active
-        ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-        : "text-gray-10 border-gray-6 hover:text-gray-12"
-    }`;
+  const showAdvanced = section === "all" || section === "plugins";
 
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
@@ -104,97 +94,40 @@ export function ExtensionsView(props: ExtensionsViewProps) {
                 </span>
               </div>
             ) : null}
-            {pluginCount > 0 ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
-                <Cpu size={14} className="text-gray-11" />
-                <span className="text-xs font-medium text-gray-11">
-                  {t("extensions.plugin_count", { count: pluginCount })}
-                </span>
-              </div>
-            ) : null}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={pillClass(section === "all")}
-              aria-pressed={section === "all"}
-              onClick={() => selectSection("all")}
-            >
-              {t("extensions.filter_all")}
-            </button>
-            <button
-              type="button"
-              className={pillClass(section === "mcp")}
-              aria-pressed={section === "mcp"}
-              onClick={() => selectSection("mcp")}
-            >
-              <Box size={14} />
-              {t("extensions.filter_apps")}
-            </button>
-            <button
-              type="button"
-              className={pillClass(section === "skills")}
-              aria-pressed={section === "skills"}
-              onClick={() => selectSection("skills")}
-            >
-              <Sparkles size={14} />
-              Skills
-            </button>
-            <button
-              type="button"
-              className={pillClass(section === "plugins")}
-              aria-pressed={section === "plugins"}
-              onClick={() => selectSection("plugins")}
-            >
-              <Cpu size={14} />
-              {t("extensions.filter_plugins")}
-            </button>
-          </div>
           <Button variant="ghost" onClick={props.onRefresh}>
             {t("common.refresh")}
           </Button>
         </div>
       </div>
 
-      {section === "all" || section === "mcp" ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Box size={16} className="text-gray-11" />
-            <span>{t("extensions.apps_mcp_header")}</span>
-          </div>
-          {props.mcpView}
-        </div>
-      ) : null}
+      {/* MCPs and Skills together -- they're the same level of abstraction */}
+      {props.mcpView}
+      {props.skillsView ?? null}
 
-      {(section === "all" || section === "skills") && props.skillsView ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Sparkles size={16} className="text-gray-11" />
-            <span>Skills</span>
+      {/* OpenCode plugins -- advanced, collapsed */}
+      {pluginCount > 0 || showAdvanced ? (
+        <details className="group">
+          <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
+            <Cpu size={14} />
+            <span>OpenCode Plugins</span>
+            <span className="text-[11px] text-dls-secondary">({pluginCount})</span>
+          </summary>
+          <div className="mt-3">
+            <PluginsView
+              extensions={props.extensions}
+              busy={props.busy}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
+              canEditPlugins={props.canEditPlugins}
+              canUseGlobalScope={props.canUseGlobalScope}
+              accessHint={props.accessHint}
+              suggestedPlugins={props.suggestedPlugins}
+            />
           </div>
-          {props.skillsView}
-        </div>
-      ) : null}
-
-      {section === "all" || section === "plugins" ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Cpu size={16} className="text-gray-11" />
-            <span>{t("extensions.plugins_opencode_header")}</span>
-          </div>
-          <PluginsView
-            extensions={props.extensions}
-            busy={props.busy}
-            selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-            canEditPlugins={props.canEditPlugins}
-            canUseGlobalScope={props.canUseGlobalScope}
-            accessHint={props.accessHint}
-            suggestedPlugins={props.suggestedPlugins}
-          />
-        </div>
+        </details>
       ) : null}
     </section>
   );
