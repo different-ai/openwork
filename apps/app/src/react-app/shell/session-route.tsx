@@ -18,7 +18,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "../../app/lib/opencode";
-import { listCommands, shellInSession } from "../../app/lib/opencode-session";
+import { forkSession, listCommands, revertSession, shellInSession } from "../../app/lib/opencode-session";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
@@ -1705,6 +1705,33 @@ export function SessionRoute() {
       },
       isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
       isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
+      onRevertToMessage: (messageId: string) => {
+        void (async () => {
+          try {
+            await revertSession(opencodeClient, selectedSessionId, messageId);
+            void refreshRouteState();
+          } catch (error) {
+            console.warn("[revert] failed", error);
+          }
+        })();
+      },
+      onForkAtMessage: (messageId: string) => {
+        void (async () => {
+          try {
+            const forked = await forkSession(opencodeClient, selectedSessionId, messageId);
+            writeLastSessionFor(selectedWorkspaceId, forked.id);
+            rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+            setSessionsByWorkspaceId((current) => ({
+              ...current,
+              [selectedWorkspaceId]: [forked as any, ...(current[selectedWorkspaceId] ?? [])],
+            }));
+            navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+            void refreshRouteState();
+          } catch (error) {
+            console.warn("[fork] failed", error);
+          }
+        })();
+      },
       onChangeModel: (model: { providerID: string; modelID: string }) => {
         local.setPrefs((previous) => ({
           ...previous,
