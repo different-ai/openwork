@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   spawn,
+  spawnSync,
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
@@ -45,7 +46,7 @@ type ApprovalMode = "manual" | "auto";
 
 type SandboxMode = "none" | "auto" | "docker" | "container" | "openshell";
 
-type ResolvedSandboxMode = "none" | "docker" | "container";
+type ResolvedSandboxMode = "none" | "docker" | "container" | "openshell";
 
 type LogFormat = "pretty" | "json";
 
@@ -1840,6 +1841,7 @@ async function resolveSandboxMode(
   if (mode === "none") return "none";
   if (mode === "docker") return "docker";
   if (mode === "container") return "container";
+  if (mode === "openshell") return "openshell";
 
   // auto
   if (process.platform === "darwin" && process.arch === "arm64") {
@@ -3725,8 +3727,9 @@ function printHelp(): void {
     "  --tui                     Force interactive dashboard (TTY only)",
     "  --no-tui                  Disable interactive dashboard",
     "  --detach                  Detach after start and keep services running",
-    "  --sandbox <mode>          none | auto | docker | container (default: none)",
+    "  --sandbox <mode>          none | auto | docker | container | openshell (default: none)",
     "  --sandbox-image <ref>     Container image for sandbox mode",
+    "  --sandbox-policy <path>   Path to OpenShell policy YAML (openshell mode)",
     "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
     "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
     "  --json                    Output JSON when applicable",
@@ -4118,6 +4121,37 @@ async function stopAppleContainer(name: string): Promise<void> {
   });
 }
 
+// OpenShell doesn't have a separate "stop" command — sandboxes are either
+// running or deleted. The cleanup path is the same regardless: --force is
+// safe when the sandbox doesn't exist.
+async function stopOpenShellSandbox(name: string): Promise<void> {
+  if (!name.trim()) return;
+  await new Promise<void>((resolve) => {
+    const child = spawnProcess(
+      "wsl.exe",
+      ["-d", OPENSHELL_DISTRO_NAME, "--", "openshell", "sandbox", "delete", name, "--force"],
+      { stdio: ["ignore", "ignore", "ignore"] },
+    );
+    child.on("error", () => resolve());
+    child.on("exit", () => resolve());
+  });
+}
+
+// Local Windows→WSL path translator. We can't import the wsl.mjs helper
+// from apps/desktop because the orchestrator is a standalone binary; same
+// rules, ~10 lines, kept in sync with apps/desktop/electron/openshell/wsl.mjs.
+function toWslMountPath(winPath: string): string {
+  const stripped = winPath.replace(/^"+|"+$/g, "");
+  const drive = stripped.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (drive) {
+    return `/mnt/${drive[1].toLowerCase()}/${drive[2].replace(/\\/g, "/")}`;
+  }
+  if (stripped.startsWith("/")) return stripped;
+  return stripped.replace(/\\/g, "/");
+}
+
+const OPENSHELL_DISTRO_NAME = "openwork-openshell";
+
 async function runQuiet(
   command: string,
   args: string[],
@@ -4235,7 +4269,7 @@ async function writeSandboxEntrypoint(options: {
   entrypointHostPath: string;
   rootInContainer: string;
   opencodeConfigDirInContainer: string;
-  backend: "docker" | "container";
+  backend: "docker" | "container" | "openshell";
   opencode: {
     corsOrigins: string[];
     username?: string;
@@ -4724,6 +4758,173 @@ async function startAppleContainerSandbox(options: {
   );
 
   return { child, cleanup: staged.cleanup };
+}
+
+// Build the OpenShell sandbox: stage the workspace + sidecars on the
+// Windows side, ask the WSL distro to tar them up, then call
+// `openshell sandbox create` with the tarball + policy + port-forward.
+// The returned `child` is the wsl.exe process whose lifetime mirrors the
+// sandbox; cleanup() kills it and asks openshell to delete the sandbox.
+//
+// This function intentionally stays close to spec §3.6. Production
+// validation of the entrypoint path inside the pod and the tarball
+// staging happens in Phase 10 against a real Windows + WSL2 environment.
+async function startOpenShellSandbox(options: {
+  containerName: string;
+  workspace: string;
+  persistDir: string;
+  policyPath: string;
+  sidecars: {
+    opencode: string;
+    openworkServer: string;
+    opencodeRouter?: string | null;
+  };
+  ports: { openwork: number };
+  opencode: {
+    corsOrigins: string[];
+    username?: string;
+    password?: string;
+    hotReload: OpencodeHotReload;
+  };
+  openwork: {
+    token: string;
+    hostToken: string;
+    approvalMode: ApprovalMode;
+    approvalTimeoutMs: number;
+    readOnly: boolean;
+    corsOrigins: string[];
+    opencodeUsername?: string;
+    opencodePassword?: string;
+    logFormat: LogFormat;
+  };
+  runId: string;
+  logFormat: LogFormat;
+  detach: boolean;
+  logger: Logger;
+}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
+  if (!options.policyPath) {
+    throw new Error(
+      "--sandbox-policy <path> is required when --sandbox openshell. " +
+        "Defaults will ship in apps/orchestrator/policies/ in a later release.",
+    );
+  }
+
+  const staged = await stageSandboxRuntime({
+    persistDir: options.persistDir,
+    containerName: options.containerName,
+    sidecars: options.sidecars,
+    detach: options.detach,
+  });
+
+  await writeSandboxEntrypoint({
+    entrypointHostPath: staged.entrypointHostPath,
+    rootInContainer: staged.rootInContainer,
+    opencodeConfigDirInContainer: "/opencode-config",
+    backend: "openshell",
+    opencode: options.opencode,
+    openwork: {
+      token: options.openwork.token,
+      hostToken: options.openwork.hostToken,
+      approvalMode: options.openwork.approvalMode,
+      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
+      readOnly: options.openwork.readOnly,
+      corsOrigins: options.openwork.corsOrigins,
+      opencodeUsername: options.openwork.opencodeUsername,
+      opencodePassword: options.openwork.opencodePassword,
+      logFormat: options.openwork.logFormat,
+      opencodeRouterEnabled: !!options.sidecars.opencodeRouter,
+    },
+    runId: options.runId,
+    logFormat: options.logFormat,
+  });
+
+  const wslWorkspacePath = toWslMountPath(options.workspace);
+  const wslStagingPath = toWslMountPath(staged.baseDir);
+  const workspaceTarPath = `${wslStagingPath}/workspace.tar`;
+  const entrypointWslPath = `${wslStagingPath}/entrypoint.sh`;
+  const policyWslPath = toWslMountPath(options.policyPath);
+
+  // Build the workspace tarball inside the WSL distro. /mnt/c is a 9p
+  // mount with notorious perf for many small files — for a single
+  // tar archive it is acceptable, and avoids a host-side tar dependency.
+  const tarResult = spawnSync(
+    "wsl.exe",
+    [
+      "-d",
+      OPENSHELL_DISTRO_NAME,
+      "--",
+      "tar",
+      "-cf",
+      workspaceTarPath,
+      "-C",
+      wslWorkspacePath,
+      ".",
+    ],
+    { windowsHide: true, encoding: "utf8" },
+  );
+  if (tarResult.status !== 0) {
+    throw new Error(
+      `Failed to stage workspace tarball for OpenShell: ${tarResult.stderr || tarResult.stdout || "unknown"}`,
+    );
+  }
+
+  const args = [
+    "-d",
+    OPENSHELL_DISTRO_NAME,
+    "--",
+    "openshell",
+    "sandbox",
+    "create",
+    "--name",
+    options.containerName,
+    "--policy",
+    policyWslPath,
+    "--workspace-tarball",
+    workspaceTarPath,
+    "--port-forward",
+    `127.0.0.1:${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    "--",
+    "sh",
+    entrypointWslPath,
+  ];
+
+  options.logger.debug("sandbox: openshell create", {
+    name: options.containerName,
+    policy: policyWslPath,
+    tarball: workspaceTarPath,
+    port: options.ports.openwork,
+  });
+
+  const child = spawnProcess("wsl.exe", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  prefixStream(
+    child.stdout,
+    "sandbox",
+    "stdout",
+    options.logger,
+    child.pid ?? undefined,
+  );
+  prefixStream(
+    child.stderr,
+    "sandbox",
+    "stderr",
+    options.logger,
+    child.pid ?? undefined,
+  );
+
+  const cleanup = async () => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Already exited.
+    }
+    await stopOpenShellSandbox(options.containerName);
+    await staged.cleanup();
+  };
+
+  return { child, cleanup };
 }
 
 async function verifyOpenCodeRouterVersion(
@@ -6935,6 +7136,10 @@ async function runStart(args: ParsedArgs) {
     readFlag(args.flags, "sandbox-image") ??
     process.env.OPENWORK_SANDBOX_IMAGE ??
     "debian:bookworm-slim";
+  const sandboxPolicy =
+    readFlag(args.flags, "sandbox-policy") ??
+    process.env.OPENWORK_SANDBOX_POLICY ??
+    null;
   const sandboxPersistOverride =
     readFlag(args.flags, "sandbox-persist-dir") ??
     process.env.OPENWORK_SANDBOX_PERSIST_DIR;
@@ -7946,16 +8151,58 @@ async function runStart(args: ParsedArgs) {
       sandboxContainerName = containerName;
 
       sandboxStop =
-        sandboxMode === "container"
-          ? stopAppleContainer
-          : (name: string) =>
-              stopDockerContainer(name, dockerCommand ?? "docker");
+        sandboxMode === "openshell"
+          ? stopOpenShellSandbox
+          : sandboxMode === "container"
+            ? stopAppleContainer
+            : (name: string) =>
+                stopDockerContainer(name, dockerCommand ?? "docker");
       sandboxStopCommand =
-        sandboxMode === "container" ? "container stop" : "docker stop";
+        sandboxMode === "openshell"
+          ? "openshell sandbox delete"
+          : sandboxMode === "container"
+            ? "container stop"
+            : "docker stop";
       const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
       const sandboxChild =
-        sandboxMode === "container"
+        sandboxMode === "openshell"
+          ? await startOpenShellSandbox({
+              containerName,
+              workspace: resolvedWorkspace,
+              persistDir: sandboxPersistDir,
+              policyPath: sandboxPolicy ?? "",
+              sidecars: {
+                opencode: opencodeBinary.bin,
+                openworkServer: openworkServerBinary.bin,
+                opencodeRouter: opencodeRouterEnabled
+                  ? (opencodeRouterBinary?.bin ?? null)
+                  : null,
+              },
+              ports: { openwork: openworkPort },
+              opencode: {
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                username: opencodeUsername,
+                password: opencodePassword,
+                hotReload: opencodeHotReload,
+              },
+              openwork: {
+                token: openworkToken,
+                hostToken: openworkHostToken,
+                approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                approvalTimeoutMs,
+                readOnly,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                opencodeUsername,
+                opencodePassword,
+                logFormat,
+              },
+              runId,
+              logFormat,
+              detach: detachRequested,
+              logger,
+            })
+          : sandboxMode === "container"
           ? await startAppleContainerSandbox({
               image: sandboxImage,
               containerName,

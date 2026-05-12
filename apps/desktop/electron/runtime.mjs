@@ -6,6 +6,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { openshellDoctor } from "./openshell/doctor.mjs";
+
 const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
@@ -1474,9 +1476,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       throw new Error("sandboxBackend must be one of: none, docker, microsandbox, openshell");
     }
 
-    const wantsDockerSandbox = sandboxBackend === "docker" || sandboxBackend === "microsandbox";
+    // Fail fast for openshell — spec §9.2 calls for hard-fail, not silent
+    // fallback to docker, so the banker is never running under weaker
+    // isolation than their policy assumes.
+    if (sandboxBackend === "openshell") {
+      const doc = await openshellDoctor();
+      if (doc.status !== "ready") {
+        const reason =
+          doc.fatal[0] ?? doc.actionable[0] ?? `OpenShell status: ${doc.status}`;
+        throw new Error(`OpenShell is not ready: ${reason}`);
+      }
+    }
+
+    const wantsContainerSandbox =
+      sandboxBackend === "docker" ||
+      sandboxBackend === "microsandbox" ||
+      sandboxBackend === "openshell";
     const runId = String(options.runId ?? randomUUID()).trim();
-    const containerName = wantsDockerSandbox ? deriveOrchestratorContainerName(runId) : null;
+    const containerName = wantsContainerSandbox ? deriveOrchestratorContainerName(runId) : null;
     const port = await findFreePort("127.0.0.1");
     const token = String(options.openworkToken ?? randomUUID()).trim();
     const hostToken = String(options.openworkHostToken ?? randomUUID()).trim();
@@ -1497,7 +1514,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       String(port),
       "--run-id",
       runId,
-      ...(wantsDockerSandbox ? ["--sandbox", "docker"] : []),
+      ...(sandboxBackend === "docker" || sandboxBackend === "microsandbox"
+        ? ["--sandbox", "docker"]
+        : []),
+      ...(sandboxBackend === "openshell"
+        ? [
+            "--sandbox",
+            "openshell",
+            ...(options.sandboxPolicyRef
+              ? ["--sandbox-policy", String(options.sandboxPolicyRef)]
+              : []),
+          ]
+        : []),
       ...(options.sandboxImageRef ? ["--sandbox-image", String(options.sandboxImageRef)] : []),
     ];
 
@@ -1509,7 +1537,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
     child.unref();
 
-    await waitForHttpOk(`${openworkUrl}/health`, wantsDockerSandbox ? 90_000 : 12_000);
+    await waitForHttpOk(`${openworkUrl}/health`, wantsContainerSandbox ? 90_000 : 12_000);
     const ownerToken = await issueOwnerToken(openworkUrl, hostToken).catch(() => null);
 
     return {
@@ -1518,8 +1546,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       ownerToken,
       hostToken,
       port,
-      sandboxBackend: wantsDockerSandbox ? sandboxBackend : null,
-      sandboxRunId: wantsDockerSandbox ? runId : null,
+      sandboxBackend: wantsContainerSandbox ? sandboxBackend : null,
+      sandboxRunId: wantsContainerSandbox ? runId : null,
       sandboxContainerName: containerName,
     };
   }
