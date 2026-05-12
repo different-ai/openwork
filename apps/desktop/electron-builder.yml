@@ -15,6 +15,11 @@ files:
 extraResources:
   - from: ../app/dist
     to: app-dist
+  # OpenShell sandbox policy bundle (Phase 8). Mapped into
+  # process.resourcesPath/openshell-policies; the Electron main process
+  # serves them via the openshellListPolicies IPC handler.
+  - from: ../orchestrator/policies
+    to: openshell-policies
 asar: true
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
@@ -100,6 +105,16 @@ win:
         - versions.json
         - versions.json-aarch64-pc-windows-msvc.exe
         - versions.json-x86_64-pc-windows-msvc.exe
+    # Bundled Ubuntu 24.04 rootfs (~150 MB) used by installer.mjs's
+    # phaseDistro to `wsl --import` the openwork-openshell distro
+    # without depending on the Microsoft Store (GPO-blocked at most
+    # banks). Built separately by .github/workflows/build-windows-openshell.yml
+    # and dropped into apps/desktop/resources/openshell/ before
+    # electron-builder runs.
+    - from: resources/openshell
+      to: openshell
+      filter:
+        - "*.tar.gz"
   target:
     - nsis
 artifactName: openwork-${os}-${arch}-${version}.${ext}

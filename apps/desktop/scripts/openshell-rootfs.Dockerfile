@@ -1,0 +1,75 @@
+# Bake the Ubuntu 24.04 + Docker Engine + OpenShell CLI rootfs that
+# installer.mjs phaseDistro imports via `wsl --import`. We build on
+# Linux (Docker) rather than spinning up WSL on a Windows GHA runner
+# because:
+#   1. Docker on Linux is ~10x faster, more reliable, and cheaper to run.
+#   2. `wsl --import` accepts any rootfs tarball; the source doesn't
+#      have to come from another WSL distro.
+#   3. We avoid the rancher-desktop/distrod fragility of running WSL
+#      inside Hyper-V inside a GHA Windows VM.
+#
+# The driver (build-openshell-rootfs.sh) runs:
+#   docker build -> docker create -> docker export | gzip
+# and drops the result at apps/desktop/resources/openshell/.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base packages the installer phases assume: ca-certificates, curl, gpg
+# for adding the Docker apt repo; sudo because OpenShell's default
+# `sandbox` user expects passwordless escalation for systemd service
+# control; iproute2/net-tools for openshell's network probes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        iproute2 \
+        less \
+        net-tools \
+        procps \
+        sudo \
+        systemd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root default user. Matches the OpenShell convention of
+# `run_as_user: sandbox` in policy.yaml.
+RUN useradd -m -s /bin/bash -G sudo banker \
+    && echo 'banker ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+
+# Docker Engine — same recipe installer.mjs phaseDocker runs at first
+# launch, but pre-baked so banker laptops on slow/blocked corporate
+# networks never have to fetch it themselves. Pinned to noble (24.04).
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        docker-ce \
+        docker-ce-cli \
+        containerd.io \
+        docker-buildx-plugin \
+    && usermod -aG docker banker \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenShell CLI — pulled from NVIDIA's published installer. The script
+# drops the binary into /usr/local/bin and writes default config into
+# /etc/openshell. We do NOT run `openshell init --bootstrap-policies`
+# here because that creates per-host state; installer.mjs phaseOpenshell
+# does that on the banker's machine.
+RUN curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/main/install.sh | bash
+
+# wsl.conf — tells WSL to use systemd as PID 1 (required for
+# `service docker start` and openshell's gateway pod) and pins the
+# default user to `banker`.
+RUN printf '[boot]\nsystemd=true\n[user]\ndefault=banker\n' > /etc/wsl.conf
+
+# Sanity-check the binaries the installer expects, so a regression in
+# the upstream OpenShell install script breaks the build here instead
+# of breaking a banker laptop weeks later.
+RUN which docker && docker --version \
+    && which openshell && openshell --version

@@ -1,0 +1,6 @@
+# The Ubuntu 24.04 + OpenShell rootfs tarball lives here at package
+# time but is built by CI (build-windows-openshell.yml) — never checked
+# into source. Local devs who want to test the packaged installer
+# should run apps/desktop/scripts/build-openshell-rootfs.sh first.
+*.tar.gz
+*.tar

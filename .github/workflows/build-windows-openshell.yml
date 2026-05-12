@@ -1,0 +1,108 @@
+name: Build Windows MSI with OpenShell rootfs
+
+# Phase 9 of the OpenWork x OpenShell integration. Produces the
+# self-contained Windows installer that ships the bundled WSL2 rootfs
+# (no Microsoft Store dependency — GPO-blocked at most banks) and the
+# default policy bundle.
+#
+# Code-signing happens on a separate self-hosted runner that has HSM
+# access; it consumes the unsigned artifact this workflow produces.
+
+on:
+  # Cut a release whenever a v* tag lands. Manual dispatch is supported
+  # for ad-hoc test builds.
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+
+  build-rootfs:
+    name: Build Ubuntu 24.04 + OpenShell rootfs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Docker is pre-installed on GitHub-hosted ubuntu-latest runners,
+      # so no setup step is needed. Driver script handles everything.
+      - name: Build rootfs tarball
+        run: ./apps/desktop/scripts/build-openshell-rootfs.sh
+
+      # Sanity-check that the artifact landed at the expected path
+      # before uploading. Saves a confusing "missing input" error in the
+      # downstream build-app job.
+      - name: Verify rootfs artifact
+        run: |
+          set -e
+          test -f apps/desktop/resources/openshell/ubuntu-24.04-openshell.tar.gz
+          ls -la apps/desktop/resources/openshell/
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-rootfs
+          path: apps/desktop/resources/openshell/ubuntu-24.04-openshell.tar.gz
+          # Keep around long enough that build-app can consume it even
+          # if release notes drag the workflow over multiple days.
+          retention-days: 7
+          if-no-files-found: error
+
+  build-app:
+    name: Package Electron MSI (Windows)
+    needs: build-rootfs
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pull the rootfs the previous job produced directly into the
+      # path electron-builder.yml's win.extraResources rule expects.
+      - name: Download rootfs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: openshell-rootfs
+          path: apps/desktop/resources/openshell
+
+      - name: Verify rootfs landed in resources path
+        shell: pwsh
+        run: |
+          $rootfs = "apps/desktop/resources/openshell/ubuntu-24.04-openshell.tar.gz"
+          if (-not (Test-Path $rootfs)) {
+            Write-Error "Expected rootfs at $rootfs but it is missing."
+            exit 1
+          }
+          Get-Item $rootfs | Select-Object FullName, Length
+
+      # Match the bootstrap order in build-electron-desktop.yml so
+      # behavior is consistent across release and dev workflows.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Electron MSI
+        run: pnpm --filter @openwork/desktop package:electron
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-windows-msi
+          path: apps/desktop/dist-electron/**
+          if-no-files-found: error
