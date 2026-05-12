@@ -126,18 +126,18 @@ export function OrgOnboardingPage() {
   const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0;
 
   return (
-    <div className="relative min-h-screen bg-dls-background text-dls-text">
+    <div className="relative h-screen overflow-y-auto bg-dls-background text-dls-text">
       {/* Background texture */}
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <div className="absolute -left-[20%] -top-[30%] h-[70%] w-[60%] rounded-full bg-[radial-gradient(ellipse,rgba(14,51,217,0.06),transparent_70%)] blur-3xl" />
         <div className="absolute -bottom-[20%] -right-[10%] h-[50%] w-[50%] rounded-full bg-[radial-gradient(ellipse,rgba(255,126,46,0.05),transparent_70%)] blur-3xl" />
         <div className="absolute left-[30%] top-[60%] h-[40%] w-[40%] rounded-full bg-[radial-gradient(ellipse,rgba(255,227,64,0.04),transparent_70%)] blur-3xl" />
       </div>
 
       {/* Titlebar drag region */}
-      <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+      <div className="fixed inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
 
-      <div className="relative z-10 min-h-screen overflow-y-auto px-6 py-16">
+      <div className="relative z-10 px-6 py-16">
         <div className="mx-auto w-full max-w-lg space-y-8">
           {/* Header */}
           <div className="space-y-3 text-center">
