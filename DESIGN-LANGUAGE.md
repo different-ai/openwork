@@ -1,5 +1,7 @@
 # OpenWork Design Language
 
+# NOTE: do not use for `apps/app`
+
 This is the definitive visual system for OpenWork product and landing work.
 
 OpenWork should feel like a premium work tool: calm, useful, technical, and trustworthy. The design should read as software first, not a flashy marketing site. The goal is clarity with taste, not visual noise.

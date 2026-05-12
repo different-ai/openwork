@@ -1,8 +1,9 @@
 # OpenWork Design System
 
+# NOTE: do not use for `apps/app`
+
 This document turns the visual direction in `DESIGN-LANGUAGE.md` into an implementation system that can unify:
 
-- `apps/app` (OpenWork app)
 - `ee/apps/den-web` (OpenWork Cloud / Den web surfaces)
 - `ee/apps/landing` (marketing + product storytelling)
 

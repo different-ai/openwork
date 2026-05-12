@@ -129,7 +129,7 @@ Design principles for hot reload:
 
 * Use `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, and `INFRASTRUCTURE.md` to understand the "why" and requirements so you can guide your decisions.
 * Treat `ARCHITECTURE.md` as the authoritative system design source for runtime flow, server ownership, filesystem mutation policy, and agent/runtime boundaries. If those behaviors change, update `ARCHITECTURE.md` in the same task.
-* Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work.
+* Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work (NOTE: do not use for `apps/app`).
 * For OpenWork session-surface details, also reference `packages/docs/orbita-layout-style.mdx`.
 
 ## App Architecture (CUPID)
