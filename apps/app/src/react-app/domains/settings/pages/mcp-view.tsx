@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useReducer, useRef, type SetStateAction } from "react";
+import { useEffect, useReducer, useRef, useState, type SetStateAction } from "react";
 import {
   BookOpen,
   CheckCircle2,
@@ -24,6 +24,7 @@ import {
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
 import { ExtensionCard } from "../../../design-system/extension-card";
+import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
   openDesktopPath,
   readOpencodeConfig,
@@ -169,6 +170,7 @@ const serviceIconBg = (name: string) => {
 
 export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
+  const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
 
   const [localState, dispatchLocal] = useReducer(
     mcpViewLocalReducer,
@@ -366,6 +368,7 @@ export function McpView(props: McpViewProps) {
         isConfigured={isQuickConnectConfigured}
         statusForEntry={quickConnectStatus}
         onConnect={props.connectMcp}
+        onDetail={setDetailEntry}
       />
 
       <McpConfiguredServersSection
@@ -451,6 +454,27 @@ export function McpView(props: McpViewProps) {
         open={chromeSetupOpen}
         onClose={() => setChromeSetupOpen(false)}
       />
+
+      {detailEntry ? (
+        <ExtensionDetailModal
+          open={!!detailEntry}
+          onClose={() => setDetailEntry(null)}
+          name={detailEntry.name}
+          description={detailEntry.description}
+          iconSlug={detailEntry.iconSlug}
+          iconSrc={detailEntry.iconSrc}
+          fallbackIcon={serviceIcon(detailEntry.name)}
+          kind={detailEntry.kind ?? "mcp"}
+          connected={isQuickConnectConfigured(detailEntry)}
+          connecting={props.mcpConnectingName === detailEntry.name}
+          url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
+          oauth={detailEntry.oauth}
+          onConnect={() => {
+            props.connectMcp(detailEntry);
+            setDetailEntry(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -513,6 +537,7 @@ function McpQuickConnectSection(props: {
   isConfigured: (entry: McpDirectoryInfo) => boolean;
   statusForEntry: (entry: McpDirectoryInfo) => { status: ReactMcpStatus } | undefined;
   onConnect: (entry: McpDirectoryInfo) => void;
+  onDetail: (entry: McpDirectoryInfo) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -541,10 +566,8 @@ function McpQuickConnectSection(props: {
               connected={configured}
               connecting={connecting}
               disabled={props.busy}
-              actionLabel={t("mcp.tap_to_connect")}
-              onClick={() => {
-                if (!configured) props.onConnect(entry);
-              }}
+              actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
+              onClick={() => props.onDetail(entry)}
             />
           );
         })}

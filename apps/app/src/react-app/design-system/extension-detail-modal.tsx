@@ -1,0 +1,198 @@
+/** @jsxImportSource react */
+import { CheckCircle2, ExternalLink, Loader2, Plug2, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ExtensionKind } from "../../app/constants";
+import {
+  modalOverlayClass,
+  modalShellClass,
+  modalHeaderClass,
+  modalHeaderButtonClass,
+  modalTitleClass,
+  modalSubtitleClass,
+  modalBodyClass,
+  modalFooterClass,
+  pillPrimaryClass,
+  pillGhostClass,
+  surfaceCardClass,
+} from "../domains/workspace/modal-styles";
+
+export type ExtensionDetailModalProps = {
+  open: boolean;
+  onClose: () => void;
+  name: string;
+  description: string;
+  iconSlug?: string;
+  iconSrc?: string;
+  fallbackIcon?: LucideIcon;
+  kind?: ExtensionKind;
+  connected?: boolean;
+  connecting?: boolean;
+  /** Remote URL if applicable. */
+  url?: string;
+  /** Whether OAuth is required. */
+  oauth?: boolean;
+  /** Connect handler. */
+  onConnect?: () => void;
+};
+
+const kindLabel: Record<ExtensionKind, string> = {
+  mcp: "MCP Server",
+  plugin: "Plugin",
+  skill: "Skill",
+};
+
+const kindDesc: Record<ExtensionKind, string> = {
+  mcp: "Connects as a Model Context Protocol server, giving your agent access to external tools and data.",
+  plugin: "Extends OpenWork with additional capabilities managed by your organization.",
+  skill: "A reusable workflow that your agent can execute on demand.",
+};
+
+export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
+  const {
+    open,
+    onClose,
+    name,
+    description,
+    iconSlug,
+    iconSrc,
+    fallbackIcon: FallbackIcon = Plug2,
+    kind = "mcp",
+    connected = false,
+    connecting = false,
+    url,
+    oauth,
+    onConnect,
+  } = props;
+
+  if (!open) return null;
+
+  return (
+    <div className={modalOverlayClass} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div
+        className={`${modalShellClass} max-w-[520px]`}
+        role="dialog"
+        aria-modal="true"
+      >
+        {/* Header */}
+        <div className={modalHeaderClass}>
+          <div className="flex min-w-0 items-start gap-4">
+            {/* Icon */}
+            <div className="relative shrink-0">
+              <div
+                className={`flex size-12 items-center justify-center rounded-xl border ${
+                  connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover"
+                }`}
+              >
+                {iconSrc ? (
+                  <img src={iconSrc} alt="" width={24} height={24} loading="lazy" style={{ display: "block" }} />
+                ) : iconSlug ? (
+                  <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={24} height={24} loading="lazy" style={{ display: "block" }} />
+                ) : (
+                  <FallbackIcon size={24} className="text-dls-secondary" />
+                )}
+              </div>
+              {connected ? (
+                <div className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-white bg-green-9">
+                  <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="min-w-0">
+              <h3 className={modalTitleClass}>{name}</h3>
+              <p className={modalSubtitleClass}>{kindLabel[kind]}</p>
+            </div>
+          </div>
+
+          <button type="button" onClick={onClose} className={modalHeaderButtonClass} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className={modalBodyClass}>
+          <div className="space-y-5">
+            {/* Description */}
+            <div className="text-[14px] leading-relaxed text-dls-text">
+              {description}
+            </div>
+
+            {/* Details */}
+            <div className={`${surfaceCardClass} space-y-3 p-4`}>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                Details
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[13px]">
+                  <span className="text-dls-secondary">Type</span>
+                  <span className="font-medium text-dls-text">{kindLabel[kind]}</span>
+                </div>
+
+                {url ? (
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-dls-secondary">Endpoint</span>
+                    <span className="flex items-center gap-1.5 truncate font-mono text-[11px] text-dls-text">
+                      {url.replace(/^https?:\/\//, "").slice(0, 40)}
+                      <ExternalLink size={10} className="shrink-0 text-dls-secondary" />
+                    </span>
+                  </div>
+                ) : null}
+
+                {oauth ? (
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-dls-secondary">Authentication</span>
+                    <span className="font-medium text-dls-text">OAuth required</span>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between text-[13px]">
+                  <span className="text-dls-secondary">Status</span>
+                  <span className={`font-medium ${connected ? "text-green-11" : "text-dls-secondary"}`}>
+                    {connected ? "Connected" : connecting ? "Connecting..." : "Not connected"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* What this enables */}
+            <div className={`${surfaceCardClass} space-y-2 p-4`}>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+                What this enables
+              </div>
+              <div className="text-[13px] leading-relaxed text-dls-secondary">
+                {kindDesc[kind]}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className={modalFooterClass}>
+          <div className="flex justify-end gap-3">
+            <button type="button" className={pillGhostClass} onClick={onClose}>
+              Close
+            </button>
+            {!connected && onConnect ? (
+              <button
+                type="button"
+                className={pillPrimaryClass}
+                onClick={onConnect}
+                disabled={connecting}
+              >
+                {connecting ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Connecting...
+                  </>
+                ) : (
+                  "Connect"
+                )}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
