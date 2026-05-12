@@ -41,6 +41,8 @@ import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
+import { ProviderOnboardingModal } from "../../../design-system/provider-onboarding-modal";
+import { ProviderAddedToast } from "../../../design-system/provider-added-toast";
 import { isElectronRuntime } from "../../../../app/utils";
 import { BrowserPanel } from "../browser/browser-panel";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -181,6 +183,9 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
+  // Provider provisioning prototypes (dev mode only)
+  const [showProviderOnboarding, setShowProviderOnboarding] = useState(true);
+  const [showProviderToast, setShowProviderToast] = useState(true);
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -784,6 +789,32 @@ export function SessionPage(props: SessionPageProps) {
           }
         }}
       />
+
+      {/* Provider provisioning UI prototypes (dev mode only) */}
+      {props.developerMode ? (
+        <>
+          <ProviderOnboardingModal
+            open={showProviderOnboarding}
+            onClose={() => setShowProviderOnboarding(false)}
+            orgName="Acme Corp"
+            providers={[
+              { id: "anthropic", name: "Anthropic", recommended: true, recommendedModel: "claude-sonnet-4-20250514" },
+              { id: "openai", name: "OpenAI", recommendedModel: "gpt-4.1" },
+              { id: "opencode", name: "OpenCode Zen", recommendedModel: "big-pickle" },
+            ]}
+            onAcceptDefaults={() => setShowProviderOnboarding(false)}
+            onConfigureManually={() => setShowProviderOnboarding(false)}
+          />
+          <ProviderAddedToast
+            open={showProviderToast}
+            providerName="Anthropic"
+            providerId="anthropic"
+            modelName="claude-sonnet-4-20250514"
+            onSwitchDefault={() => setShowProviderToast(false)}
+            onDismiss={() => setShowProviderToast(false)}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
