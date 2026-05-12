@@ -2,6 +2,7 @@
 import { CheckCircle2, ExternalLink, Loader2, Plug2, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ExtensionKind } from "../../app/constants";
+import { MarkdownBlock } from "../domains/session/surface/markdown";
 import {
   modalOverlayClass,
   modalShellClass,
@@ -191,8 +192,8 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                 <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
                   Skill preview
                 </div>
-                <div className="max-h-[200px] overflow-y-auto rounded-lg bg-dls-hover p-3 font-mono text-[11px] leading-relaxed text-dls-secondary whitespace-pre-wrap">
-                  {contentPreview}
+                <div className="max-h-[240px] overflow-y-auto rounded-lg bg-dls-hover p-3 text-[12px] leading-relaxed text-dls-text">
+                  <MarkdownBlock text={contentPreview} />
                 </div>
               </div>
             ) : null}
