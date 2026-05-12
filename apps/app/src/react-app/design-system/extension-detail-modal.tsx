@@ -57,34 +57,43 @@ const kindDesc: Record<ExtensionKind, string> = {
 };
 
 /**
- * Strip YAML-like frontmatter lines (name:, description:, trigger:) from
- * the beginning of a skill content string, returning only the body.
+ * Strip YAML-like frontmatter from the beginning of a skill content string.
+ * Handles both `---` delimited blocks and bare `key: value` lines at the top.
  */
 function stripSkillFrontmatter(content: string): string {
-  const lines = content.split("\n");
-  let startIndex = 0;
+  let text = content;
 
-  // Skip leading blank lines
-  while (startIndex < lines.length && !lines[startIndex].trim()) {
-    startIndex++;
-  }
+  // Handle --- delimited frontmatter block
+  const fencedMatch = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+  if (fencedMatch) {
+    text = text.slice(fencedMatch[0].length);
+  } else {
+    // Handle bare key: value lines at the top
+    const lines = text.split("\n");
+    let startIndex = 0;
 
-  // Skip frontmatter lines (key: value pattern at the top)
-  while (startIndex < lines.length) {
-    const line = lines[startIndex].trim();
-    if (/^(name|description|trigger)\s*:/i.test(line)) {
+    // Skip leading blank lines
+    while (startIndex < lines.length && !lines[startIndex].trim()) {
       startIndex++;
-    } else {
-      break;
+    }
+
+    // Skip any key: value lines (common frontmatter keys)
+    while (startIndex < lines.length) {
+      const line = lines[startIndex].trim();
+      if (/^[a-zA-Z_-]+\s*:/.test(line) && !line.startsWith("#")) {
+        startIndex++;
+      } else {
+        break;
+      }
+    }
+
+    if (startIndex > 0) {
+      text = lines.slice(startIndex).join("\n");
     }
   }
 
-  // Skip blank lines after frontmatter
-  while (startIndex < lines.length && !lines[startIndex].trim()) {
-    startIndex++;
-  }
-
-  return lines.slice(startIndex).join("\n");
+  // Trim leading blank lines
+  return text.replace(/^\s*\n/, "");
 }
 
 export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
