@@ -8,6 +8,30 @@ import path from "node:path";
 
 import { openshellDoctor } from "./openshell/doctor.mjs";
 
+// Resolves the packaged banking-strict.yaml when openshell mode is
+// requested without an explicit --sandbox-policy override. Kept in sync
+// with main.mjs's resolveOpenShellPoliciesDir() — both look in the
+// process.resourcesPath/openshell-policies/ directory in production and
+// fall back to the source tree for dev builds.
+function resolveOpenShellDefaultPolicy() {
+  const override = process.env.OPENWORK_OPENSHELL_DEFAULT_POLICY;
+  if (override) return override;
+  const candidates = [];
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, "openshell-policies", "banking-strict.yaml"));
+  }
+  // Source-tree fallback for dev builds where electron-builder hasn't
+  // run yet. runtime.mjs lives at apps/desktop/electron/runtime.mjs;
+  // the policies are at apps/orchestrator/policies/.
+  candidates.push(
+    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "orchestrator", "policies", "banking-strict.yaml"),
+  );
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 const DIRECT_RUNTIME = "direct";
 const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
 const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
@@ -1518,13 +1542,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         ? ["--sandbox", "docker"]
         : []),
       ...(sandboxBackend === "openshell"
-        ? [
-            "--sandbox",
-            "openshell",
-            ...(options.sandboxPolicyRef
-              ? ["--sandbox-policy", String(options.sandboxPolicyRef)]
-              : []),
-          ]
+        ? (() => {
+            // Caller-provided ref wins; otherwise fall back to the
+            // packaged banking-strict.yaml (spec §9 recommendation —
+            // predictable conservative default for banker workspaces).
+            const explicit = options.sandboxPolicyRef
+              ? String(options.sandboxPolicyRef)
+              : null;
+            const resolved = explicit ?? resolveOpenShellDefaultPolicy();
+            const flags = ["--sandbox", "openshell"];
+            if (resolved) flags.push("--sandbox-policy", resolved);
+            return flags;
+          })()
         : []),
       ...(options.sandboxImageRef ? ["--sandbox-image", String(options.sandboxImageRef)] : []),
     ];

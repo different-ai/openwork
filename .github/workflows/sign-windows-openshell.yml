@@ -1,0 +1,148 @@
+name: Sign Windows OpenShell installer
+
+# Phase 11 of the OpenWork x OpenShell integration. Consumes the
+# unsigned NSIS installer from build-windows-openshell.yml and produces
+# a signed artifact suitable for distribution to banker laptops.
+#
+# Signing runs on a SELF-HOSTED runner labeled `signing` that has:
+#   - Windows + signtool.exe on PATH (Windows SDK install)
+#   - Access to the firm's code-signing HSM (USB token / KSP / Azure Key Vault)
+#   - One of the following secret bundles wired up:
+#       Option A — PFX file:
+#         secrets.WINDOWS_SIGN_PFX_BASE64  (the .pfx, base64-encoded)
+#         secrets.WINDOWS_SIGN_PFX_PASSWORD
+#       Option B — HSM via Key Storage Provider (recommended for banks):
+#         secrets.WINDOWS_SIGN_KSP_NAME
+#         secrets.WINDOWS_SIGN_CONTAINER_NAME
+#         secrets.WINDOWS_SIGN_CERT_THUMBPRINT
+#
+# The job below is a skeleton — your firm's IT will replace the
+# `Sign installer` step body with whichever signtool invocation matches
+# your KSP/HSM. The artifact name and trigger contract are stable.
+
+on:
+  workflow_run:
+    workflows: ["Build Windows MSI with OpenShell rootfs"]
+    types: [completed]
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Run ID of the build-windows-openshell workflow whose MSI you want to sign"
+        required: true
+        type: string
+
+jobs:
+  sign:
+    name: Sign installer
+    # Self-hosted, not GitHub-hosted: HSM creds can't live in cloud secrets.
+    runs-on: [self-hosted, windows, signing]
+    # Only run on a successful build; otherwise there's no artifact.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    env:
+      TIMESTAMP_URL: "http://timestamp.digicert.com"
+
+    steps:
+      - name: Resolve build run id
+        id: resolve-run
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            echo "run_id=${{ inputs.build_run_id }}" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "run_id=${{ github.event.workflow_run.id }}" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Download unsigned installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: openwork-windows-msi
+          path: artifacts/
+          run-id: ${{ steps.resolve-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Locate installer
+        id: locate
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path artifacts -Filter "openwork-windows-*.exe" -Recurse | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No openwork-windows-*.exe found in artifacts."
+            exit 1
+          }
+          echo "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          echo "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Sign installer
+        shell: pwsh
+        env:
+          # Replace these with your firm's actual secret references when
+          # wiring the workflow up. Left as comments so secret leakage
+          # via accidental env dump is impossible in this skeleton state.
+          # PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+          # KSP_NAME: ${{ secrets.WINDOWS_SIGN_KSP_NAME }}
+          # CERT_THUMBPRINT: ${{ secrets.WINDOWS_SIGN_CERT_THUMBPRINT }}
+          INSTALLER: ${{ steps.locate.outputs.path }}
+        run: |
+          # ------------------------------------------------------------
+          # TODO (firm IT): replace this block with whichever signtool
+          # invocation matches your HSM / KSP / PFX setup. Two common
+          # shapes:
+          #
+          # Option A — PFX file (decoded from a base64 secret):
+          #   $pfxBytes = [System.Convert]::FromBase64String($env:PFX_BASE64)
+          #   [System.IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx", $pfxBytes)
+          #   & signtool sign /fd SHA256 /f "$env:RUNNER_TEMP\sign.pfx" `
+          #     /p $env:PFX_PASSWORD `
+          #     /tr $env:TIMESTAMP_URL /td SHA256 `
+          #     $env:INSTALLER
+          #   Remove-Item "$env:RUNNER_TEMP\sign.pfx" -Force
+          #
+          # Option B — HSM via KSP (recommended for banking):
+          #   & signtool sign /fd SHA256 `
+          #     /csp $env:KSP_NAME `
+          #     /kc $env:CONTAINER_NAME `
+          #     /sha1 $env:CERT_THUMBPRINT `
+          #     /tr $env:TIMESTAMP_URL /td SHA256 `
+          #     $env:INSTALLER
+          #
+          # Option C — Azure Key Vault (jsign or AzureSignTool):
+          #   AzureSignTool sign -kvu <vault-url> -kvi <client-id> `
+          #     -kvs <client-secret> -kvc <cert-name> `
+          #     -tr $env:TIMESTAMP_URL -td SHA256 $env:INSTALLER
+          # ------------------------------------------------------------
+
+          Write-Host "Sign step is a skeleton — uncomment and configure one of the options above for your firm's signing setup."
+          Write-Host "Installer that would be signed: $env:INSTALLER"
+          # exit 1  # uncomment to fail the job until signing is wired up
+
+      - name: Verify signature
+        shell: pwsh
+        run: |
+          # signtool verify is idempotent and harmless on an unsigned
+          # binary (just returns non-zero). With signing wired up this
+          # is the contract check that the firm cert chain validates.
+          $verify = & signtool verify /pa /v ${{ steps.locate.outputs.path }} 2>&1
+          Write-Host $verify
+          # if ($LASTEXITCODE -ne 0) { exit 1 }   # uncomment with signing
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-windows-msi-signed
+          path: ${{ steps.locate.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+
+      # Optional: publish to a GitHub Release (if this build came from a
+      # v* tag). electron-updater reads latest*.yml from the release
+      # assets; uploading the signed installer here lets clients
+      # auto-update to the signed build.
+      #
+      # - name: Publish to release
+      #   if: github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v')
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: ${{ steps.locate.outputs.path }}
+      #     tag_name: ${{ github.event.workflow_run.head_branch }}

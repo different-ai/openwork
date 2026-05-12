@@ -332,6 +332,7 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
     workspace.workspaceType === "remote" &&
     (workspace.sandboxBackend === "docker" ||
       workspace.sandboxBackend === "microsandbox" ||
+      workspace.sandboxBackend === "openshell" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim()))
   );

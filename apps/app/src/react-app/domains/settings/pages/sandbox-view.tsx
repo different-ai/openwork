@@ -133,6 +133,12 @@ export function SandboxView(props: SandboxViewProps) {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-2xl border border-amber-7/40 bg-amber-2/20 p-3 text-xs text-amber-12">
+        <strong>Heads up:</strong> Your backend choice is saved here, but the session-start flow
+        in this build still routes through the Tauri bridge. Until that's rewired to Electron IPC
+        (deferred follow-up), this selector affects new workspace metadata only — Open existing
+        workspaces will keep whichever backend they were created with.
+      </div>
       <div className={`${settingsPanelClass} space-y-3`}>
         <div>
           <div className="text-sm font-medium text-gray-12">Sandbox backend</div>
