@@ -305,6 +305,11 @@ function ModelOptionRow(props: {
         <div className="flex-1 min-w-0">
           <div className={["text-[13px] flex items-center justify-between gap-2", active ? "font-medium text-gray-12" : "text-current"].join(" ")}>
             <span className="truncate">{opt.title}</span>
+            {active ? (
+              <span className="shrink-0 rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
+                Current
+              </span>
+            ) : null}
           </div>
           <div className={["mt-0.5 flex items-center gap-3 text-[11px]", active ? "text-gray-10" : "text-gray-9 group-hover:text-gray-10"].join(" ")}>
             <span className="truncate">{opt.description ?? opt.providerID}</span>

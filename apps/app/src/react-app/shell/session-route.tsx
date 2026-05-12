@@ -508,9 +508,19 @@ export function SessionRoute() {
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
   }, []);
+  // Provider IDs that were just added — used to highlight them as
+  // "Recently added" in the model picker even after they've been
+  // marked as seen in localStorage.
+  const [recentProviderIds, setRecentProviderIds] = useState<Set<string>>(new Set());
   // Open model picker when the global toast's "Pick a new default?" is clicked
   useEffect(() => {
-    const handler = () => setModelPickerOpen(true);
+    const handler = (event: Event) => {
+      const ids = (event as CustomEvent<{ newProviderIds?: string[] }>).detail?.newProviderIds;
+      if (ids && ids.length > 0) {
+        setRecentProviderIds(new Set(ids));
+      }
+      setModelPickerOpen(true);
+    };
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
@@ -1562,7 +1572,10 @@ export function SessionRoute() {
           };
         }).data;
         if (cancelled || !data?.providers) return;
-        // Read seen-provider set so we can flag recently added models
+        // Flag models from recently-added providers so they appear in
+        // the "Recently added" section at the top of the picker.
+        // Two sources: (1) providers not yet in the localStorage seen-set,
+        // (2) providers passed via the openModelPickerEvent from the toast.
         let seenIds: Set<string>;
         try {
           const raw = window.localStorage.getItem("openwork.seenProviderIds");
@@ -1574,7 +1587,7 @@ export function SessionRoute() {
         for (const provider of data.providers) {
           const modelIds = Object.keys(provider.models);
           const hasModels = modelIds.length > 0;
-          const isNew = !seenIds.has(provider.id);
+          const isNew = !seenIds.has(provider.id) || recentProviderIds.has(provider.id);
           for (const id of modelIds) {
             const model = provider.models[id];
             options.push({
@@ -1600,7 +1613,7 @@ export function SessionRoute() {
     return () => {
       cancelled = true;
     };
-  }, [modelPickerOpen, opencodeClient, selectedWorkspaceRoot]);
+  }, [modelPickerOpen, opencodeClient, recentProviderIds, selectedWorkspaceRoot]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
@@ -2634,7 +2647,7 @@ export function SessionRoute() {
         setModelPickerOpen(false);
         handleOpenSettings("/settings/general");
       }}
-      onClose={() => setModelPickerOpen(false)}
+      onClose={() => { setModelPickerOpen(false); setRecentProviderIds(new Set()); }}
     />
     </WorkspaceProvider>
   );

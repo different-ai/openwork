@@ -70,9 +70,12 @@ export function NewProvidersToast() {
   }, [state.providers]);
 
   const pickDefault = useCallback(() => {
-    markProvidersSeen(state.providers.map((p) => p.id));
+    const ids = state.providers.map((p) => p.id);
+    markProvidersSeen(ids);
     setState({ show: false, providers: [] });
-    window.dispatchEvent(new CustomEvent(openModelPickerEvent));
+    // Pass the new provider IDs so the picker can highlight them as
+    // "Recently added" even though they were just marked as seen.
+    window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { newProviderIds: ids } }));
   }, [state.providers]);
 
   if (!state.show || state.providers.length === 0) return null;
