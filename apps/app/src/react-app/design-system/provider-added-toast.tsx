@@ -37,7 +37,7 @@ export function ProviderAddedToast(props: ProviderAddedToastProps) {
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            className="rounded-full bg-[#011627] px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-black"
+            className="rounded-full bg-dls-accent px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-[var(--dls-accent-hover)]"
             onClick={props.onSwitchDefault}
           >
             Switch default

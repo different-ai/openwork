@@ -88,7 +88,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
             )}
           </div>
           {connected ? (
-            <div className="absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border-2 border-white bg-green-9">
+            <div className="absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
               <CheckCircle2 size={9} className="text-white" strokeWidth={3} />
             </div>
           ) : null}

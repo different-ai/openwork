@@ -184,7 +184,7 @@ export function StatusBar(props: StatusBarProps) {
           {shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking" ? (
             <button
               type="button"
-              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-[#011627] px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-black"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-dls-accent px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)]"
               onClick={() => {
                 const baseUrl = readDenBootstrapConfig().baseUrl;
                 platform.openLink(buildDenAuthUrl(baseUrl, "sign-in"));

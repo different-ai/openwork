@@ -116,6 +116,7 @@ import {
 import { saveSessionDraft } from "../domains/session/sync/draft-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
+import { useProviderChangeDetection } from "./use-provider-change-detection";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -496,6 +497,7 @@ export function SessionRoute() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
+  const providerChangeDetection = useProviderChangeDetection(providerConnectedIds, providers as any);
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
@@ -2296,6 +2298,7 @@ export function SessionRoute() {
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
       providerConnectedIds={providerConnectedIds}
       providers={providers}
+      providerNotifications={providerChangeDetection}
       mcpConnectedCount={0}
       onSendFeedback={() => {
         platform.openLink(
