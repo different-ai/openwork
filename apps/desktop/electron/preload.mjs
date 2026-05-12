@@ -53,6 +53,16 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       };
     },
   },
+  openshell: {
+    /** Subscribe to installer progress events emitted by installer.mjs (Phase 6). */
+    onInstallProgress(callback) {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on("openshell:install-progress", handler);
+      return () => {
+        ipcRenderer.removeListener("openshell:install-progress", handler);
+      };
+    },
+  },
   meta: {
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),

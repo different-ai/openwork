@@ -20,6 +20,9 @@ import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
+import * as openshellClient from "./openshell/client.mjs";
+import { openshellDoctor } from "./openshell/doctor.mjs";
+import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, wslRun } from "./openshell/wsl.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
@@ -1313,6 +1316,38 @@ async function handleDesktopInvoke(event, command, ...args) {
       window.webContents.setZoomFactor(factor);
       return true;
     }
+    case "openshellDoctor":
+      return openshellDoctor();
+    case "openshellListSandboxes":
+      return openshellClient.listSandboxes();
+    case "openshellGatewayStatus":
+      return openshellClient.getGatewayStatus();
+    case "openshellGatewayRestart": {
+      // openshell gateway start --recreate handles both "stopped" and
+      // "crashed" gateway containers without conflicts (matches the
+      // recovery instruction in OpenShell's own troubleshooting docs).
+      const r = await wslRun(
+        ["-d", OPENSHELL_DISTRO_NAME, "--", "openshell", "gateway", "start", "--recreate"],
+        { timeout: 60_000 },
+      );
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `openshell gateway restart failed: ${r.stderr || r.stdout || "unknown error"}`,
+        );
+      }
+      return { ok: true };
+    }
+    case "openshellListPolicies":
+      // Phase 8 will ship default policies under apps/orchestrator/policies/
+      // and electron-builder.yml will map them to a known extraResource path.
+      // Returning an empty array keeps the IPC contract stable until then.
+      return [];
+    case "openshellInstallStart":
+    case "openshellInstallStatus":
+    case "openshellInstallCancel":
+      throw new Error(
+        "OpenShell installer is not implemented yet — wired in Phase 6 (installer.mjs).",
+      );
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
