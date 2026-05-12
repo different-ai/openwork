@@ -70,17 +70,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       if (!denAuth.isSignedIn && !onSignin) {
         navigate("/signin", { replace: true });
       } else if (denAuth.isSignedIn && onSignin) {
-        // Signed in — route to onboarding (it will skip to /session
-        // automatically if the user has already seen it for this org).
+        // Signed in — route to onboarding so the user sees their org resources.
         navigate("/onboarding", { replace: true });
       }
     } else if (onSignin) {
       navigate("/session", { replace: true });
     }
 
-    // If on /onboarding but not signed in, bounce to signin
+    // If on /onboarding but not signed in, bounce to signin or session
     if (onOnboarding && !denAuth.isSignedIn) {
-      navigate("/signin", { replace: true });
+      navigate(requireSignin ? "/signin" : "/session", { replace: true });
     }
   }, [
     denAuth.isSignedIn,
@@ -91,18 +90,25 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   ]);
 
   // After a fresh sign-in, navigate to the onboarding page so the
-  // user sees what their org provides. The onboarding page handles
-  // "already seen" skipping internally.
+  // user sees what their org provides.
+  // Poll for activeOrgId (set asynchronously by refreshOrgs) rather
+  // than using a fixed delay — handles both fast and slow org lookups.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
-      // Small delay: let orgs load / auto-select first.
-      setTimeout(() => {
+      let attempts = 0;
+      const check = () => {
+        attempts++;
         const settings = readDenSettings();
         if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
           navigate("/onboarding", { replace: true });
+        } else if (attempts < 10) {
+          // Org not selected yet — retry (max ~5 seconds)
+          setTimeout(check, 500);
         }
-      }, 1500);
+      };
+      // First check after a short delay for the auth to settle
+      setTimeout(check, 500);
     };
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);

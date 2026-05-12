@@ -107,8 +107,19 @@ export function OrgOnboardingPage() {
         modelID: selectedDefault.modelId,
       });
     }
+    // Mark all providers shown on this page as "seen" so the global
+    // toast doesn't re-fire for them on the next sync interval.
+    if (resources.providers.length > 0) {
+      try {
+        const raw = window.localStorage.getItem("openwork.seenProviderIds");
+        const existing: string[] = raw ? JSON.parse(raw) : [];
+        const ids = new Set(existing);
+        for (const p of resources.providers) ids.add(p.id);
+        window.localStorage.setItem("openwork.seenProviderIds", JSON.stringify([...ids]));
+      } catch {}
+    }
     navigate("/session", { replace: true });
-  }, [navigate, selectedDefault]);
+  }, [navigate, resources.providers, selectedDefault]);
 
   const { providers, marketplaces, workers } = resources;
   const totalModels = providers.reduce((sum, p) => sum + p.models.length, 0);
