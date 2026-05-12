@@ -272,7 +272,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const refreshEngineInfo = useCallback(async () => {
     if (!isDesktopRuntime()) return;
     try {
-      const info = await engineInfoCmd();
+      const info = await engineInfoCmd() as EngineInfo | null;
       setEngineInfoState(info);
     } catch {
       setEngineInfoState(null);
@@ -284,7 +284,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     void (async () => {
       if (!isDesktopRuntime()) return;
       try {
-        const build = await appBuildInfoCmd();
+        const build = await appBuildInfoCmd() as AppBuildInfo | null;
         setAppBuild(build);
       } catch {
         setAppBuild(null);
@@ -451,7 +451,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       return;
     }
     try {
-      const env = await updaterEnvironmentCmd();
+      const env = await updaterEnvironmentCmd() as { appBundlePath?: string };
       const appBundlePath = env.appBundlePath?.trim();
       if (!appBundlePath) {
         setElectronMigrationStatus("Could not resolve the current OpenWork.app bundle path.");

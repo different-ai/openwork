@@ -10,6 +10,10 @@ import {
   workspaceBootstrap,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type EngineInfo,
+  type OpenworkServerInfo,
+  type WorkspaceInfo,
+  type WorkspaceList,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
 import {
@@ -81,7 +85,7 @@ export function useDesktopRuntimeBoot() {
         hydrateOpenworkServerSettingsFromEnv();
 
         setPhase("bootstrapping-workspaces");
-        const list = await workspaceBootstrap().catch(() => null);
+        const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
         if (!list) {
           markReady();
           return;
@@ -164,10 +168,10 @@ export function useDesktopRuntimeBoot() {
         // This mirrors Solid's bootstrap at context/workspace.ts:3883-3907
         // ("localAttachExisting"), which never restarts a running stack.
         try {
-          const engine = await engineInfo();
+          const engine = await engineInfo() as EngineInfo | null;
           if (engine?.running && engine.baseUrl) {
             setActive(engine.baseUrl);
-            const fresh = await openworkServerInfo().catch(() => null);
+            const fresh = await openworkServerInfo().catch(() => null) as OpenworkServerInfo | null;
             if (fresh?.baseUrl) {
               writeOpenworkServerSettings({
                 urlOverride: fresh.baseUrl,
@@ -197,7 +201,7 @@ export function useDesktopRuntimeBoot() {
         // SLOW PATH ─────────────────────────────────────────────────────
         // No running engine. Tauri now mirrors Electron: engine_start boots
         // openwork-server and lets that server manage OpenCode.
-        const localPaths = list.workspaces.flatMap((entry) => {
+        const localPaths = list.workspaces.flatMap((entry: WorkspaceInfo) => {
           const path = entry.workspaceType !== "remote" ? entry.path?.trim() ?? "" : "";
           return path ? [path] : [];
         });
@@ -220,7 +224,7 @@ export function useDesktopRuntimeBoot() {
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
-        });
+        }) as EngineInfo | null;
 
         if (!engineStartResult) {
           const fallback = list.workspaces.find((entry) => {
@@ -242,7 +246,7 @@ export function useDesktopRuntimeBoot() {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
               return null;
-            });
+            }) as EngineInfo | null;
             if (engineStartResult) {
               void workspaceSetSelected(fallback.id).catch(() => undefined);
               void workspaceSetRuntimeActive(fallback.id).catch(() => undefined);
@@ -257,7 +261,7 @@ export function useDesktopRuntimeBoot() {
             setActive(engineStartResult.baseUrl);
           }
           try {
-            const freshInfo = await openworkServerInfo();
+            const freshInfo = await openworkServerInfo() as OpenworkServerInfo | null;
             if (freshInfo?.baseUrl) {
               writeOpenworkServerSettings({
                 urlOverride: freshInfo.baseUrl,

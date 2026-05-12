@@ -2,6 +2,8 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
+  type EngineInfo,
+  type OpenworkServerInfo,
 } from "../../app/lib/desktop";
 import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
@@ -63,7 +65,7 @@ export async function ensureDesktopLocalOpenworkConnection(
   });
 
   try {
-    const engine = await engineInfo().catch(() => null);
+    const engine = await engineInfo().catch(() => null) as EngineInfo | null;
     if (!engine?.running || !engine.baseUrl) {
       await engineStart(workspaceRoot, {
         runtime: "direct",
@@ -72,7 +74,7 @@ export async function ensureDesktopLocalOpenworkConnection(
       });
     }
 
-    const info = await openworkServerInfo();
+    const info = await openworkServerInfo() as OpenworkServerInfo | null;
     if (!info?.baseUrl) {
       throw new Error("OpenWork server did not report a base URL after activation.");
     }

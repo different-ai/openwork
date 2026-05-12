@@ -10,6 +10,8 @@ import {
   workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type WorkspaceInfo,
+  type WorkspaceList,
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 import { createClient, unwrap } from "../../app/lib/opencode";
@@ -110,17 +112,17 @@ export function WelcomeRoute() {
       dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
-        const list = await workspaceCreate({
-          folderPath: folder,
-          name: workspaceName,
-          preset: "starter",
-        });
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
-        let targetWorkspaceId = createdId;
-        let targetWorkspace = list.workspaces.find((workspace) => workspace.id === createdId) ?? null;
+      const list = await workspaceCreate({
+        folderPath: folder,
+        name: workspaceName,
+        preset: "starter",
+      }) as WorkspaceList;
+      const createdId =
+        resolveWorkspaceListSelectedId(list) ||
+        list.workspaces[list.workspaces.length - 1]?.id ||
+        "";
+      let targetWorkspaceId = createdId;
+      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
         let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
@@ -192,18 +194,18 @@ export function WelcomeRoute() {
       if (!baseUrlValue) return false;
       dispatch({ type: "remote:start" });
       try {
-        const list = await workspaceCreateRemote({
-          baseUrl: baseUrlValue,
-          openworkHostUrl: baseUrlValue,
-          openworkToken: input.openworkToken?.trim() || null,
-          displayName: input.displayName?.trim() || null,
-          directory: input.directory?.trim() || null,
-          remoteType: "openwork",
-        });
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
+      const list = await workspaceCreateRemote({
+        baseUrl: baseUrlValue,
+        openworkHostUrl: baseUrlValue,
+        openworkToken: input.openworkToken?.trim() || null,
+        displayName: input.displayName?.trim() || null,
+        directory: input.directory?.trim() || null,
+        remoteType: "openwork",
+      }) as WorkspaceList;
+      const createdId =
+        resolveWorkspaceListSelectedId(list) ||
+        list.workspaces[list.workspaces.length - 1]?.id ||
+        "";
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);

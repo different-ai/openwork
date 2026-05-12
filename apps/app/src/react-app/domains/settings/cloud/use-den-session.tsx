@@ -282,6 +282,12 @@ export function useDenSession({
           activeOrgSlug: nextOrg?.slug ?? null,
           activeOrgName: nextOrg?.name ?? null,
         });
+        // Push to context immediately so consumers see the new org
+        if (nextOrg) {
+          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, slug: nextOrg.slug });
+        } else if (!next) {
+          setActiveOrganization(null);
+        }
         if (next) {
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
         }
@@ -297,7 +303,7 @@ export function useDenSession({
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, showToast],
+    [activeOrgId, authToken, baseUrl, client, setActiveOrganization, showToast],
   );
 
   React.useEffect(() => {
@@ -416,15 +422,17 @@ export function useDenSession({
       setOrgsError(null);
 
       try {
+        // 1. Sync Den server-side (cookie/session)
         await client.setActiveOrganization({ organizationId: nextOrg.id });
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
-        return;
-      } finally {
         setOrgsBusy(false);
+        return;
       }
 
-      setActiveOrgId(nextId);
+      // 2. Persist to localStorage FIRST so any code that reads from settings
+      //    (e.g. refreshCloudOrgProviders which reads readDenSettings()) sees
+      //    the new org immediately.
       writeDenSettings({
         baseUrl,
         authToken: authToken ? authToken : null,
@@ -432,12 +440,34 @@ export function useDenSession({
         activeOrgSlug: nextOrg?.slug ?? null,
         activeOrgName: nextOrg?.name ?? null,
       });
+
+      // 3. Update local state
+      setActiveOrgId(nextId);
+
+      // 4. Update CloudSessionProvider context IMMEDIATELY so consumers
+      //    (cloud providers / marketplace / workers views) re-fetch with
+      //    the new org without waiting for the sync effect to fire.
+      setActiveOrganization({
+        id: nextOrg.id,
+        name: nextOrg.name,
+        slug: nextOrg.slug,
+      });
+
+      // 5. Force a full server sync (Den + localStorage reconciliation)
+      try {
+        await ensureDenActiveOrganization({ forceServerSync: true });
+      } catch {
+        // Best-effort; the explicit setActiveOrganization above already
+        // covered the critical path.
+      }
+
+      setOrgsBusy(false);
       showToast({
         title: t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
         tone: "success",
       });
     },
-    [authToken, baseUrl, client, orgs, showToast],
+    [authToken, baseUrl, client, orgs, setActiveOrganization, showToast],
   );
 
   // User is signed in, orgs loaded, multiple orgs available, but none selected yet.
