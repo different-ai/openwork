@@ -808,8 +808,8 @@ export function SessionPage(props: SessionPageProps) {
         }}
       />
 
-      {/* Provider provisioning UI prototypes (dev mode only) */}
-      {props.developerMode ? (
+      {/* Provider provisioning UI prototypes */}
+      {(
         <>
           <ProviderOnboardingModal
             open={showProviderOnboarding}
