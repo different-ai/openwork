@@ -1,11 +1,61 @@
 /** @jsxImportSource react */
+import { CircleAlert, Info } from "lucide-react";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { formatBytes, formatRelativeTime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
 import type { SettingsUpdateStatus } from "../state/electron-updater-state";
+import {
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemHeader,
+  LayoutSectionItemHeaderActions,
+  LayoutSectionItemTitle,
+  LayoutStack,
+} from "../settings-layout";
+import { Separator } from "@/components/ui/separator";
+import { Spinner } from "../settings-section";
 
-const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
+const RELEASE_CHANNEL_OPTIONS: { label: string; value: ReleaseChannel }[] = [
+  { label: "Stable", value: "stable" },
+  { label: "Alpha", value: "alpha" },
+];
+
+type UpdateDownloadProgressProps = {
+  downloadedBytes: number | null;
+  totalBytes: number | null;
+};
+
+function UpdateDownloadProgress(props: UpdateDownloadProgressProps) {
+  const downloadedBytes = props.downloadedBytes ?? 0;
+  const progressPercent =
+    props.totalBytes != null && props.totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / props.totalBytes) * 100)) : 0;
+  const progressLabel = (
+    <>
+      {formatBytes(downloadedBytes)}
+      {props.totalBytes != null ? ` / ${formatBytes(props.totalBytes)}` : ""}
+    </>
+  );
+
+  return (
+    <Progress value={progressPercent} className="w-full">
+      <ProgressLabel className="text-sm text-muted-foreground font-normal">{progressLabel}</ProgressLabel>
+      <ProgressValue className="text-sm" />
+    </Progress>
+  );
+}
 
 export type UpdatesViewProps = {
   busy: boolean;
@@ -53,200 +103,177 @@ export function UpdatesView(props: UpdatesViewProps) {
       : null;
 
   return (
-    <div className="space-y-6 max-w-3xl w-full">
-      <div className={`${settingsPanelClass} space-y-3`}>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-sm font-medium text-gray-12">{t("settings.updates_title")}</div>
-            <div className="text-xs text-gray-10">{t("settings.updates_desc")}</div>
-          </div>
-          <div className="font-mono text-xs text-gray-7">{props.appVersion ? `v${props.appVersion}` : ""}</div>
-        </div>
-
-        {props.webDeployment ? (
-          <div className="rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-sm text-gray-11">
-            {t("settings.updates_desktop_only")}
-          </div>
-        ) : props.updateEnv && props.updateEnv.supported === false ? (
-          <div className="rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-sm text-gray-11">
-            {props.updateEnv.reason ?? t("settings.updates_not_supported")}
-          </div>
-        ) : (
-          <>
-            {props.alphaChannelSupported && props.releaseChannel ? (
-              <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
-                <div className="space-y-0.5">
-                  <div className="text-sm text-gray-12">Release channel</div>
-                  <div className="text-xs text-gray-7">
-                    Stable is the default. Alpha auto-updates from every merge to{" "}
-                    <code className="rounded bg-gray-2 px-1 py-0.5 text-[11px]">dev</code>{" "}
-                    (macOS only).
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 rounded-full border border-gray-6/60 bg-gray-1/70 p-0.5 text-xs">
-                  {(["stable", "alpha"] as const).map((value) => {
-                    const active = props.releaseChannel === value;
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        className={`rounded-full px-3 py-1 font-medium transition-colors ${
-                          active
-                            ? "bg-gray-12/12 text-gray-12 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]"
-                            : "text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
-                        } ${!props.onReleaseChannelChange ? "cursor-default opacity-70" : ""}`}
-                        onClick={() => props.onReleaseChannelChange?.(value)}
-                        disabled={!props.onReleaseChannelChange}
-                      >
-                        {value === "stable" ? "Stable" : "Alpha"}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-            <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
-              <div className="space-y-0.5">
-                <div className="text-sm text-gray-12">{t("settings.background_checks_title")}</div>
-                <div className="text-xs text-gray-7">{t("settings.background_checks_desc")}</div>
-              </div>
-              <button
-                type="button"
-                className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
-                  props.updateAutoCheck
-                    ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
-                }`}
-                onClick={props.toggleUpdateAutoCheck}
-              >
-                {props.updateAutoCheck ? t("settings.on") : t("settings.off")}
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between rounded-xl border border-gray-6 bg-gray-1 p-3">
-              <div className="space-y-0.5">
-                <div className="text-sm text-gray-12">{t("settings.auto_update_title")}</div>
-                <div className="text-xs text-gray-7">{t("settings.auto_update_desc")}</div>
-              </div>
-              <button
-                type="button"
-                className={`min-w-[70px] rounded-full border px-4 py-1.5 text-xs font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
-                  props.updateAutoDownload
-                    ? "border-gray-6/30 bg-gray-12/12 text-gray-12"
-                    : "border-gray-6/60 bg-gray-1/70 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
-                }`}
-                onClick={props.toggleUpdateAutoDownload}
-              >
-                {props.updateAutoDownload ? t("settings.on") : t("settings.off")}
-              </button>
-            </div>
-
-            <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <div className="text-sm text-gray-12">
-                    {updateState === "checking"
-                      ? t("settings.update_checking")
-                      : updateState === "available"
-                        ? t("settings.update_available_version", undefined, { version: updateVersion ?? "" })
-                        : updateState === "downloading"
-                          ? t("settings.update_downloading")
-                          : updateState === "ready"
-                            ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
-                            : updateState === "error"
-                              ? t("settings.update_check_failed")
-                              : t("settings.update_uptodate")}
-                  </div>
-
-                  {updateState === "idle" && updateLastCheckedAt ? (
-                    <div className="text-xs text-gray-7">
-                      {t("settings.update_last_checked", undefined, {
+    <LayoutStack>
+      {props.appVersion ? (
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>Current version</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription className="font-mono">v{props.appVersion}</LayoutSectionItemDescription>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      ) : null}
+      <LayoutSectionItem>
+              <LayoutSectionItemHeader>
+                <LayoutSectionItemTitle>
+                  {updateState === "checking"
+                    ? t("settings.update_checking")
+                    : updateState === "available"
+                      ? t("settings.update_available_version", undefined, { version: updateVersion ?? "" })
+                      : updateState === "downloading"
+                        ? t("settings.update_downloading")
+                        : updateState === "ready"
+                          ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
+                          : updateState === "error"
+                            ? t("settings.update_check_failed")
+                            : t("settings.update_uptodate")}
+                </LayoutSectionItemTitle>
+                <LayoutSectionItemDescription>
+                  {updateState === "idle" && updateLastCheckedAt
+                    ? t("settings.update_last_checked", undefined, {
                         time: formatRelativeTime(updateLastCheckedAt),
-                      })}
-                    </div>
-                  ) : null}
-
-                  {updateState === "available" && updateDate ? (
-                    <div className="text-xs text-gray-7">
-                      {t("settings.update_published", undefined, { date: updateDate })}
-                    </div>
-                  ) : null}
-
-                  {updateState === "downloading" ? (
-                    <div className="space-y-1.5">
-                      <div className="text-xs text-gray-7">
-                        {formatBytes(updateDownloadedBytes ?? 0)}
-                        {updateTotalBytes != null ? ` / ${formatBytes(updateTotalBytes)}` : ""}
-                        {updateTotalBytes != null && updateTotalBytes > 0
-                          ? ` (${Math.round(((updateDownloadedBytes ?? 0) / updateTotalBytes) * 100)}%)`
-                          : ""}
-                      </div>
-                      {updateTotalBytes != null && updateTotalBytes > 0 ? (
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-4">
-                          <div
-                            className="h-full rounded-full bg-dls-accent transition-[width] duration-300 ease-out"
-                            style={{ width: `${Math.min(100, Math.round(((updateDownloadedBytes ?? 0) / updateTotalBytes) * 100))}%` }}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {updateState === "error" && updateErrorMessage ? (
-                    <div className="text-xs text-red-11">{updateErrorMessage}</div>
-                  ) : null}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    className="h-9 rounded-full border-gray-6/60 bg-gray-1/70 px-4 py-0 text-xs hover:bg-gray-2/70"
-                    onClick={props.checkForUpdates}
-                    disabled={props.busy || updateState === "checking" || updateState === "downloading"}
-                  >
-                    {t("settings.update_check_button")}
-                  </Button>
-
-                  {updateState === "available" ? (
+                      })
+                    : updateState === "available" && updateDate
+                      ? t("settings.update_published", undefined, { date: updateDate })
+                      : null}
+                </LayoutSectionItemDescription>
+                <LayoutSectionItemHeaderActions>
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
-                      variant="secondary"
-                      className="h-9 rounded-full px-4 py-0 text-xs"
-                      onClick={props.downloadUpdate}
-                      disabled={props.busy}
+                      variant="outline"
+                      onClick={props.checkForUpdates}
+                      disabled={props.busy || updateState === "checking" || updateState === "downloading"}
                     >
-                      {t("settings.update_download_button")}
+                      {updateState === "checking" ? <Spinner className="size-4" /> : null}
+                      {t("settings.update_check_button")}
                     </Button>
-                  ) : null}
 
-                  {updateState === "ready" ? (
-                    <Button
-                      variant="secondary"
-                      className="h-9 rounded-full px-4 py-0 text-xs"
-                      onClick={props.installUpdateAndRestart}
-                      disabled={props.busy || props.anyActiveRuns}
-                      title={updateRestartBlockedMessage ?? ""}
-                    >
-                      {t("settings.update_install_button")}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
+                    {updateState === "available" ? (
+                      <Button
+                        variant="secondary"
+                        onClick={props.downloadUpdate}
+                        disabled={props.busy}
+                      >
+                        {t("settings.update_download_button")}
+                      </Button>
+                    ) : null}
+
+                    {updateState === "ready" ? (
+                      <Button
+                        variant="secondary"
+                        onClick={props.installUpdateAndRestart}
+                        disabled={props.busy || props.anyActiveRuns}
+                        title={updateRestartBlockedMessage ?? ""}
+                      >
+                        {t("settings.update_install_button")}
+                      </Button>
+                    ) : null}
+                  </div>
+                </LayoutSectionItemHeaderActions>
+              </LayoutSectionItemHeader>
+
+              {updateState === "downloading" ? (
+                <UpdateDownloadProgress downloadedBytes={updateDownloadedBytes} totalBytes={updateTotalBytes} />
+              ) : null}
+
+              {updateState === "error" && updateErrorMessage ? (
+                <Alert variant="destructive">
+                  <CircleAlert />
+                  <AlertDescription>{updateErrorMessage}</AlertDescription>
+                </Alert>
+              ) : null}
 
               {updateRestartBlockedMessage ? (
-                <div className="rounded-xl border border-amber-7/25 bg-amber-3/10 px-3 py-2 text-xs leading-relaxed text-amber-11">
-                  {updateRestartBlockedMessage}
-                </div>
+                <Alert>
+                  <Info />
+                  <AlertDescription>{updateRestartBlockedMessage}</AlertDescription>
+                </Alert>
               ) : null}
-            </div>
+            </LayoutSectionItem>
 
             {updateState === "available" && updateNotes ? (
-              <div className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl border border-gray-6 bg-gray-1/20 p-3 text-xs text-gray-11">
+              <LayoutSectionItem className="max-h-40 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
                 {updateNotes}
-              </div>
+              </LayoutSectionItem>
             ) : null}
+
+      {props.webDeployment ? (
+        <Alert>
+          <AlertDescription>{t("settings.updates_desktop_only")}</AlertDescription>
+        </Alert>
+      ) : props.updateEnv && props.updateEnv.supported === false ? (
+        <Alert>
+          <AlertDescription>{props.updateEnv.reason ?? t("settings.updates_not_supported")}</AlertDescription>
+        </Alert>
+      ) : (
+        <>
+        <Separator />
+          {props.alphaChannelSupported && props.releaseChannel ? (
+            <LayoutSectionItem>
+              <LayoutSectionItemHeader>
+                <LayoutSectionItemTitle>Release channel</LayoutSectionItemTitle>
+                <LayoutSectionItemDescription>
+                  Stable gets fully tested releases. Alpha includes the very latest changes but may be less polished (macOS only).
+                </LayoutSectionItemDescription>
+                <LayoutSectionItemHeaderActions>
+                  <Select
+                    value={props.releaseChannel}
+                    items={RELEASE_CHANNEL_OPTIONS}
+                    onValueChange={(value) => {
+                      if (value === "stable" || value === "alpha") {
+                        props.onReleaseChannelChange?.(value);
+                      }
+                    }}
+                    disabled={!props.onReleaseChannelChange}
+                  >
+                    <SelectTrigger aria-label="Release channel" className="w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {RELEASE_CHANNEL_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </LayoutSectionItemHeaderActions>
+              </LayoutSectionItemHeader>
+            </LayoutSectionItem>
+          ) : null}
+
+            <LayoutSectionItem>
+              <LayoutSectionItemHeader>
+                <LayoutSectionItemTitle>{t("settings.background_checks_title")}</LayoutSectionItemTitle>
+                <LayoutSectionItemDescription>{t("settings.background_checks_desc")}</LayoutSectionItemDescription>
+                <LayoutSectionItemHeaderActions>
+                  <Switch
+                    aria-label={t("settings.background_checks_title")}
+                    checked={props.updateAutoCheck}
+                    onCheckedChange={props.toggleUpdateAutoCheck}
+                  />
+                </LayoutSectionItemHeaderActions>
+              </LayoutSectionItemHeader>
+            </LayoutSectionItem>
+
+            <LayoutSectionItem>
+              <LayoutSectionItemHeader>
+                <LayoutSectionItemTitle>{t("settings.auto_update_title")}</LayoutSectionItemTitle>
+                <LayoutSectionItemDescription>{t("settings.auto_update_desc")}</LayoutSectionItemDescription>
+                <LayoutSectionItemHeaderActions>
+                  <Switch
+                    aria-label={t("settings.auto_update_title")}
+                    checked={props.updateAutoDownload}
+                    onCheckedChange={props.toggleUpdateAutoDownload}
+                  />
+                </LayoutSectionItemHeaderActions>
+              </LayoutSectionItemHeader>
+            </LayoutSectionItem>
+
+
           </>
-        )}
-      </div>
-    </div>
+      )}
+    </LayoutStack>
   );
 }
