@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
-import { revealDesktopItemInDir } from "../../../../app/lib/desktop";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
