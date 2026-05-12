@@ -501,6 +501,7 @@ export function SessionRoute() {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
+  const [disabledProviderIds, setDisabledProviderIds] = useState<string[]>([]);
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
   useEffect(() => {
@@ -1421,6 +1422,7 @@ export function SessionRoute() {
         disabledProviders = Array.isArray(config.disabled_providers)
           ? config.disabled_providers
           : [];
+        if (!cancelled) setDisabledProviderIds(disabledProviders);
       } catch {
         // ignore config read failures and continue with provider discovery
       }
@@ -2615,7 +2617,20 @@ export function SessionRoute() {
         }));
         setModelPickerOpen(false);
       }}
+      disabledProviders={disabledProviderIds}
       onBehaviorChange={() => {}}
+      onToggleProvider={async (providerId, enable) => {
+        if (!opencodeClient) return;
+        try {
+          const config = unwrap(await opencodeClient.config.get()) as { disabled_providers?: string[] };
+          const current = Array.isArray(config.disabled_providers) ? config.disabled_providers : [];
+          const next = enable
+            ? current.filter((id: string) => id !== providerId)
+            : [...current, providerId];
+          await opencodeClient.config.update({ config: { ...config, disabled_providers: next } });
+          setDisabledProviderIds(next);
+        } catch {}
+      }}
       onOpenSettings={() => {
         setModelPickerOpen(false);
         handleOpenSettings("/settings/general");

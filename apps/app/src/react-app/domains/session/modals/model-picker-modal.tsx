@@ -31,12 +31,16 @@ function isRecommendedModel(modelId: string): boolean {
 export type ModelPickerModalProps = {
   open: boolean;
   options: ModelOption[];
+  /** Provider IDs that are currently disabled (hidden from model list). */
+  disabledProviders?: string[];
   query: string;
   setQuery: (value: string) => void;
   target: "default" | "session";
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
   onBehaviorChange: (model: ModelRef, value: string | null) => void;
+  /** Toggle a provider on/off. When disabled, its models are hidden. */
+  onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
 };
@@ -46,6 +50,7 @@ type ProviderGroup = {
   name: string;
   isNew: boolean;
   isCloud: boolean;
+  isDisabled: boolean;
   hasCurrent: boolean;
   recommended: ModelOption[];
   other: ModelOption[];
@@ -69,12 +74,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     return () => cancelAnimationFrame(frame);
   }, [props.open]);
 
+  const disabledSet = useMemo(
+    () => new Set(props.disabledProviders ?? []),
+    [props.disabledProviders],
+  );
+
   // Filter by search query (searches providers AND models)
   const filteredOptions = useMemo(() => {
-    const connected = props.options.filter((o) => o.isConnected);
     const q = props.query.trim().toLowerCase();
-    if (!q) return connected;
-    return connected.filter(
+    if (!q) return props.options;
+    return props.options.filter(
       (o) =>
         o.title.toLowerCase().includes(q) ||
         o.providerID.toLowerCase().includes(q) ||
@@ -94,6 +103,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           name: opt.description ?? resolveProviderDisplayName(opt.providerID),
           isNew: !!opt.isRecommended,
           isCloud: opt.source === "cloud",
+          isDisabled: disabledSet.has(opt.providerID),
           hasCurrent: false,
           recommended: [],
           other: [],
@@ -109,13 +119,14 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         group.hasCurrent = true;
       }
     }
-    // Sort: new providers first, then providers with current default, then alpha
+    // Sort: enabled first, then new, then current, then alpha
     return [...map.values()].sort((a, b) => {
+      if (a.isDisabled !== b.isDisabled) return a.isDisabled ? 1 : -1;
       if (a.isNew !== b.isNew) return a.isNew ? -1 : 1;
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current]);
+  }, [filteredOptions, props.current, disabledSet]);
 
   // When searching, auto-expand all providers that have matching models
   useEffect(() => {
@@ -177,13 +188,13 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             <div>
               <h2 className="text-lg font-semibold text-dls-text">
                 {props.target === "default"
-                  ? t("model_picker.default_model")
-                  : t("model_picker.session_model")}
+                  ? t("model_picker.default_model_title")
+                  : t("model_picker.chat_model_title")}
               </h2>
               <p className="mt-0.5 text-[13px] text-dls-secondary">
                 {props.target === "default"
-                  ? t("model_picker.default_model_description")
-                  : t("model_picker.session_model_description")}
+                  ? t("model_picker.default_model_desc")
+                  : t("model_picker.chat_model_desc")}
               </p>
             </div>
             <button
@@ -222,7 +233,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   group={group}
                   expanded={expandedProviders.has(group.id)}
                   current={props.current}
-                  onToggle={() => toggleProvider(group.id)}
+                  canToggleProvider={!!props.onToggleProvider}
+                  onToggleExpand={() => toggleProvider(group.id)}
+                  onToggleProvider={props.onToggleProvider}
                   onSelect={handleSelectModel}
                 />
               ))
@@ -253,55 +266,80 @@ function ProviderAccordion({
   group,
   expanded,
   current,
-  onToggle,
+  canToggleProvider,
+  onToggleExpand,
+  onToggleProvider,
   onSelect,
 }: {
   group: ProviderGroup;
   expanded: boolean;
   current: ModelRef;
-  onToggle: () => void;
+  canToggleProvider: boolean;
+  onToggleExpand: () => void;
+  onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onSelect: (opt: ModelOption) => void;
 }) {
   const totalModels = group.recommended.length + group.other.length;
   const Chevron = expanded ? ChevronDown : ChevronRight;
 
   return (
-    <div>
+    <div className={group.isDisabled ? "opacity-50" : ""}>
       {/* Provider header */}
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-dls-hover"
-        onClick={onToggle}
-      >
-        <Chevron size={14} className="shrink-0 text-dls-secondary" />
-        <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
-        <div className="min-w-0 flex-1">
-          <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
-          <span className="ml-2 text-[11px] text-dls-secondary">
-            {totalModels} model{totalModels === 1 ? "" : "s"}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-dls-hover"
+          onClick={onToggleExpand}
+        >
+          <Chevron size={14} className="shrink-0 text-dls-secondary" />
+          <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
+          <div className="min-w-0 flex-1">
+            <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
+            <span className="ml-2 text-[11px] text-dls-secondary">
+              {totalModels} model{totalModels === 1 ? "" : "s"}
+            </span>
+          </div>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {group.isNew ? (
+              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
+                New
+              </span>
+            ) : null}
+            {group.isCloud ? (
+              <span className="rounded-md bg-blue-3/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-11/70">
+                Cloud
+              </span>
+            ) : null}
+            {group.hasCurrent ? (
+              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
+                Current
+              </span>
+            ) : null}
           </span>
-        </div>
-        <span className="flex shrink-0 items-center gap-1.5">
-          {group.isNew ? (
-            <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-              New
-            </span>
-          ) : null}
-          {group.isCloud ? (
-            <span className="rounded-md bg-blue-3/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-11/70">
-              Cloud
-            </span>
-          ) : null}
-          {group.hasCurrent ? (
-            <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
-              Current
-            </span>
-          ) : null}
-        </span>
-      </button>
+        </button>
+        {/* Enable/disable toggle */}
+        {canToggleProvider ? (
+          <button
+            type="button"
+            className={[
+              "mr-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors",
+              group.isDisabled
+                ? "border border-dls-border text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+                : "bg-green-3 text-green-11 hover:bg-green-4",
+            ].join(" ")}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleProvider?.(group.id, group.isDisabled);
+            }}
+            title={group.isDisabled ? "Enable this provider" : "Disable this provider"}
+          >
+            {group.isDisabled ? "Enable" : "Enabled"}
+          </button>
+        ) : null}
+      </div>
 
       {/* Models (expanded) */}
-      {expanded ? (
+      {expanded && !group.isDisabled ? (
         <div className="ml-9 space-y-0.5 pb-2 pt-0.5">
           {group.recommended.length > 0 ? (
             <>
