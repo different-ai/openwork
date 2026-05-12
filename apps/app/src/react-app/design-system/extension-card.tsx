@@ -71,22 +71,27 @@ export function ExtensionCard(props: ExtensionCardProps) {
     >
       <div className="flex items-start gap-3">
         {/* Icon */}
-        <div
-          className={`flex size-10 shrink-0 items-center justify-center rounded-lg border ${
-            connected ? "border-green-6 bg-green-3" : "border-dls-border bg-dls-hover"
-          }`}
-        >
-          {connecting ? (
-            <Loader2 size={18} className="animate-spin text-dls-secondary" />
-          ) : connected ? (
-            <CheckCircle2 size={18} className="text-green-11" />
-          ) : iconSrc ? (
-            <img src={iconSrc} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
-          ) : iconSlug ? (
-            <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
-          ) : (
-            <FallbackIcon size={18} className="text-dls-secondary" />
-          )}
+        <div className="relative shrink-0">
+          <div
+            className={`flex size-10 items-center justify-center rounded-lg border ${
+              connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover"
+            }`}
+          >
+            {connecting ? (
+              <Loader2 size={18} className="animate-spin text-dls-secondary" />
+            ) : iconSrc ? (
+              <img src={iconSrc} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
+            ) : iconSlug ? (
+              <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={18} height={18} loading="lazy" style={{ display: "block" }} />
+            ) : (
+              <FallbackIcon size={18} className="text-dls-secondary" />
+            )}
+          </div>
+          {connected ? (
+            <div className="absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border-2 border-white bg-green-9">
+              <CheckCircle2 size={9} className="text-white" strokeWidth={3} />
+            </div>
+          ) : null}
         </div>
 
         {/* Content */}

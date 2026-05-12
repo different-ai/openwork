@@ -21,7 +21,10 @@ export type ExtensionKind = "mcp" | "plugin" | "skill";
 
 export type McpDirectoryInfo = {
   id?: string;
+  /** Display name shown in the UI. */
   name: string;
+  /** Safe server name for opencode.jsonc (alphanumeric, - and _ only). Auto-derived from name if omitted. */
+  serverName?: string;
   description: string;
   url?: string;
   type?: "remote" | "local";
@@ -35,9 +38,20 @@ export type McpDirectoryInfo = {
   iconSrc?: string;
 };
 
+/** Derive a safe MCP server name from a display name or explicit serverName. */
+export function getMcpServerName(entry: McpDirectoryInfo): string {
+  if (entry.serverName) return entry.serverName;
+  return entry.name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "mcp";
+}
+
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   {
     get name() { return t("mcp.quick_connect_notion_title"); },
+    serverName: "notion",
     get description() { return t("mcp.quick_connect_notion_desc"); },
     url: "https://mcp.notion.com/mcp",
     type: "remote",
@@ -47,6 +61,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   },
   {
     get name() { return t("mcp.quick_connect_linear_title"); },
+    serverName: "linear",
     get description() { return t("mcp.quick_connect_linear_desc"); },
     url: "https://mcp.linear.app/mcp",
     type: "remote",
@@ -56,6 +71,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   },
   {
     get name() { return t("mcp.quick_connect_sentry_title"); },
+    serverName: "sentry",
     get description() { return t("mcp.quick_connect_sentry_desc"); },
     url: "https://mcp.sentry.dev/mcp",
     type: "remote",
@@ -65,6 +81,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   },
   {
     get name() { return t("mcp.quick_connect_stripe_title"); },
+    serverName: "stripe",
     get description() { return t("mcp.quick_connect_stripe_desc"); },
     url: "https://mcp.stripe.com",
     type: "remote",
@@ -74,6 +91,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   },
   {
     get name() { return t("mcp.quick_connect_context7_title"); },
+    serverName: "context7",
     get description() { return t("mcp.quick_connect_context7_desc"); },
     url: "https://mcp.context7.com/mcp",
     type: "remote",
@@ -83,6 +101,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
   },
   {
     get name() { return t("mcp.quick_connect_openwork_cloud_title"); },
+    serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
       try {
