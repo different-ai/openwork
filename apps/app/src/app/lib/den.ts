@@ -1245,7 +1245,7 @@ async function ensureActiveOrganization(
     return;
   }
 
-  await requestJson<unknown>(baseUrls, "/api/auth/organization/set-active", {
+  await requestJson<unknown>(baseUrls, "/v1/me/active-organization", {
     method: "POST",
     token,
     body: {
