@@ -1261,6 +1261,7 @@ export function SettingsRoute() {
             onStartInstall={() => void openshellState.startInstall()}
             onCancelInstall={() => void openshellState.cancelInstall()}
             onRestartGateway={() => void openshellState.restartGateway()}
+            onResetDistro={() => void openshellState.resetDistro()}
             onRefreshDoctor={() => void openshellState.refreshDoctor()}
             onOpenPolicyFolder={() => void openshellState.openPoliciesFolder()}
             os={platform.os}

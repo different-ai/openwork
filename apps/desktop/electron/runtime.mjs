@@ -8,6 +8,12 @@ import path from "node:path";
 
 import { openshellDoctor } from "./openshell/doctor.mjs";
 
+// Tracks per-workspace detached host metadata from orchestratorStartDetached
+// so orchestratorInstanceDispose can find and tear down the right
+// orchestrator + sandbox when a session closes. Keyed by
+// normalizeWorkspaceKey(workspacePath).
+const activeDetachedHosts = new Map();
+
 // Resolves the packaged banking-strict.yaml when openshell mode is
 // requested without an explicit --sandbox-policy override. Kept in sync
 // with main.mjs's resolveOpenShellPoliciesDir() — both look in the
@@ -1289,10 +1295,78 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
+  // Per spec §2.3: POST /shutdown to the orchestrator process, wait 5s
+  // for graceful exit, and — when the backend is openshell — delete the
+  // sandbox and clean up the staging dir. Idempotent: a dispose for a
+  // workspace with no tracked host is a no-op return true.
   async function orchestratorInstanceDispose(workspacePath) {
-    if (normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(workspacePath)) {
-      return true;
+    const key = normalizeWorkspaceKey(workspacePath);
+    const host = activeDetachedHosts.get(key);
+    if (!host) return true;
+
+    // 1. Ask the orchestrator child to exit gracefully. Best-effort —
+    // if it's already gone we just continue to teardown.
+    if (host.openworkUrl) {
+      try {
+        await fetch(`${host.openworkUrl.replace(/\/+$/, "")}/shutdown`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(host.hostToken ? { Authorization: `Bearer ${host.hostToken}` } : {}),
+          },
+        });
+      } catch {
+        // The orchestrator child may already be down; that's fine.
+      }
     }
+
+    // 2. Wait up to 5s for the orchestrator to exit on its own. We don't
+    // have the child process handle (it was detach+unref'd), so we just
+    // sleep — the orchestrator typically exits in <2s after /shutdown.
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+
+    // 3. OpenShell-specific: explicit sandbox delete so the pod doesn't
+    // linger after the orchestrator dies. spawnSync + --force makes
+    // this idempotent against an already-deleted sandbox.
+    if (host.sandboxBackend === "openshell" && host.sandboxContainerName) {
+      try {
+        spawnSync(
+          "wsl.exe",
+          [
+            "-d",
+            "openwork-openshell",
+            "--",
+            "openshell",
+            "sandbox",
+            "delete",
+            host.sandboxContainerName,
+            "--force",
+          ],
+          { windowsHide: true, timeout: 30_000 },
+        );
+      } catch {
+        // Best-effort teardown — the next session start would surface
+        // a residual sandbox via the listSandboxes IPC anyway.
+      }
+    }
+
+    // 4. Clean the staging directory the orchestrator child used. The
+    // path is the same pattern as cli.ts's stageSandboxRuntime base.
+    if (host.sandboxRunId) {
+      const stagingDir = path.join(
+        os.homedir(),
+        ".openwork",
+        "runs",
+        host.sandboxRunId,
+      );
+      try {
+        await rm(stagingDir, { recursive: true, force: true });
+      } catch {
+        // Permission errors or already-removed: ignore.
+      }
+    }
+
+    activeDetachedHosts.delete(key);
     return true;
   }
 
@@ -1569,7 +1643,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     await waitForHttpOk(`${openworkUrl}/health`, wantsContainerSandbox ? 90_000 : 12_000);
     const ownerToken = await issueOwnerToken(openworkUrl, hostToken).catch(() => null);
 
-    return {
+    const hostInfo = {
       openworkUrl,
       token,
       ownerToken,
@@ -1579,6 +1653,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       sandboxRunId: wantsContainerSandbox ? runId : null,
       sandboxContainerName: containerName,
     };
+    activeDetachedHosts.set(normalizeWorkspaceKey(workspacePath), hostInfo);
+    return hostInfo;
   }
 
   async function sandboxDebugProbe() {

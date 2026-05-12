@@ -1485,6 +1485,49 @@ async function handleDesktopInvoke(event, command, ...args) {
       openshellInstaller.abortController?.abort();
       return { status: "cancelling" };
     }
+    case "openshellResetDistro": {
+      // Per spec §5 row "Distro corrupts (rare but happens)". Tear the
+      // distro down completely so the installer can re-import from the
+      // bundled rootfs on next launch. Destructive — gate behind an
+      // explicit confirmation dialog.
+      const choice = await dialog.showMessageBox(activeWindowFromEvent(event), {
+        type: "warning",
+        title: "Reset OpenShell distro?",
+        message: "This wipes the openwork-openshell WSL distro and clears installer state.",
+        detail:
+          "Any data inside the distro (Docker images, OpenShell sandboxes, downloaded packages) " +
+          "is lost. Your OpenWork workspaces on the Windows side are untouched. " +
+          "The next launch will re-run the setup wizard from scratch.",
+        buttons: ["Reset distro", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (choice.response !== 0) {
+        return { status: "cancelled" };
+      }
+      // Terminate then unregister. --terminate is required first because
+      // --unregister refuses to act on a running distro.
+      try {
+        await wslRun(["-t", OPENSHELL_DISTRO_NAME], { timeout: 15_000 });
+      } catch {
+        // Distro may already be stopped.
+      }
+      try {
+        await wslRun(["--unregister", OPENSHELL_DISTRO_NAME], { timeout: 30_000 });
+      } catch (err) {
+        throw new Error(
+          `Could not unregister distro: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // Wipe installer state so the next run re-executes every phase.
+      const stateFile = path.join(os.homedir(), ".openwork", "openshell-install.json");
+      try {
+        await rm(stateFile, { force: true });
+      } catch {
+        // Best-effort.
+      }
+      return { status: "reset", path: stateFile };
+    }
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }

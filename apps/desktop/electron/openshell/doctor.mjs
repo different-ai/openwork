@@ -321,6 +321,187 @@ async function checkOpenShellCli() {
   }
 }
 
+// Disk usage inside the distro. Spec §5 row "User runs out of disk":
+// surface a warn at <10% free, missing at <5% (sandbox creation will
+// fail). We probe via `df -B1 --output=avail,size /` so the parse is a
+// pair of plain integers (no SI suffixes to deal with).
+/** @returns {Promise<OpenShellComponent>} */
+async function checkDiskUsage() {
+  try {
+    const r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "df", "-B1", "--output=avail,size", "/"],
+      { timeout: 10_000 },
+    );
+    if (r.exitCode !== 0) {
+      return {
+        id: "disk",
+        label: "Disk (in distro)",
+        state: "unknown",
+        version: null,
+        detail: r.stderr || "df failed inside distro.",
+        actionable: null,
+      };
+    }
+    // df --output=avail,size emits a header line then one data line:
+    //   Avail      1B-blocks
+    //   <bytes>    <bytes>
+    const dataLine = r.stdout.split(/\r?\n/).map((l) => l.trim()).find((l, idx, all) => idx > 0 && l.length > 0 && all[0].toLowerCase().includes("avail"));
+    if (!dataLine) {
+      return {
+        id: "disk",
+        label: "Disk (in distro)",
+        state: "unknown",
+        version: null,
+        detail: "Could not parse df output.",
+        actionable: null,
+      };
+    }
+    const [availStr, totalStr] = dataLine.split(/\s+/);
+    const avail = Number(availStr);
+    const total = Number(totalStr);
+    if (!Number.isFinite(avail) || !Number.isFinite(total) || total === 0) {
+      return {
+        id: "disk",
+        label: "Disk (in distro)",
+        state: "unknown",
+        version: null,
+        detail: "Could not parse df output.",
+        actionable: null,
+      };
+    }
+    const freeRatio = avail / total;
+    const summary = `${formatBytes(avail)} free of ${formatBytes(total)}`;
+    if (freeRatio < 0.05) {
+      return {
+        id: "disk",
+        label: "Disk (in distro)",
+        state: "missing",
+        version: summary,
+        detail: `Only ${(freeRatio * 100).toFixed(1)}% free; sandbox creation may fail.`,
+        actionable:
+          "Reclaim space: `wsl -d openwork-openshell -- docker image prune -af` " +
+          "and `wsl --shrink openwork-openshell` from PowerShell.",
+      };
+    }
+    if (freeRatio < 0.10) {
+      return {
+        id: "disk",
+        label: "Disk (in distro)",
+        state: "warn",
+        version: summary,
+        detail: `${(freeRatio * 100).toFixed(1)}% free.`,
+        actionable:
+          "Consider `wsl -d openwork-openshell -- docker image prune -af` " +
+          "to reclaim space before the next session.",
+      };
+    }
+    return {
+      id: "disk",
+      label: "Disk (in distro)",
+      state: "ok",
+      version: summary,
+      detail: null,
+      actionable: null,
+    };
+  } catch (err) {
+    return {
+      id: "disk",
+      label: "Disk (in distro)",
+      state: "unknown",
+      version: null,
+      detail: `Could not probe disk: ${err.message || err}`,
+      actionable: null,
+    };
+  }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return String(bytes);
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
+// Orphan wsl-side processes. Spec §5 row "wsl.exe orphan accumulates
+// over a day". When a sandbox lifecycle breaks down (the WSL #12159 bug
+// or an EDR mid-kill), agent processes can survive their parent and
+// pile up. > 5 surviving processes is the spec's trigger for a
+// "Restart OpenShell" toast.
+/** @returns {Promise<OpenShellComponent>} */
+async function checkOrphans() {
+  try {
+    // pgrep -fc matches against the full command line and prints the
+    // count. We look for shell processes owned by PID 1 — the canonical
+    // shape an orphan takes after its parent exits in WSL.
+    const r = await wslRun(
+      [
+        "-d",
+        DISTRO_NAME,
+        "--",
+        "bash",
+        "-c",
+        "ps -eo ppid,pid,comm --no-headers | awk '$1 == 1 && $3 ~ /^(sh|bash|openshell|node)$/' | wc -l",
+      ],
+      { timeout: 10_000 },
+    );
+    if (r.exitCode !== 0) {
+      return {
+        id: "orphans",
+        label: "WSL orphan processes",
+        state: "unknown",
+        version: null,
+        detail: r.stderr || "Could not enumerate processes.",
+        actionable: null,
+      };
+    }
+    const count = Number(r.stdout.trim());
+    if (!Number.isFinite(count)) {
+      return {
+        id: "orphans",
+        label: "WSL orphan processes",
+        state: "unknown",
+        version: null,
+        detail: "Could not parse orphan count.",
+        actionable: null,
+      };
+    }
+    if (count > 5) {
+      return {
+        id: "orphans",
+        label: "WSL orphan processes",
+        state: "warn",
+        version: String(count),
+        detail: `${count} orphaned processes inside the distro.`,
+        actionable:
+          "Restart OpenShell: `wsl --terminate openwork-openshell` from PowerShell " +
+          "(then relaunch the app). Workspaces are not affected.",
+      };
+    }
+    return {
+      id: "orphans",
+      label: "WSL orphan processes",
+      state: "ok",
+      version: String(count),
+      detail: null,
+      actionable: null,
+    };
+  } catch (err) {
+    return {
+      id: "orphans",
+      label: "WSL orphan processes",
+      state: "unknown",
+      version: null,
+      detail: `Could not probe orphans: ${err.message || err}`,
+      actionable: null,
+    };
+  }
+}
+
 // 7. OpenShell gateway pod is Ready. The gateway is what spawns per-session
 // sandboxes; without it, sandbox creation is impossible.
 /** @returns {Promise<OpenShellComponent>} */
@@ -409,6 +590,8 @@ export async function openshellDoctor() {
     await checkDockerInDistro(),
     await checkOpenShellCli(),
     await checkOpenShellGateway(),
+    await checkDiskUsage(),
+    await checkOrphans(),
   ];
   return {
     status: aggregateStatus(components),
@@ -431,4 +614,6 @@ export const __testing = {
   checkDockerInDistro,
   checkOpenShellCli,
   checkOpenShellGateway,
+  checkDiskUsage,
+  checkOrphans,
 };

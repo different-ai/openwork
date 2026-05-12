@@ -206,6 +206,26 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     }
   }, []);
 
+  const resetDistro = useCallback(async () => {
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const result = await invoke<{ status: string }>("openshellResetDistro");
+      if (result?.status === "reset") {
+        // Force a fresh doctor + installer-state read so the UI snaps to
+        // "Install OpenShell" instead of showing a green checklist for a
+        // distro that no longer exists.
+        await refreshDoctor();
+        await refreshInstallStatus();
+        setProgressLog([]);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }, [refreshDoctor, refreshInstallStatus]);
+
   return {
     doctor,
     doctorLoading,
@@ -218,6 +238,7 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     startInstall,
     cancelInstall,
     restartGateway,
+    resetDistro,
     openPoliciesFolder,
     refreshDoctor,
     refreshInstallStatus,

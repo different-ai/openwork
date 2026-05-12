@@ -57,6 +57,7 @@ export type SandboxViewProps = {
   onStartInstall: () => void;
   onCancelInstall: () => void;
   onRestartGateway: () => void;
+  onResetDistro: () => void;
   onRefreshDoctor: () => void;
   onOpenPolicyFolder?: () => void;
   /** Host OS as reported by the platform kernel. Drives the install-button
@@ -282,6 +283,16 @@ export function SandboxView(props: SandboxViewProps) {
                 Restart gateway
               </Button>
             ) : null}
+            {/* Destructive — confirmation dialog lives in the main process. */}
+            <Button
+              variant="outline"
+              className="border-red-7/50 text-red-12 hover:bg-red-2/30"
+              onClick={props.onResetDistro}
+              disabled={props.actionBusy || props.os !== "windows"}
+              title="Wipes the distro and reruns setup. Use if OpenShell is corrupted."
+            >
+              Reset distro
+            </Button>
           </div>
 
           {props.actionError ? (

@@ -224,6 +224,87 @@ test("checkOpenShellGateway: non-zero exit → missing", async () => {
   assert.equal(c.state, "missing");
 });
 
+// ── checkDiskUsage ─────────────────────────────────────────────────────
+
+test("checkDiskUsage: plenty of free space → ok", async () => {
+  // df -B1 --output=avail,size emits header line then data line.
+  // 80 GB free of 100 GB → 80% free.
+  process.env.MOCK_WSL_STDOUT =
+    "    Avail      1B-blocks\n" +
+    "85899345920  107374182400\n";
+  const c = await __testing.checkDiskUsage();
+  assert.equal(c.state, "ok");
+  assert.match(c.version, /80 GB free of 100 GB|free/i);
+});
+
+test("checkDiskUsage: < 10% free → warn", async () => {
+  // 8 GB free of 100 GB → 8% free.
+  process.env.MOCK_WSL_STDOUT =
+    "    Avail      1B-blocks\n" +
+    "8589934592   107374182400\n";
+  const c = await __testing.checkDiskUsage();
+  assert.equal(c.state, "warn");
+  assert.match(c.actionable, /docker image prune/i);
+});
+
+test("checkDiskUsage: < 5% free → missing", async () => {
+  // 2 GB free of 100 GB → 2% free.
+  process.env.MOCK_WSL_STDOUT =
+    "    Avail      1B-blocks\n" +
+    "2147483648   107374182400\n";
+  const c = await __testing.checkDiskUsage();
+  assert.equal(c.state, "missing");
+  assert.match(c.actionable, /wsl --shrink|prune/i);
+});
+
+test("checkDiskUsage: df failure → unknown", async () => {
+  process.env.MOCK_WSL_EXIT = "1";
+  process.env.MOCK_WSL_STDERR = "df: /: No such file";
+  const c = await __testing.checkDiskUsage();
+  assert.equal(c.state, "unknown");
+});
+
+test("checkDiskUsage: unparseable output → unknown", async () => {
+  process.env.MOCK_WSL_STDOUT = "not a df table";
+  const c = await __testing.checkDiskUsage();
+  assert.equal(c.state, "unknown");
+});
+
+// ── checkOrphans ───────────────────────────────────────────────────────
+
+test("checkOrphans: zero orphans → ok", async () => {
+  process.env.MOCK_WSL_STDOUT = "0\n";
+  const c = await __testing.checkOrphans();
+  assert.equal(c.state, "ok");
+  assert.equal(c.version, "0");
+});
+
+test("checkOrphans: handful (≤5) → still ok", async () => {
+  process.env.MOCK_WSL_STDOUT = "3\n";
+  const c = await __testing.checkOrphans();
+  assert.equal(c.state, "ok");
+});
+
+test("checkOrphans: > 5 orphans → warn with restart hint", async () => {
+  process.env.MOCK_WSL_STDOUT = "12\n";
+  const c = await __testing.checkOrphans();
+  assert.equal(c.state, "warn");
+  assert.match(c.actionable, /wsl --terminate/i);
+  assert.equal(c.version, "12");
+});
+
+test("checkOrphans: non-zero exit → unknown", async () => {
+  process.env.MOCK_WSL_EXIT = "1";
+  const c = await __testing.checkOrphans();
+  assert.equal(c.state, "unknown");
+});
+
+test("checkOrphans: non-numeric output → unknown", async () => {
+  process.env.MOCK_WSL_STDOUT = "not a number";
+  const c = await __testing.checkOrphans();
+  assert.equal(c.state, "unknown");
+});
+
 // ── aggregateStatus matrix ─────────────────────────────────────────────
 
 function mkComp(id, state) {
@@ -331,10 +412,20 @@ test("openshellDoctor returns a well-formed result on non-Windows host", async (
   process.env.MOCK_WSL_EXIT = "1";
   const result = await doctor.openshellDoctor();
   assert.ok(["ready", "degraded", "missing", "unsupported"].includes(result.status));
-  assert.equal(result.components.length, 7);
+  assert.equal(result.components.length, 9);
   assert.deepEqual(
     result.components.map((c) => c.id),
-    ["windows", "hyperv", "wsl", "distro", "docker", "openshell-cli", "openshell-gateway"],
+    [
+      "windows",
+      "hyperv",
+      "wsl",
+      "distro",
+      "docker",
+      "openshell-cli",
+      "openshell-gateway",
+      "disk",
+      "orphans",
+    ],
   );
   assert.ok(Array.isArray(result.actionable));
   assert.ok(Array.isArray(result.fatal));
