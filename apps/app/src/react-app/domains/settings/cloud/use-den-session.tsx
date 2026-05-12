@@ -156,6 +156,8 @@ export function useDenSession({
       setBaseUrlError(null);
       setAuthError(null);
       setStatusMessage(message ?? null);
+      // Notify provider auth store so it can clean up cloud-imported providers
+      dispatchDenSessionUpdated({ status: "signed_out" });
     },
     [clearSessionState, developerMode, setAuthToken, setBaseUrl],
   );
