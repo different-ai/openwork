@@ -139,10 +139,21 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
           <text x="388" y="245" textAnchor="middle" fontSize="7" fill="var(--dls-text-secondary)" opacity="0.3">{"\u2699"}</text>
         </g>
 
-        {/* Browser panel edge */}
-        {config.browser ? (
-          <line x1="399" y1="31" x2="399" y2="226" stroke="var(--dls-accent)" strokeWidth="2" opacity="0.15" strokeDasharray="4 3" />
-        ) : null}
+        {/* Browser panel */}
+        <g className="transition-all duration-300" style={{ opacity: config.browser ? 1 : 0 }}>
+          <line x1={cx + cw - 120} y1="31" x2={cx + cw - 120} y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
+          <rect x={cx + cw - 120} y="31" width="120" height="195" fill="var(--dls-hover)" opacity="0.5" />
+          {/* Browser chrome */}
+          <rect x={cx + cw - 115} y="36" width="110" height="14" rx="4" fill="var(--dls-surface)" />
+          <circle cx={cx + cw - 108} cy="43" r="2" fill="var(--dls-text-secondary)" opacity="0.2" />
+          <circle cx={cx + cw - 100} cy="43" r="2" fill="var(--dls-text-secondary)" opacity="0.2" />
+          <rect x={cx + cw - 92} y="40" width="60" height="6" rx="3" fill="var(--dls-text-secondary)" opacity="0.08" />
+          {/* Page content placeholder */}
+          <rect x={cx + cw - 112} y="56" width="100" height="6" rx="2" fill="var(--dls-text-secondary)" opacity="0.07" />
+          <rect x={cx + cw - 112} y="66" width="80" height="6" rx="2" fill="var(--dls-text-secondary)" opacity="0.05" />
+          <rect x={cx + cw - 112} y="76" width="90" height="6" rx="2" fill="var(--dls-text-secondary)" opacity="0.05" />
+          <rect x={cx + cw - 112} y="92" width="100" height="50" rx="4" fill="var(--dls-surface)" opacity="0.6" />
+        </g>
       </svg>
     </div>
   );
