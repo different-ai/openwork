@@ -196,6 +196,19 @@ function resolveOpenShellRootfsPath() {
   return path.join(base, "openshell", "ubuntu-24.04-openshell.tar.gz");
 }
 
+function resolveOpenShellPoliciesDir() {
+  // In production the policies are mapped to process.resourcesPath/openshell-policies
+  // by electron-builder.yml (Phase 9). In dev we fall back to the
+  // source directory so devs see the policies they're editing.
+  const override = process.env.OPENWORK_OPENSHELL_POLICIES_DIR;
+  if (override) return override;
+  if (process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, "openshell-policies");
+    if (existsSync(packaged)) return packaged;
+  }
+  return path.join(__dirname, "..", "..", "orchestrator", "policies");
+}
+
 function emitOpenShellInstallProgress(payload) {
   openshellInstaller.lastEvent = payload;
   try {
@@ -1371,11 +1384,33 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       return { ok: true };
     }
-    case "openshellListPolicies":
-      // Phase 8 will ship default policies under apps/orchestrator/policies/
-      // and electron-builder.yml will map them to a known extraResource path.
-      // Returning an empty array keeps the IPC contract stable until then.
-      return [];
+    case "openshellListPolicies": {
+      // Lists the bundled policy YAML files. Returns just filenames for
+      // now; the UI doesn't need richer metadata yet, and the YAML
+      // schema validation happens inside the openshell binary at
+      // sandbox-create time.
+      const dir = resolveOpenShellPoliciesDir();
+      try {
+        const entries = await readdir(dir);
+        return entries
+          .filter((name) => name.endsWith(".yaml") || name.endsWith(".yml"))
+          .sort();
+      } catch {
+        return [];
+      }
+    }
+    case "openshellOpenPoliciesFolder": {
+      const dir = resolveOpenShellPoliciesDir();
+      try {
+        const err = await shell.openPath(dir);
+        if (err) throw new Error(err);
+        return { ok: true, path: dir };
+      } catch (err) {
+        throw new Error(
+          `Could not open policy folder at ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     case "openshellInstallStart": {
       if (openshellInstaller.promise) {
         return { status: "running", lastEvent: openshellInstaller.lastEvent };

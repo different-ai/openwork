@@ -1,0 +1,130 @@
+# Banking-strict policy. Shipped as the default for production banker
+# workspaces. The customer's IT team can override per deployment via a
+# deployment profile (the same pattern Rancher Desktop documents at
+# docs.rancherdesktop.io/getting-started/deployment).
+#
+# Egress: ONLY firm-allowlisted internal endpoints, plus the canonical
+# Anthropic and OpenAI API hosts for LLM traffic. No SMB, no SSH, no
+# DNS to public resolvers.
+#
+# Filesystem: read-write only inside /workspace; everything else
+# read-only. The sandbox cannot write a file the banker's laptop will
+# ever see directly.
+#
+# Resource caps: 2 vCPU, 4 GB RAM, 10 GB disk. Hard enough that a
+# pathological agent loop can't take down the system.
+#
+# Approval-required: any outbound HTTP to non-allowlisted hosts. The
+# OpenWork approval flow surfaces these as banker-confirmable prompts.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /opt
+    - /var/log
+    - /proc
+    - /dev/urandom
+    - /dev/random
+  read_write:
+    - /workspace
+    - /tmp
+    - /dev/null
+    - /dev/zero
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+  deny_binaries:
+    - /usr/bin/tcpdump
+    - /usr/sbin/tcpdump
+    - /usr/bin/nmap
+    - /usr/sbin/nmap
+    - /usr/bin/insmod
+    - /usr/sbin/insmod
+    - /usr/bin/modprobe
+    - /usr/sbin/modprobe
+    - /usr/bin/iptables
+    - /usr/sbin/iptables
+
+network_policies:
+
+  # ── LLM providers ───────────────────────────────────────────────────
+  # Both Anthropic and OpenAI APIs are allowed so the agent can talk
+  # through whichever provider OpenWork is configured against.
+  anthropic:
+    name: anthropic
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
+  openai:
+    name: openai
+    endpoints:
+      - host: api.openai.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
+  # ── Firm-allowlisted internal endpoints ────────────────────────────
+  # IT replaces these placeholders with the real Bloomberg, Refinitiv,
+  # internal-research, and risk-system hosts as part of deployment. The
+  # default shapes are kept so the YAML validates and an operator can
+  # see what shape the override should take.
+  firm_internal:
+    name: firm-internal
+    endpoints:
+      - { host: REPLACE.internal.bank.invalid, port: 443 }
+      - { host: REPLACE-research.internal.bank.invalid, port: 443 }
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
+# Hosts that bypass the deny rule but still surface as an approval prompt
+# in OpenWork. Useful for "I'm pretty sure I want this once" cases where
+# adding the host to network_policies is overkill.
+approval_required_hosts:
+  - "*.openwork.app"
+
+# Explicit denies that override any allow chain. SMB, SSH, common file
+# share ports are blocked outright. Public DNS resolvers (1.1.1.1,
+# 8.8.8.8, 9.9.9.9) are blocked so the sandbox can't bypass internal
+# split-horizon DNS.
+deny_egress:
+  - port: 22       # SSH
+  - port: 445      # SMB
+  - port: 137      # NetBIOS
+  - port: 138      # NetBIOS datagram
+  - port: 139      # NetBIOS session
+  - host: 1.1.1.1
+  - host: 1.0.0.1
+  - host: 8.8.8.8
+  - host: 8.8.4.4
+  - host: 9.9.9.9
+
+resources:
+  cpu: "2"
+  memory: "4Gi"
+  disk: "10Gi"

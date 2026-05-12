@@ -1,0 +1,68 @@
+# Privacy Router configuration. OpenShell's Privacy Router sits between
+# the agent process and the outbound LLM call, redacting matched
+# patterns from the prompt before the request leaves the sandbox. The
+# substitutions are reversed on the response so the agent sees the
+# original values in its replies.
+#
+# The patterns here cover what compliance commonly flags in
+# banker-facing tools. Bank IT can layer additional ones via a
+# deployment profile.
+
+version: 1
+
+# Mode: "redact" replaces matches with a sentinel. "drop" causes the
+# entire request to fail with an audit log entry; use sparingly for
+# fields that should never reach the LLM at all.
+default_mode: redact
+
+# Sentinel format. ${id} is replaced with a stable opaque id per match
+# so the agent can refer back to the same redacted value within a
+# conversation without seeing the underlying string.
+sentinel_template: "[REDACTED-${kind}-${id}]"
+
+patterns:
+
+  # CUSIP — 9-character alphanumeric, last digit is check.
+  # Real CUSIPs are stricter than this regex; the broader match is
+  # intentional so near-misses get redacted out of caution.
+  - kind: cusip
+    regex: '\b[A-Z0-9]{8}[0-9]\b'
+    mode: redact
+
+  # ISIN — 12-character: 2-letter country code, 9 chars, 1-digit check.
+  - kind: isin
+    regex: '\b[A-Z]{2}[A-Z0-9]{9}[0-9]\b'
+    mode: redact
+
+  # US bank account numbers — 8-17 digits in account-like contexts.
+  # The leading context keyword keeps the regex from grabbing every
+  # 10-digit number it sees.
+  - kind: account-us
+    regex: '(?i)(?:account|acct|a/c|account\s*number|account\s*#)\s*[:#]?\s*(\d{8,17})'
+    mode: redact
+    capture_group: 1
+
+  # US ABA routing numbers (9 digits, first digit 0-1, 2 specifies
+  # Fed district).
+  - kind: aba-routing
+    regex: '\b[01]\d{8}\b'
+    mode: redact
+
+  # SSN-shaped strings (US). Bankers don't usually paste these into an
+  # agent prompt; the redaction is a defense-in-depth measure.
+  - kind: ssn
+    regex: '\b\d{3}-\d{2}-\d{4}\b'
+    mode: drop
+
+  # Credit-card-shaped strings. Same defense-in-depth rationale.
+  - kind: credit-card
+    regex: '\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b'
+    mode: drop
+
+# Hosts where the Privacy Router is bypassed. Useful for firm-internal
+# LLM proxies that already handle PII redaction at the gateway.
+bypass_hosts: []
+
+# Audit log destination inside the sandbox. The orchestrator picks this
+# file up at session-end and writes it into the run's transcript.
+audit_log: /workspace/.openwork/privacy-router-audit.jsonl

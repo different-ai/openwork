@@ -1,0 +1,58 @@
+# Conservative default policy for OpenShell sandboxes spawned by OpenWork.
+# Use when no other policy applies. Denies the public internet outright,
+# allows the agent to touch only /workspace, and pins resource usage low
+# so a runaway sandbox can't starve the banker's laptop.
+#
+# The schema mirrors NVIDIA's stock OpenShell policy format. See
+# https://github.com/NVIDIA/OpenShell-Community for canonical reference.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /opt
+    - /var/log
+    - /proc
+    - /dev/urandom
+    - /dev/random
+  read_write:
+    - /workspace
+    - /tmp
+    - /dev/null
+    - /dev/zero
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+  # No tools that exfiltrate kernel state or sniff traffic. Adding more
+  # binaries here than absolutely necessary turns the deny list into a
+  # whack-a-mole exercise; the network deny + read-only fs combination
+  # already blocks the bulk of escape attempts.
+  deny_binaries:
+    - /usr/bin/tcpdump
+    - /usr/sbin/tcpdump
+    - /usr/bin/insmod
+    - /usr/sbin/insmod
+    - /usr/bin/modprobe
+    - /usr/sbin/modprobe
+
+# Default mode: no network at all. Other profiles inherit this shape
+# and selectively allowlist endpoints.
+network_policies: {}
+
+# Resource caps low enough that a misbehaving agent won't starve the
+# banker's laptop. Override per-workspace if a specific job needs more.
+resources:
+  cpu: "2"
+  memory: "4Gi"
+  disk: "10Gi"

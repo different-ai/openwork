@@ -1262,6 +1262,7 @@ export function SettingsRoute() {
             onCancelInstall={() => void openshellState.cancelInstall()}
             onRestartGateway={() => void openshellState.restartGateway()}
             onRefreshDoctor={() => void openshellState.refreshDoctor()}
+            onOpenPolicyFolder={() => void openshellState.openPoliciesFolder()}
             os={platform.os}
           />
         );

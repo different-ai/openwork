@@ -1,0 +1,134 @@
+# Broader policy for research analysts. Adds the common paper / data
+# sources we observed analysts asking the agent to fetch from, on top of
+# the banking-strict baseline. Resource caps are unchanged — the LLM
+# provider is what eats memory, not the analyst's grep.
+#
+# IT should review the allowlist below before deploying — internal
+# research portals (Bloomberg Terminal, Refinitiv, internal SharePoint)
+# almost always belong here too and aren't enumerated by default.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /lib64
+    - /bin
+    - /sbin
+    - /etc
+    - /opt
+    - /var/log
+    - /proc
+    - /dev/urandom
+    - /dev/random
+  read_write:
+    - /workspace
+    - /tmp
+    - /dev/null
+    - /dev/zero
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+  deny_binaries:
+    - /usr/bin/tcpdump
+    - /usr/sbin/tcpdump
+    - /usr/bin/nmap
+    - /usr/sbin/nmap
+    - /usr/bin/insmod
+    - /usr/sbin/insmod
+    - /usr/bin/modprobe
+    - /usr/sbin/modprobe
+
+network_policies:
+
+  # ── LLM providers (same as banking-strict) ─────────────────────────
+  anthropic:
+    name: anthropic
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
+  openai:
+    name: openai
+    endpoints:
+      - host: api.openai.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/node }
+
+  # ── Research / paper sources ───────────────────────────────────────
+  arxiv:
+    name: arxiv
+    endpoints:
+      - { host: arxiv.org, port: 443 }
+      - { host: export.arxiv.org, port: 443 }
+
+  pubmed:
+    name: pubmed
+    endpoints:
+      - { host: pubmed.ncbi.nlm.nih.gov, port: 443 }
+      - { host: eutils.ncbi.nlm.nih.gov, port: 443 }
+
+  semantic_scholar:
+    name: semantic-scholar
+    endpoints:
+      - { host: api.semanticscholar.org, port: 443 }
+      - { host: www.semanticscholar.org, port: 443 }
+
+  ssrn:
+    name: ssrn
+    endpoints:
+      - { host: papers.ssrn.com, port: 443 }
+      - { host: www.ssrn.com, port: 443 }
+
+  # ── Public market data (read-only) ─────────────────────────────────
+  sec_edgar:
+    name: sec-edgar
+    endpoints:
+      - { host: www.sec.gov, port: 443 }
+      - { host: data.sec.gov, port: 443 }
+
+  fred:
+    name: fred-st-louis-fed
+    endpoints:
+      - { host: api.stlouisfed.org, port: 443 }
+      - { host: fred.stlouisfed.org, port: 443 }
+
+# Approval is still required for anything outside this list.
+approval_required_hosts:
+  - "*"
+
+deny_egress:
+  - port: 22
+  - port: 445
+  - port: 137
+  - port: 138
+  - port: 139
+  - host: 1.1.1.1
+  - host: 1.0.0.1
+  - host: 8.8.8.8
+  - host: 8.8.4.4
+  - host: 9.9.9.9
+
+resources:
+  cpu: "2"
+  memory: "4Gi"
+  disk: "10Gi"

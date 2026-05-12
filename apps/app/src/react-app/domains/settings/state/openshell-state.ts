@@ -197,6 +197,15 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     }
   }, [refreshDoctor]);
 
+  const openPoliciesFolder = useCallback(async () => {
+    setActionError(null);
+    try {
+      await invoke("openshellOpenPoliciesFolder");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   return {
     doctor,
     doctorLoading,
@@ -209,6 +218,7 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     startInstall,
     cancelInstall,
     restartGateway,
+    openPoliciesFolder,
     refreshDoctor,
     refreshInstallStatus,
     refreshPolicies,
