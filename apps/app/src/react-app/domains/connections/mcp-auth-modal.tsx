@@ -324,7 +324,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setCliAuthResult(null);
 
     try {
-      const result = await opencodeMcpAuth(props.projectDir, props.entry.name);
+      const result = await opencodeMcpAuth(props.projectDir, props.entry.name) as { ok: boolean; stderr?: string; stdout?: string };
       if (result.ok) {
         setError(null);
         setNeedsReload(true);

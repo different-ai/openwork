@@ -2319,7 +2319,16 @@ export function SessionRoute() {
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
       providerConnectedIds={providerConnectedIds}
       providers={providers}
-      providerNotifications={providerChangeDetection}
+      providerNotifications={{
+        ...providerChangeDetection,
+        switchDefault: (providerId: string, modelId: string) => {
+          local.setPrefs((prev) => ({
+            ...prev,
+            defaultModel: { providerID: providerId, modelID: modelId },
+            modelVariant: null,
+          }));
+        },
+      }}
       mcpConnectedCount={0}
       onSendFeedback={() => {
         platform.openLink(

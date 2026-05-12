@@ -460,7 +460,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   }
 
   try {
-    const bootstrap = await getDesktopBootstrapConfigFromShell();
+    const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
   } catch {
     desktopBootstrapConfig = resolveDenBootstrapConfig({
@@ -484,7 +484,7 @@ export async function setDenBootstrapConfig(
       baseUrl: normalized.baseUrl,
       apiBaseUrl: normalized.apiBaseUrl,
       requireSignin: normalized.requireSignin,
-    });
+    }) as ShellDesktopBootstrapConfig;
     
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig(persisted));
   } else {

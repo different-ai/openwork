@@ -25,6 +25,7 @@ export type ProviderOnboardingState = {
     id: string;
     name: string;
     recommended?: boolean;
+    recommendedModelId?: string;
     recommendedModel?: string;
   }>;
 };
@@ -33,6 +34,7 @@ export type ProviderToastState = {
   show: boolean;
   providerName: string;
   providerId: string;
+  modelId?: string;
   modelName?: string;
 };
 
@@ -52,7 +54,7 @@ export function useProviderChangeDetection(
   providers: ProviderInfo[],
 ) {
   const [onboarding, setOnboarding] = useState<ProviderOnboardingState>({ show: false, providers: [] });
-  const [toast, setToast] = useState<ProviderToastState>({ show: false, providerName: "", providerId: "" });
+  const [toast, setToast] = useState<ProviderToastState>({ show: false, providerName: "", providerId: "", modelId: undefined });
   const shownRef = useRef(false);
 
   useEffect(() => {
@@ -78,6 +80,7 @@ export function useProviderChangeDetection(
           id,
           name: provider?.name ?? resolveProviderDisplayName(id),
           recommended: false as boolean,
+          recommendedModelId: firstModelId,
           recommendedModel: firstModelName,
         };
       });
@@ -100,6 +103,7 @@ export function useProviderChangeDetection(
         show: true,
         providerName: provider?.name ?? resolveProviderDisplayName(newId),
         providerId: newId,
+        modelId: firstModelId,
         modelName,
       });
     }
@@ -108,7 +112,7 @@ export function useProviderChangeDetection(
   const acknowledgeAll = useCallback(() => {
     writeAcknowledged(connectedProviderIds);
     setOnboarding({ show: false, providers: [] });
-    setToast({ show: false, providerName: "", providerId: "" });
+    setToast({ show: false, providerName: "", providerId: "", modelId: undefined });
   }, [connectedProviderIds]);
 
   const dismissOnboarding = useCallback(() => {
@@ -118,7 +122,7 @@ export function useProviderChangeDetection(
 
   const dismissToast = useCallback(() => {
     writeAcknowledged(connectedProviderIds);
-    setToast({ show: false, providerName: "", providerId: "" });
+    setToast({ show: false, providerName: "", providerId: "", modelId: undefined });
   }, [connectedProviderIds]);
 
   return {

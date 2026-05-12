@@ -159,6 +159,7 @@ export type SessionPageProps = {
     onboarding: import("../../../shell/use-provider-change-detection").ProviderOnboardingState;
     toast: import("../../../shell/use-provider-change-detection").ProviderToastState;
     acknowledgeAll: () => void;
+    switchDefault: (providerId: string, modelId: string) => void;
     dismissOnboarding: () => void;
     dismissToast: () => void;
   };
@@ -815,7 +816,13 @@ export function SessionPage(props: SessionPageProps) {
             onClose={providerNotif.dismissOnboarding}
             orgName=""
             providers={providerNotif.onboarding.providers}
-            onAcceptDefaults={providerNotif.acknowledgeAll}
+            onAcceptDefaults={() => {
+              const rec = providerNotif.onboarding.providers.find((p) => p.recommended);
+              if (rec?.recommendedModelId) {
+                providerNotif.switchDefault(rec.id, rec.recommendedModelId);
+              }
+              providerNotif.acknowledgeAll();
+            }}
             onConfigureManually={providerNotif.dismissOnboarding}
           />
           <ProviderAddedToast
@@ -823,7 +830,12 @@ export function SessionPage(props: SessionPageProps) {
             providerName={providerNotif.toast.providerName}
             providerId={providerNotif.toast.providerId}
             modelName={providerNotif.toast.modelName}
-            onSwitchDefault={providerNotif.acknowledgeAll}
+            onSwitchDefault={() => {
+              if (providerNotif.toast.providerId && providerNotif.toast.modelId) {
+                providerNotif.switchDefault(providerNotif.toast.providerId, providerNotif.toast.modelId);
+              }
+              providerNotif.acknowledgeAll();
+            }}
             onDismiss={providerNotif.dismissToast}
           />
         </>

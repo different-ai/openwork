@@ -352,7 +352,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         if (disposed) return;
 
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
 
           mutateState((current) => ({
@@ -442,7 +442,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (!options.documentVisible()) return;
       void (async () => {
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
           mutateState((current) => ({
             ...current,
@@ -628,7 +628,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       let hostInfo = state.openworkServerHostInfo;
       if (isDesktopRuntime()) {
         try {
-          hostInfo = await openworkServerInfo();
+          hostInfo = await openworkServerInfo() as OpenworkServerInfo;
           mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
         } catch {
           hostInfo = null;
@@ -693,7 +693,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     try {
       hostInfo = await openworkServerRestart({
         remoteAccessEnabled: state.openworkServerSettings.remoteAccessEnabled === true,
-      });
+      }) as OpenworkServerInfo;
       mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
     } catch {
       return null;

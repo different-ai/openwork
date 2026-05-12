@@ -153,7 +153,7 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    return readOpencodeConfig(scope, projectDir);
+    return readOpencodeConfig(scope, projectDir) as Promise<OpencodeConfigFile>;
   };
 
   const ensureActiveClient = async () => {
@@ -342,8 +342,8 @@ export function createConnectionsStore(options: {
         projectDir,
       });
       const [globalConfig, projectConfig] = await Promise.all([
-        readOpencodeConfig("global", projectDir),
-        readOpencodeConfig("project", projectDir),
+        readOpencodeConfig("global", projectDir) as Promise<OpencodeConfigFile>,
+        readOpencodeConfig("project", projectDir) as Promise<OpencodeConfigFile>,
       ]);
       const globalServers = globalConfig.exists && globalConfig.content
         ? parseMcpServersFromContent(globalConfig.content).map((entry) => ({
@@ -521,7 +521,7 @@ export function createConnectionsStore(options: {
           config: mcpEntryConfig,
         });
       } else {
-        const configFile = await readOpencodeConfig("project", resolvedProjectDir);
+        const configFile = await readOpencodeConfig("project", resolvedProjectDir) as OpencodeConfigFile;
 
         const raw = configFile.exists && configFile.content?.trim()
           ? configFile.content
@@ -551,7 +551,7 @@ export function createConnectionsStore(options: {
           "project",
           resolvedProjectDir,
           updated.endsWith("\n") ? updated : `${updated}\n`,
-        );
+        ) as { ok: boolean; stderr?: string; stdout?: string };
         if (!writeResult.ok) {
           throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
         }
