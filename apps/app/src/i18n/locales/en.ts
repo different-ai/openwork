@@ -724,7 +724,7 @@ export default {
   "model_picker.more_providers": "More providers",
   "model_picker.no_results": "No models match your search.",
   "model_picker.other_connected_models": "Other connected models",
-  "model_picker.recommended": "Recently added",
+  "model_picker.recommended": "Recent",
   "onboarding.authorize_folder": "Authorize folder",
   "welcome.title": "Welcome to OpenWork",
   "welcome.subtitle": "Your computer, but it works for you.",

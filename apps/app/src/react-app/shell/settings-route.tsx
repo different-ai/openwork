@@ -796,6 +796,7 @@ function SettingsRouteContent() {
               isFree: false,
               isConnected: hasModels,
               isRecommended: isNew,
+              source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
             });
           }
         }
