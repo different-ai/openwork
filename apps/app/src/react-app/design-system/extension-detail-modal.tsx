@@ -31,8 +31,12 @@ export type ExtensionDetailModalProps = {
   url?: string;
   /** Whether OAuth is required. */
   oauth?: boolean;
+  /** Filesystem path (for skills). */
+  path?: string;
   /** Connect handler. */
   onConnect?: () => void;
+  /** Uninstall/disconnect handler. Shown when connected. */
+  onUninstall?: () => void;
 };
 
 const kindLabel: Record<ExtensionKind, string> = {
@@ -61,7 +65,9 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     connecting = false,
     url,
     oauth,
+    path,
     onConnect,
+    onUninstall,
   } = props;
 
   if (!open) return null;
@@ -139,6 +145,13 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                   </div>
                 ) : null}
 
+                {path ? (
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-dls-secondary">Path</span>
+                    <span className="truncate font-mono text-[11px] text-dls-text max-w-[240px]">{path}</span>
+                  </div>
+                ) : null}
+
                 {oauth ? (
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-dls-secondary">Authentication</span>
@@ -169,27 +182,40 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
 
         {/* Footer */}
         <div className={modalFooterClass}>
-          <div className="flex justify-end gap-3">
-            <button type="button" className={pillGhostClass} onClick={onClose}>
-              Close
-            </button>
-            {!connected && onConnect ? (
-              <button
-                type="button"
-                className={pillPrimaryClass}
-                onClick={onConnect}
-                disabled={connecting}
-              >
-                {connecting ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  "Connect"
-                )}
+          <div className="flex justify-between">
+            <div>
+              {connected && onUninstall ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-red-6 px-4 py-2 text-[13px] font-medium text-red-11 transition-colors hover:bg-red-3"
+                  onClick={() => { onUninstall(); onClose(); }}
+                >
+                  {kind === "skill" ? "Uninstall" : "Disconnect"}
+                </button>
+              ) : null}
+            </div>
+            <div className="flex gap-3">
+              <button type="button" className={pillGhostClass} onClick={onClose}>
+                Close
               </button>
+              {!connected && onConnect ? (
+                <button
+                  type="button"
+                  className={pillPrimaryClass}
+                  onClick={onConnect}
+                  disabled={connecting}
+                >
+                  {connecting ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    "Connect"
+                  )}
+                </button>
             ) : null}
+            </div>
           </div>
         </div>
       </div>

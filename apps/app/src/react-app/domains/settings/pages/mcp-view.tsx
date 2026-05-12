@@ -69,6 +69,8 @@ export type McpViewProps = {
   isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
+  /** Uninstall a skill by name. */
+  uninstallSkill?: (name: string) => void;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
@@ -179,6 +181,7 @@ const serviceIconBg = (name: string) => {
 export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
   const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
+  const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
 
   const [localState, dispatchLocal] = useReducer(
     mcpViewLocalReducer,
@@ -378,6 +381,7 @@ export function McpView(props: McpViewProps) {
         statusForEntry={quickConnectStatus}
         onConnect={props.connectMcp}
         onDetail={setDetailEntry}
+        onSkillDetail={setDetailSkill}
       />
 
       <McpConfiguredServersSection
@@ -482,6 +486,27 @@ export function McpView(props: McpViewProps) {
             props.connectMcp(detailEntry);
             setDetailEntry(null);
           }}
+          onUninstall={isQuickConnectConfigured(detailEntry) ? () => {
+            const slug = getMcpIdentityKey(detailEntry);
+            props.removeMcp(slug);
+            setDetailEntry(null);
+          } : undefined}
+        />
+      ) : null}
+
+      {detailSkill ? (
+        <ExtensionDetailModal
+          open={!!detailSkill}
+          onClose={() => setDetailSkill(null)}
+          name={detailSkill.name}
+          description={detailSkill.description ?? "Installed skill"}
+          kind="skill"
+          connected={true}
+          path={detailSkill.path}
+          onUninstall={props.uninstallSkill ? () => {
+            props.uninstallSkill?.(detailSkill.name);
+            setDetailSkill(null);
+          } : undefined}
         />
       ) : null}
     </section>
@@ -548,6 +573,7 @@ function McpQuickConnectSection(props: {
   statusForEntry: (entry: McpDirectoryInfo) => { status: ReactMcpStatus } | undefined;
   onConnect: (entry: McpDirectoryInfo) => void;
   onDetail: (entry: McpDirectoryInfo) => void;
+  onSkillDetail?: (skill: SkillItem) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -591,7 +617,8 @@ function McpQuickConnectSection(props: {
             description={skill.description ?? "Installed skill"}
             kind="skill"
             connected={true}
-            actionLabel="Installed"
+            actionLabel="View details"
+            onClick={() => props.onSkillDetail?.(skill)}
           />
         ))}
       </div>

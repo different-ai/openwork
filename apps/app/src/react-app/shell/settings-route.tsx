@@ -1594,6 +1594,7 @@ export function SettingsRoute() {
                 }
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
                 installedSkills={extensionsStore.skills()}
+                uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 showHeader={false}
               />
             }

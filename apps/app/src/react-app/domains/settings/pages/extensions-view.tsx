@@ -52,37 +52,20 @@ export function ExtensionsView(props: ExtensionsViewProps) {
 
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-1">
-          {props.showHeader !== false ? (
-            <>
-              <h2 className="text-3xl font-semibold text-dls-text">
-                {t("extensions.title")}
-              </h2>
-              <p className="text-sm text-dls-secondary mt-1.5">
-                {t("extensions.subtitle")}
-              </p>
-            </>
-          ) : null}
-          <div
-            className={`${props.showHeader === false ? "" : "mt-3"} flex flex-wrap items-center gap-2`}
-          >
-            {props.mcpConnectedAppsCount > 0 ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-                <div className="size-2 rounded-full bg-green-9" />
-                <span className="text-xs font-medium text-green-11">
-                  {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
+      <div className="flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" onClick={props.onRefresh}>
-            {t("common.refresh")}
-          </Button>
+          {props.mcpConnectedAppsCount > 0 ? (
+            <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
+              <div className="size-2 rounded-full bg-green-9" />
+              <span className="text-xs font-medium text-green-11">
+                {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
+              </span>
+            </div>
+          ) : null}
         </div>
+        <Button variant="ghost" onClick={props.onRefresh}>
+          {t("common.refresh")}
+        </Button>
       </div>
 
       {/* All extensions: MCPs + skills in one view */}
