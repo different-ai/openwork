@@ -1595,14 +1595,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           void runCloudProviderSync("sign_in");
         } else {
           // Sign-out or error: remove all cloud-imported providers from the workspace
-          const importedIds = Object.keys(state.importedCloudProviders);
-          mutateState((current) => ({
-            ...current,
-            cloudOrgProviders: [],
-            providerAuthMethods: {},
-            importedCloudProviders: {},
-          }));
-          // Best-effort cleanup of cloud provider entries from opencode.jsonc
+          // Capture the full import records BEFORE clearing state
+          const importedProviders = { ...state.importedCloudProviders };
+          const importedIds = Object.keys(importedProviders);
+
+          // Best-effort cleanup: remove each cloud provider from opencode.jsonc
+          // BEFORE clearing state so removeCloudProviderInternal can find the records
           void (async () => {
             for (const cloudId of importedIds) {
               try {
@@ -1611,6 +1609,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
                 // Ignore individual removal failures during sign-out cleanup
               }
             }
+            // Clear state AFTER cleanup so the records are available during removal
+            mutateState((current) => ({
+              ...current,
+              cloudOrgProviders: [],
+              providerAuthMethods: {},
+              importedCloudProviders: {},
+            }));
+            refreshSnapshot();
+            emitChange();
           })();
         }
       };
