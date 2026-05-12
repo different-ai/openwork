@@ -32,10 +32,12 @@ export type ExtensionDetailModalProps = {
   url?: string;
   /** Whether OAuth is required. */
   oauth?: boolean;
-  /** Filesystem path (for skills). */
+  /** Filesystem path (for skills). Not shown directly, used for reveal. */
   path?: string;
   /** Skill trigger phrase (e.g. "when user asks to create an agent"). */
   trigger?: string;
+  /** Reveal the file in Finder/Explorer. */
+  onReveal?: () => void;
   /** Skill content preview (first ~500 chars of the SKILL.md). */
   contentPreview?: string;
   /** Connect handler. */
@@ -113,6 +115,7 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     path,
     trigger,
     contentPreview,
+    onReveal,
     onConnect,
     onUninstall,
   } = props;
@@ -192,10 +195,17 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                   </div>
                 ) : null}
 
-                {path ? (
+                {path && onReveal ? (
                   <div className="flex items-center justify-between text-[13px]">
-                    <span className="text-dls-secondary">Path</span>
-                    <span className="truncate font-mono text-[11px] text-dls-text max-w-[240px]">{path}</span>
+                    <span className="text-dls-secondary">Location</span>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 font-medium text-dls-text transition-colors hover:text-dls-accent"
+                      onClick={onReveal}
+                    >
+                      Reveal in Finder
+                      <ExternalLink size={10} />
+                    </button>
                   </div>
                 ) : null}
 
@@ -209,7 +219,9 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                 <div className="flex items-center justify-between text-[13px]">
                   <span className="text-dls-secondary">Status</span>
                   <span className={`font-medium ${connected ? "text-green-11" : "text-dls-secondary"}`}>
-                    {connected ? "Connected" : connecting ? "Connecting..." : "Not connected"}
+                    {kind === "skill"
+                      ? (connected ? "Installed" : "Not installed")
+                      : (connected ? "Connected" : connecting ? "Connecting..." : "Not connected")}
                   </span>
                 </div>
               </div>

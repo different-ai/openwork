@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
+import { revealDesktopItemInDir } from "../../../../app/lib/desktop";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
@@ -568,6 +569,9 @@ export function McpView(props: McpViewProps) {
           path={detailSkill.path}
           trigger={detailSkill.trigger}
           contentPreview={detailSkillContent ?? undefined}
+          onReveal={detailSkill.path ? () => {
+            void revealDesktopItemInDir(detailSkill.path);
+          } : undefined}
           onUninstall={props.uninstallSkill ? () => {
             props.uninstallSkill?.(detailSkill.name);
             setDetailSkill(null);
