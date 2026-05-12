@@ -233,7 +233,7 @@ export function CloudProvidersView({
         rows={rows}
         onImport={importProvider}
         onRefresh={refresh}
-        onRemove={removeProvider}
+        onRemove={undefined}
         onSync={syncProvider}
       />
     </SettingsStack>

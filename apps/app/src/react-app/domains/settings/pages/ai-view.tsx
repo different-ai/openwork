@@ -38,6 +38,8 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (source?: ConnectedProvider["source"]) => boolean;
+  /** Set of local provider IDs that were imported from cloud. */
+  cloudProviderIds?: Set<string>;
 };
 
 function providerSourceLabel(source?: ConnectedProvider["source"]) {
@@ -96,31 +98,35 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 <div className="flex min-w-0 items-center gap-3">
                   <ProviderIcon providerId={provider.id} size={20} className="text-dls-text" />
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-dls-text">{provider.name}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
+                      {props.cloudProviderIds?.has(provider.id) ? (
+                        <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
+                          Cloud
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
-                    {providerSourceLabel(provider.source) ? (
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {providerSourceLabel(provider.source)}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
-                <Button
-                  variant="destructive"
-                  onClick={() => void props.onDisconnectProvider(provider.id)}
-                  disabled={
-                    props.busy ||
-                    props.providerAuthBusy ||
-                    props.disconnectingProviderId !== null ||
-                    !props.canDisconnectProvider(provider.source)
-                  }
-                >
-                  {props.disconnectingProviderId === provider.id
-                    ? t("settings.disconnecting")
-                    : props.canDisconnectProvider(provider.source)
-                      ? t("settings.disconnect")
-                      : t("settings.managed_by_env")}
-                </Button>
+                {!props.cloudProviderIds?.has(provider.id) ? (
+                  <Button
+                    variant="destructive"
+                    onClick={() => void props.onDisconnectProvider(provider.id)}
+                    disabled={
+                      props.busy ||
+                      props.providerAuthBusy ||
+                      props.disconnectingProviderId !== null ||
+                      !props.canDisconnectProvider(provider.source)
+                    }
+                  >
+                    {props.disconnectingProviderId === provider.id
+                      ? t("settings.disconnecting")
+                      : props.canDisconnectProvider(provider.source)
+                        ? t("settings.disconnect")
+                        : t("settings.managed_by_env")}
+                  </Button>
+                ) : null}
               </LayoutSectionItem>
             ))}
           </div>
