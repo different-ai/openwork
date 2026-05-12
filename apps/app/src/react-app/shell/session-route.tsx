@@ -1708,7 +1708,11 @@ export function SessionRoute() {
       onRevertToMessage: (messageId: string) => {
         void (async () => {
           try {
+            // Abort any running generation first, like the actions-store does
+            try { await opencodeClient.session.abort({ sessionID: selectedSessionId }); } catch { /* ok if not running */ }
             await revertSession(opencodeClient, selectedSessionId, messageId);
+            // Force a full reload of the session to pick up reverted state
+            navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId);
             void refreshRouteState();
           } catch (error) {
             console.warn("[revert] failed", error);
