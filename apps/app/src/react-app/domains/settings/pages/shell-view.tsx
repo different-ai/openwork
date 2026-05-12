@@ -143,14 +143,6 @@ export function ShellCustomizationView() {
         </SettingsSectionHeader>
 
         <ToggleRow
-          label="Status bar"
-          description="The bottom bar showing connection status, docs, and feedback."
-          checked={config.statusBar}
-          onChange={(v) => update({ statusBar: v })}
-          warning="When hidden, the only way to access settings is via Cmd+K."
-        />
-
-        <ToggleRow
           label="Sidebar"
           description="The left panel with workspace and session list."
           checked={config.sidebar}
@@ -158,25 +150,44 @@ export function ShellCustomizationView() {
         />
 
         <ToggleRow
-          label="Docs button"
-          description="Link to documentation in the status bar."
-          checked={config.docsButton}
-          onChange={(v) => update({ docsButton: v })}
+          label="Status bar"
+          description="The bottom bar showing connection status and quick actions."
+          checked={config.statusBar}
+          onChange={(v) => update({ statusBar: v })}
+          warning="When hidden, the only way to access settings is via Cmd+K."
         />
 
-        <ToggleRow
-          label="Feedback button"
-          description="Feedback link in the status bar."
-          checked={config.feedbackButton}
-          onChange={(v) => update({ feedbackButton: v })}
-        />
-
-        <ToggleRow
-          label="Cloud sign-in"
-          description="Sign-in button shown when not connected to OpenWork Cloud."
-          checked={config.cloudSignin}
-          onChange={(v) => update({ cloudSignin: v })}
-        />
+        {config.statusBar ? (
+          <SettingsInset className="ml-6 space-y-0 divide-y divide-dls-border p-0">
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <span className="text-[13px] font-medium text-dls-text">Docs button</span>
+                <div className="text-[11px] text-dls-secondary">Link to documentation.</div>
+              </div>
+              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ docsButton: !config.docsButton })}>
+                {config.docsButton ? "On" : "Off"}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <span className="text-[13px] font-medium text-dls-text">Feedback button</span>
+                <div className="text-[11px] text-dls-secondary">Send feedback link.</div>
+              </div>
+              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ feedbackButton: !config.feedbackButton })}>
+                {config.feedbackButton ? "On" : "Off"}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <span className="text-[13px] font-medium text-dls-text">Cloud sign-in</span>
+                <div className="text-[11px] text-dls-secondary">Sign-in button when not connected.</div>
+              </div>
+              <Button variant="outline" className="h-7 shrink-0 px-2.5 py-0 text-[11px]" onClick={() => update({ cloudSignin: !config.cloudSignin })}>
+                {config.cloudSignin ? "On" : "Off"}
+              </Button>
+            </div>
+          </SettingsInset>
+        ) : null}
 
         <ToggleRow
           label="Welcome page"
@@ -190,6 +201,27 @@ export function ShellCustomizationView() {
           description="Suggested task cards in empty sessions."
           checked={config.starterCards}
           onChange={(v) => update({ starterCards: v })}
+        />
+
+        <ToggleRow
+          label="Model picker"
+          description="Allow users to change the default model."
+          checked={config.modelPicker}
+          onChange={(v) => update({ modelPicker: v })}
+        />
+
+        <ToggleRow
+          label="Browser panel"
+          description="Show the built-in browser panel toggle."
+          checked={config.browser}
+          onChange={(v) => update({ browser: v })}
+        />
+
+        <ToggleRow
+          label="Add workspace"
+          description="Allow creating or connecting new workspaces."
+          checked={config.addWorkspace}
+          onChange={(v) => update({ addWorkspace: v })}
         />
       </SettingsSection>
 
