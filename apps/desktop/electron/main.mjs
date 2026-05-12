@@ -501,6 +501,20 @@ async function seedBrowserMcpConfig(workspaceDir) {
     changed = true;
   }
 
+  // UI control bridge
+  try {
+    const uiDiscovery = JSON.parse(await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8"));
+    if (uiDiscovery?.baseUrl) {
+      const uiUrl = `${uiDiscovery.baseUrl}/mcp`;
+      if (config.mcp["openwork-ui"]?.url !== uiUrl) {
+        config.mcp["openwork-ui"] = { type: "remote", url: uiUrl };
+        changed = true;
+      }
+    }
+  } catch {
+    // UI control bridge not started yet — skip.
+  }
+
   // Remove legacy entries
   for (const key of ["chrome-devtools", "control-chrome"]) {
     if (config.mcp[key]) {

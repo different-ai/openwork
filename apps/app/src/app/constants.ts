@@ -115,4 +115,13 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     kind: "mcp",
     iconSrc: "/openwork-mark.svg",
   },
+  {
+    get name() { return t("mcp.quick_connect_openwork_ui_title"); },
+    serverName: "openwork-ui",
+    get description() { return t("mcp.quick_connect_openwork_ui_desc"); },
+    type: "remote",
+    oauth: false,
+    kind: "mcp",
+    iconSrc: "/openwork-mark.svg",
+  },
 ];
