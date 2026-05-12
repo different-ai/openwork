@@ -114,7 +114,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{description}</p>
           {!connected && !connecting && actionLabel ? (
-            <div className="mt-2 text-[11px] font-medium text-dls-accent transition-colors group-hover:opacity-80">
+            <div className="mt-2 text-[11px] font-medium text-dls-text transition-colors group-hover:opacity-80">
               {actionLabel}
             </div>
           ) : null}
