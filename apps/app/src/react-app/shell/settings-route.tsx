@@ -294,8 +294,11 @@ function parseSettingsPath(pathname: string): {
       return { tab: head, redirectPath: null };
     case "extensions":
       if (tail === "mcp") return { tab: "extensions", redirectPath: null, extensionsSection: "mcp" };
+      if (tail === "skills") return { tab: "extensions", redirectPath: null, extensionsSection: "skills" };
       if (tail === "plugins") return { tab: "extensions", redirectPath: null, extensionsSection: "plugins" };
       return { tab: "extensions", redirectPath: null, extensionsSection: "all" };
+    case "skills":
+      return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "skills" };
     default:
       return { tab: "general", redirectPath: "general" };
   }
@@ -1591,6 +1594,21 @@ export function SettingsRoute() {
                 }
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
                 showHeader={false}
+              />
+            }
+            skillsView={
+              <SkillsView
+                workspaceName={selectedWorkspaceName}
+                busy={busy}
+                canInstallSkillCreator={canWriteWorkspaceSkills}
+                canUseDesktopTools={!isRemoteWorkspace}
+                accessHint={skillsAccessHint}
+                extensions={extensionsStore}
+                onOpenLink={(url) => platform.openLink(url)}
+                createSessionAndOpen={async () => {
+                  navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
+                  return undefined;
+                }}
               />
             }
           />

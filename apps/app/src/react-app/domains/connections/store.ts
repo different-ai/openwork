@@ -475,11 +475,15 @@ export function createConnectionsStore(options: {
 
       // Resolve dynamic URLs for built-in MCPs
       let resolvedUrl = entry.url;
+      let resolvedHeaders: Record<string, string> | undefined;
       if (!resolvedUrl && entry.serverName === "openwork-ui") {
         try {
           const bridgeInfo = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
           if (bridgeInfo?.baseUrl) {
             resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
+            if (bridgeInfo.token) {
+              resolvedHeaders = { Authorization: `Bearer ${bridgeInfo.token}` };
+            }
           }
         } catch {
           // Bridge not available
@@ -496,7 +500,10 @@ export function createConnectionsStore(options: {
           throw new Error("Missing MCP URL. Is the OpenWork desktop app running?");
         }
         mcpEntryConfig["url"] = resolvedUrl;
-        if (entry.oauth) {
+        if (resolvedHeaders) {
+          mcpEntryConfig["headers"] = resolvedHeaders;
+        }
+        if (entry.oauth && !resolvedHeaders) {
           mcpEntryConfig["oauth"] = {};
         }
       }

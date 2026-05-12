@@ -28,8 +28,7 @@ export type GeneralSettingsViewProps = {
 
 const workspaceCards: { tab: SettingsTab; icon: typeof Sparkles; title: string; desc: string }[] = [
   { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
-  { tab: "skills", icon: Sparkles, title: "Skills", desc: "Install, create, and manage workspace skills." },
-  { tab: "extensions", icon: Puzzle, title: "Extensions", desc: "MCP servers, plugins, and integrations." },
+  { tab: "extensions", icon: Puzzle, title: "Extensions", desc: "MCPs, skills, plugins, and integrations." },
   { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
 ];
 

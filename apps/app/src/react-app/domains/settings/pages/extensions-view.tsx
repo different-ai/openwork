@@ -1,13 +1,13 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Box, Cpu } from "lucide-react";
+import { Box, Cpu, Sparkles } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
-export type ExtensionsSection = "all" | "mcp" | "plugins";
+export type ExtensionsSection = "all" | "mcp" | "skills" | "plugins";
 
 type SuggestedPlugin = {
   name: string;
@@ -41,9 +41,10 @@ export type ExtensionsViewProps = {
   extensions: PluginsExtensionsStore;
   mcpConnectedAppsCount: number;
   mcpView: ReactNode;
+  skillsView?: ReactNode;
   onRefresh: () => void;
   initialSection?: ExtensionsSection;
-  setSectionRoute?: (tab: "mcp" | "plugins") => void;
+  setSectionRoute?: (tab: "mcp" | "skills" | "plugins") => void;
   showHeader?: boolean;
 };
 
@@ -66,7 +67,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
 
   const selectSection = (nextSection: ExtensionsSection) => {
     setSection(nextSection);
-    if (nextSection === "mcp" || nextSection === "plugins") {
+    if (nextSection === "mcp" || nextSection === "skills" || nextSection === "plugins") {
       props.setSectionRoute?.(nextSection);
     }
   };
@@ -135,6 +136,15 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             </button>
             <button
               type="button"
+              className={pillClass(section === "skills")}
+              aria-pressed={section === "skills"}
+              onClick={() => selectSection("skills")}
+            >
+              <Sparkles size={14} />
+              Skills
+            </button>
+            <button
+              type="button"
               className={pillClass(section === "plugins")}
               aria-pressed={section === "plugins"}
               onClick={() => selectSection("plugins")}
@@ -156,6 +166,16 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             <span>{t("extensions.apps_mcp_header")}</span>
           </div>
           {props.mcpView}
+        </div>
+      ) : null}
+
+      {(section === "all" || section === "skills") && props.skillsView ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
+            <Sparkles size={16} className="text-gray-11" />
+            <span>Skills</span>
+          </div>
+          {props.skillsView}
         </div>
       ) : null}
 
