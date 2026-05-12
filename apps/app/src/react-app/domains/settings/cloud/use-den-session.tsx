@@ -477,10 +477,6 @@ export function useDenSession({
       }
 
       setOrgsBusy(false);
-      showToast({
-        title: t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
-        tone: "success",
-      });
     },
     [authToken, baseUrl, client, orgs, setActiveOrganization, showToast],
   );
