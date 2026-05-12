@@ -1514,7 +1514,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const provider = options.providers().find((entry) => entry.id === resolved) as
       | (ProviderListItem & { source?: string })
       | undefined;
-    const canDisableProvider = provider?.source === "config" || provider?.source === "custom";
+    // Allow disabling any provider — including built-in/env providers
+    // like "opencode" (Zen). The user should be able to hide any provider
+    // from the model list by adding it to disabled_providers in opencode.json.
+    const canDisableProvider = true;
 
     const disableProvider = async () => {
       const config = unwrap(await c.config.get());

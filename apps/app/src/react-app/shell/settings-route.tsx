@@ -1517,10 +1517,7 @@ function SettingsRouteContent() {
             onDisconnectProvider={async (providerId) => {
               await providerAuthStore.disconnectProvider(providerId);
             }}
-            canDisconnectProvider={(source) => {
-              if (source === "env") return false;
-              return true;
-            }}
+            canDisconnectProvider={() => true}
             cloudProviderIds={new Set(
               Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId)
             )}
