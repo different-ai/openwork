@@ -75,17 +75,6 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
         {/* Main content */}
         <rect x={cx} y="31" width={cw} height="195" fill="var(--dls-surface)" />
 
-        {/* User message bubble */}
-        <rect x={cx + cw - 130} y="46" width="120" height="22" rx="11" fill="var(--dls-hover)" />
-        <text x={cx + cw - 70} y="60" textAnchor="middle" fontSize="6" fill="var(--dls-text-primary)" opacity="0.5">
-          Hey, help me with this
-        </text>
-
-        {/* Assistant response */}
-        <text x={cx + 12} y="86" fontSize="5.5" fill="var(--dls-text-primary)" opacity="0.4">Sure! Here&apos;s what I found...</text>
-        <rect x={cx + 12} y="92" width={cw * 0.6} height="4" rx="2" fill="var(--dls-text-secondary)" opacity="0.08" />
-        <rect x={cx + 12} y="100" width={cw * 0.45} height="4" rx="2" fill="var(--dls-text-secondary)" opacity="0.06" />
-
         {/* Starter cards */}
         <g className="transition-all duration-300" style={{ opacity: config.starterCards ? 1 : 0 }}>
           {[
