@@ -17,6 +17,119 @@ import {
 import { useShellConfig, DEFAULT_SHELL_CONFIG, type ShellConfig } from "../../../shell/shell-config";
 
 /* ------------------------------------------------------------------ */
+/*  Interactive wireframe preview                                      */
+/* ------------------------------------------------------------------ */
+
+function ShellWireframe({ config }: { config: ShellConfig }) {
+  const on = "fill-dls-text opacity-100 transition-all duration-300";
+  const off = "fill-dls-secondary opacity-15 transition-all duration-300";
+  const onStroke = "stroke-dls-text opacity-60 transition-all duration-300";
+  const offStroke = "stroke-dls-secondary opacity-10 transition-all duration-300";
+
+  return (
+    <div className="mx-auto mb-2 w-full max-w-md">
+      <svg viewBox="0 0 400 240" className="w-full" aria-hidden="true">
+        {/* Window frame */}
+        <rect x="0" y="0" width="400" height="240" rx="12" fill="none" stroke="var(--dls-border)" strokeWidth="1.5" />
+
+        {/* Title bar */}
+        <rect x="1" y="1" width="398" height="28" rx="11" className="fill-dls-hover" />
+        {/* Traffic lights */}
+        <circle cx="16" cy="15" r="4" className="fill-red-9 opacity-40" />
+        <circle cx="28" cy="15" r="4" className="fill-amber-9 opacity-40" />
+        <circle cx="40" cy="15" r="4" className="fill-green-9 opacity-40" />
+        {/* App name */}
+        <text x="200" y="19" textAnchor="middle" className="fill-dls-secondary text-[9px] font-medium">
+          {config.appName}
+        </text>
+
+        {/* Sidebar */}
+        <rect
+          x="1" y="29" width="100" height="180"
+          className={config.sidebar ? on : off}
+          style={{ fill: config.sidebar ? "var(--dls-hover)" : "var(--dls-surface)" }}
+        />
+        <line x1="101" y1="29" x2="101" y2="209" className={config.sidebar ? onStroke : offStroke} strokeWidth="1" />
+        {/* Sidebar items */}
+        {config.sidebar ? (
+          <>
+            <rect x="12" y="40" width="60" height="6" rx="3" className="fill-dls-secondary opacity-30" />
+            <rect x="12" y="54" width="76" height="6" rx="3" className="fill-dls-secondary opacity-20" />
+            <rect x="12" y="68" width="50" height="6" rx="3" className="fill-dls-secondary opacity-20" />
+            <rect x="12" y="82" width="68" height="6" rx="3" className="fill-dls-secondary opacity-15" />
+            <rect x="12" y="96" width="55" height="6" rx="3" className="fill-dls-secondary opacity-15" />
+            {config.addWorkspace ? (
+              <rect x="12" y="175" width="76" height="14" rx="7" className="fill-dls-accent opacity-20" />
+            ) : null}
+          </>
+        ) : null}
+
+        {/* Main content area */}
+        <rect
+          x={config.sidebar ? "102" : "1"} y="29"
+          width={config.sidebar ? "297" : "398"} height="180"
+          className="fill-dls-surface"
+        />
+        {/* Chat bubbles */}
+        <rect x={config.sidebar ? "260" : "200"} y="50" width="110" height="20" rx="10" className="fill-dls-hover" />
+        <rect x={config.sidebar ? "120" : "20"} y="85" width="160" height="14" rx="3" className="fill-dls-secondary opacity-15" />
+        <rect x={config.sidebar ? "120" : "20"} y="105" width="120" height="14" rx="3" className="fill-dls-secondary opacity-10" />
+
+        {/* Starter cards */}
+        {config.starterCards ? (
+          <g>
+            <rect x={config.sidebar ? "120" : "20"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
+            <rect x={config.sidebar ? "210" : "110"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
+            <rect x={config.sidebar ? "300" : "200"} y="140" width="80" height="30" rx="6" className="fill-dls-hover opacity-50" />
+          </g>
+        ) : null}
+
+        {/* Composer */}
+        <rect
+          x={config.sidebar ? "112" : "12"} y="185"
+          width={config.sidebar ? "276" : "376"} height="18"
+          rx="9" fill="none" stroke="var(--dls-border)" strokeWidth="1"
+        />
+
+        {/* Status bar */}
+        <rect
+          x="1" y="209" width="398" height="30" rx="0"
+          className={config.statusBar ? "transition-all duration-300" : off}
+          style={{ fill: config.statusBar ? "var(--dls-hover)" : "var(--dls-surface)" }}
+        />
+        <rect x="1" y="228" width="398" height="12" rx="0" className="fill-dls-surface" style={{ clipPath: "inset(0 0 0 0 round 0 0 11px 11px)" }} />
+
+        {config.statusBar ? (
+          <>
+            {/* Status dot */}
+            <circle cx="14" cy="222" r="3" className="fill-green-9 opacity-50" />
+            <rect x="22" y="219" width="40" height="6" rx="3" className="fill-dls-secondary opacity-25" />
+            {/* Right side buttons */}
+            {config.cloudSignin ? (
+              <rect x="290" y="216" width="36" height="12" rx="6" className="fill-dls-accent opacity-25" />
+            ) : null}
+            {config.docsButton ? (
+              <rect x="332" y="219" width="20" height="6" rx="3" className="fill-dls-secondary opacity-20" />
+            ) : null}
+            {config.feedbackButton ? (
+              <rect x="358" y="219" width="24" height="6" rx="3" className="fill-dls-secondary opacity-20" />
+            ) : null}
+          </>
+        ) : null}
+
+        {/* Browser panel indicator */}
+        {config.browser ? (
+          <line
+            x1="399" y1="29" x2="399" y2="209"
+            stroke="var(--dls-accent)" strokeWidth="2" opacity="0.2"
+          />
+        ) : null}
+      </svg>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Toggle row                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -141,6 +254,10 @@ export function ShellCustomizationView() {
             </SettingsSectionHeaderDescription>
           </SettingsSectionHeaderContent>
         </SettingsSectionHeader>
+
+        <SettingsInset className="p-4">
+          <ShellWireframe config={config} />
+        </SettingsInset>
 
         <ToggleRow
           label="Sidebar"
