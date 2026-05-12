@@ -183,9 +183,9 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
-  // Provider provisioning prototypes (dev mode only)
-  const [showProviderOnboarding, setShowProviderOnboarding] = useState(true);
-  const [showProviderToast, setShowProviderToast] = useState(true);
+  // Provider provisioning prototypes
+  const [showProviderOnboarding, setShowProviderOnboarding] = useState(false);
+  const [showProviderToast, setShowProviderToast] = useState(false);
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -454,6 +454,24 @@ export function SessionPage(props: SessionPageProps) {
                 </button>
               ) : null}
               {/* Revert/redo moved to per-message actions */}
+              {props.developerMode ? (
+                <>
+                  <button
+                    type="button"
+                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                    onClick={() => setShowProviderOnboarding(true)}
+                  >
+                    Test onboarding
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                    onClick={() => setShowProviderToast(true)}
+                  >
+                    Test toast
+                  </button>
+                </>
+              ) : null}
             </div>
           </header>
 
