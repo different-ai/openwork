@@ -1396,6 +1396,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     const nextImportedProviders = state.importedCloudProviders;
+    const newlyImported: Array<{ id: string; name: string; providerId: string; firstModelId?: string; firstModelName?: string }> = [];
     for (const liveProvider of liveProviders) {
       if (processedLiveProviderIds.has(liveProvider.id)) {
         continue;
@@ -1407,6 +1408,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       try {
         await connectCloudProviderInternal(liveProvider.id, { silent: true });
         configChanged = true;
+        const firstModel = liveProvider.models[0] ?? null;
+        newlyImported.push({
+          id: liveProvider.id,
+          name: liveProvider.name,
+          providerId: liveProvider.providerId,
+          firstModelId: firstModel?.id,
+          firstModelName: firstModel?.name ?? firstModel?.id,
+        });
       } catch (error) {
         failures.push(logCloudProviderSyncError(reason, error));
       }
@@ -1414,6 +1423,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     if (configChanged) {
       await refreshProviders({ dispose: true }).catch(() => null);
+    }
+
+    // Notify the UI about newly imported cloud providers so a global
+    // toast can be shown regardless of which route is active.
+    if (newlyImported.length > 0 && typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("openwork-cloud-providers-imported", {
+          detail: { providers: newlyImported, reason },
+        }),
+      );
     }
 
     if (failures.length > 0) {

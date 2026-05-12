@@ -116,7 +116,7 @@ import {
 import { saveSessionDraft } from "../domains/session/sync/draft-store";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { useReactRenderWatchdog } from "./react-render-watchdog";
-import { useProviderChangeDetection } from "./use-provider-change-detection";
+
 import { readDenSettings } from "../../app/lib/den";
 import { denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
@@ -501,23 +501,12 @@ export function SessionRoute() {
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
-  const [isDenSignedIn, setIsDenSignedIn] = useState<boolean>(() => !!readDenSettings().authToken?.trim());
   useEffect(() => {
-    const handler = () => {
-      setDenSessionVersion((v) => v + 1);
-      setIsDenSignedIn(!!readDenSettings().authToken?.trim());
-    };
+    const handler = () => setDenSessionVersion((v) => v + 1);
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
   }, []);
-  // Provider notifications are only shown while signed in. After sign-out
-  // we clear acknowledgedProviders, so without this gate the modal would
-  // re-trigger every time local providers (openai, opencode) re-appear.
-  const providerChangeDetection = useProviderChangeDetection(
-    providerConnectedIds,
-    providers as any,
-    isDenSignedIn,
-  );
+
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
   // Provider catalog cache. Used to compute the reasoning/thinking variant
@@ -2330,17 +2319,6 @@ export function SessionRoute() {
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
       providerConnectedIds={providerConnectedIds}
       providers={providers}
-      providerNotifications={{
-        ...providerChangeDetection,
-        orgName: readDenSettings().activeOrgName?.trim() ?? "",
-        switchDefault: (providerId: string, modelId: string) => {
-          local.setPrefs((prev) => ({
-            ...prev,
-            defaultModel: { providerID: providerId, modelID: modelId },
-            modelVariant: null,
-          }));
-        },
-      }}
       mcpConnectedCount={0}
       onSendFeedback={() => {
         platform.openLink(

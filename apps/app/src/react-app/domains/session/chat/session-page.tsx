@@ -41,8 +41,7 @@ import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
-import { ProviderOnboardingModal } from "../../../design-system/provider-onboarding-modal";
-import { ProviderAddedToast } from "../../../design-system/provider-added-toast";
+
 import { isElectronRuntime } from "../../../../app/utils";
 import { BrowserPanel } from "../browser/browser-panel";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -155,15 +154,6 @@ export type SessionPageProps = {
   notFoundMessage?: string | null;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
-  providerNotifications?: {
-    onboarding: import("../../../shell/use-provider-change-detection").ProviderOnboardingState;
-    toast: import("../../../shell/use-provider-change-detection").ProviderToastState;
-    orgName?: string;
-    acknowledgeAll: () => void;
-    switchDefault: (providerId: string, modelId: string) => void;
-    dismissOnboarding: () => void;
-    dismissToast: () => void;
-  };
 };
 
 function getSidebarInitialLoading(props: SessionPageSidebarProps) {
@@ -192,7 +182,7 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
-  const providerNotif = props.providerNotifications;
+
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -461,16 +451,19 @@ export function SessionPage(props: SessionPageProps) {
                 </button>
               ) : null}
               {/* Revert/redo moved to per-message actions */}
-              {props.developerMode && providerNotif ? (
+              {props.developerMode ? (
                 <button
                   type="button"
                   className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
                   onClick={() => {
-                    try { window.localStorage.removeItem("openwork.acknowledgedProviders"); } catch {}
+                    try {
+                      window.localStorage.removeItem("openwork.acknowledgedProviders");
+                      window.localStorage.removeItem("openwork.orgOnboardingSeen");
+                    } catch {}
                   }}
-                  title="Clears acknowledged providers so onboarding triggers on next provider change"
+                  title="Clears acknowledged providers + org onboarding so they trigger again"
                 >
-                  Reset provider notifications
+                  Reset notifications
                 </button>
               ) : null}
             </div>
@@ -809,38 +802,7 @@ export function SessionPage(props: SessionPageProps) {
         }}
       />
 
-      {/* Provider onboarding + new-provider notification */}
-      {providerNotif ? (
-        <>
-          <ProviderOnboardingModal
-            open={providerNotif.onboarding.show}
-            onClose={providerNotif.dismissOnboarding}
-            orgName={providerNotif.orgName ?? ""}
-            providers={providerNotif.onboarding.providers}
-            onAcceptDefaults={() => {
-              const rec = providerNotif.onboarding.providers.find((p) => p.recommended);
-              if (rec?.recommendedModelId) {
-                providerNotif.switchDefault(rec.id, rec.recommendedModelId);
-              }
-              providerNotif.acknowledgeAll();
-            }}
-            onConfigureManually={providerNotif.dismissOnboarding}
-          />
-          <ProviderAddedToast
-            open={providerNotif.toast.show}
-            providerName={providerNotif.toast.providerName}
-            providerId={providerNotif.toast.providerId}
-            modelName={providerNotif.toast.modelName}
-            onSwitchDefault={() => {
-              if (providerNotif.toast.providerId && providerNotif.toast.modelId) {
-                providerNotif.switchDefault(providerNotif.toast.providerId, providerNotif.toast.modelId);
-              }
-              providerNotif.acknowledgeAll();
-            }}
-            onDismiss={providerNotif.dismissToast}
-          />
-        </>
-      ) : null}
+      {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>
   );
 }
