@@ -183,7 +183,7 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
-  // Provider provisioning prototypes
+  // Provider onboarding + new-provider notification (triggered by cloud sync)
   const [showProviderOnboarding, setShowProviderOnboarding] = useState(false);
   const [showProviderToast, setShowProviderToast] = useState(false);
   useReactRenderWatchdog("SessionPage", {
@@ -454,24 +454,7 @@ export function SessionPage(props: SessionPageProps) {
                 </button>
               ) : null}
               {/* Revert/redo moved to per-message actions */}
-              {props.developerMode ? (
-                <>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-                    onClick={() => setShowProviderOnboarding(true)}
-                  >
-                    Test onboarding
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-[10px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-                    onClick={() => setShowProviderToast(true)}
-                  >
-                    Test toast
-                  </button>
-                </>
-              ) : null}
+
             </div>
           </header>
 
@@ -808,31 +791,22 @@ export function SessionPage(props: SessionPageProps) {
         }}
       />
 
-      {/* Provider provisioning UI prototypes (dev mode) */}
-      {props.developerMode ? (
-        <>
-          <ProviderOnboardingModal
-            open={showProviderOnboarding}
-            onClose={() => setShowProviderOnboarding(false)}
-            orgName="Acme Corp"
-            providers={[
-              { id: "anthropic", name: "Anthropic", recommended: true, recommendedModel: "claude-sonnet-4-20250514" },
-              { id: "openai", name: "OpenAI", recommendedModel: "gpt-4.1" },
-              { id: "opencode", name: "OpenCode Zen", recommendedModel: "big-pickle" },
-            ]}
-            onAcceptDefaults={() => setShowProviderOnboarding(false)}
-            onConfigureManually={() => setShowProviderOnboarding(false)}
-          />
-          <ProviderAddedToast
-            open={showProviderToast}
-            providerName="Anthropic"
-            providerId="anthropic"
-            modelName="claude-sonnet-4-20250514"
-            onSwitchDefault={() => setShowProviderToast(false)}
-            onDismiss={() => setShowProviderToast(false)}
-          />
-        </>
-      ) : null}
+      {/* Provider onboarding + new-provider notification */}
+      <ProviderOnboardingModal
+        open={showProviderOnboarding}
+        onClose={() => setShowProviderOnboarding(false)}
+        orgName=""
+        providers={[]}
+        onAcceptDefaults={() => setShowProviderOnboarding(false)}
+        onConfigureManually={() => setShowProviderOnboarding(false)}
+      />
+      <ProviderAddedToast
+        open={showProviderToast}
+        providerName=""
+        providerId=""
+        onSwitchDefault={() => setShowProviderToast(false)}
+        onDismiss={() => setShowProviderToast(false)}
+      />
     </div>
   );
 }
