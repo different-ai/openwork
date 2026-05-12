@@ -120,6 +120,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { readDenSettings } from "../../app/lib/den";
 import { denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { dispatchNewProviders } from "../../app/lib/provider-events";
+import { openModelPickerEvent } from "./new-providers-toast";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -506,6 +507,12 @@ export function SessionRoute() {
     const handler = () => setDenSessionVersion((v) => v + 1);
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+  }, []);
+  // Open model picker when the global toast's "Pick a new default?" is clicked
+  useEffect(() => {
+    const handler = () => setModelPickerOpen(true);
+    window.addEventListener(openModelPickerEvent, handler);
+    return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
