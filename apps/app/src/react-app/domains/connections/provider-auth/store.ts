@@ -1584,14 +1584,34 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         cloudOrgProvidersLoadKey = "";
         cloudOrgProvidersInFlightKey = "";
         cloudOrgProvidersInFlight = null;
-        mutateState((current) => ({
-          ...current,
-          cloudOrgProviders: [],
-          providerAuthMethods: {},
-        }));
         const detail = (event as CustomEvent<DenSessionUpdatedDetail>).detail;
+
         if (detail?.status === "success") {
+          mutateState((current) => ({
+            ...current,
+            cloudOrgProviders: [],
+            providerAuthMethods: {},
+          }));
           void runCloudProviderSync("sign_in");
+        } else {
+          // Sign-out or error: remove all cloud-imported providers from the workspace
+          const importedIds = Object.keys(state.importedCloudProviders);
+          mutateState((current) => ({
+            ...current,
+            cloudOrgProviders: [],
+            providerAuthMethods: {},
+            importedCloudProviders: {},
+          }));
+          // Best-effort cleanup of cloud provider entries from opencode.jsonc
+          void (async () => {
+            for (const cloudId of importedIds) {
+              try {
+                await removeCloudProviderInternal(cloudId, { silent: true });
+              } catch {
+                // Ignore individual removal failures during sign-out cleanup
+              }
+            }
+          })();
         }
       };
       window.addEventListener(

@@ -55,8 +55,9 @@ export function CloudProvidersView({
       const imported = importedCloudProviders[provider.id] ?? null;
       const status = !imported
         ? "available"
-        : imported.providerId !== provider.providerId ||
-            (imported.source ?? null) !== provider.source ||
+        : imported.providerId !== provider.id.trim() ||
+            imported.sourceProviderId !== provider.providerId ||
+            (imported.source ?? null) !== (provider.source ?? null) ||
             (imported.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
             !sameStringList(imported.modelIds, sortStrings(provider.models.map((model) => model.id)))
           ? "out_of_sync"
