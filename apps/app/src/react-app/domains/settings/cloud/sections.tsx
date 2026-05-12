@@ -505,7 +505,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
             {actionBusy ? actionLabel : t("den.import_provider")}
           </Button>
         ) : null}
-        {row.status !== "available" ? (
+        {row.status !== "available" && onRemove ? (
           <Button
             variant="destructive"
             size="sm"
