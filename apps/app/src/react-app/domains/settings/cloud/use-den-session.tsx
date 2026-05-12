@@ -387,8 +387,25 @@ export function useDenSession({
   }, [authBusy, authToken, clearSignedInState, client]);
 
   const handleActiveOrgChange = React.useCallback(
-    (nextId: string) => {
+    async (nextId: string) => {
       const nextOrg = orgs.find((org) => org.id === nextId) ?? null;
+      if (!nextOrg) {
+        setOrgsError(t("den.error_load_orgs"));
+        return;
+      }
+
+      setOrgsBusy(true);
+      setOrgsError(null);
+
+      try {
+        await client.setActiveOrganization({ organizationId: nextOrg.id });
+      } catch (error) {
+        setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
+        return;
+      } finally {
+        setOrgsBusy(false);
+      }
+
       setActiveOrgId(nextId);
       writeDenSettings({
         baseUrl,
@@ -397,15 +414,12 @@ export function useDenSession({
         activeOrgSlug: nextOrg?.slug ?? null,
         activeOrgName: nextOrg?.name ?? null,
       });
-      if (nextId) {
-        void ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
-      }
       showToast({
         title: t("den.org_switched", { name: nextOrg?.name ?? t("den.active_org_title") }),
         tone: "success",
       });
     },
-    [authToken, baseUrl, orgs, showToast],
+    [authToken, baseUrl, client, orgs, showToast],
   );
 
   return {

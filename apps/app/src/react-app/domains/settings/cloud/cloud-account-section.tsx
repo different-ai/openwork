@@ -26,7 +26,7 @@ export interface CloudAccountSectionProps {
   orgsBusy: boolean;
   orgsError: string | null;
   sessionBusy: boolean;
-  onActiveOrgChange: (orgId: string) => void;
+  onActiveOrgChange: (orgId: string) => void | Promise<void>;
   onRefreshOrgs: () => void | Promise<void>;
   onSignOut: () => void | Promise<void>;
 }
