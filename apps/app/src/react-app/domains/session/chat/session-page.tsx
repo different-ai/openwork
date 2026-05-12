@@ -814,9 +814,9 @@ export function SessionPage(props: SessionPageProps) {
         onClose={() => setShowProviderOnboarding(false)}
         orgName="Acme Corp"
         providers={[
-          { id: "anthropic", name: "Anthropic", recommended: true, recommendedModel: "claude-sonnet-4-20250514" },
-          { id: "openai", name: "OpenAI", recommendedModel: "gpt-4.1" },
-          { id: "opencode", name: "OpenCode Zen", recommendedModel: "big-pickle" },
+          { id: "anthropic", name: "Anthropic", recommended: true, recommendedModel: "Claude Sonnet 4" },
+          { id: "openai", name: "OpenAI", recommendedModel: "GPT-4.1" },
+          { id: "opencode", name: "OpenCode Zen", recommendedModel: "Big Pickle" },
         ]}
         onAcceptDefaults={() => setShowProviderOnboarding(false)}
         onConfigureManually={() => setShowProviderOnboarding(false)}
@@ -825,7 +825,7 @@ export function SessionPage(props: SessionPageProps) {
         open={showProviderToast}
         providerName="Anthropic"
         providerId="anthropic"
-        modelName="claude-sonnet-4-20250514"
+        modelName="Claude Sonnet 4"
         onSwitchDefault={() => setShowProviderToast(false)}
         onDismiss={() => setShowProviderToast(false)}
       />

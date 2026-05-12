@@ -69,6 +69,7 @@ import {
   isDesktopRuntime,
   isSandboxWorkspace,
   normalizeDirectoryPath,
+  resolveModelDisplayName,
   safeStringify,
 } from "../../app/utils";
 import { t } from "../../i18n";
@@ -1421,7 +1422,7 @@ export function SessionRoute() {
   }, [opencodeClient, selectedWorkspaceRoot]);
 
   const modelLabel = local.prefs.defaultModel
-    ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
+    ? resolveModelDisplayName(local.prefs.defaultModel.modelID)
     : t("session.default_model");
 
   // Prefetch the full provider catalog once so `getModelBehaviorSummary` has

@@ -29,13 +29,106 @@ export function modelEquals(a: ModelRef, b: ModelRef) {
   return a.providerID === b.providerID && a.modelID === b.modelID;
 }
 
-const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
+/**
+ * Provider ID → friendly display name.
+ * Used when the backend doesn't return a provider name.
+ */
+export const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   opencode: "OpenCode",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  groq: "Groq",
   openrouter: "OpenRouter",
+  together: "Together AI",
+  fireworks: "Fireworks",
+  perplexity: "Perplexity",
+  xai: "xAI",
+  cohere: "Cohere",
 };
+
+/**
+ * Model ID → friendly display name.
+ * Matches by substring so "gpt-4.1-2025-04-14" still hits "gpt-4.1".
+ * Order matters: more specific patterns first.
+ */
+export const FRIENDLY_MODEL_LABELS: [pattern: string, label: string][] = [
+  // OpenAI
+  ["gpt-5.5", "GPT-5.5"],
+  ["gpt-5", "GPT-5"],
+  ["gpt-4.1-mini", "GPT-4.1 Mini"],
+  ["gpt-4.1-nano", "GPT-4.1 Nano"],
+  ["gpt-4.1", "GPT-4.1"],
+  ["gpt-4o-mini", "GPT-4o Mini"],
+  ["gpt-4o", "GPT-4o"],
+  ["gpt-4-turbo", "GPT-4 Turbo"],
+  ["gpt-4", "GPT-4"],
+  ["o4-mini", "o4 Mini"],
+  ["o3-pro", "o3 Pro"],
+  ["o3-mini", "o3 Mini"],
+  ["o3", "o3"],
+  ["o1-pro", "o1 Pro"],
+  ["o1-mini", "o1 Mini"],
+  ["o1", "o1"],
+  ["codex-mini", "Codex Mini"],
+
+  // Anthropic
+  ["claude-sonnet-4", "Claude Sonnet 4"],
+  ["claude-opus-4", "Claude Opus 4"],
+  ["claude-3.7-sonnet", "Claude 3.7 Sonnet"],
+  ["claude-3.5-sonnet", "Claude 3.5 Sonnet"],
+  ["claude-3.5-haiku", "Claude 3.5 Haiku"],
+  ["claude-3-opus", "Claude 3 Opus"],
+  ["claude-3-sonnet", "Claude 3 Sonnet"],
+  ["claude-3-haiku", "Claude 3 Haiku"],
+
+  // Google
+  ["gemini-2.5-pro", "Gemini 2.5 Pro"],
+  ["gemini-2.5-flash", "Gemini 2.5 Flash"],
+  ["gemini-2.0-flash", "Gemini 2.0 Flash"],
+  ["gemini-1.5-pro", "Gemini 1.5 Pro"],
+  ["gemini-1.5-flash", "Gemini 1.5 Flash"],
+
+  // DeepSeek
+  ["deepseek-r1", "DeepSeek R1"],
+  ["deepseek-v3", "DeepSeek V3"],
+  ["deepseek-chat", "DeepSeek Chat"],
+
+  // Mistral
+  ["mistral-large", "Mistral Large"],
+  ["mistral-medium", "Mistral Medium"],
+  ["mistral-small", "Mistral Small"],
+  ["codestral", "Codestral"],
+
+  // xAI
+  ["grok-3", "Grok 3"],
+  ["grok-2", "Grok 2"],
+
+  // OpenCode
+  ["big-pickle", "Big Pickle"],
+];
+
+/**
+ * Resolve a friendly display name for a model ID.
+ * Checks FRIENDLY_MODEL_LABELS first (substring match), then falls back
+ * to humanizeModelLabel which title-cases the raw ID.
+ */
+export function resolveModelDisplayName(modelID: string): string {
+  const normalized = modelID.trim().toLowerCase();
+  for (const [pattern, label] of FRIENDLY_MODEL_LABELS) {
+    if (normalized.includes(pattern)) return label;
+  }
+  return humanizeModelLabel(modelID);
+}
+
+/**
+ * Resolve a friendly display name for a provider ID.
+ */
+export function resolveProviderDisplayName(providerID: string): string {
+  return FRIENDLY_PROVIDER_LABELS[providerID.trim().toLowerCase()] ?? humanizeModelLabel(providerID);
+}
 
 const humanizeModelLabel = (value: string) => {
   const normalized = value.trim().toLowerCase();
@@ -63,8 +156,8 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   const provider = providers.find((p) => p.id === model.providerID);
   const modelInfo = provider?.models?.[model.modelID];
 
-  const providerLabel = provider?.name ?? humanizeModelLabel(model.providerID);
-  const modelLabel = modelInfo?.name ?? humanizeModelLabel(model.modelID);
+  const providerLabel = provider?.name ?? resolveProviderDisplayName(model.providerID);
+  const modelLabel = modelInfo?.name ?? resolveModelDisplayName(model.modelID);
 
   return `${providerLabel} · ${modelLabel}`;
 }
