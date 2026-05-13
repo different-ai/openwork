@@ -878,16 +878,46 @@ function normalizeDesktopBootstrapConfig(input) {
 }
 
 async function getDesktopBootstrapConfig() {
+  const configPath = desktopBootstrapPath();
   try {
-    const raw = await readFile(desktopBootstrapPath(), "utf8");
+    const raw = await readFile(configPath, "utf8");
     return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-  } catch {
+  } catch (error) {
+    console.warn("[desktop-bootstrap] falling back to defaults", {
+      path: configPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       baseUrl: DEFAULT_DEN_BASE_URL,
       apiBaseUrl: null,
       requireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
     };
   }
+}
+
+async function debugDesktopBootstrapConfig() {
+  const configPath = desktopBootstrapPath();
+  const result = {
+    path: configPath,
+    home: os.homedir(),
+    envHome: process.env.HOME ?? null,
+    envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
+    exists: existsSync(configPath),
+    raw: null,
+    parsed: null,
+    normalized: null,
+    error: null,
+  };
+
+  try {
+    result.raw = await readFile(configPath, "utf8");
+    result.parsed = JSON.parse(result.raw);
+    result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+
+  return result;
 }
 
 async function setDesktopBootstrapConfig(config) {
@@ -1928,6 +1958,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
     case "getDesktopBootstrapConfig":
       return getDesktopBootstrapConfig();
+    case "debugDesktopBootstrapConfig":
+      return debugDesktopBootstrapConfig();
     case "setDesktopBootstrapConfig":
       return setDesktopBootstrapConfig(args[0] ?? {});
     case "nukeOpenworkAndOpencodeConfigAndExit": {
