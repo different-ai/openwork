@@ -1,15 +1,17 @@
 # Daytona / Dev Container Setup
 
-Full-stack dev environment that runs the entire OpenWork + Den stack in a cloud sandbox.
+Full-stack dev environment that runs the **real Electron app** + Den stack in a cloud sandbox. You see and steer the desktop app through your browser via noVNC.
 
 ## What's included
 
 | Service | Port | Description |
 |---------|------|-------------|
-| **App (Vite)** | 5173 | The OpenWork React UI — no Electron needed, runs as a web app |
+| **Desktop App (noVNC)** | 6080 | The real Electron app rendered in a virtual display, accessible in your browser |
 | **Den Web** | 3005 | Admin dashboard for managing orgs, restrictions, providers |
 | **Den API** | 8788 | Control plane API |
-| **MySQL** | 3306 | Database (internal, not forwarded) |
+| **CDP Debug** | 9825 | Chrome DevTools Protocol — for automation and Chrome MCP |
+| **Vite HMR** | 5173 | Hot module replacement for the React UI |
+| **MySQL** | 3306 | Database (internal) |
 
 ## Quick start with Daytona
 
@@ -17,61 +19,45 @@ Full-stack dev environment that runs the entire OpenWork + Den stack in a cloud 
 daytona create https://github.com/different-ai/openwork
 ```
 
-This will:
-1. Spin up a workspace with Node.js 20 + MySQL
-2. Install dependencies (`pnpm install`)
-3. Push the DB schema
-4. Start Den API, Den Web, and the App dev server
-5. Forward ports 5173, 3005, 8788
+Then open port 6080 in your browser — you'll see the actual OpenWork desktop app.
 
-## Quick start with VS Code Dev Containers
+## How it works
 
-1. Open the repo in VS Code
-2. Cmd+Shift+P → "Dev Containers: Reopen in Container"
-3. Wait for build + services to start
-4. Ports are auto-forwarded
+1. **Xvfb** creates a virtual X display (`:99`) inside the container
+2. **Electron** renders the app on this virtual display
+3. **x11vnc** captures the display and serves it as VNC
+4. **noVNC** (port 6080) wraps VNC in a web client you can open in any browser
+5. You can click, type, and interact with the full Electron app through noVNC
+6. **CDP on port 9825** enables Chrome MCP and Playwright automation
 
 ## Testing the customization system
 
-1. Open **Den Web** (port 3005)
-2. Sign up with any email (dev mode auto-approves)
-3. Create an org
-4. Go to **Org Settings** → **UI Customization**
-5. Set any override (e.g., "Status bar" → "Always hide")
-6. Save
-
-Then:
-
-1. Open the **App** (port 5173)
-2. Go to **Cloud** → enable developer mode → set base URL to `http://localhost:3005`
-3. Sign in with the same account
-4. Go to **Settings** → **Customization**
-5. The "Status bar" toggle should be locked with a "Managed" badge
+1. Open **Den Web** (port 3005) in a separate tab
+2. Sign up → create org → Org Settings → UI Customization
+3. Set overrides → Save
+4. In the **Electron app** (noVNC on port 6080):
+   - Cloud → developer mode → base URL `http://localhost:3005`
+   - Sign in → Customization → see locked toggles
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  Daytona Workspace                          │
-│                                             │
-│  ┌─────────┐  ┌──────────┐  ┌───────────┐  │
-│  │ App     │  │ Den Web  │  │ Den API   │  │
-│  │ :5173   │  │ :3005    │  │ :8788     │  │
-│  │ (Vite)  │  │ (Next.js)│  │ (Hono)    │  │
-│  └────┬────┘  └────┬─────┘  └─────┬─────┘  │
-│       │             │              │         │
-│       │    GET /v1/me/desktop-config         │
-│       └─────────────┼──────────────┘         │
-│                     │                        │
-│              ┌──────┴──────┐                 │
-│              │   MySQL     │                 │
-│              │   :3306     │                 │
-│              └─────────────┘                 │
-└─────────────────────────────────────────────┘
+Your Browser
+    │
+    ├── :6080 noVNC ──▶ Xvfb ──▶ Electron App (real desktop app)
+    │                              │
+    │                              ├── CDP :9825 (automatable)
+    │                              └── Vite HMR :5173
+    │
+    ├── :3005 Den Web (Next.js)
+    │
+    └── :8788 Den API (Hono) ──▶ MySQL :3306
 ```
 
-## Notes
+## Automation
 
-- **No Electron**: The app runs as a plain web app via Vite. All features work except Electron-specific ones (file system access, native browser panel, window management).
-- **OTP codes**: In dev mode, email verification codes are logged to the Den API stdout. Check the terminal.
-- **Hot reload**: Vite HMR works for the app. Den API/Web need manual restart if you change their source.
+The Electron app exposes CDP on port 9825. You can:
+
+- Connect Playwright: `const browser = await chromium.connectOverCDP('ws://localhost:9825')`
+- Connect Chrome MCP for AI agent testing
+- Take screenshots, run UI tests, etc.
