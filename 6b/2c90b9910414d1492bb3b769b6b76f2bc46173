@@ -1,0 +1,44 @@
+apps/desktop/electron/main.mjs
+  s_ca80ba0fc82042::t_491d9d6ffdff29 244,349-489
+  s_ca80ba0fc82042::t_072b02a6153862 490-494
+apps/app/src/react-app/shell/ui-state-store.ts
+  s_8390ecb44f9eea::t_63dcadfe078b77 7,55,65
+  s_ca80ba0fc82042::t_058d6319ff7893 134-137,156,160
+  s_e28aa1d5ef52e6::t_e0005f4d943f3f 50,66-67
+  s_ca80ba0fc82042::t_098d6e086e2b2d 9,18-22,43,64,70-85,155
+  s_ca80ba0fc82042::t_9f3b4f9950f6d6 15,123,125-133,144-154,157
+apps/app/src/react-app/domains/settings/pages/shell-view.tsx
+  s_ca80ba0fc82042::t_0b52e52c35a3f9 226-227,232-234,236,353-360,431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "6b2c90b9910414d1492bb3b769b6b76f2bc46173",
+  "prompts": {},
+  "sessions": {
+    "s_8390ecb44f9eea": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c5985ce6-6c9a-4c18-b0e5-2b91d730f959",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_ca80ba0fc82042": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f6f9d773-c9b8-4275-ba07-f4c88377872d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e28aa1d5ef52e6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "417911eb-6e23-4f96-a093-393363570918",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
