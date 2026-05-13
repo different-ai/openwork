@@ -3,54 +3,88 @@ set -euo pipefail
 
 # Start all services for the Daytona/devcontainer workspace.
 # Launches the real Electron app with a virtual display.
+#
+# Usage: bash .devcontainer/start-services.sh
+#
+# Services started:
+#   - Xvfb + noVNC (port 6080) — see the Electron app in your browser
+#   - Vite dev server (port 5173) — React UI with HMR
+#   - Electron app — the real desktop app on the virtual display
+#   - CDP debugging (port 9825) — for automation
+#
+# Optional (if MySQL is available):
+#   - Den API (port 8788)
+#   - Den Web (port 3005)
 
 cd /workspace
 
-# 1. Start virtual display + noVNC
+# ── 1. Virtual display ──
 echo "==> Starting virtual display..."
-/usr/local/bin/start-display.sh
+.devcontainer/start-display.sh
 sleep 2
 
-# 2. Push DB schema
-echo "==> Pushing DB schema..."
-pnpm --filter @openwork-ee/den-db db:push 2>&1 || echo "DB push failed (may already be up to date)"
+# ── 2. Vite dev server on 0.0.0.0 (so Electron can reach it via 127.0.0.1) ──
+echo "==> Starting Vite on :5173..."
+cd apps/app
+OPENWORK_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
+cd /workspace
+sleep 3
 
-# 3. Start Den API
-echo "==> Starting Den API on :8788..."
-pnpm dev:den:api &
-DEN_API_PID=$!
+# ── 3. Electron app ──
+echo "==> Starting Electron app..."
+export DISPLAY=:99
+export ELECTRON_DISABLE_SANDBOX=1
+export OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9825
+export OPENWORK_DEV_MODE=1
+nohup pnpm --filter @openwork/desktop dev:electron > /tmp/electron.log 2>&1 &
 
-echo "==> Waiting for Den API health..."
+# ── 4. Wait for Electron to be ready ──
+echo "==> Waiting for Electron..."
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:8788/health >/dev/null 2>&1; then
-    echo "Den API healthy."
+  if curl -sf http://127.0.0.1:9825/json/list >/dev/null 2>&1; then
+    echo "Electron CDP ready."
     break
   fi
   sleep 2
 done
 
-# 4. Start Den Web
-echo "==> Starting Den Web on :3005..."
-pnpm dev:den:web &
-DEN_WEB_PID=$!
+# ── 5. Optional: Den stack (only if MySQL is reachable) ──
+if mysql -h mysql -u root -ppassword -e "SELECT 1" >/dev/null 2>&1; then
+  echo "==> MySQL found, starting Den stack..."
 
-# 5. Start the Electron app (uses Xvfb display)
-echo "==> Starting OpenWork desktop app..."
-OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9825 pnpm dev &
-APP_PID=$!
+  echo "  Pushing DB schema..."
+  pnpm --filter @openwork-ee/den-db db:push 2>&1 || echo "  DB push failed (may be up to date)"
+
+  echo "  Starting Den API on :8788..."
+  pnpm dev:den:api > /tmp/den-api.log 2>&1 &
+
+  for i in $(seq 1 20); do
+    if curl -sf http://localhost:8788/health >/dev/null 2>&1; then
+      echo "  Den API healthy."
+      break
+    fi
+    sleep 2
+  done
+
+  echo "  Starting Den Web on :3005..."
+  pnpm dev:den:web > /tmp/den-web.log 2>&1 &
+else
+  echo "==> MySQL not found, skipping Den stack."
+fi
 
 echo ""
 echo "============================================"
 echo "  All services running!"
 echo ""
 echo "  Desktop App (noVNC):  http://localhost:6080"
-echo "  Den Web Dashboard:    http://localhost:3005"
+echo "  CDP Debug:            ws://127.0.0.1:9825"
+echo "  Vite HMR:             http://localhost:5173"
+if mysql -h mysql -u root -ppassword -e "SELECT 1" >/dev/null 2>&1; then
+echo "  Den Web:              http://localhost:3005"
 echo "  Den API:              http://localhost:8788"
-echo "  CDP Debug:            ws://localhost:9825"
-echo ""
-echo "  Open noVNC in your browser to see and"
-echo "  interact with the real Electron app."
+fi
 echo "============================================"
 echo ""
 
+# Keep alive
 wait
