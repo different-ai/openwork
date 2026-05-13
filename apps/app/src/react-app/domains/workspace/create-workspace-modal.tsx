@@ -18,7 +18,7 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
-import type { SandboxBackend } from "../../../app/lib/desktop";
+import type { SandboxBackend, SandboxProfile } from "../../../app/lib/desktop";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
@@ -109,6 +109,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [sandboxBackend, setSandboxBackend] = useState<SandboxBackend | undefined>(
     props.defaultSandboxBackend,
+  );
+  const [sandboxProfile, setSandboxProfile] = useState<SandboxProfile | undefined>(
+    props.defaultSandboxProfile,
   );
   const [pickingFolder, setPickingFolder] = useState(false);
   const [showProgressDetails, setShowProgressDetails] = useState(false);
@@ -423,7 +426,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    props.onConfirm(preset, selectedFolder, sandboxBackend);
+    props.onConfirm(preset, selectedFolder, sandboxBackend, sandboxProfile);
   };
 
   if (!props.open && !isInline) {
@@ -538,6 +541,23 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             Defaults to your Settings → Sandbox preference. The backend is fixed for the lifetime of
             this workspace.
           </div>
+          {(sandboxBackend ?? props.defaultSandboxBackend) === "openshell" ? (
+            <div className="mt-3 space-y-1.5">
+              <div className="text-xs font-medium text-gray-11">OpenShell launch profile</div>
+              <select
+                className="w-full rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-sm"
+                value={sandboxProfile ?? props.defaultSandboxProfile ?? "openwork"}
+                onChange={(e) => setSandboxProfile(e.target.value as SandboxProfile)}
+              >
+                <option value="openwork">OpenWork — OpenCode agent (rich chat UI)</option>
+                <option value="openeral-claude">OpenEral — Claude Code (terminal, Postgres)</option>
+                <option value="openeral-openclaw">OpenEral — OpenClaw (terminal, Postgres)</option>
+              </select>
+              <div className="text-[11px] text-gray-9">
+                OpenEral profiles require DATABASE_URL configured in Settings → Sandbox.
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

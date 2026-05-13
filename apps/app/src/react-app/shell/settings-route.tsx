@@ -1250,6 +1250,10 @@ export function SettingsRoute() {
             onSelectBackend={(next) =>
               local.setPrefs((previous) => ({ ...previous, preferredSandboxBackend: next }))
             }
+            selectedProfile={local.prefs.preferredSandboxProfile}
+            onSelectProfile={(next) =>
+              local.setPrefs((previous) => ({ ...previous, preferredSandboxProfile: next }))
+            }
             doctor={openshellState.doctor}
             doctorLoading={openshellState.doctorLoading}
             doctorError={openshellState.doctorError}
@@ -1421,6 +1425,7 @@ export function SettingsRoute() {
         remoteSubmitting={createWorkspaceRemoteBusy}
         remoteError={createWorkspaceRemoteError}
         defaultSandboxBackend={local.prefs.preferredSandboxBackend}
+        defaultSandboxProfile={local.prefs.preferredSandboxProfile}
       />
       <ConnectionsModals
         client={activeClient}

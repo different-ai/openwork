@@ -1,4 +1,4 @@
-import type { SandboxBackend } from "../../../app/lib/desktop";
+import type { SandboxBackend, SandboxProfile } from "../../../app/lib/desktop";
 import type { WorkspacePreset } from "../../../app/types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
@@ -37,6 +37,7 @@ export type CreateWorkspaceModalProps = {
     preset: WorkspacePreset,
     folder: string | null,
     sandboxBackend?: SandboxBackend,
+    sandboxProfile?: SandboxProfile,
   ) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;
   onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
@@ -71,6 +72,9 @@ export type CreateWorkspaceModalProps = {
    *  without a sandboxBackend override (the host falls back to whatever
    *  the user configured globally). */
   defaultSandboxBackend?: SandboxBackend;
+  /** Default sandbox profile pre-selected when the backend selector
+   *  resolves to "openshell". Meaningless for other backends. */
+  defaultSandboxProfile?: SandboxProfile;
 };
 
 export type CreateRemoteWorkspaceModalProps = {

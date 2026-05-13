@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, RefreshCcw, XCircle } from "lucide-react";
 
-import type { SandboxBackend } from "../../../../app/lib/desktop";
+import type { SandboxBackend, SandboxProfile } from "../../../../app/lib/desktop";
 import { Button } from "../../../design-system/button";
 import type {
   OpenShellComponent,
@@ -43,9 +43,37 @@ const BACKEND_OPTIONS: BackendOption[] = [
   },
 ];
 
+type ProfileOption = {
+  value: SandboxProfile;
+  label: string;
+  summary: string;
+};
+
+const PROFILE_OPTIONS: ProfileOption[] = [
+  {
+    value: "openwork",
+    label: "OpenWork (default)",
+    summary: "Bundled image with OpenCode. Rich chat UI in OpenWork.",
+  },
+  {
+    value: "openeral-claude",
+    label: "OpenEral — Claude Code",
+    summary:
+      "ghcr.io/sandys/openeral image with Claude Code as the agent. Workspace persists via PostgreSQL. Requires DATABASE_URL configured below.",
+  },
+  {
+    value: "openeral-openclaw",
+    label: "OpenEral — OpenClaw",
+    summary:
+      "Same OpenEral image, OpenClaw as the agent. Also requires ANTHROPIC_API_KEY to be configured below.",
+  },
+];
+
 export type SandboxViewProps = {
   selectedBackend: SandboxBackend;
   onSelectBackend: (next: SandboxBackend) => void;
+  selectedProfile: SandboxProfile;
+  onSelectProfile: (next: SandboxProfile) => void;
   doctor: OpenShellDoctorResult | null;
   doctorLoading: boolean;
   doctorError: string | null;
@@ -184,6 +212,50 @@ export function SandboxView(props: SandboxViewProps) {
           })}
         </div>
       </div>
+
+      {showOpenShellPanel ? (
+        <div className={`${settingsPanelClass} space-y-3`}>
+          <div>
+            <div className="text-sm font-medium text-gray-12">OpenShell launch profile</div>
+            <div className="text-xs text-gray-10">
+              Picks which agent + image runs inside the OpenShell sandbox. Default workspaces use
+              the OpenWork image. OpenEral profiles boot from the published image at{" "}
+              <code className="rounded bg-gray-2/40 px-1 py-0.5 text-[11px]">
+                ghcr.io/sandys/openeral/sandbox:just-bash
+              </code>{" "}
+              and require credentials configured below.
+            </div>
+          </div>
+          <div className="grid gap-2">
+            {PROFILE_OPTIONS.map((option) => {
+              const checked = props.selectedProfile === option.value;
+              return (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 transition-colors ${
+                    checked
+                      ? "border-dls-text/70 bg-gray-3/50"
+                      : "border-dls-border bg-dls-surface hover:bg-gray-2/30"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="sandbox-profile"
+                    className="mt-1"
+                    value={option.value}
+                    checked={checked}
+                    onChange={() => props.onSelectProfile(option.value)}
+                  />
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium text-gray-12">{option.label}</div>
+                    <div className="text-xs text-gray-10">{option.summary}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {showOpenShellPanel ? (
         <div className={`${settingsPanelClass} space-y-4`}>

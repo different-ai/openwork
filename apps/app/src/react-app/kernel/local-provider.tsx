@@ -13,7 +13,7 @@ import {
 import { THINKING_PREF_KEY } from "../../app/constants";
 import { coerceReleaseChannel } from "../../app/lib/release-channels";
 import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
-import type { SandboxBackend } from "../../app/lib/desktop";
+import type { SandboxBackend, SandboxProfile } from "../../app/lib/desktop";
 import { readStoredDefaultModel } from "./model-config";
 
 export type LocalUIState = {
@@ -45,6 +45,13 @@ export type LocalPreferences = {
    * can override per-workspace in the create-workspace flow.
    */
   preferredSandboxBackend: SandboxBackend;
+  /**
+   * When preferredSandboxBackend is "openshell", picks which launch
+   * protocol to use. "openwork" boots the bundled OpenCode image;
+   * "openeral-claude" / "openeral-openclaw" boot the OpenEral image
+   * with the named agent. Meaningless for other backends.
+   */
+  preferredSandboxProfile: SandboxProfile;
 };
 
 type LocalContextValue = {
@@ -69,6 +76,7 @@ const INITIAL_PREFS: LocalPreferences = {
   featureFlags: { microsandboxCreateSandbox: false },
   hasCompletedOnboarding: false,
   preferredSandboxBackend: "docker",
+  preferredSandboxProfile: "openwork",
 };
 
 function readPersisted<T>(key: string, fallback: T): T {

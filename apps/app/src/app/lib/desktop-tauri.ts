@@ -6,6 +6,15 @@ import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
 export type SandboxBackend = "none" | "docker" | "microsandbox" | "openshell";
 
+/**
+ * Sandbox profile — picks the launch protocol when SandboxBackend is
+ * "openshell". "openwork" is the default OpenCode-based flow we ship;
+ * "openeral-claude" / "openeral-openclaw" boot from the published
+ * OpenEral image (ghcr.io/sandys/openeral/sandbox:just-bash) with the
+ * named agent.
+ */
+export type SandboxProfile = "openwork" | "openeral-claude" | "openeral-openclaw";
+
 export const desktopFetch = tauriFetch as unknown as typeof globalThis.fetch;
 
 export async function openDesktopUrl(url: string): Promise<void> {
@@ -145,6 +154,7 @@ export type WorkspaceInfo = {
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
+  sandboxProfile?: SandboxProfile | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
@@ -231,6 +241,7 @@ export async function workspaceCreateRemote(input: {
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
+  sandboxProfile?: SandboxProfile | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -246,6 +257,7 @@ export async function workspaceCreateRemote(input: {
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
+    sandboxProfile: input.sandboxProfile ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
   });
@@ -266,6 +278,7 @@ export async function workspaceUpdateRemote(input: {
 
   // Sandbox lifecycle metadata (desktop-managed)
   sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
+  sandboxProfile?: SandboxProfile | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
@@ -282,6 +295,7 @@ export async function workspaceUpdateRemote(input: {
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
+    sandboxProfile: input.sandboxProfile ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
   });
@@ -462,6 +476,7 @@ export type OrchestratorDetachedHost = {
   hostToken: string;
   port: number;
   sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
+  sandboxProfile?: SandboxProfile | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
 };
@@ -469,6 +484,7 @@ export type OrchestratorDetachedHost = {
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: SandboxBackend | null;
+  sandboxProfile?: SandboxProfile | null;
   sandboxImageRef?: string | null;
   runId?: string | null;
   openworkToken?: string | null;
@@ -477,6 +493,7 @@ export async function orchestratorStartDetached(input: {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
+    sandboxProfile: input.sandboxProfile ?? null,
     sandboxImageRef: input.sandboxImageRef ?? null,
     runId: input.runId ?? null,
     openworkToken: input.openworkToken ?? null,
