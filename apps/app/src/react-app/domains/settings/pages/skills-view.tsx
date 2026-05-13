@@ -63,7 +63,7 @@ import {
   surfaceCardClass,
   tagClass,
 } from "../../workspace/modal-styles";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import {
   SelectMenu,
@@ -1363,7 +1363,7 @@ export function SkillsView(props: SkillsViewProps) {
         message={t("skills.uninstall_warning").replace("{name}", uninstallTarget?.name ?? "")}
         confirmLabel={t("skills.uninstall")}
         cancelLabel={t("common.cancel")}
-        confirmButtonVariant="danger"
+        confirmButtonVariant="destructive"
         onCancel={() => setUninstallTarget(null)}
         onConfirm={() => {
           const target = uninstallTarget;
@@ -1566,7 +1566,7 @@ export function SkillsView(props: SkillsViewProps) {
                 <Button variant="outline" onClick={closeCustomRepoModal} disabled={props.busy}>
                   {t("common.cancel")}
                 </Button>
-                <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
+                <Button onClick={saveCustomRepo} disabled={props.busy}>
                   {t("skills.save_and_load")}
                 </Button>
               </div>

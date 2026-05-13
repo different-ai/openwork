@@ -22,7 +22,7 @@ import type {
 } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 const sectionHeaderClass = "flex flex-col gap-1 pb-2";
 const sectionTitleClass = "text-[15px] font-semibold tracking-[-0.2px] text-dls-text";
@@ -242,10 +242,9 @@ function ServiceCard(props: ServiceCardProps) {
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          variant="secondary"
           onClick={() => void props.onRestart()}
           disabled={restartDisabled}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
           title={!props.isDesktop ? t("settings.sandbox_requires_desktop") : ""}
         >
           <RefreshCcw className={`mr-1.5 h-3.5 w-3.5 ${props.restarting ? "animate-spin" : ""}`} />
@@ -254,7 +253,7 @@ function ServiceCard(props: ServiceCardProps) {
         <Button
           variant="outline"
           onClick={() => void props.onCopyLogs()}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
         >
           <Copy size={13} className="mr-1.5" />
           {t("settings.copy_logs")}
@@ -262,7 +261,7 @@ function ServiceCard(props: ServiceCardProps) {
         <Button
           variant="outline"
           onClick={() => void props.onExportLogs()}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
         >
           <Download size={13} className="mr-1.5" />
           {t("settings.export_log_button")}
@@ -329,15 +328,15 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex shrink-0 items-center gap-2">
             <Button
               variant="outline"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onCopyRuntimeDebugReport()}
             >
               <Copy size={13} className="mr-1.5" />
               {t("settings.copy_json")}
             </Button>
             <Button
-              variant="secondary"
-              className="h-8 px-3 py-0 text-xs"
+              variant="outline"
+              size="sm"
               onClick={() => void props.onExportRuntimeDebugReport()}
             >
               <Download size={13} className="mr-1.5" />
@@ -617,7 +616,8 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-7 shrink-0 px-2 py-0 text-xs"
+              size="xs"
+              className="shrink-0"
               onClick={() => void props.onClearWorkspaceDebugEvents()}
               disabled={props.busy}
             >
@@ -641,14 +641,14 @@ export function DebugView(props: DebugViewProps) {
             <div className={sectionDescClass}>{t("settings.developer_log_desc")}</div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onClearDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onClearDeveloperLog()}>
               {t("settings.clear_button")}
             </Button>
-            <Button variant="outline" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onCopyDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onCopyDeveloperLog()}>
               <Copy size={13} className="mr-1.5" />
               {t("settings.copy_log_button")}
             </Button>
-            <Button variant="secondary" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onExportDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onExportDeveloperLog()}>
               <Download size={13} className="mr-1.5" />
               {t("settings.export_log_button")}
             </Button>
@@ -677,8 +677,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="text-[12px] text-dls-secondary">{t("settings.sandbox_probe_desc")}</div>
             </div>
             <Button
-              variant="secondary"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onRunSandboxDebugProbe()}
               disabled={sandboxProbeDisabled}
               title={sandboxProbeTitle}
@@ -756,7 +755,8 @@ export function DebugView(props: DebugViewProps) {
                   </div>
                   <Button
                     variant="outline"
-                    className="h-10 shrink-0 px-3 text-xs"
+                    size="lg"
+                    className="shrink-0"
                     onClick={() => void props.onPickEngineBinary()}
                     disabled={props.busy}
                   >
@@ -764,7 +764,8 @@ export function DebugView(props: DebugViewProps) {
                   </Button>
                   <Button
                     variant="outline"
-                    className="h-10 shrink-0 px-3 text-xs"
+                    size="lg"
+                    className="shrink-0"
                     onClick={props.onClearEngineCustomBinPath}
                     disabled={props.busy || !props.engineCustomBinPath.trim()}
                     title={!props.engineCustomBinPath.trim() ? t("settings.no_custom_path_set") : t("settings.clear")}
@@ -796,7 +797,7 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onStopHost()}
               disabled={props.busy}
             >
@@ -805,7 +806,7 @@ export function DebugView(props: DebugViewProps) {
           </div>
 
           <Button
-            variant="secondary"
+            variant="outline"
             className="group w-full justify-between"
             onClick={() => void props.onResetStartupPreference()}
           >
@@ -832,7 +833,7 @@ export function DebugView(props: DebugViewProps) {
           </div>
           <Button
             variant="outline"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
+            size="sm" className="shrink-0"
             onClick={() => props.onOpenResetModal("onboarding")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
             title={props.anyActiveRuns ? t("settings.stop_runs_to_reset") : ""}
@@ -847,8 +848,8 @@ export function DebugView(props: DebugViewProps) {
             <div className="text-[12px] text-dls-secondary">{t("settings.reset_app_data_description")}</div>
           </div>
           <Button
-            variant="danger"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
+            variant="destructive"
+            size="sm" className="shrink-0"
             onClick={() => props.onOpenResetModal("all")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
             title={props.anyActiveRuns ? t("settings.stop_runs_to_reset") : ""}
@@ -874,7 +875,7 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-8 shrink-0 px-3 py-0 text-xs"
+              size="sm" className="shrink-0"
               onClick={() => void props.onOpenElectronPreviewRelease()}
             >
               <ExternalLink size={13} className="mr-1.5" />
@@ -890,8 +891,7 @@ export function DebugView(props: DebugViewProps) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="secondary"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onResolveElectronAlphaArtifact()}
               disabled={props.electronMigrationBusy}
             >
@@ -946,8 +946,7 @@ export function DebugView(props: DebugViewProps) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="secondary"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onPrepareElectronMigrationSnapshot()}
               disabled={props.electronMigrationBusy}
             >
@@ -955,7 +954,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 border-amber-7/50 px-3 py-0 text-xs text-amber-11 hover:bg-amber-3/40"
+              size="sm"
               onClick={() => void props.onInstallElectronPreviewFromTauri()}
               disabled={props.electronMigrationBusy || !props.electronMigrationUrl.trim()}
               title="Requires a trusted artifact URL. macOS keeps OpenWork.app.migrate-bak for rollback."
@@ -964,7 +963,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onRevealElectronMigrationBackup()}
               disabled={props.electronMigrationBusy}
             >
@@ -999,7 +998,7 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant={props.electronAlphaUpdaterChannel === "alpha" ? "secondary" : "outline"}
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onSetElectronAlphaUpdaterChannel("alpha")}
               disabled={props.electronAlphaUpdaterBusy}
             >
@@ -1007,7 +1006,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant={props.electronAlphaUpdaterChannel === "stable" ? "secondary" : "outline"}
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onSetElectronAlphaUpdaterChannel("stable")}
               disabled={props.electronAlphaUpdaterBusy}
             >
@@ -1015,7 +1014,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onCheckElectronAlphaUpdates()}
               disabled={props.electronAlphaUpdaterBusy}
             >

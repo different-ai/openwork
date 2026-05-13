@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
 import { t } from "../../../../i18n";
 import type { PendingPermission } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 type PermissionPresentation = {
   title: string;
@@ -333,8 +333,7 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
           </p>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_auto]">
             <Button
-              variant="outline"
-              className="justify-center rounded-full border-red-6/35 bg-red-2/20 text-red-11 hover:bg-red-3/30 sm:justify-self-start"
+              variant="destructive"
               onClick={() => props.respondPermission?.(props.permission.id, "reject")}
               disabled={props.busy || !props.respondPermission}
             >
@@ -342,8 +341,6 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
               {t("session.deny")}
             </Button>
             <Button
-              variant="primary"
-              className="rounded-full"
               onClick={() => props.respondPermission?.(props.permission.id, "once")}
               disabled={props.busy || !props.respondPermission}
             >
@@ -352,7 +349,6 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             </Button>
             <Button
               variant="outline"
-              className="rounded-full bg-dls-surface"
               onClick={() => props.respondPermission?.(props.permission.id, "always")}
               disabled={props.busy || !props.respondPermission}
             >

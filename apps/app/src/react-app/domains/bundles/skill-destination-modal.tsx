@@ -13,7 +13,7 @@ import {
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import { t } from "../../../i18n";
 import { isSandboxWorkspace } from "../../../app/utils";
-import { Button } from "../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 type SkillSummary = {
   name: string;
@@ -106,11 +106,10 @@ function SkillDestinationFooter(props: {
         ) : null}
 
         <div className="flex items-center justify-end gap-3">
-          <Button variant="ghost" onClick={props.onClose} disabled={props.footerBusy}>
+          <Button variant="outline" onClick={props.onClose} disabled={props.footerBusy}>
             {t("common.cancel")}
           </Button>
           <Button
-            variant="primary"
             onClick={props.onSubmit}
             disabled={!props.selectedWorkspace || props.footerBusy}
           >

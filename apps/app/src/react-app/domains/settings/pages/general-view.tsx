@@ -18,6 +18,7 @@ import {
 
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
+import { Button } from "@/components/ui/button";
 
 export type GeneralSettingsViewProps = {
   onNavigateTab: (tab: SettingsTab) => void;
@@ -121,31 +122,31 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
               <div className="mt-1 max-w-[58ch] text-[11px] text-dls-secondary">{t("settings.feedback_desc")}</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[#011627] px-3.5 text-[11px] font-semibold text-white transition-colors hover:bg-black"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={props.onSendFeedback}
               >
                 <MessageCircle size={12} />
                 {t("settings.send_feedback")}
                 <ArrowUpRight size={11} />
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dls-border bg-dls-surface px-3 text-[11px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={props.onJoinDiscord}
               >
                 {t("settings.join_discord")}
                 <ArrowUpRight size={11} />
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border border-dls-border bg-dls-surface px-3 text-[11px] font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={props.onReportIssue}
               >
                 {t("settings.report_issue")}
                 <ArrowUpRight size={11} />
-              </button>
+              </Button>
             </div>
           </div>
         </div>

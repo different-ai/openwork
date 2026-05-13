@@ -18,7 +18,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { PermissionApprovalModal } from "./permission-approval-modal";
@@ -571,14 +571,14 @@ export function SessionPage(props: SessionPageProps) {
                         <div className="mt-4 flex flex-wrap gap-2">
                           <Button
                             variant="outline"
-                            className="px-3 py-1.5 text-xs"
+                            size="sm"
                             onClick={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
                           >
                             {t("workspace_list.test_connection")}
                           </Button>
                           <Button
                             variant="outline"
-                            className="px-3 py-1.5 text-xs"
+                            size="sm"
                             onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
                           >
                             {t("workspace_list.edit_connection")}
@@ -586,7 +586,7 @@ export function SessionPage(props: SessionPageProps) {
                           {props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId]?.status === "error" ? (
                             <Button
                               variant="outline"
-                              className="px-3 py-1.5 text-xs"
+                              size="sm"
                               onClick={() => void Promise.resolve(props.sidebar.onRecoverWorkspace(props.selectedWorkspaceId))}
                             >
                               {t("workspace_list.recover")}

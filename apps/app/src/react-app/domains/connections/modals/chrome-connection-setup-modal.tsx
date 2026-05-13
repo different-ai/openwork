@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { isElectronRuntime } from "../../../../app/utils";
 
 export type ChromeConnectionSetupModalProps = {
@@ -214,11 +214,10 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
 
         {/* Footer */}
         <div className="flex flex-col-reverse gap-3 border-t border-gray-6 bg-gray-2/80 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-7">
-          <Button variant="ghost" onClick={props.onClose}>
+          <Button variant="outline" onClick={props.onClose}>
             {t("common.cancel")}
           </Button>
           <Button
-            variant="secondary"
             onClick={props.onClose}
             disabled={status === "checking"}
           >

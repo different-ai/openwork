@@ -3,7 +3,7 @@ import type * as React from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 type SettingsContentProps = {
   children: React.ReactNode;
@@ -104,7 +104,7 @@ export function SettingsPanelToolbarButton(props: SettingsPanelToolbarButtonProp
   return (
     <Button
       variant="outline"
-      className="h-8 rounded-full border-gray-6/60 bg-gray-1/70 px-3 py-0 text-xs hover:bg-gray-2/70"
+      size="sm"
       onClick={props.onClick}
       disabled={props.disabled}
       title={props.title}

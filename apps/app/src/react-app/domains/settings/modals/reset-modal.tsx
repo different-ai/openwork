@@ -1,17 +1,11 @@
 /** @jsxImportSource react */
 import { X } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
 
 const RESET_CONFIRM_PLACEHOLDER = "{resetWord}";
 const RESET_CONFIRM_WORD = "RESET";
-
-const buttonBaseClass =
-  "inline-flex items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
-const outlineButtonClass = `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`;
-const dangerButtonClass = `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`;
-const ghostIconButtonClass =
-  "inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)] disabled:cursor-not-allowed disabled:opacity-60";
 
 export type ResetModalProps = {
   open: boolean;
@@ -57,14 +51,15 @@ export function ResetModal(props: ResetModalProps) {
                 {resetConfirmationHint()}
               </p>
             </div>
-            <button
-              type="button"
-              className={ghostIconButtonClass}
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={props.onClose}
               disabled={props.busy}
+              aria-label={t("settings.reset_cancel")}
             >
-              <X size={16} />
-            </button>
+              <X />
+            </Button>
           </div>
 
           <div className="mt-6 space-y-4">
@@ -96,22 +91,22 @@ export function ResetModal(props: ResetModalProps) {
           </div>
 
           <div className="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              className={outlineButtonClass}
+            <Button
+              variant="outline"
+              size="sm"
               onClick={props.onClose}
               disabled={props.busy}
             >
               {t("settings.reset_cancel")}
-            </button>
-            <button
-              type="button"
-              className={dangerButtonClass}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={props.onConfirm}
               disabled={!props.canReset}
             >
               {t("settings.reset_confirm_button")}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

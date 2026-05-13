@@ -3,7 +3,7 @@ import { RefreshCcw } from "lucide-react";
 
 import type { OpenworkServerInfo } from "../../../../app/lib/desktop";
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 import type { OpenworkTestState, TokenVisibilityKey } from "./config-view-state";
 
@@ -27,7 +27,7 @@ export function ConfigEngineReloadSection(props: {
   reloadBusy: boolean;
   reloadError: string | null;
   reloadAvailabilityReason: string | null;
-  reloadButtonTone: "danger" | "secondary";
+  reloadButtonTone: "destructive" | "secondary";
   reloadButtonDisabled: boolean;
   reloadButtonLabel: string;
   onReload: () => Promise<void>;
@@ -46,7 +46,7 @@ export function ConfigEngineReloadSection(props: {
           {props.reloadError ? <div className="text-[11px] text-red-11">{props.reloadError}</div> : null}
           {props.reloadAvailabilityReason ? <div className="text-[11px] text-gray-9">{props.reloadAvailabilityReason}</div> : null}
         </div>
-        <Button variant={props.reloadButtonTone} className="text-xs h-8 py-0 px-3 shrink-0" onClick={props.onReload} disabled={props.reloadButtonDisabled}>
+        <Button variant={props.reloadButtonTone} size="sm" className="shrink-0" onClick={props.onReload} disabled={props.reloadButtonDisabled}>
           <RefreshCcw size={14} className={props.reloadBusy ? "animate-spin" : ""} />
           {props.reloadButtonLabel}
         </Button>
@@ -68,7 +68,7 @@ export function ConfigDiagnosticsSection(props: {
           <div className="text-sm font-medium text-gray-12">{t("config.diagnostics_title")}</div>
           <div className="text-xs text-gray-10">{t("config.diagnostics_desc")}</div>
         </div>
-        <Button variant="secondary" className="text-xs h-8 py-0 px-3 shrink-0" onClick={() => void props.onCopy(props.diagnosticsBundleJson, "debug-bundle")} disabled={props.busy}>
+        <Button variant="outline" size="sm" className="shrink-0" onClick={() => void props.onCopy(props.diagnosticsBundleJson, "debug-bundle")} disabled={props.busy}>
           {props.copyingField === "debug-bundle" ? t("config.copied") : t("config.copy")}
         </Button>
       </div>
@@ -99,10 +99,10 @@ function TokenRow(props: {
         <div className="text-[11px] text-gray-8 mt-1">{props.hint}</div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <Button variant="outline" className="text-xs h-8 py-0 px-3" onClick={props.toggle} disabled={!props.tokenValue}>
+        <Button variant="outline" size="sm" onClick={props.toggle} disabled={!props.tokenValue}>
           {props.visible ? t("common.hide") : t("common.show")}
         </Button>
-        <Button variant="outline" className="text-xs h-8 py-0 px-3" onClick={() => props.onCopy(props.tokenValue ?? "", props.copyKey)} disabled={!props.tokenValue}>
+        <Button variant="outline" size="sm" onClick={() => props.onCopy(props.tokenValue ?? "", props.copyKey)} disabled={!props.tokenValue}>
           {props.copyingField === props.copyKey ? t("config.copied") : t("config.copy")}
         </Button>
       </div>
@@ -143,7 +143,7 @@ export function ConfigServerSharingSection(props: {
             <div className="text-xs text-gray-7 font-mono truncate">{props.hostConnectUrl || t("config.starting_server")}</div>
             {props.hostConnectUrl ? <div className="text-[11px] text-gray-8 mt-1">{hostUrlHint}</div> : null}
           </div>
-          <Button variant="outline" className="text-xs h-8 py-0 px-3 shrink-0" onClick={() => props.onCopy(props.hostConnectUrl, "host-url")} disabled={!props.hostConnectUrl}>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => props.onCopy(props.hostConnectUrl, "host-url")} disabled={!props.hostConnectUrl}>
             {props.copyingField === "host-url" ? t("config.copied") : t("config.copy")}
           </Button>
         </div>
@@ -190,7 +190,7 @@ export function ConfigServerConnectionSection(props: {
           <div className="mb-1 text-xs font-medium text-gray-11">{t("config.token_label")}</div>
           <div className="flex items-center gap-2">
             <input type={props.tokenVisible ? "text" : "password"} value={props.openworkToken} onChange={(event) => props.onTokenChange(event.currentTarget.value)} placeholder={t("config.token_placeholder")} disabled={props.busy} className="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20" />
-            <Button variant="outline" className="text-xs h-9 px-3 shrink-0" onClick={props.onToggleToken} disabled={props.busy}>
+            <Button variant="outline" className="shrink-0" onClick={props.onToggleToken} disabled={props.busy}>
               {props.tokenVisible ? t("common.hide") : t("common.show")}
             </Button>
           </div>
@@ -202,9 +202,9 @@ export function ConfigServerConnectionSection(props: {
         <div className="text-[11px] text-gray-8 font-mono truncate">{t("config.worker_id")}{props.resolvedWorkspaceId || t("config.unavailable")}</div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={() => void props.onTestConnection()} disabled={props.busy || props.openworkTestState === "testing"}>{props.openworkTestState === "testing" ? t("config.testing") : t("config.test_connection")}</Button>
-        <Button variant="outline" onClick={props.onSave} disabled={props.busy || !props.hasOpenworkChanges}>{t("common.save")}</Button>
-        <Button variant="ghost" onClick={props.onReset} disabled={props.busy}>{t("common.reset")}</Button>
+        <Button variant="outline" onClick={() => void props.onTestConnection()} disabled={props.busy || props.openworkTestState === "testing"}>{props.openworkTestState === "testing" ? t("config.testing") : t("config.test_connection")}</Button>
+        <Button onClick={props.onSave} disabled={props.busy || !props.hasOpenworkChanges}>{t("common.save")}</Button>
+        <Button variant="outline" onClick={props.onReset} disabled={props.busy}>{t("common.reset")}</Button>
       </div>
       {props.openworkTestState !== "idle" ? <ConfigConnectionTestStatus state={props.openworkTestState} message={props.openworkTestMessage} /> : null}
       {props.openworkStatusLabel !== t("config.status_connected") ? <div className="text-xs text-gray-9">{t("config.server_needed_hint")}</div> : null}

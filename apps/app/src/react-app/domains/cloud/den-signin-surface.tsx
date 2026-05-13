@@ -11,7 +11,7 @@ import { PaperGrainGradient } from "@openwork/ui/react";
 
 import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
-import { Button } from "../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 
 export type DenSignInSurfaceVariant = "panel" | "fullscreen";
@@ -185,15 +185,14 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
-              className="h-9 px-3 text-xs"
+              size="sm"
               onClick={props.onResetBaseUrl}
               disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
             >
               {t("den.cloud_control_plane_reset")}
             </Button>
             <Button
-              variant="secondary"
-              className="h-9 px-3 text-xs"
+              size="sm"
               onClick={props.onApplyBaseUrl}
               disabled={props.authBusy || props.baseUrlBusy || props.sessionBusy}
             >
@@ -201,7 +200,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 px-3 text-xs"
+              size="sm"
               onClick={props.onOpenControlPlane}
             >
               {t("den.cloud_control_plane_open")}
@@ -226,16 +225,13 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="secondary"
-          onClick={() => props.onOpenBrowserAuth("sign-in")}
-        >
+        <Button onClick={() => props.onOpenBrowserAuth("sign-in")}>
           {t("den.signin_button")}
           <ArrowUpRight size={13} />
         </Button>
         <Button
           variant="outline"
-          className="h-9 px-3 text-xs"
+          size="sm"
           onClick={() => props.onOpenBrowserAuth("sign-up")}
         >
           {t("den.create_account")}
@@ -243,7 +239,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         </Button>
         <Button
           variant="outline"
-          className="h-9 px-3 text-xs"
+          size="sm"
           onClick={props.onToggleManualAuth}
           disabled={props.authBusy || props.sessionBusy}
         >
@@ -267,8 +263,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="secondary"
-              className="h-9 px-3 text-xs"
+              size="sm"
               onClick={props.onSubmitManualAuth}
               disabled={
                 props.authBusy ||

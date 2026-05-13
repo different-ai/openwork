@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus, Loader2, Rocket, X } from "lucide-react";
 
-import { Button } from "../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 export type BundleStartModalProps = {
   open: boolean;
@@ -158,14 +158,13 @@ export function BundleStartModal(props: BundleStartModalProps) {
 
           <div className="flex items-center justify-end gap-3 border-t border-dls-border pt-4">
             <Button
-              variant="ghost"
+              variant="outline"
               onClick={props.onClose}
               disabled={Boolean(props.busy)}
             >
               Cancel
             </Button>
             <Button
-              variant="primary"
               onClick={() => void props.onConfirm(selectedFolder)}
               disabled={!canSubmit}
             >

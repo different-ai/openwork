@@ -2,6 +2,8 @@
 import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+
 export type ConfirmModalProps = {
   open: boolean;
   title: string;
@@ -9,27 +11,16 @@ export type ConfirmModalProps = {
   confirmLabel: string;
   cancelLabel: string;
   variant?: "danger" | "warning";
-  confirmButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
-  cancelButtonVariant?: "primary" | "secondary" | "ghost" | "outline" | "danger";
+  confirmButtonVariant?: "secondary" | "ghost" | "outline" | "destructive";
+  cancelButtonVariant?: "secondary" | "ghost" | "outline" | "destructive";
   onConfirm: () => void;
   onCancel: () => void;
 };
 
-const buttonBaseClass =
-  "inline-flex items-center justify-center rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
-
-const buttonClasses = {
-  primary: `${buttonBaseClass} bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]`,
-  secondary: `${buttonBaseClass} bg-gray-12 text-gray-1 hover:bg-gray-11`,
-  ghost: `${buttonBaseClass} bg-transparent text-dls-secondary hover:bg-[var(--dls-hover)] hover:text-dls-text`,
-  outline: `${buttonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-[var(--dls-hover)]`,
-  danger: `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`,
-} satisfies Record<NonNullable<ConfirmModalProps["confirmButtonVariant"]>, string>;
-
 export function ConfirmModal(props: ConfirmModalProps) {
   if (!props.open) return null;
   const variant = props.variant ?? "warning";
-  const confirmVariant = props.confirmButtonVariant ?? (variant === "danger" ? "danger" : "primary");
+  const confirmVariant = props.confirmButtonVariant ?? (variant === "danger" ? "destructive" : undefined);
   const cancelVariant = props.cancelButtonVariant ?? "outline";
 
   const iconTileClass =
@@ -56,20 +47,20 @@ export function ConfirmModal(props: ConfirmModalProps) {
           </div>
 
           <div className="mt-6 flex justify-end gap-2">
-            <button
+            <Button
               type="button"
-              className={buttonClasses[cancelVariant]}
+              variant={cancelVariant}
               onClick={props.onCancel}
             >
               {props.cancelLabel}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={buttonClasses[confirmVariant]}
+              variant={confirmVariant}
               onClick={props.onConfirm}
             >
               {props.confirmLabel}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

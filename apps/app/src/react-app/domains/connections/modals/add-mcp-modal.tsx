@@ -2,7 +2,7 @@
 import { useId, useReducer } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 import type { McpDirectoryInfo } from "../../../../app/constants";
 import { t } from "../../../../i18n";
@@ -245,14 +245,13 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-6 bg-gray-2/50">
           <Button
-            variant="ghost"
+            variant="outline"
             onClick={handleClose}
             disabled={state.submitting}
           >
             {t("mcp.auth.cancel")}
           </Button>
           <Button
-            variant="secondary"
             onClick={() => void handleSubmit()}
             disabled={props.busy || state.submitting}
           >

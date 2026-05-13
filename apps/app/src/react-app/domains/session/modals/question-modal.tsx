@@ -4,7 +4,7 @@ import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronRight, HelpCircle } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 export type QuestionModalProps = {
   open: boolean;
@@ -271,9 +271,9 @@ export function QuestionModal(props: QuestionModalProps) {
           <div className="flex gap-2">
             {currentQuestion.multiple || currentQuestion.custom ? (
               <Button
+                size="lg"
                 onClick={handleNext}
                 disabled={!canProceed || props.busy}
-                className="!px-6"
               >
                 {isLastQuestion ? t("common.submit") : t("common.next")}
                 {!isLastQuestion ? (

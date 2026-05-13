@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
@@ -63,7 +63,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             </div>
           ) : null}
         </div>
-        <Button variant="ghost" onClick={props.onRefresh}>
+        <Button variant="outline" onClick={props.onRefresh}>
           {t("common.refresh")}
         </Button>
       </div>

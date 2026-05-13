@@ -1,19 +1,17 @@
 /** @jsxImportSource react */
 import { CheckCircle2, ExternalLink, Loader2, Plug2, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { ExtensionKind } from "../../app/constants";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
 import {
   modalOverlayClass,
   modalShellClass,
   modalHeaderClass,
-  modalHeaderButtonClass,
   modalTitleClass,
   modalSubtitleClass,
   modalBodyClass,
   modalFooterClass,
-  pillPrimaryClass,
-  pillGhostClass,
   surfaceCardClass,
 } from "../domains/workspace/modal-styles";
 
@@ -206,9 +204,14 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             </div>
           </div>
 
-          <button type="button" onClick={onClose} className={modalHeaderButtonClass} aria-label="Close">
-            <X size={18} />
-          </button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X />
+          </Button>
         </div>
 
         {/* Body */}
@@ -251,14 +254,14 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                 {path && onReveal ? (
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-dls-secondary">Location</span>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 font-medium text-dls-text transition-colors hover:text-dls-accent"
+                    <Button
+                      variant="link"
+                      size="xs"
                       onClick={onReveal}
                     >
                       Reveal in Finder
-                      <ExternalLink size={10} />
-                    </button>
+                      <ExternalLink data-icon="inline-end" />
+                    </Button>
                   </div>
                 ) : null}
 
@@ -328,36 +331,39 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
           <div className="flex justify-between">
             <div>
               {connected && onUninstall ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-red-6 px-4 py-2 text-[13px] font-medium text-red-11 transition-colors hover:bg-red-3"
+                <Button
+                  variant="destructive"
+                  size="sm"
                   onClick={() => { onUninstall(); onClose(); }}
                 >
                   {kind === "skill" ? "Uninstall" : "Disconnect"}
-                </button>
+                </Button>
               ) : null}
             </div>
             <div className="flex gap-3">
-              <button type="button" className={pillGhostClass} onClick={onClose}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+              >
                 Close
-              </button>
+              </Button>
               {!connected && onConnect ? (
-                <button
-                  type="button"
-                  className={pillPrimaryClass}
+                <Button
+                  size="sm"
                   onClick={onConnect}
                   disabled={connecting}
                 >
                   {connecting ? (
                     <>
-                      <Loader2 size={14} className="animate-spin" />
+                      <Loader2 data-icon="inline-start" className="animate-spin" />
                       Connecting...
                     </>
                   ) : (
                     "Connect"
                   )}
-                </button>
-            ) : null}
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
