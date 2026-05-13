@@ -39,8 +39,6 @@ User mental model:
 * Connecting to a worker happens through `Add worker` -> `Connect remote` using URL + token (or deep link).
 * Billing gates belong to shared cloud workspace launch, not base Den sign-up or organization creation.
 
-Read `ARCHITECTURE.md` for runtime flow, server-vs-shell ownership, and architecture behavior. Read `INFRASTRUCTURE.md` for deployment and control-plane details.
-
 ## Why OpenWork Exists
 
 **Cowork is closed-source and locked to Claude Max.** We need an open alternative.
@@ -127,8 +125,7 @@ Design principles for hot reload:
 
 ## Repository Guidance
 
-* Use `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, and `INFRASTRUCTURE.md` to understand the "why" and requirements so you can guide your decisions.
-* Treat `ARCHITECTURE.md` as the authoritative system design source for runtime flow, server ownership, filesystem mutation policy, and agent/runtime boundaries. If those behaviors change, update `ARCHITECTURE.md` in the same task.
+* Use `VISION.md`, `PRINCIPLES.md`, and `PRODUCT.md` to understand the "why" and requirements so you can guide your decisions.
 * Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work (NOTE: do not use for `apps/app`).
 * For OpenWork session-surface details, also reference `packages/docs/orbita-layout-style.mdx`.
 
@@ -157,7 +154,6 @@ openwork/
   VISION.md                     # Product vision and positioning
   PRINCIPLES.md                 # Decision framework and guardrails
   PRODUCT.md                    # Requirements, UX, and user flows
-  ARCHITECTURE.md               # Runtime modes and OpenCode integration
   .gitignore                    # Ignores vendor/opencode, node_modules, etc.
   .opencode/
   apps/

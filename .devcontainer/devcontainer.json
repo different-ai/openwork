@@ -1,0 +1,25 @@
+{
+  "name": "OpenWork Full Stack",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [
+    3005,
+    5173,
+    8788
+  ],
+  "portsAttributes": {
+    "5173": { "label": "App (Vite)", "onAutoForward": "notify" },
+    "3005": { "label": "Den Web", "onAutoForward": "notify" },
+    "8788": { "label": "Den API", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": "pnpm install",
+  "postStartCommand": ".devcontainer/start-services.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

@@ -1,0 +1,58 @@
+# Full-stack dev environment for Daytona / Codespaces / devcontainers.
+#
+# Runs:
+#   - MySQL 8.4 for the Den database
+#   - A workspace container with Node.js 20, pnpm, Docker CLI
+#
+# The workspace container runs:
+#   - Den API (port 8788) — control plane
+#   - Den Web (port 3005) — admin dashboard
+#   - App Vite dev server (port 5173) — the OpenWork React UI (no Electron)
+
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --performance_schema=OFF
+      - --innodb-buffer-pool-size=64M
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: openwork_den
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ppassword --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  workspace:
+    image: mcr.microsoft.com/devcontainers/javascript-node:20
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:cached
+    environment:
+      # Den API config
+      DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+      BETTER_AUTH_SECRET: local-dev-secret-not-for-production-use!!
+      BETTER_AUTH_URL: http://localhost:3005
+      OPENWORK_DEV_MODE: "1"
+      PORT: "8788"
+      PROVISIONER_MODE: stub
+      # Den Web config
+      DEN_API_BASE: http://localhost:8788
+      DEN_AUTH_ORIGIN: http://localhost:3005
+      DEN_AUTH_FALLBACK_BASE: http://localhost:8788
+      DEN_WEB_PORT: "3005"
+      DEN_API_PORT: "8788"
+      # CORS — allow the app dev server, Den web, and Den API
+      CORS_ORIGINS: http://localhost:3005,http://localhost:5173,http://localhost:8788
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3005,http://localhost:5173,http://localhost:8788
+    command: sleep infinity
+
+volumes:
+  mysql-data:
