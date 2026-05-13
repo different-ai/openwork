@@ -21,6 +21,11 @@
       "development": "./src/schema/auth.ts",
       "default": "./dist/schema/auth.js"
     },
+    "./schema/inference": {
+      "types": "./src/schema/inference.ts",
+      "development": "./src/schema/inference.ts",
+      "default": "./dist/schema/inference.js"
+    },
     "./schema/org": {
       "types": "./src/schema/org.ts",
       "development": "./src/schema/org.ts",

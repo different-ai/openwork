@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     schema: "src/schema.ts",
     "schema/auth": "src/schema/auth.ts",
+    "schema/inference": "src/schema/inference.ts",
     "schema/org": "src/schema/org.ts",
     "schema/sharables/skills": "src/schema/sharables/skills.ts",
     "schema/teams": "src/schema/teams.ts",

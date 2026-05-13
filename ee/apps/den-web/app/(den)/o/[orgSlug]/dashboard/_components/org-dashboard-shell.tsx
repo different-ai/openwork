@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Puzzle,
   SlidersHorizontal,
+  Sparkles,
   Store,
   Users,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   getCustomLlmProvidersRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
+  getInferenceRoute,
   getMembersRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
@@ -112,6 +114,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "LLM Providers";
   }
+  if (pathname.startsWith(getInferenceRoute(orgSlug))) {
+    return "Inference";
+  }
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
   }
@@ -175,6 +180,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
       label: "LLM Providers",
       icon: Cpu,
+    },
+    {
+      href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
+      label: "Inference",
+      icon: Sparkles,
+      badge: "Beta",
     },
     // NOTE: Skill Hubs soft-disabled — uncomment to re-enable
     // {

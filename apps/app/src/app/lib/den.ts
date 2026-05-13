@@ -108,7 +108,7 @@ export type DenOrgLlmProviderModel = {
 
 export type DenOrgLlmProvider = {
   id: string;
-  source: "models_dev" | "custom";
+  source: "models_dev" | "custom" | "openwork";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
@@ -868,7 +868,9 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     typeof value.id !== "string" ||
     typeof value.providerId !== "string" ||
     typeof value.name !== "string" ||
-    (value.source !== "models_dev" && value.source !== "custom")
+    (value.source !== "models_dev" &&
+      value.source !== "custom" &&
+      value.source !== "openwork")
   ) {
     return null;
   }

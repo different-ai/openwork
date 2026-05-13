@@ -24,7 +24,7 @@ export const LlmProviderTable = mysqlTable(
       "member",
       "created_by_org_membership_id",
     ).notNull(),
-    source: mysqlEnum("source", ["models_dev", "custom"]).notNull(),
+    source: mysqlEnum("source", ["models_dev", "custom", "openwork"]).notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     name: varchar("name", { length: 255 }).notNull(),
     providerConfig: json("provider_config")

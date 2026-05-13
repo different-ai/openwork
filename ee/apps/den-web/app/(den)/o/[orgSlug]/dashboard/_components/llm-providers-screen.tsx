@@ -12,17 +12,19 @@ import {
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
+  type DenLlmProviderSource,
   formatProviderTimestamp,
   getProviderDocUrl,
   getProviderEnvNames,
   useOrgLlmProviders,
 } from "./llm-provider-data";
 
-function getProviderSourceLabel(source: "models_dev" | "custom") {
+function getProviderSourceLabel(source: DenLlmProviderSource) {
+  if (source === "openwork") return "OpenWork";
   return source === "custom" ? "Custom" : "Catalog";
 }
 
-function getProviderSourceIcon(source: "models_dev" | "custom") {
+function getProviderSourceIcon(source: DenLlmProviderSource) {
   return source === "custom" ? CodeXml : Cpu;
 }
 
