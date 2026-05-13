@@ -1,0 +1,30 @@
+{
+  "name": "openwork-atomic-chat-mcp",
+  "version": "0.1.0",
+  "description": "MCP bridge to Atomic Chat OpenAI-compatible local API (localhost:1337) for OpenCode / OpenWork",
+  "author": "OpenWork <support@openworklabs.com>",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openwork-atomic-chat-mcp": "index.mjs"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "scripts": {
+    "check": "node --check index.mjs",
+    "test": "node --check index.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/atomic-chat-mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  }
+}

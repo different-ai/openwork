@@ -1,0 +1,95 @@
+---
+title: "Atomic Chat (local LLM)"
+description: "Use Atomic Chat as your OpenWork session model and as MCP tools for side completions"
+---
+
+[Atomic Chat](https://github.com/AtomicBot-ai/Atomic-Chat) runs local (or hybrid) models and exposes an **OpenAI-compatible** HTTP API at `http://localhost:1337/v1` by default. OpenWork is built on OpenCode, so you can combine:
+
+1. **Session provider** — the same API powers your main agent model.
+2. **MCP tools** — optional one-off completions via the `openwork-atomic-chat-mcp` bridge (Atomic Chat is an MCP *client* in its own UI; it does not expose an MCP server for OpenWork, so this small package calls its HTTP API instead).
+
+## Prerequisites
+
+- [Atomic Chat](https://atomic.chat/) installed and running.
+- Local server reachable (see their README): `http://localhost:1337/v1`.
+
+## Where to put config (important)
+
+- **OpenCode upstream** recommends workspace **`.config/opencode/opencode.json`** for provider entries.
+- **OpenWork** also resolves project config from **`opencode.jsonc`** or **`opencode.json` in the workspace root** (and `.opencode/` variants) when syncing providers with the app. If you only see **OpenCode Zen** in the model picker, add the provider block to **root `opencode.jsonc`** (or `opencode.json`) in the folder you opened as the workspace, then reload the engine or restart OpenWork.
+
+You can keep the same JSON in **both** places if you use OpenCode CLI and OpenWork together.
+
+## 1. Provider for OpenWork sessions
+
+Add a provider block and pick a model id that Atomic lists (often the same string you see in the Atomic UI).
+
+Use `@ai-sdk/openai-compatible` and point `baseURL` at Atomic’s `/v1` root:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "atomic-chat": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Atomic Chat",
+      "options": {
+        "baseURL": "http://localhost:1337/v1"
+      },
+      "models": {
+        "your-model-id": {
+          "name": "Your model (Atomic Chat)"
+        }
+      }
+    }
+  },
+  "model": "atomic-chat/your-model-id"
+}
+```
+
+Replace `your-model-id` with a real id from Atomic Chat (for example after loading a model in the app, or from `GET http://localhost:1337/v1/models`).
+
+If your Atomic build requires an API key for the local server, add the same fields you use for other OpenAI-compatible providers (see [Add a custom LLM](/start-here/connect-your-stack/add-a-custom-llm)).
+
+## 2. MCP: extra Atomic-backed completions
+
+npm package **`openwork-atomic-chat-mcp`** (source: [`packages/atomic-chat-mcp`](https://github.com/different-ai/openwork/tree/dev/packages/atomic-chat-mcp) in this repo). It registers:
+
+- `atomic_list_models` — lists models from Atomic’s `/v1/models`.
+- `atomic_chat_completion` — non-streaming `POST /v1/chat/completions` for a one-off reply (useful when the primary session model is cloud but you want a local pass, or a second opinion).
+
+Add to the same OpenCode config (merge with your existing `mcp` block):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "atomic-chat": {
+      "type": "local",
+      "command": ["npx", "-y", "openwork-atomic-chat-mcp"],
+      "enabled": true,
+      "environment": {
+        "ATOMIC_CHAT_BASE_URL": "http://localhost:1337/v1"
+      }
+    }
+  }
+}
+```
+
+Optional: set `ATOMIC_CHAT_API_KEY` in `environment` if your Atomic instance expects `Authorization: Bearer …`.
+
+If `npx -y openwork-atomic-chat-mcp` is not available yet (before the package is published to npm), point `command` at the script in your clone, for example `"command": ["node", "/path/to/openwork/packages/atomic-chat-mcp/index.mjs"]` after `pnpm install` in the OpenWork repo.
+
+From a prompt you can steer the agent explicitly, for example: *“List models with atomic_list_models, then answer X using atomic_chat_completion with model …”.* See [OpenCode MCP docs](https://opencode.ai/docs/mcp-servers/) for `enabled`, timeouts, and per-agent tool toggles.
+
+## Troubleshooting
+
+- **`atomic_list_models` errors** — Atomic Chat is not running, the API port differs from `1337`, or a firewall blocks localhost.
+- **Only OpenCode Zen in the model list** — put the provider JSON in **workspace root** `opencode.jsonc` / `opencode.json`, then restart OpenWork or reload the OpenCode engine.
+- **Session model fails but MCP works (or the reverse)** — confirm `baseURL` matches exactly (including `/v1`) and model ids match `/v1/models`.
+- **Large context from MCP** — each enabled MCP adds tool definitions to context; keep `atomic-chat` disabled globally and enable only for specific [agents](https://opencode.ai/docs/agents#tools) if you hit limits.
+
+## Related
+
+- [Add a custom LLM](/start-here/connect-your-stack/add-a-custom-llm) — same `provider` pattern as Ollama, different `baseURL`.
+- [Add an MCP server](/start-here/connect-your-stack/add-an-mcp-server) — UI flow for remote MCP; local Atomic bridge uses the JSON above.
