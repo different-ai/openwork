@@ -30,7 +30,18 @@ const EnvSchema = z.object({
   }
 })
 
-const parsed = EnvSchema.parse(process.env)
+const isDevMode = process.env.OPENWORK_DEV_MODE === "1"
+
+const parsed = EnvSchema.parse({
+  ...process.env,
+  DATABASE_URL: process.env.DATABASE_URL ?? (isDevMode ? "mysql://root:password@127.0.0.1:3306/openwork_den" : undefined),
+  DB_MODE: process.env.DB_MODE ?? (isDevMode ? "mysql" : undefined),
+  DEN_DB_ENCRYPTION_KEY:
+    process.env.DEN_DB_ENCRYPTION_KEY ??
+    (isDevMode ? "local-dev-db-encryption-key-please-change-1234567890" : undefined),
+  INFERENCE_WEBHOOK_SECRET:
+    process.env.INFERENCE_WEBHOOK_SECRET ?? (isDevMode ? "local-dev-webhook-secret" : undefined),
+})
 
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
