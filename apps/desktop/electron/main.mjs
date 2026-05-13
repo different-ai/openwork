@@ -21,6 +21,7 @@ import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import * as openshellClient from "./openshell/client.mjs";
+import * as openeral from "./openshell/openeral.mjs";
 import * as openeralCredentials from "./openshell/openeral-credentials.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
 import {
@@ -1501,16 +1502,11 @@ async function handleDesktopInvoke(event, command, ...args) {
       return openeralCredentials.getCredentialStatus();
     }
     case "openeralTestDatabase": {
-      // Stub. Phase O3 replaces this with a real probe (spinning up a
-      // short-lived sandbox or shelling out to a psql container) once
-      // we have openeral.mjs wired. For now we just confirm the
-      // credential is present so the renderer's "Test" button has
-      // immediate feedback.
-      const value = await openeralCredentials.getCredential("databaseUrl");
-      if (!value) {
-        throw new Error("DATABASE_URL is not configured.");
-      }
-      return { status: "configured", probedReachable: false };
+      // Runs psql via a transient postgres:16-alpine container inside
+      // the openwork-openshell distro. Lazy-pulls the image on first
+      // run (~6 MB). Returns reachable=true on a successful SELECT 1,
+      // throws with the stderr otherwise so the UI can surface why.
+      return openeral.probeDatabaseUrl();
     }
     case "openshellResetDistro": {
       // Per spec §5 row "Distro corrupts (rare but happens)". Tear the
