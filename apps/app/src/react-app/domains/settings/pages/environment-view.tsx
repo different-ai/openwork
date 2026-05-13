@@ -16,7 +16,7 @@ import {
   writeOpenworkEnvPendingChanges,
 } from "../../../../app/lib/openwork-env-runtime";
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
 import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-context";
@@ -363,7 +363,7 @@ export function EnvironmentView(props: EnvironmentViewProps) {
         confirmLabel={deletingKey ? t("settings.environment.deleting") : t("settings.environment.delete")}
         cancelLabel={t("settings.environment.cancel")}
         variant="danger"
-        confirmButtonVariant="danger"
+        confirmButtonVariant="destructive"
         onConfirm={() => void confirmDelete()}
         onCancel={() => {
           if (!deletingKey) setDeleteCandidate(null);
@@ -377,7 +377,6 @@ export function EnvironmentView(props: EnvironmentViewProps) {
         confirmLabel={applyBusy ? t("settings.environment.applying") : t("settings.environment.apply_button")}
         cancelLabel={t("settings.environment.cancel")}
         variant="warning"
-        confirmButtonVariant="primary"
         onConfirm={() => void applyChanges()}
         onCancel={() => {
           if (!applyBusy) setApplyConfirmOpen(false);
@@ -466,7 +465,7 @@ function EnvironmentPanelHeader(props: { canEdit: boolean; onAdd: () => void }) 
         <p className="mt-1 max-w-[52ch] text-xs text-gray-10">{t("settings.environment.description")}</p>
       </div>
       {props.canEdit ? (
-        <Button variant="primary" className="h-8 shrink-0 px-3 py-0 text-xs" onClick={props.onAdd}>
+        <Button size="sm" className="shrink-0" onClick={props.onAdd}>
           <Plus size={13} className="mr-1.5" />
           {t("settings.environment.add_button")}
         </Button>
@@ -511,8 +510,7 @@ function EnvironmentPendingChanges(props: {
         </div>
         {props.onApplyChanges ? (
           <Button
-            variant="primary"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
+            size="sm" className="shrink-0"
             onClick={() => {
               if (props.applyBlocked) {
                 props.onApplyBlocked(props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks"));
@@ -650,7 +648,7 @@ function EnvironmentEditorModal(props: {
           <div id={props.titleId} className="text-sm font-medium text-gray-12">
             {props.editor.mode === "add" ? t("settings.environment.add_title") : t("settings.environment.edit_title")}
           </div>
-          <Button variant="ghost" className="size-7 p-0" onClick={props.onClose} aria-label={t("settings.environment.close_editor")} title={t("settings.environment.close_editor")}>
+          <Button variant="ghost" size="icon-sm" onClick={props.onClose} aria-label={t("settings.environment.close_editor")} title={t("settings.environment.close_editor")}>
             <X size={14} />
           </Button>
         </div>
@@ -684,10 +682,10 @@ function EnvironmentEditorModal(props: {
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" className="h-8 px-3 text-xs" onClick={props.onClose} disabled={props.saving}>
+          <Button variant="outline" size="sm" onClick={props.onClose} disabled={props.saving}>
             {t("settings.environment.cancel")}
           </Button>
-          <Button variant="primary" className="h-8 px-3 text-xs" onClick={() => void props.onSubmit()} disabled={props.saving}>
+          <Button size="sm" onClick={() => void props.onSubmit()} disabled={props.saving}>
             {props.saving ? t("settings.environment.saving") : t("settings.environment.save")}
           </Button>
         </div>

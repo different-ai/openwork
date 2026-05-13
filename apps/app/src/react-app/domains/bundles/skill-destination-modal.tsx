@@ -13,7 +13,7 @@ import {
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import { t } from "../../../i18n";
 import { isSandboxWorkspace } from "../../../app/utils";
-import { Button } from "../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 type SkillSummary = {
   name: string;
@@ -110,7 +110,6 @@ function SkillDestinationFooter(props: {
             {t("common.cancel")}
           </Button>
           <Button
-            variant="primary"
             onClick={props.onSubmit}
             disabled={!props.selectedWorkspace || props.footerBusy}
           >

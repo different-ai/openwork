@@ -17,7 +17,7 @@ import {
 import { openDesktopUrl } from "../../../../app/lib/desktop";
 import { isDesktopRuntime } from "../../../../app/utils";
 import { compareProviders } from "../../../../app/utils/providers";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { TextInput } from "../../../design-system/text-input";
 import type {
@@ -669,7 +669,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               Sign in to services or use providers managed by your organization.
             </p>
           </div>
-          <Button variant="ghost" className="!p-2 rounded-full" onClick={handleClose} aria-label="Close">
+          <Button variant="ghost" size="icon-sm" onClick={handleClose} aria-label="Close">
             <X size={16} />
           </Button>
         </div>
@@ -995,7 +995,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         <div className="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
                         <div className="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode}</div>
                       </div>
-                      <Button variant="ghost" className="text-xs shrink-0" onClick={() => void copyOauthDisplayCode()}>
+                      <Button variant="ghost" size="sm" className="shrink-0" onClick={() => void copyOauthDisplayCode()}>
                         {oauthCodeCopied ? "Copied" : "Copy"}
                       </Button>
                     </div>

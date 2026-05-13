@@ -2,7 +2,7 @@
 import { ArrowUpRight } from "lucide-react";
 
 import { DEFAULT_DEN_BASE_URL } from "../../../../app/lib/den";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 import { t } from "@/i18n";
 
@@ -32,7 +32,7 @@ export function CloudDevMode(props: CloudDevModeProps) {
       <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
-          className="h-9 px-3 text-xs"
+          size="sm"
           onClick={props.onResetBaseUrl}
           disabled={controlsDisabled}
         >
@@ -40,13 +40,13 @@ export function CloudDevMode(props: CloudDevModeProps) {
         </Button>
         <Button
           variant="secondary"
-          className="h-9 px-3 text-xs"
+          size="sm"
           onClick={props.onApplyBaseUrl}
           disabled={controlsDisabled}
         >
           {t("den.cloud_control_plane_save")}
         </Button>
-        <Button variant="outline" className="h-9 px-3 text-xs" onClick={props.onOpenControlPlane}>
+        <Button variant="outline" size="sm" onClick={props.onOpenControlPlane}>
           {t("den.cloud_control_plane_open")}
           <ArrowUpRight size={13} />
         </Button>

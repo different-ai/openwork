@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { isElectronRuntime } from "../../../../app/utils";
 
 export type ChromeConnectionSetupModalProps = {

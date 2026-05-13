@@ -2,7 +2,7 @@
 import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 
 // Explicit, prop-driven shape of the extensions store. The Solid
@@ -71,32 +71,20 @@ export function PluginsView(props: PluginsViewProps) {
             <div className="text-xs text-gray-10">{t("plugins.desc")}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                scope === "project"
-                  ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
-              }`}
+            <Button
+              variant={scope === "project" ? "secondary" : "outline"}
+              size="xs"
               onClick={() => {
                 extensions.setPluginScope("project");
                 void extensions.refreshPlugins("project");
               }}
             >
               {t("plugins.scope_project")}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={scope === "global" ? "secondary" : "outline"}
+              size="xs"
               disabled={!props.canUseGlobalScope}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                scope === "global"
-                  ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
-              } ${
-                !props.canUseGlobalScope
-                  ? "opacity-40 cursor-not-allowed hover:text-gray-10"
-                  : ""
-              }`}
               onClick={() => {
                 if (!props.canUseGlobalScope) return;
                 extensions.setPluginScope("global");
@@ -104,7 +92,7 @@ export function PluginsView(props: PluginsViewProps) {
               }}
             >
               {t("plugins.scope_global")}
-            </button>
+            </Button>
             <Button
               variant="ghost"
               onClick={() => void extensions.refreshPlugins()}
@@ -278,8 +266,8 @@ export function PluginsView(props: PluginsViewProps) {
                   </div>
                   {plugin.removable ? (
                     <Button
-                      variant="ghost"
-                      className="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
+                      variant="destructive"
+                      size="xs"
                       onClick={() => extensions.removePlugin(plugin.name)}
                       disabled={props.busy || !props.canEditPlugins}
                     >

@@ -9,7 +9,7 @@ import { validateMcpServerName } from "../../../app/mcp";
 import type { Client } from "../../../app/types";
 import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
 import { t } from "../../../i18n";
-import { Button } from "../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
@@ -780,7 +780,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                   </div>
                   <div className="truncate font-mono text-[11px] text-gray-11">{authorizationUrl}</div>
                 </div>
-                <Button variant="ghost" className="text-xs" onClick={() => void handleCopyAuthorizationUrl()}>
+                <Button variant="ghost" size="sm" onClick={() => void handleCopyAuthorizationUrl()}>
                   {authUrlCopied ? t("mcp.auth.copied") : t("mcp.auth.copy_link")}
                 </Button>
               </div>
@@ -859,7 +859,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
         <div className="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/50 px-6 py-4">
           {alreadyConnected ? (
-            <Button variant="primary" onClick={() => void handleComplete()}>
+            <Button onClick={() => void handleComplete()}>
               <CheckCircle2 size={16} />
               {t("mcp.auth.done")}
             </Button>

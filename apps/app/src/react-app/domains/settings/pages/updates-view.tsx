@@ -2,7 +2,7 @@
 import { formatBytes, formatRelativeTime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import type { ReleaseChannel } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import type { SettingsUpdateStatus } from "../state/electron-updater-state";
 
 const settingsPanelClass = "rounded-[28px] border border-dls-border bg-dls-surface p-5 md:p-6";
@@ -200,7 +200,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    className="h-9 rounded-full border-gray-6/60 bg-gray-1/70 px-4 py-0 text-xs hover:bg-gray-2/70"
+                    size="sm"
                     onClick={props.checkForUpdates}
                     disabled={props.busy || updateState === "checking" || updateState === "downloading"}
                   >
@@ -210,7 +210,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                   {updateState === "available" ? (
                     <Button
                       variant="secondary"
-                      className="h-9 rounded-full px-4 py-0 text-xs"
+                      size="sm"
                       onClick={props.downloadUpdate}
                       disabled={props.busy}
                     >
@@ -221,7 +221,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                   {updateState === "ready" ? (
                     <Button
                       variant="secondary"
-                      className="h-9 rounded-full px-4 py-0 text-xs"
+                      size="sm"
                       onClick={props.installUpdateAndRestart}
                       disabled={props.busy || props.anyActiveRuns}
                       title={updateRestartBlockedMessage ?? ""}

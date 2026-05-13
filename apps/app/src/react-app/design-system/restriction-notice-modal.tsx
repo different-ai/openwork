@@ -2,7 +2,7 @@
 import { X } from "lucide-react";
 
 import { t } from "../../i18n";
-import { Button } from "./button";
+import { Button } from "@/components/ui/button";
 
 export type RestrictionNoticeModalProps = {
   open: boolean;
@@ -16,7 +16,7 @@ export type RestrictionNoticeModalProps = {
  * (`apps/app/src/app/components/restriction-notice-modal.tsx` on dev — added
  * as part of #1505 "enforce desktop restriction policies").
  *
- * Purposefully framework-free except for the design-system Button: this is
+ * Purposefully framework-free except for the shared Button: this is
  * a thin, declarative surface driven by the cloud domain when an org gates
  * a feature (blockZenModel, disallowNonCloudModels, blockMultipleWorkspaces).
  */
@@ -47,7 +47,7 @@ export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
             {props.message}
           </p>
           <div className="mt-6 flex justify-end">
-            <Button variant="primary" onClick={props.onClose}>
+            <Button onClick={props.onClose}>
               {t("common.close")}
             </Button>
           </div>

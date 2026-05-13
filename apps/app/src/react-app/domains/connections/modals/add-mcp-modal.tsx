@@ -2,7 +2,7 @@
 import { useId, useReducer } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 import type { McpDirectoryInfo } from "../../../../app/constants";
 import { t } from "../../../../i18n";

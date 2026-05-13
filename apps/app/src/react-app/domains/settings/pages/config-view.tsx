@@ -176,8 +176,8 @@ export function ConfigView(props: ConfigViewProps) {
   const reloadButtonLabel = props.reloadBusy
     ? t("config.reloading")
     : t("config.reload_engine");
-  const reloadButtonTone: "danger" | "secondary" = props.anyActiveRuns
-    ? "danger"
+  const reloadButtonTone: "destructive" | "secondary" = props.anyActiveRuns
+    ? "destructive"
     : "secondary";
   const reloadButtonDisabled =
     props.reloadBusy || Boolean(reloadAvailabilityReason);

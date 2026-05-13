@@ -39,7 +39,7 @@ import {
 import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ChromeConnectionSetupModal } from "../../connections/modals/chrome-connection-setup-modal";
@@ -394,18 +394,14 @@ export function McpView(props: McpViewProps) {
         </div>
         <div className="flex items-center gap-1.5">
           {(["all", "mcp", "skill"] as const).map((f) => (
-            <button
+            <Button
               key={f}
-              type="button"
-              className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                filter === f
-                  ? "border-dls-text/20 bg-dls-text/10 text-dls-text"
-                  : "border-dls-border text-dls-secondary hover:text-dls-text"
-              }`}
+              variant={filter === f ? "secondary" : "outline"}
+              size="xs"
               onClick={() => setFilter(f)}
             >
               {f === "all" ? "All" : f === "mcp" ? "MCPs" : "Skills"}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -623,7 +619,7 @@ function McpCustomAppCard(props: { onOpen: () => void }) {
           <div className="text-base font-semibold text-dls-text">{t("mcp.add_modal_title")}</div>
           <div className="text-sm text-dls-secondary">{t("mcp.custom_app_cta_hint")}</div>
         </div>
-        <Button variant="secondary" onClick={props.onOpen}>
+        <Button variant="outline" onClick={props.onOpen}>
           <Plus size={14} />
           {t("mcp.add_modal_title")}
         </Button>
@@ -843,7 +839,7 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
         {props.onToggleEnabled && props.entry.source !== "config.global" ? (
           <Button
             variant="outline"
-            className="!px-3 !py-1.5 !text-xs"
+            size="sm"
             disabled={props.busy || props.togglingMcp === props.entry.name}
             onClick={(event) => {
               event.stopPropagation();
@@ -858,8 +854,8 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
           </Button>
         ) : null}
         <Button
-          variant="danger"
-          className="!px-3 !py-1.5 !text-xs"
+          variant="destructive"
+          size="sm"
           onClick={(event) => {
             event.stopPropagation();
             props.onRemove(props.entry.name);
@@ -879,7 +875,7 @@ function McpConfiguredServerAuthActions(props: Parameters<typeof McpConfiguredSe
       <>
         <div className="flex items-center justify-between gap-3 pt-1">
           <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
-          <Button variant="secondary" className="px-3 py-1.5 text-xs" disabled={props.busy} onClick={() => props.onAuthorize(props.entry)}>
+          <Button variant="secondary" size="sm" disabled={props.busy} onClick={() => props.onAuthorize(props.entry)}>
             {t("mcp.login_action")}
           </Button>
         </div>
@@ -892,8 +888,8 @@ function McpConfiguredServerAuthActions(props: Parameters<typeof McpConfiguredSe
       <div className="flex items-center justify-between gap-3 pt-1">
         <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
         <Button
-          variant="danger"
-          className="px-3 py-1.5 text-xs"
+          variant="destructive"
+          size="sm"
           disabled={props.busy || props.logoutBusy}
           onClick={() => props.onRequestLogout(props.entry.name)}
         >
