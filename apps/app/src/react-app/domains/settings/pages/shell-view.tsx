@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { AlertTriangle, Lock, RotateCcw } from "lucide-react";
+import { AlertTriangle, Info, Lock, RotateCcw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -175,6 +175,7 @@ type ToggleRowProps = {
   checked: boolean;
   onChange: (value: boolean) => void;
   disabled?: boolean;
+  unavailable?: string | null;
   warning?: string | null;
   cloudOnly?: boolean;
   className?: string;
@@ -210,6 +211,12 @@ function ToggleRow(props: ToggleRowProps) {
         <Alert variant="warning">
           <AlertTriangle />
           <AlertDescription>{props.warning}</AlertDescription>
+        </Alert>
+      ) : null}
+      {props.unavailable ? (
+        <Alert>
+          <Info />
+          <AlertDescription>{props.unavailable}</AlertDescription>
         </Alert>
       ) : null}
     </LayoutSectionItem>
@@ -254,11 +261,16 @@ export function ShellCustomizationView() {
                   className="h-8 text-xs"
                   value={config.appName}
                   placeholder="OpenWork"
+                  disabled
                   onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
                 />
               </Field>
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
+          <Alert>
+            <Info />
+            <AlertDescription>Changing the application name is not available yet.</AlertDescription>
+          </Alert>
         </LayoutSectionItem>
       </LayoutSection>
 
@@ -333,6 +345,8 @@ export function ShellCustomizationView() {
           description="Let users choose which AI model to use."
           checked={config.modelPicker}
           onChange={(v) => update({ modelPicker: v })}
+          disabled
+          unavailable="The model picker display control is not available yet."
         />
 
         <ToggleRow
@@ -340,6 +354,8 @@ export function ShellCustomizationView() {
           description="A built-in browser for viewing web content alongside sessions."
           checked={config.browser}
           onChange={(v) => update({ browser: v })}
+          disabled
+          unavailable="The browser panel display control is not available yet."
         />
 
         <ToggleRow
@@ -347,6 +363,8 @@ export function ShellCustomizationView() {
           description="Let users create or join additional workspaces."
           checked={config.addWorkspace}
           onChange={(v) => update({ addWorkspace: v })}
+          disabled
+          unavailable="The new workspace button display control is not available yet."
         />
       </LayoutSection>
 
