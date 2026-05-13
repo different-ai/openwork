@@ -146,6 +146,33 @@ stopped and crashed gateway containers cleanly.
 
 ---
 
+## Claude Code (OpenEral) workspaces
+
+OpenWork can run Claude Code or OpenClaw inside the same OpenShell
+sandbox infrastructure, with a PostgreSQL-backed `/home/agent` that
+restores across sessions and machines. Pick the **OpenEral — Claude
+Code** profile when creating a workspace; the chat UI is replaced by
+an embedded terminal where Claude Code's TUI runs.
+
+What you need first:
+
+- A reachable `DATABASE_URL` (Supabase, Neon, or firm-internal Postgres)
+- An Anthropic API key (`sk-ant-...`)
+- The OpenShell stack already installed (Settings → Sandbox → green)
+
+Configure both credentials in **Settings → Sandbox → OpenEral
+configuration**. Values are encrypted by the OS keyring and never sent
+to the renderer once saved.
+
+When you open a Claude Code workspace, the bootstrap takes ~30s on
+first use (image pull + sandbox create) and ~3s thereafter (reconnect).
+You'll see a three-step progress card during the bootstrap. Once
+Claude Code's welcome banner appears, type normally.
+
+Full walkthrough + troubleshooting: [`OPENERAL.md`](./OPENERAL.md).
+
+---
+
 ## For IT: deployment notes
 
 ### Default policy

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
@@ -91,6 +91,11 @@ export type SessionPageProps = {
     displayName?: string;
     workspaceType?: WorkspaceInfo["workspaceType"];
   };
+  /** When set, replaces the entire SessionSurface render block — the
+   *  chat UI is bypassed and the override is rendered in its place.
+   *  Used by the OpenEral terminal flow to inject xterm.js without
+   *  touching the chat-based surface code path. */
+  sessionSurfaceOverride?: ReactNode;
   selectedWorkspaceRoot: string;
   runtimeWorkspaceId: string | null;
   workspaces: WorkspaceInfo[];
@@ -421,7 +426,9 @@ export function SessionPage(props: SessionPageProps) {
                 </div>
               ) : null}
 
-              {!showDelayedSessionLoadingState && canRenderReactSurface ? (
+              {props.sessionSurfaceOverride ? (
+                props.sessionSurfaceOverride
+              ) : !showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <SessionSurface
                   client={props.openworkServerClient!}
                   workspaceId={props.runtimeWorkspaceId!}
@@ -432,7 +439,7 @@ export function SessionPage(props: SessionPageProps) {
                 />
               ) : null}
 
-              {!showDelayedSessionLoadingState && !canRenderReactSurface && !showStartupSkeleton ? (
+              {!props.sessionSurfaceOverride && !showDelayedSessionLoadingState && !canRenderReactSurface && !showStartupSkeleton ? (
                 <div className={`mx-auto max-w-[800px] px-6 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}>
                   {showWorkspaceSetupEmptyState ? (
                     <div className="space-y-6 px-6 text-center">

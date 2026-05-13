@@ -93,6 +93,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { getReactQueryClient } from "../infra/query-client";
 import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
+import { OpenEralTerminal } from "../domains/session/surface/openeral-terminal";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -876,6 +877,16 @@ export function SessionRoute() {
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null,
     [selectedWorkspaceId, workspaces],
   );
+
+  // When the selected workspace's sandboxProfile is an OpenEral variant,
+  // the chat-UI session surface is replaced wholesale with an xterm.js
+  // pane connected to the agent's TTY. Phase O5 wires this; previous
+  // phases keep the chat UI for every other backend/profile combo.
+  const openeralProfile: "openeral-claude" | "openeral-openclaw" | null =
+    selectedWorkspace?.sandboxProfile === "openeral-claude" ||
+    selectedWorkspace?.sandboxProfile === "openeral-openclaw"
+      ? selectedWorkspace.sandboxProfile
+      : null;
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;
@@ -1674,6 +1685,15 @@ export function SessionRoute() {
     <SessionPage
       selectedSessionId={selectedSessionId}
       selectedWorkspaceId={selectedWorkspaceId}
+      sessionSurfaceOverride={
+        openeralProfile && selectedWorkspaceId ? (
+          <OpenEralTerminal
+            workspaceId={selectedWorkspaceId}
+            profile={openeralProfile}
+            onOpenSettings={() => navigate("/settings/sandbox")}
+          />
+        ) : undefined
+      }
       selectedWorkspaceDisplay={selectedWorkspace ? {
         id: selectedWorkspace.id,
         name: selectedWorkspace.name ?? undefined,
