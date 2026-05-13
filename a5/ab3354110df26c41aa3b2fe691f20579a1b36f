@@ -1,0 +1,31 @@
+apps/app/src/react-app/domains/settings/pages/mcp-view.tsx
+  s_91d4ea518e5228::t_f0e3faa4bf2c32 397,399-400,404
+apps/app/src/react-app/design-system/extension-detail-modal.tsx
+  s_91d4ea518e5228::t_e6697bf3b3f124 4,165-172,208-210,214-215,283-285,289,293-297,299,301-302,308,314
+  s_91d4ea518e5228::t_ef837597328a8c 315
+apps/app/src/react-app/domains/settings/pages/plugins-view.tsx
+  s_91d4ea518e5228::t_ccee88c258fbb1 74-76,83-86,95
+apps/app/src/react-app/domains/settings/modals/reset-modal.tsx
+  s_91d4ea518e5228::t_c03b5f12af3407 4,54-56,59,61-62,94-96,101-104,109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "a5ab3354110df26c41aa3b2fe691f20579a1b36f",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_91d4ea518e5228": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "43c4ebf4-8fb6-47dc-b580-9a7fbb3390f4",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
