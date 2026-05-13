@@ -6,7 +6,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import * as openeral from "./openshell/openeral.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
+import {
+  deriveOpenEralSandboxName,
+  launchExternalTerminalToSandbox,
+} from "./openshell/openeral-terminal.mjs";
 
 // Tracks per-workspace detached host metadata from orchestratorStartDetached
 // so orchestratorInstanceDispose can find and tear down the right
@@ -1304,6 +1309,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const host = activeDetachedHosts.get(key);
     if (!host) return true;
 
+    // OpenEral profiles short-circuit: sandbox name = workspace ID is
+    // the cross-machine portability story, so the sandbox MUST survive
+    // a session close. The external terminal exiting is what ends the
+    // user-facing interaction. No HTTP shutdown, no sandbox delete,
+    // no staging cleanup (OpenEral has no host-side staging dir).
+    if (
+      host.sandboxProfile === "openeral-claude" ||
+      host.sandboxProfile === "openeral-openclaw"
+    ) {
+      activeDetachedHosts.delete(key);
+      return true;
+    }
+
     // 1. Ask the orchestrator child to exit gracefully. Best-effort —
     // if it's already gone we just continue to teardown.
     if (host.openworkUrl) {
@@ -1574,6 +1592,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       throw new Error("sandboxBackend must be one of: none, docker, microsandbox, openshell");
     }
 
+    const sandboxProfile = String(options.sandboxProfile ?? "openwork").trim();
+    const isOpenEralProfile =
+      sandboxProfile === "openeral-claude" || sandboxProfile === "openeral-openclaw";
+
     // Fail fast for openshell — spec §9.2 calls for hard-fail, not silent
     // fallback to docker, so the banker is never running under weaker
     // isolation than their policy assumes.
@@ -1584,6 +1606,48 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           doc.fatal[0] ?? doc.actionable[0] ?? `OpenShell status: ${doc.status}`;
         throw new Error(`OpenShell is not ready: ${reason}`);
       }
+    }
+
+    // OpenEral profile branch: skip the npm orchestrator entirely.
+    // OpenEral's agent (Claude Code / OpenClaw) runs as a foreground TTY
+    // process inside the sandbox — there is no openwork-server HTTP
+    // endpoint to spawn. We create or resume the sandbox, launch an
+    // external terminal pointed at it, and return a slimmer host-info
+    // shape (no openworkUrl).
+    if (sandboxBackend === "openshell" && isOpenEralProfile) {
+      const workspaceId =
+        String(options.workspaceId ?? "").trim() || path.basename(workspacePath);
+      const sandboxName = deriveOpenEralSandboxName(workspaceId);
+      const result = await openeral.createOpenEralSandbox({
+        name: sandboxName,
+        profile: sandboxProfile,
+      });
+      // Best-effort terminal launch — Phase O5 replaces this with an
+      // in-app xterm.js view. If the OS terminal isn't reachable, the
+      // session is still created and the caller can connect manually.
+      let terminalLaunch = null;
+      let terminalError = null;
+      try {
+        terminalLaunch = await launchExternalTerminalToSandbox(sandboxName);
+      } catch (err) {
+        terminalError = err instanceof Error ? err.message : String(err);
+      }
+      const hostInfo = {
+        openworkUrl: null,
+        token: null,
+        ownerToken: null,
+        hostToken: null,
+        port: null,
+        sandboxBackend,
+        sandboxProfile,
+        sandboxRunId: sandboxName,
+        sandboxContainerName: sandboxName,
+        openeralExisted: result.existed,
+        terminalLaunch,
+        terminalError,
+      };
+      activeDetachedHosts.set(normalizeWorkspaceKey(workspacePath), hostInfo);
+      return hostInfo;
     }
 
     const wantsContainerSandbox =
@@ -1650,6 +1714,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       hostToken,
       port,
       sandboxBackend: wantsContainerSandbox ? sandboxBackend : null,
+      sandboxProfile: wantsContainerSandbox ? sandboxProfile : null,
       sandboxRunId: wantsContainerSandbox ? runId : null,
       sandboxContainerName: containerName,
     };

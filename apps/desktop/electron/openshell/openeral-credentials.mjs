@@ -8,13 +8,31 @@
 // never sees the plaintext — only "set"/"unset" status flags. The
 // openeral.mjs module in Phase O3 reads decrypted values directly from
 // the main process when staging the credential bundle for a sandbox.
+//
+// Electron is loaded LAZILY (inside each function) so this module can be
+// imported under node --test on a dev box that doesn't ship electron.
+// When OPENWORK_TEST_CREDENTIALS_DIR is set, the module reads/writes
+// plain files inside that directory instead — a test seam for the
+// openeral.mjs suite.
 
-import { safeStorage } from "electron";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const CREDENTIALS_FILE = path.join(os.homedir(), ".openwork", "openeral-credentials.json");
+const DEFAULT_CREDENTIALS_FILE = path.join(os.homedir(), ".openwork", "openeral-credentials.json");
+
+function credentialsFile() {
+  return process.env.OPENWORK_CREDENTIALS_FILE || DEFAULT_CREDENTIALS_FILE;
+}
+
+function testCredentialsDir() {
+  return process.env.OPENWORK_TEST_CREDENTIALS_DIR || null;
+}
+
+async function getSafeStorage() {
+  const { safeStorage } = await import("electron");
+  return safeStorage;
+}
 
 /** @typedef {"databaseUrl" | "anthropicApiKey" | "stringcostApiKey"} CredentialKey */
 
@@ -30,7 +48,7 @@ function isKnownKey(key) {
 
 async function loadBlob() {
   try {
-    const text = await readFile(CREDENTIALS_FILE, "utf8");
+    const text = await readFile(credentialsFile(), "utf8");
     const parsed = JSON.parse(text);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
@@ -39,11 +57,11 @@ async function loadBlob() {
 }
 
 async function saveBlob(blob) {
-  await mkdir(path.dirname(CREDENTIALS_FILE), { recursive: true });
+  await mkdir(path.dirname(credentialsFile()), { recursive: true });
   // Mode 0o600 caps the impact of safeStorage's fallback "basic" backend on
   // Linux systems without a keyring — even if the encryption is weak, only
   // this user can read the file.
-  await writeFile(CREDENTIALS_FILE, JSON.stringify(blob, null, 2), { mode: 0o600 });
+  await writeFile(credentialsFile(), JSON.stringify(blob, null, 2), { mode: 0o600 });
 }
 
 /**
@@ -55,16 +73,26 @@ export async function setCredential(key, value) {
   if (!isKnownKey(key)) {
     throw new Error(`Unknown OpenEral credential key: ${key}`);
   }
+  const plaintext = String(value ?? "");
+  if (!plaintext.trim()) {
+    throw new Error("Credential value is empty.");
+  }
+  // Test seam: when OPENWORK_TEST_CREDENTIALS_DIR is set, write a plain
+  // file in that dir. The openeral.mjs test suite uses this to stub
+  // credentials without needing the Electron runtime.
+  const testDir = testCredentialsDir();
+  if (testDir) {
+    await mkdir(testDir, { recursive: true });
+    await writeFile(path.join(testDir, key), plaintext, { mode: 0o600 });
+    return;
+  }
+  const safeStorage = await getSafeStorage();
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error(
       "Encryption is not available on this system (no keyring detected). " +
         "Cannot store OpenEral credentials securely. " +
         "Install gnome-keyring or kwallet on Linux, or run from a logged-in desktop session.",
     );
-  }
-  const plaintext = String(value ?? "");
-  if (!plaintext.trim()) {
-    throw new Error("Credential value is empty.");
   }
   const encrypted = safeStorage.encryptString(plaintext);
   const blob = await loadBlob();
@@ -75,6 +103,16 @@ export async function setCredential(key, value) {
 export async function clearCredential(key) {
   if (!isKnownKey(key)) {
     throw new Error(`Unknown OpenEral credential key: ${key}`);
+  }
+  const testDir = testCredentialsDir();
+  if (testDir) {
+    try {
+      const { rm } = await import("node:fs/promises");
+      await rm(path.join(testDir, key), { force: true });
+    } catch {
+      // Best-effort.
+    }
+    return;
   }
   const blob = await loadBlob();
   if (key in blob) {
@@ -92,9 +130,18 @@ export async function getCredential(key) {
   if (!isKnownKey(key)) {
     throw new Error(`Unknown OpenEral credential key: ${key}`);
   }
+  const testDir = testCredentialsDir();
+  if (testDir) {
+    try {
+      return await readFile(path.join(testDir, key), "utf8");
+    } catch {
+      return null;
+    }
+  }
   const blob = await loadBlob();
   if (!blob[key]) return null;
   try {
+    const safeStorage = await getSafeStorage();
     return safeStorage.decryptString(Buffer.from(blob[key], "base64"));
   } catch {
     // safeStorage backend keys change when the user switches keyrings or
@@ -110,11 +157,29 @@ export async function getCredential(key) {
  * status pills + Configure/Clear buttons from this shape alone.
  */
 export async function getCredentialStatus() {
-  const blob = await loadBlob();
+  const testDir = testCredentialsDir();
   const status = {};
+  if (testDir) {
+    for (const key of CREDENTIAL_KEYS) {
+      try {
+        await readFile(path.join(testDir, key), "utf8");
+        status[key] = "set";
+      } catch {
+        status[key] = "unset";
+      }
+    }
+    status.encryptionAvailable = true;
+    return status;
+  }
+  const blob = await loadBlob();
   for (const key of CREDENTIAL_KEYS) {
     status[key] = blob[key] ? "set" : "unset";
   }
-  status.encryptionAvailable = safeStorage.isEncryptionAvailable();
+  try {
+    const safeStorage = await getSafeStorage();
+    status.encryptionAvailable = safeStorage.isEncryptionAvailable();
+  } catch {
+    status.encryptionAvailable = false;
+  }
   return status;
 }

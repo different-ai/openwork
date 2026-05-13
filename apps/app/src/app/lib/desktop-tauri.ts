@@ -470,19 +470,38 @@ export async function nukeOpenworkAndOpencodeConfigAndExit(): Promise<void> {
 }
 
 export type OrchestratorDetachedHost = {
-  openworkUrl: string;
-  token: string;
+  /** Null for OpenEral profiles — the agent runs as a TTY with no HTTP boundary. */
+  openworkUrl: string | null;
+  /** Null for OpenEral profiles for the same reason. */
+  token: string | null;
   ownerToken?: string | null;
-  hostToken: string;
-  port: number;
+  /** Null for OpenEral profiles. */
+  hostToken: string | null;
+  /** Null for OpenEral profiles. */
+  port: number | null;
   sandboxBackend?: "docker" | "microsandbox" | "openshell" | null;
   sandboxProfile?: SandboxProfile | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
+  /** OpenEral-specific: true if we reconnected to an existing sandbox
+   *  rather than creating one (the workspace was opened previously). */
+  openeralExisted?: boolean;
+  /** OpenEral-specific: which terminal launched. Null on macOS / Linux
+   *  without a terminal emulator installed. */
+  terminalLaunch?: { launched: string } | null;
+  /** OpenEral-specific: error message if the terminal couldn't be opened.
+   *  The sandbox is still running and can be reached via the documented
+   *  `wsl ... openshell sandbox connect <name>` command. */
+  terminalError?: string | null;
 };
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
+  /** Stable across machines — controls the OpenEral sandbox name when
+   *  sandboxProfile is "openeral-*". Same workspaceId + same DATABASE_URL
+   *  on a different laptop restores the same /home/agent. Falls back to
+   *  basename(workspacePath) if omitted. */
+  workspaceId?: string | null;
   sandboxBackend?: SandboxBackend | null;
   sandboxProfile?: SandboxProfile | null;
   sandboxImageRef?: string | null;
@@ -492,6 +511,7 @@ export async function orchestratorStartDetached(input: {
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
+    workspaceId: input.workspaceId ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
     sandboxProfile: input.sandboxProfile ?? null,
     sandboxImageRef: input.sandboxImageRef ?? null,
