@@ -136,6 +136,24 @@ function isAuthorized(request: Request) {
   return [bearer, signature].some((value) => value !== null && constantTimeEquals(value, env.webhookSecret!))
 }
 
+function logWebhookDiagnostics(request: Request, outcome: string) {
+  const auth = request.headers.get("authorization")
+  const bearer = auth?.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : null
+  const signature = request.headers.get("x-webhook-signature")?.trim() ?? null
+  console.log("[openrouter-webhook] diagnostics", {
+    outcome,
+    webhookSecretPresent: Boolean(env.webhookSecret),
+    webhookSecretLength: env.webhookSecret?.length ?? 0,
+    authorizationPresent: Boolean(auth),
+    authorizationIsBearer: Boolean(bearer),
+    bearerLength: bearer?.length ?? 0,
+    xWebhookSignaturePresent: Boolean(signature),
+    xWebhookSignatureLength: signature?.length ?? 0,
+    contentType: request.headers.get("content-type"),
+    userAgent: request.headers.get("user-agent"),
+  })
+}
+
 async function ingestSpan(span: ParsedSpan) {
   if (span.externalEventId) {
     const [event] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
@@ -192,14 +210,18 @@ async function ingestSpan(span: ParsedSpan) {
 export function registerWebhookRoutes(app: Hono) {
   app.post("/webhooks/openrouter", async (c) => {
     if (c.req.header("x-test-connection")?.toLowerCase() === "true") {
+      logWebhookDiagnostics(c.req.raw, "test_connection")
       return c.body(null, 204)
     }
     if (!env.webhookSecret) {
+      logWebhookDiagnostics(c.req.raw, "webhook_disabled")
       return c.json({ error: "webhook_disabled" }, 503)
     }
     if (!isAuthorized(c.req.raw)) {
+      logWebhookDiagnostics(c.req.raw, "unauthorized")
       return c.json({ error: "unauthorized" }, 401)
     }
+    logWebhookDiagnostics(c.req.raw, "authorized")
 
     const body = await c.req.json().catch(() => null)
     console.log("[openrouter-webhook] received payload", JSON.stringify(body, null, 2))
