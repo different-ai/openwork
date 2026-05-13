@@ -125,8 +125,6 @@ Design principles for hot reload:
 
 ## Repository Guidance
 
-* Use `VISION.md`, `PRINCIPLES.md`, and `PRODUCT.md` to understand the "why" and requirements so you can guide your decisions.
-* Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work (NOTE: do not use for `apps/app`).
 * For OpenWork session-surface details, also reference `packages/docs/orbita-layout-style.mdx`.
 
 ## App Architecture (CUPID)
@@ -151,9 +149,6 @@ For `apps/app/src/app/**`, use CUPID: small public surfaces, intention-revealing
 ```
 openwork/
   AGENTS.md                    # This file
-  VISION.md                     # Product vision and positioning
-  PRINCIPLES.md                 # Decision framework and guardrails
-  PRODUCT.md                    # Requirements, UX, and user flows
   .gitignore                    # Ignores vendor/opencode, node_modules, etc.
   .opencode/
   apps/
