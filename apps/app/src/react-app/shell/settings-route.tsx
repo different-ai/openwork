@@ -247,6 +247,7 @@ function parseSettingsPath(pathname: string): {
     case "advanced":
     case "appearance":
     case "environment":
+    case "sandbox":
     case "updates":
     case "recovery":
     case "debug":
