@@ -23,6 +23,10 @@ import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archiv
 import * as openshellClient from "./openshell/client.mjs";
 import * as openeral from "./openshell/openeral.mjs";
 import * as openeralCredentials from "./openshell/openeral-credentials.mjs";
+import {
+  deriveOpenEralSandboxName,
+  launchExternalTerminalToSandbox,
+} from "./openshell/openeral-terminal.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
 import {
   installOpenShellStack,
@@ -217,6 +221,14 @@ function emitOpenShellInstallProgress(payload) {
     mainWindow?.webContents.send("openshell:install-progress", payload);
   } catch {
     // Window may have closed mid-install; the next status query still works.
+  }
+}
+
+function emitOpenEralSessionProgress(payload) {
+  try {
+    mainWindow?.webContents.send("openeral:session-progress", payload);
+  } catch {
+    // Window may have closed; renderer's next status query still works.
   }
 }
 
@@ -1507,6 +1519,106 @@ async function handleDesktopInvoke(event, command, ...args) {
       // run (~6 MB). Returns reachable=true on a successful SELECT 1,
       // throws with the stderr otherwise so the UI can surface why.
       return openeral.probeDatabaseUrl();
+    }
+    case "openeralStartSession": {
+      // Per spec O3+O4 contract:
+      //   1. Derive sandbox name from workspaceId (stable across machines).
+      //   2. createOpenEralSandbox: create or short-circuit if it exists,
+      //      streams pull + create progress via openeral:session-progress.
+      //   3. Launch the OS terminal pointed at `openshell sandbox connect <name>`.
+      //   4. Return {sandboxName, profile, existed, terminal} to the renderer.
+      const input = args[0] ?? {};
+      const workspaceId = String(input.workspaceId ?? "").trim();
+      const profile = String(input.profile ?? "").trim();
+      if (!workspaceId) throw new Error("workspaceId is required");
+      if (profile !== "openeral-claude" && profile !== "openeral-openclaw") {
+        throw new Error(`Unsupported OpenEral profile: ${profile}`);
+      }
+      const sandboxName = deriveOpenEralSandboxName(workspaceId);
+      emitOpenEralSessionProgress({
+        sandboxName,
+        phase: "starting",
+        message: "Preparing OpenEral sandbox...",
+      });
+      const result = await openeral.createOpenEralSandbox({
+        name: sandboxName,
+        profile,
+        onProgress: (evt) =>
+          emitOpenEralSessionProgress({
+            sandboxName,
+            phase: evt.phase,
+            message: evt.message,
+          }),
+      });
+      emitOpenEralSessionProgress({
+        sandboxName,
+        phase: "launching-terminal",
+        message: "Opening session in external terminal...",
+      });
+      let terminal;
+      try {
+        terminal = await launchExternalTerminalToSandbox(sandboxName);
+      } catch (err) {
+        // Sandbox is up but we couldn't open a terminal. Don't fail the
+        // whole session — surface the issue so the user can launch
+        // their own terminal with the documented command.
+        emitOpenEralSessionProgress({
+          sandboxName,
+          phase: "terminal-error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          ...result,
+          sandboxName,
+          terminal: null,
+          terminalError: err instanceof Error ? err.message : String(err),
+        };
+      }
+      emitOpenEralSessionProgress({
+        sandboxName,
+        phase: "ready",
+        message: `Session running in ${terminal.launched}.`,
+      });
+      return { ...result, sandboxName, terminal };
+    }
+    case "openeralListSessions": {
+      // Returns the subset of `openshell sandbox list` whose names start
+      // with the openeral- prefix — sandboxes OpenWork has created.
+      const list = await openshellClient.listSandboxes().catch(() => []);
+      const filtered = Array.isArray(list)
+        ? list.filter((s) => {
+            const name = typeof s === "string" ? s : s?.name;
+            return typeof name === "string" && name.startsWith("openeral-");
+          })
+        : [];
+      return filtered;
+    }
+    case "openeralEndSession": {
+      // Per spec: OpenEral sandboxes persist across sessions for the
+      // Postgres-backed restore story. "End session" is a no-op marker;
+      // closing the external terminal is what ends user interaction.
+      // We still emit a status event so the UI can update.
+      const name = String(args[0] ?? "").trim();
+      emitOpenEralSessionProgress({ sandboxName: name, phase: "closed", message: "Session closed." });
+      return { status: "closed", sandboxName: name };
+    }
+    case "openeralDeleteSandbox": {
+      // Explicit destructive teardown. Gated by a renderer-side
+      // confirmation in Phase O8 docs; here we just execute.
+      const name = String(args[0] ?? "").trim();
+      if (!name) throw new Error("sandboxName is required");
+      const r = await openeral.deleteOpenEralSandbox(name);
+      if (r.exitCode !== 0) {
+        throw new Error(
+          `openshell sandbox delete failed: ${(r.stderr || r.stdout).trim()}`,
+        );
+      }
+      emitOpenEralSessionProgress({ sandboxName: name, phase: "deleted", message: "Sandbox deleted." });
+      return { status: "deleted", sandboxName: name };
+    }
+    case "openeralDeriveSandboxName": {
+      const workspaceId = String(args[0] ?? "").trim();
+      return deriveOpenEralSandboxName(workspaceId);
     }
     case "openshellResetDistro": {
       // Per spec §5 row "Distro corrupts (rare but happens)". Tear the

@@ -63,6 +63,16 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       };
     },
   },
+  openeral: {
+    /** Subscribe to OpenEral session progress (pull, create, terminal launch). */
+    onSessionProgress(callback) {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on("openeral:session-progress", handler);
+      return () => {
+        ipcRenderer.removeListener("openeral:session-progress", handler);
+      };
+    },
+  },
   meta: {
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),

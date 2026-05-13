@@ -1272,6 +1272,10 @@ export function SettingsRoute() {
             onSetCredential={(key, value) => openshellState.setCredential(key, value)}
             onClearCredential={(key) => openshellState.clearCredential(key)}
             onTestDatabaseUrl={() => openshellState.testDatabaseUrl()}
+            sessionProgress={openshellState.sessionProgress}
+            onStartOpenEralSession={(workspaceId, profile) =>
+              openshellState.startOpenEralSession(workspaceId, profile)
+            }
             os={platform.os}
           />
         );

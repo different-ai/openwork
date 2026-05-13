@@ -7,6 +7,7 @@ import { Button } from "../../../design-system/button";
 import type {
   OpenEralCredentialKey,
   OpenEralCredentialStatus,
+  OpenEralSessionProgress,
   OpenShellComponent,
   OpenShellDoctorResult,
   OpenShellInstallProgress,
@@ -93,6 +94,11 @@ export type SandboxViewProps = {
   onSetCredential: (key: OpenEralCredentialKey, value: string) => Promise<void>;
   onClearCredential: (key: OpenEralCredentialKey) => Promise<void>;
   onTestDatabaseUrl: () => Promise<{ status: string; probedReachable?: boolean }>;
+  sessionProgress: OpenEralSessionProgress[];
+  onStartOpenEralSession: (
+    workspaceId: string,
+    profile: "openeral-claude" | "openeral-openclaw",
+  ) => Promise<unknown>;
   onRefreshDoctor: () => void;
   onOpenPolicyFolder?: () => void;
   /** Host OS as reported by the platform kernel. Drives the install-button
@@ -326,6 +332,16 @@ export function SandboxView(props: SandboxViewProps) {
         </div>
       ) : null}
 
+      {showOpenShellPanel && props.selectedProfile.startsWith("openeral-") ? (
+        <TestLaunchPanel
+          profile={props.selectedProfile as "openeral-claude" | "openeral-openclaw"}
+          credentialStatus={props.credentialStatus}
+          actionBusy={props.actionBusy}
+          sessionProgress={props.sessionProgress}
+          onStartOpenEralSession={props.onStartOpenEralSession}
+        />
+      ) : null}
+
       {showOpenShellPanel ? (
         <div className={`${settingsPanelClass} space-y-4`}>
           <div className="flex items-start justify-between gap-3">
@@ -503,6 +519,102 @@ export function SandboxView(props: SandboxViewProps) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+type TestLaunchPanelProps = {
+  profile: "openeral-claude" | "openeral-openclaw";
+  credentialStatus: OpenEralCredentialStatus | null;
+  actionBusy: boolean;
+  sessionProgress: OpenEralSessionProgress[];
+  onStartOpenEralSession: (
+    workspaceId: string,
+    profile: "openeral-claude" | "openeral-openclaw",
+  ) => Promise<unknown>;
+};
+
+function TestLaunchPanel(props: TestLaunchPanelProps) {
+  const [workspaceId, setWorkspaceId] = useState("test-workspace");
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const credsOk =
+    props.credentialStatus?.databaseUrl === "set" &&
+    (props.profile !== "openeral-openclaw" ||
+      props.credentialStatus?.anthropicApiKey === "set");
+
+  const start = async () => {
+    setLaunchError(null);
+    try {
+      await props.onStartOpenEralSession(workspaceId.trim(), props.profile);
+    } catch (err) {
+      setLaunchError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div className={`${settingsPanelClass} space-y-3`}>
+      <div>
+        <div className="text-sm font-medium text-gray-12">Test session launch</div>
+        <div className="text-xs text-gray-10">
+          Creates (or resumes) an OpenEral sandbox for the workspace ID below, then opens it in an
+          external terminal. Workspaces with the same ID + DATABASE_URL restore the same{" "}
+          <code className="rounded bg-gray-2/40 px-1 py-0.5 text-[11px]">/home/agent</code> on any
+          machine. Once the renderer terminal view ships (deferred), this flow integrates with the
+          regular workspace-create / open-session UX.
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="flex-1 min-w-[200px]">
+          <label className="text-xs text-gray-10" htmlFor="openeral-test-workspace-id">
+            Workspace ID
+          </label>
+          <input
+            id="openeral-test-workspace-id"
+            className="mt-1 w-full rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-sm"
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            placeholder="test-workspace"
+          />
+        </div>
+        <Button
+          variant="primary"
+          onClick={() => void start()}
+          disabled={!credsOk || props.actionBusy || !workspaceId.trim()}
+          title={
+            !credsOk
+              ? props.profile === "openeral-openclaw"
+                ? "Configure DATABASE_URL and ANTHROPIC_API_KEY first"
+                : "Configure DATABASE_URL first"
+              : ""
+          }
+        >
+          {props.actionBusy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
+          Launch session
+        </Button>
+      </div>
+      {launchError ? (
+        <div className="rounded-xl border border-red-7/40 bg-red-2/30 p-2 text-xs text-red-12">
+          {launchError}
+        </div>
+      ) : null}
+      {props.sessionProgress.length ? (
+        <div className="rounded-xl border border-dls-border bg-gray-1/40 p-3">
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wider text-gray-8">
+            Session activity
+          </div>
+          <div className="max-h-40 overflow-y-auto font-mono text-[11px] text-gray-11">
+            {props.sessionProgress.slice(-50).map((event, idx) => (
+              <div key={idx} className="py-0.5">
+                <span className="text-gray-8">{event.phase}</span>
+                {event.sandboxName ? (
+                  <span className="text-gray-7"> · {event.sandboxName}</span>
+                ) : null}
+                {event.message ? <span>: {event.message}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

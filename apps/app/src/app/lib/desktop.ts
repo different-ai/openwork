@@ -53,6 +53,15 @@ declare global {
           }) => void,
         ) => () => void;
       };
+      openeral?: {
+        onSessionProgress?: (
+          callback: (data: {
+            sandboxName?: string;
+            phase: string;
+            message?: string;
+          }) => void,
+        ) => () => void;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";

@@ -58,6 +58,20 @@ export type OpenEralCredentialStatus = {
   encryptionAvailable: boolean;
 };
 
+export type OpenEralSessionProgress = {
+  sandboxName?: string;
+  phase: string;
+  message?: string;
+};
+
+export type OpenEralSessionResult = {
+  sandboxName: string;
+  profile?: string;
+  existed?: boolean;
+  terminal?: { launched: string } | null;
+  terminalError?: string;
+};
+
 type ElectronBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>;
 
 function getBridge(): ElectronBridge | null {
@@ -85,6 +99,7 @@ export function useOpenShellState(options: { active: boolean } = { active: false
   const [progressLog, setProgressLog] = useState<OpenShellInstallProgress[]>([]);
   const [policies, setPolicies] = useState<string[]>([]);
   const [credentialStatus, setCredentialStatus] = useState<OpenEralCredentialStatus | null>(null);
+  const [sessionProgress, setSessionProgress] = useState<OpenEralSessionProgress[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
 
@@ -168,6 +183,22 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     });
     return () => unsubscribe();
   }, [refreshInstallStatus, refreshDoctor]);
+
+  // Subscribe to OpenEral session progress (pull + create + terminal-launch).
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    const bridge = getBridge();
+    const sub = bridge?.openeral?.onSessionProgress;
+    if (!sub) return;
+    const unsubscribe = sub((evt: OpenEralSessionProgress) => {
+      if (!isMountedRef.current) return;
+      setSessionProgress((prev) => {
+        const next = prev.concat(evt);
+        return next.length > PROGRESS_LOG_MAX ? next.slice(-PROGRESS_LOG_MAX) : next;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Poll doctor + install status on a steady cadence while the user is
   // looking at the sandbox tab. Outside the tab we don't waste cycles.
@@ -266,6 +297,43 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     [],
   );
 
+  const startOpenEralSession = useCallback(
+    async (
+      workspaceId: string,
+      profile: "openeral-claude" | "openeral-openclaw",
+    ): Promise<OpenEralSessionResult> => {
+      setActionBusy(true);
+      setActionError(null);
+      setSessionProgress([]);
+      try {
+        const result = await invoke<OpenEralSessionResult>("openeralStartSession", {
+          workspaceId,
+          profile,
+        });
+        return result;
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+        throw err;
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [],
+  );
+
+  const deleteOpenEralSandbox = useCallback(async (sandboxName: string) => {
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      await invoke("openeralDeleteSandbox", sandboxName);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setActionBusy(false);
+    }
+  }, []);
+
   const testDatabaseUrl = useCallback(async () => {
     setActionBusy(true);
     setActionError(null);
@@ -312,6 +380,7 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     actionBusy,
     actionError,
     credentialStatus,
+    sessionProgress,
     startInstall,
     cancelInstall,
     restartGateway,
@@ -320,6 +389,8 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     setCredential,
     clearCredential,
     testDatabaseUrl,
+    startOpenEralSession,
+    deleteOpenEralSandbox,
     refreshDoctor,
     refreshInstallStatus,
     refreshPolicies,
