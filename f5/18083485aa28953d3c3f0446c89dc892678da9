@@ -1,0 +1,19 @@
+apps/app/src/react-app/domains/settings/pages/shell-view.tsx
+  s_93f5832de72125::t_4a8df382f52821 2,178,216-221,264,270-273,348-349,357-358,366-367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "f518083485aa28953d3c3f0446c89dc892678da9",
+  "prompts": {},
+  "sessions": {
+    "s_93f5832de72125": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5a99d769-d9ad-47dd-887e-683d20822bb3",
+        "model": "gpt-5.5-medium-fast"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
