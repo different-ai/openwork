@@ -152,7 +152,7 @@ export function OrganizationScreen() {
                     Create your first organization.
                   </h1>
                   <p className="mt-3 max-w-xl text-sm leading-6 text-gray-500">
-                    Name the workspace you want to set up. Billing only appears when you launch a shared cloud workspace.
+                    Name the workspace you want to set up. Billing only appears when you need team features or cloud hosting.
                   </p>
                 </div>
               </div>

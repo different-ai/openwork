@@ -27,9 +27,9 @@ function CheckoutStatusPanel({ body }: { body: string }) {
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[14ch]">Shared workspace billing.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Workspace billing.</h1>
             <p className="den-copy max-w-2xl">
-              Den is free for solo setup. Billing appears only when launching a shared cloud workspace.
+              Den is free for solo setup. Billing appears when you need team features or cloud hosting.
             </p>
           </div>
 
@@ -214,9 +214,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before launching a shared workspace.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan to unlock team features.</h1>
             <p className="den-copy max-w-2xl">
-              Den is free for solo setup. Shared cloud workspaces require a workspace plan with up to 5 members and 1 hosted worker.
+              Den is free for solo setup. A workspace plan gives you up to 5 members, custom LLM providers, and team management.
             </p>
           </div>
 
@@ -271,21 +271,21 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
               <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers with team access controls</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background tasks — coming soon</div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">Background agents</p>
-                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Keep selected workflows running in the background. Alpha.
-                  </p>
-                </div>
-                <div className="den-frame-inset rounded-[1.5rem] p-4">
                   <p className="den-stat-label">LLM providers</p>
                   <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
                     Standardize provider access, model selection, and team rollout.
+                  </p>
+                </div>
+                <div className="den-frame-inset rounded-[1.5rem] p-4">
+                  <p className="den-stat-label">Background tasks</p>
+                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
+                    Run selected workflows in the background. Coming soon.
                   </p>
                 </div>
               </div>
@@ -319,7 +319,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to launch shared workspaces."}
+                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to unlock team features."}
               </p>
             </div>
 

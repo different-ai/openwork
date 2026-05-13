@@ -181,13 +181,13 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     describeRoute({
       tags: ["Workers"],
       summary: "Create worker",
-      description: "Creates a local worker or shared cloud workspace for the active organization and returns the initial tokens needed to connect to it.",
+      description: "Creates a local worker or cloud worker for the active organization and returns the initial tokens needed to connect to it.",
       responses: {
         201: jsonResponse("Local worker created successfully.", workerCreateResponseSchema),
         202: jsonResponse("Cloud worker creation started successfully.", workerCreateResponseSchema),
         400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema, userEmailRequiredSchema])),
         401: jsonResponse("The caller must be signed in to create workers.", unauthorizedSchema),
-        402: jsonResponse("The caller needs an active cloud plan before launching a shared workspace.", paymentRequiredSchema),
+        402: jsonResponse("The caller needs an active cloud plan before launching a cloud worker.", paymentRequiredSchema),
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
     }),
@@ -222,7 +222,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       if (!access.allowed) {
         return c.json({
           error: "payment_required",
-          message: "Launching a shared workspace requires an active OpenWork Cloud plan.",
+          message: "Launching a cloud worker requires an active OpenWork Cloud plan.",
           polar: {
             checkoutUrl: access.checkoutUrl,
             productId: env.polar.productId,

@@ -558,7 +558,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                     {billingSummary?.featureGateEnabled
                       ? billingSummary.hasActivePlan
                         ? "Your account has active worker billing."
-                        : "Shared workspace launches require a workspace plan."
+                        : "Team features require a workspace plan."
                       : "Billing gates are disabled in this environment."}
                   </p>
                   <Link
@@ -575,12 +575,12 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
           <div className="rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] p-8">
             <div className="mx-auto max-w-[30rem] text-center">
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">No workers yet</h2>
-              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Launch a shared workspace to unlock connection details and runtime controls.</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Launch a worker to unlock connection details and runtime controls.</p>
               <Link
                 href="/checkout"
                 className="mt-5 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
               >
-                Open shared workspace billing
+                Open billing
               </Link>
             </div>
           </div>
@@ -659,7 +659,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
 
             {workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">Loading workers...</p> : null}
             {workersError ? <p className="text-xs font-medium text-rose-600">{workersError}</p> : null}
-            {workers.length === 0 && !workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">No shared workspaces yet.</p> : null}
+            {workers.length === 0 && !workersBusy ? <p className="text-xs text-[var(--dls-text-secondary)]">No workers yet.</p> : null}
           </div>
 
             <div className="text-xs text-[var(--dls-text-secondary)] md:text-sm">
