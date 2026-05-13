@@ -13,6 +13,7 @@ import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
+import { AppMenuProvider } from "./app-menu";
 import { OpenworkControlProvider, OpenworkRouteControlActions } from "./control/control-provider";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
@@ -128,6 +129,7 @@ export function AppRoot() {
     <>
       <DevProfiler id="AppRoot">
         <ShellConfigProvider>
+        <AppMenuProvider>
         <OpenworkControlProvider>
           <OpenworkRouteControlActions />
           <DenSigninGate>
@@ -211,6 +213,7 @@ export function AppRoot() {
             </Routes>
           </DenSigninGate>
         </OpenworkControlProvider>
+        </AppMenuProvider>
         </ShellConfigProvider>
         <LoadingOverlay />
       </DevProfiler>

@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { startBrowserMcpServers } from "./browser-mcp.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
@@ -31,6 +31,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
+const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
+const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
@@ -39,6 +41,7 @@ const APP_NAME = isDevMode ? "OpenWork - Dev" : "OpenWork";
 const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
+const DOCS_PAGE_URL = "https://openworklabs.com/docs";
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
 // so in-place migration is a no-op for almost every file. Dev mode uses the
@@ -238,6 +241,7 @@ const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
+let applicationMenuVisible = process.platform === "darwin";
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -340,6 +344,154 @@ const BROWSER_DEFAULT_URL = "https://www.google.com";
 function sendToRenderer(channel, payload) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   try { mainWindow.webContents.send(channel, payload); } catch { /* window closing */ }
+}
+
+async function openSettingsFromNativeMenu() {
+  const win = await createMainWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
+}
+
+async function toggleSidebarFromNativeMenu() {
+  const win = await createMainWindow();
+  win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
+}
+
+function installApplicationMenu() {
+  const isMac = process.platform === "darwin";
+  /** @type {import("electron").MenuItemConstructorOptions[]} */
+  const template = [
+    ...(isMac
+      ? [
+          {
+            label: APP_NAME,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              {
+                label: "Settings...",
+                accelerator: "Command+,",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        ...(isMac
+          ? [
+              { role: "pasteAndMatchStyle" },
+              { role: "delete" },
+              { role: "selectAll" },
+              { type: "separator" },
+              {
+                label: "Speech",
+                submenu: [
+                  { role: "startSpeaking" },
+                  { role: "stopSpeaking" },
+                ],
+              },
+            ]
+          : [
+              { role: "delete" },
+              { type: "separator" },
+              { role: "selectAll" },
+            ]),
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CommandOrControl+B",
+          click: () => {
+            void toggleSidebarFromNativeMenu();
+          },
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(isMac
+          ? [
+              { type: "separator" },
+              { role: "front" },
+              { type: "separator" },
+              { role: "window" },
+            ]
+          : [
+              { role: "close" },
+            ]),
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Docs",
+          click: async () => {
+            await shell.openExternal(DOCS_PAGE_URL);
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function applyApplicationMenuVisibility(window) {
+  if (process.platform === "darwin") return;
+  window.setAutoHideMenuBar(false);
+  window.setMenuBarVisibility(applicationMenuVisible);
+}
+
+function setApplicationMenuVisible(visible) {
+  applicationMenuVisible = visible === true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    applyApplicationMenuVisibility(window);
+  }
+  return applicationMenuVisible;
 }
 
 function createBrowserView() {
@@ -1973,6 +2125,8 @@ async function handleDesktopInvoke(event, command, ...args) {
     }
     case "__setNativeTheme":
       return applyNativeTheme(String(args[0]));
+    case "__setApplicationMenuVisible":
+      return setApplicationMenuVisible(args[0]);
     case "getBrowserMcpPorts":
       return browserMcpPorts
         ? { builtinPort: browserMcpPorts.builtinPort, externalPort: browserMcpPorts.externalPort }
@@ -2151,6 +2305,7 @@ async function createMainWindow() {
       sandbox: false,
     },
   });
+  applyApplicationMenuVisibility(mainWindow);
 
   if (isDevMode) {
     mainWindow.on("page-title-updated", (event) => {
@@ -2271,6 +2426,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    installApplicationMenu();
     await installReactDevToolsForDev();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
+const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
+const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -114,6 +116,16 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
 ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));
+});
+
+ipcRenderer.on(NATIVE_MENU_OPEN_SETTINGS_EVENT, () => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(NATIVE_MENU_OPEN_SETTINGS_EVENT));
+});
+
+ipcRenderer.on(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT, () => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT));
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

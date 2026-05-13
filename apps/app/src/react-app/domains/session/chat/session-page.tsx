@@ -41,6 +41,7 @@ import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
+import { useUiStateStore } from "../../../shell/ui-state-store";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { BrowserPanel } from "../browser/browser-panel";
@@ -182,6 +183,12 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
 
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
+  const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
+  const setSidebarOpen = useUiStateStore((state) => state.setSidebarOpen);
+  const browserPanelOpen = useUiStateStore((state) => state.browserPanelOpen);
+  const openBrowserPanel = useUiStateStore((state) => state.openBrowserPanel);
+  const closeBrowserPanel = useUiStateStore((state) => state.closeBrowserPanel);
+  const toggleBrowserPanel = useUiStateStore((state) => state.toggleBrowserPanel);
 
   useReactRenderWatchdog("SessionPage", {
     selectedSessionId: props.selectedSessionId,
@@ -199,9 +206,7 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const [todoExpanded, setTodoExpanded] = useState(true);
-  const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
   const browserPanelRef = usePanelRef();
-  const toggleBrowserPanel = useCallback(() => setBrowserPanelOpen((p) => !p), []);
 
   // Sync browser panel state with Electron main process IPC events.
   // When the agent calls a built-in browser tool, the main process opens
@@ -212,10 +217,10 @@ export function SessionPage(props: SessionPageProps) {
     if (!isElectronRuntime()) return;
     const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
     if (!browser) return;
-    const unsubOpen = browser.onPanelOpened?.(() => setBrowserPanelOpen(true));
-    const unsubClose = browser.onPanelClosed?.(() => setBrowserPanelOpen(false));
+    const unsubOpen = browser.onPanelOpened?.(openBrowserPanel);
+    const unsubClose = browser.onPanelClosed?.(closeBrowserPanel);
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, []);
+  }, [closeBrowserPanel, openBrowserPanel]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -365,7 +370,8 @@ export function SessionPage(props: SessionPageProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text mac:bg-transparent">
       <SidebarProvider
-        defaultOpen={shellConfig.sidebar}
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
         className={cn(
           "relative min-h-0 flex-1 mac:bg-transparent",
           leftSidebarResizing &&
@@ -736,7 +742,7 @@ export function SessionPage(props: SessionPageProps) {
                   maxSize="70%"
                   className="min-h-0 overflow-hidden lg:flex lg:flex-col"
                 >
-                  <BrowserPanel onClose={toggleBrowserPanel} />
+                  <BrowserPanel onClose={closeBrowserPanel} />
                 </ResizablePanel>
               </>
             ) : null}

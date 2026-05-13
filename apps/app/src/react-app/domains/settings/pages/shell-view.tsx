@@ -21,6 +21,7 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { useShellConfig, DEFAULT_SHELL_CONFIG, type ShellConfig } from "../../../shell/shell-config";
+import { useUiStateStore } from "../../../shell/ui-state-store";
 
 /* ------------------------------------------------------------------ */
 /*  Interactive wireframe preview                                      */
@@ -222,10 +223,17 @@ function ToggleRow(props: ToggleRowProps) {
 
 export function ShellCustomizationView() {
   const { config, update, reset } = useShellConfig();
+  const applicationMenuVisible = useUiStateStore((state) => state.applicationMenuVisible);
+  const setApplicationMenuVisible = useUiStateStore((state) => state.setApplicationMenuVisible);
 
   const isDefault = (Object.keys(DEFAULT_SHELL_CONFIG) as (keyof ShellConfig)[]).every(
     (key) => config[key] === DEFAULT_SHELL_CONFIG[key],
-  );
+  ) && !applicationMenuVisible;
+
+  const resetAll = () => {
+    reset();
+    setApplicationMenuVisible(false);
+  };
 
   return (
     <LayoutStack>
@@ -343,6 +351,14 @@ export function ShellCustomizationView() {
         />
 
         <ToggleRow
+          label="Display menu bar"
+          description="Show the native desktop menu bar."
+          checked={applicationMenuVisible}
+          onChange={setApplicationMenuVisible}
+          className="hidden windows:flex linux:flex"
+        />
+
+        <ToggleRow
           label="Display new workspace button"
           description="Let users create or join additional workspaces."
           checked={config.addWorkspace}
@@ -412,7 +428,7 @@ export function ShellCustomizationView() {
         <Button
           variant="outline"
           size="sm"
-          onClick={reset}
+          onClick={resetAll}
           disabled={isDefault}
         >
           <RotateCcw size={12} />
