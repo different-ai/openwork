@@ -1,23 +1,26 @@
 import { and, eq, sql } from "drizzle-orm"
 import type { Hono } from "hono"
-import { InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { constantTimeEquals } from "./keys.js"
+import { ensureUsableBuckets } from "./limits.js"
+import { resolveModelByUpstreamModel } from "./model-catalog.js"
 
 type JsonRecord = Record<string, unknown>
 
 type ParsedSpan = {
-  organizationId: string
   orgMembershipId: string
-  inferenceKeyId: string | null
+  inferenceKeyId: string
   openworkRequestId: string
   externalEventId: string | null
   costAmount: number
   occurredAt: Date
-  bucketIds: Record<string, DenTypeId<"inferenceOrgUsageBucket">>
+  upstreamModel: string
+  inputTokens: number
+  outputTokens: number
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -58,10 +61,21 @@ function stringAttr(attrs: JsonRecord, keys: string[]) {
   return null
 }
 
-function costToCredits(value: unknown) {
-  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
-  if (!Number.isFinite(numberValue) || numberValue <= 0) return null
-  return Math.max(1, Math.round(numberValue * env.creditsPerDollar))
+function numberAttr(attrs: JsonRecord, keys: string[]) {
+  for (const key of keys) {
+    const value = attrs[key]
+    const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
+    if (Number.isFinite(numberValue)) return numberValue
+  }
+  return null
+}
+
+function usageUnitsForModel(input: { upstreamModel: string; inputTokens: number; outputTokens: number }) {
+  const model = resolveModelByUpstreamModel(input.upstreamModel)
+  if (!model) return null
+  const inputUnits = input.inputTokens * model.usageUnitsPerMillionTokens.input
+  const outputUnits = input.outputTokens * model.usageUnitsPerMillionTokens.output
+  return Math.max(1, Math.ceil((inputUnits + outputUnits) / 1_000_000))
 }
 
 function timeFromSpan(span: JsonRecord) {
@@ -73,39 +87,33 @@ function timeFromSpan(span: JsonRecord) {
 
 function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: JsonRecord): ParsedSpan | null {
   const attrs = { ...resourceAttrs, ...scopeAttrs, ...attributesToRecord(span.attributes) }
-  const organizationId = stringAttr(attrs, ["trace.metadata.organization_id", "trace.organization_id", "metadata.organization_id", "organization_id"])
   const orgMembershipId = stringAttr(attrs, ["trace.metadata.org_membership_id", "trace.org_membership_id", "metadata.org_membership_id", "org_membership_id"])
+  const inferenceKeyId = stringAttr(attrs, ["trace.metadata.inference_key_id", "trace.inference_key_id", "metadata.inference_key_id", "inference_key_id"])
   const openworkRequestId = stringAttr(attrs, ["trace.metadata.openwork_request_id", "trace.openwork_request_id", "metadata.openwork_request_id", "openwork_request_id", "trace_id"])
     ?? (typeof span.traceId === "string" ? span.traceId : null)
-  const cost = costToCredits(
-    attrs["gen_ai.usage.cost"] ?? attrs["openrouter.cost"] ?? attrs.cost ?? attrs["cost_usd"] ?? attrs["usage.cost"],
-  )
-  if (!organizationId || !orgMembershipId || !openworkRequestId || cost === null) {
+  const upstreamModel = stringAttr(attrs, ["gen_ai.request.model", "gen_ai.response.model"])
+  const inputTokens = numberAttr(attrs, ["gen_ai.usage.input_tokens"])
+  const outputTokens = numberAttr(attrs, ["gen_ai.usage.output_tokens"])
+  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !upstreamModel || inputTokens === null || outputTokens === null) {
     return null
   }
 
-  const bucketIds: Record<string, DenTypeId<"inferenceOrgUsageBucket">> = {}
-  for (const [key, value] of Object.entries(attrs)) {
-    const match = /^trace\.metadata\.bucket_(.+)_id$|^trace\.bucket_(.+)_id$|^metadata\.bucket_(.+)_id$|^bucket_(.+)_id$/.exec(key)
-    const windowType = match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4]
-    if (windowType && typeof value === "string") {
-      try {
-        bucketIds[windowType] = normalizeDenTypeId("inferenceOrgUsageBucket", value)
-      } catch {
-        continue
-      }
-    }
+  const costAmount = usageUnitsForModel({ upstreamModel, inputTokens, outputTokens })
+  if (costAmount === null) {
+    console.warn("[openrouter-webhook] skipped span for unknown priced model", { upstreamModel })
+    return null
   }
 
   return {
-    organizationId,
     orgMembershipId,
-    inferenceKeyId: stringAttr(attrs, ["trace.metadata.inference_key_id", "trace.inference_key_id", "metadata.inference_key_id", "inference_key_id"]),
+    inferenceKeyId,
     openworkRequestId,
     externalEventId: stringAttr(attrs, ["event_id", "id", "span_id"]) ?? (typeof span.spanId === "string" ? span.spanId : null),
-    costAmount: cost,
+    costAmount,
     occurredAt: timeFromSpan(span),
-    bucketIds,
+    upstreamModel,
+    inputTokens,
+    outputTokens,
   }
 }
 
@@ -155,6 +163,30 @@ function logWebhookDiagnostics(request: Request, outcome: string) {
 }
 
 async function ingestSpan(span: ParsedSpan) {
+  const [inferenceKey] = await db.select().from(InferenceKeyTable)
+    .where(eq(InferenceKeyTable.id, normalizeDenTypeId("inferenceKey", span.inferenceKeyId)))
+    .limit(1)
+  if (!inferenceKey || inferenceKey.status !== "active") {
+    console.warn("[openrouter-webhook] skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })
+    return
+  }
+  if (inferenceKey.org_membership_id !== normalizeDenTypeId("member", span.orgMembershipId)) {
+    console.warn("[openrouter-webhook] skipped span for mismatched org membership", {
+      inferenceKeyId: span.inferenceKeyId,
+      spanOrgMembershipId: span.orgMembershipId,
+      keyOrgMembershipId: inferenceKey.org_membership_id,
+    })
+    return
+  }
+
+  const limits = await ensureUsableBuckets(inferenceKey.organization_id, span.occurredAt)
+  if (!limits.ok) {
+    console.warn("[openrouter-webhook] settling usage after limit was exceeded", {
+      inferenceKeyId: span.inferenceKeyId,
+      limitedBy: limits.limitedBy,
+    })
+  }
+
   if (span.externalEventId) {
     const [event] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
       .where(eq(InferenceUsageLedgerEntryTable.external_event_id, span.externalEventId))
@@ -168,9 +200,9 @@ async function ingestSpan(span: ParsedSpan) {
     const entryId = createDenTypeId("inferenceUsageLedgerEntry")
     await db.insert(InferenceUsageLedgerEntryTable).values({
       id: entryId,
-      organization_id: normalizeDenTypeId("organization", span.organizationId),
-      org_membership_id: normalizeDenTypeId("member", span.orgMembershipId),
-      inference_key_id: span.inferenceKeyId ? normalizeDenTypeId("inferenceKey", span.inferenceKeyId) : null,
+      organization_id: inferenceKey.organization_id,
+      org_membership_id: inferenceKey.org_membership_id,
+      inference_key_id: inferenceKey.id,
       external_job_id: span.openworkRequestId,
       external_event_id: span.externalEventId,
       cost_amount: span.costAmount,
@@ -182,7 +214,7 @@ async function ingestSpan(span: ParsedSpan) {
   if (!entry) return
 
   await db.transaction(async (tx) => {
-    for (const bucketId of Object.values(span.bucketIds)) {
+    for (const bucketId of Object.values(limits.bucketIds).filter((id): id is DenTypeId<"inferenceOrgUsageBucket"> => Boolean(id))) {
       const [charge] = await tx.select({ id: InferenceUsageLedgerBucketChargeTable.id })
         .from(InferenceUsageLedgerBucketChargeTable)
         .where(and(

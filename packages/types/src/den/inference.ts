@@ -36,10 +36,28 @@ export const INFERENCE_MODEL_ALIASES = {
   model1: {
     upstreamModel: "openai/gpt-4o-mini",
     displayName: "OpenWork Model 1",
+    enabled: true,
+    limit: {
+      context: 200_000,
+      output: 65_536,
+    },
+    usageUnitsPerMillionTokens: {
+      input: 150_000,
+      output: 600_000,
+    },
   },
   model2: {
     upstreamModel: "anthropic/claude-3.5-sonnet",
     displayName: "OpenWork Model 2",
+    enabled: true,
+    limit: {
+      context: 200_000,
+      output: 65_536,
+    },
+    usageUnitsPerMillionTokens: {
+      input: 3_000_000,
+      output: 15_000_000,
+    },
   },
 } as const
 

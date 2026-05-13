@@ -109,17 +109,20 @@ function buildOpenWorkProviderConfig() {
 }
 
 function buildOpenWorkModelRows(llmProviderId: DenTypeId<"llmProvider">, now: Date) {
-  return Object.entries(INFERENCE_MODEL_ALIASES).map(([alias, model]) => ({
-    id: createDenTypeId("llmProviderModel"),
-    llmProviderId,
-    modelId: `${OPENWORK_PROVIDER_ID}/${alias}`,
-    name: model.displayName,
-    modelConfig: {
-      id: `${OPENWORK_PROVIDER_ID}/${alias}`,
+  return Object.entries(INFERENCE_MODEL_ALIASES)
+    .filter(([, model]) => model.enabled)
+    .map(([alias, model]) => ({
+      id: createDenTypeId("llmProviderModel"),
+      llmProviderId,
+      modelId: `${OPENWORK_PROVIDER_ID}/${alias}`,
       name: model.displayName,
-    },
-    createdAt: now,
-  }))
+      modelConfig: {
+        id: `${OPENWORK_PROVIDER_ID}/${alias}`,
+        name: model.displayName,
+        limit: model.limit,
+      },
+      createdAt: now,
+    }))
 }
 
 async function revokeMemberInferenceKeys(memberId: MemberId) {

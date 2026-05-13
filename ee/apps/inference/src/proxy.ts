@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto"
 import type { Hono } from "hono"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "./env.js"
 import { findActiveInferenceKey, getOpenRouterProviderKey } from "./keys.js"
 import { ensureUsableBuckets } from "./limits.js"
@@ -102,7 +101,6 @@ async function prepareBody(request: Request, input: {
   orgMembershipId: string
   inferenceKeyId: string
   openworkRequestId: string
-  bucketIds: Partial<Record<string, DenTypeId<"inferenceOrgUsageBucket">>>
 }) {
   if (!isJsonRequest(request)) {
     return { body: request.body, modelAlias: "unknown", upstreamModel: null as string | null }
@@ -128,20 +126,16 @@ async function prepareBody(request: Request, input: {
     return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${body.model}`) }
   }
 
-  const trace = typeof body.trace === "object" && body.trace !== null ? body.trace as JsonObject : {}
   body.model = model.upstreamModel
   body.user = input.orgMembershipId
   body.session_id = typeof body.session_id === "string" ? body.session_id : input.openworkRequestId
   body.trace = {
-    ...trace,
     trace_id: input.openworkRequestId,
     trace_name: "OpenWork Inference",
     generation_name: model.alias,
-    organization_id: input.organizationId,
     org_membership_id: input.orgMembershipId,
     inference_key_id: input.inferenceKeyId,
     openwork_request_id: input.openworkRequestId,
-    ...Object.fromEntries(Object.entries(input.bucketIds).map(([windowType, id]) => [`bucket_${windowType}_id`, id])),
   }
 
   return {
@@ -192,7 +186,6 @@ export function registerProxyRoutes(app: Hono) {
       orgMembershipId: inferenceKey.org_membership_id,
       inferenceKeyId: inferenceKey.id,
       openworkRequestId,
-      bucketIds: limits.bucketIds,
     })
     if ("error" in prepared) {
       logProxyError("Invalid inference proxy request", {
