@@ -29,7 +29,7 @@ afterSign: scripts/electron-after-sign.cjs
 # release assets during the migration window.
 publish:
   - provider: github
-    owner: different-ai
+    owner: ankurshashwat
     repo: openwork
     releaseType: release
 mac:
