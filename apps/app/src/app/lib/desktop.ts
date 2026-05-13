@@ -61,6 +61,16 @@ declare global {
             message?: string;
           }) => void,
         ) => () => void;
+        onPtyData?: (
+          callback: (payload: { sessionId: string; data: string }) => void,
+        ) => () => void;
+        onPtyExit?: (
+          callback: (payload: {
+            sessionId: string;
+            exitCode: number | null;
+            signal: string | null;
+          }) => void,
+        ) => () => void;
       };
       meta?: {
         initialDeepLinks?: string[];

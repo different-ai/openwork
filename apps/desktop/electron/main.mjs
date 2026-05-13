@@ -23,6 +23,7 @@ import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archiv
 import * as openshellClient from "./openshell/client.mjs";
 import * as openeral from "./openshell/openeral.mjs";
 import * as openeralCredentials from "./openshell/openeral-credentials.mjs";
+import * as openeralPty from "./openshell/openeral-pty.mjs";
 import {
   deriveOpenEralSandboxName,
   launchExternalTerminalToSandbox,
@@ -229,6 +230,23 @@ function emitOpenEralSessionProgress(payload) {
     mainWindow?.webContents.send("openeral:session-progress", payload);
   } catch {
     // Window may have closed; renderer's next status query still works.
+  }
+}
+
+function emitOpenEralPtyData(sessionId, data) {
+  try {
+    mainWindow?.webContents.send("openeral:pty-data", { sessionId, data });
+  } catch {
+    // Window may have closed mid-stream. The renderer's next PTY open
+    // reattaches handlers (attachHandlers) so a brief disconnect is fine.
+  }
+}
+
+function emitOpenEralPtyExit(sessionId, exitCode, signal) {
+  try {
+    mainWindow?.webContents.send("openeral:pty-exit", { sessionId, exitCode, signal });
+  } catch {
+    // ignore
   }
 }
 
@@ -1619,6 +1637,96 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "openeralDeriveSandboxName": {
       const workspaceId = String(args[0] ?? "").trim();
       return deriveOpenEralSandboxName(workspaceId);
+    }
+    case "openeralPtyOpen": {
+      // Renderer xterm.js requests a PTY to an existing sandbox. We
+      // spawn `wsl -d openwork-openshell -- openshell sandbox connect <name>`
+      // inside a real PTY (node-pty) and forward stdout bytes via the
+      // openeral:pty-data event channel.
+      const input = args[0] ?? {};
+      const sandboxName = String(input.sandboxName ?? "").trim();
+      if (!sandboxName) throw new Error("sandboxName is required");
+      const cols = Number.isFinite(input.cols) ? input.cols : undefined;
+      const rows = Number.isFinite(input.rows) ? input.rows : undefined;
+      const result = await openeralPty.openSession({
+        sandboxName,
+        cols,
+        rows,
+        onData: (data) => emitOpenEralPtyData(result.id, data),
+        onExit: (exitCode, signal) => emitOpenEralPtyExit(result.id, exitCode, signal),
+      });
+      return result;
+    }
+    case "openeralPtyWrite": {
+      const input = args[0] ?? {};
+      const id = String(input.sessionId ?? "").trim();
+      const data = String(input.data ?? "");
+      if (!id) throw new Error("sessionId is required");
+      return openeralPty.writeSession(id, data);
+    }
+    case "openeralPtyResize": {
+      const input = args[0] ?? {};
+      const id = String(input.sessionId ?? "").trim();
+      if (!id) throw new Error("sessionId is required");
+      return openeralPty.resizeSession(id, Number(input.cols), Number(input.rows));
+    }
+    case "openeralPtyClose": {
+      const id = String(args[0] ?? "").trim();
+      if (!id) throw new Error("sessionId is required");
+      return openeralPty.closeSession(id);
+    }
+    case "openeralPtyList":
+      return openeralPty.listSessions();
+    case "openeralEnsureSandbox": {
+      // Same as openeralStartSession but WITHOUT launching an external
+      // terminal — the renderer's xterm.js component connects via the
+      // PTY IPC handlers instead. Returns {sandboxName, existed, profile}.
+      const input = args[0] ?? {};
+      const workspaceId = String(input.workspaceId ?? "").trim();
+      const profile = String(input.profile ?? "").trim();
+      if (!workspaceId) throw new Error("workspaceId is required");
+      if (profile !== "openeral-claude" && profile !== "openeral-openclaw") {
+        throw new Error(`Unsupported OpenEral profile: ${profile}`);
+      }
+      const sandboxName = deriveOpenEralSandboxName(workspaceId);
+      emitOpenEralSessionProgress({
+        sandboxName,
+        phase: "ensuring",
+        message: "Ensuring OpenEral sandbox is up...",
+      });
+      const result = await openeral.createOpenEralSandbox({
+        name: sandboxName,
+        profile,
+        onProgress: (evt) =>
+          emitOpenEralSessionProgress({
+            sandboxName,
+            phase: evt.phase,
+            message: evt.message,
+          }),
+      });
+      emitOpenEralSessionProgress({
+        sandboxName,
+        phase: "ready",
+        message: result.existed
+          ? `Reconnecting to ${sandboxName}.`
+          : `Sandbox ${sandboxName} ready.`,
+      });
+      return { ...result, sandboxName };
+    }
+    case "openeralPopOutTerminal": {
+      // Renderer's "Pop out to external terminal" button. Opens a
+      // second connection to the same sandbox in a new OS terminal
+      // window — additive to the in-app xterm.js, not a replacement.
+      const sandboxName = String(args[0] ?? "").trim();
+      if (!sandboxName) throw new Error("sandboxName is required");
+      try {
+        const terminal = await launchExternalTerminalToSandbox(sandboxName);
+        return terminal;
+      } catch (err) {
+        throw new Error(
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
     case "openshellResetDistro": {
       // Per spec §5 row "Distro corrupts (rare but happens)". Tear the

@@ -72,6 +72,24 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
         ipcRenderer.removeListener("openeral:session-progress", handler);
       };
     },
+    /** Subscribe to PTY stdout/stderr bytes from a live session. The
+     *  callback receives {sessionId, data}; consumers should filter by
+     *  the id of the session they own (renderer may have multiple PTYs). */
+    onPtyData(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openeral:pty-data", handler);
+      return () => {
+        ipcRenderer.removeListener("openeral:pty-data", handler);
+      };
+    },
+    /** Subscribe to PTY exit events — fires when the wsl child dies. */
+    onPtyExit(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openeral:pty-exit", handler);
+      return () => {
+        ipcRenderer.removeListener("openeral:pty-exit", handler);
+      };
+    },
   },
   meta: {
     initialDeepLinks: [],

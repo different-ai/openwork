@@ -23,12 +23,15 @@
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
     "test:openshell": "node --test __tests__/openshell/*.test.mjs",
-    "test:openshell:e2e": "node --test __tests__/openshell.spec.mjs"
+    "test:openshell:e2e": "node --test __tests__/openshell.spec.mjs",
+    "postinstall": "electron-rebuild -w node-pty -f"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
     "@tauri-apps/cli": "^2.0.0",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
