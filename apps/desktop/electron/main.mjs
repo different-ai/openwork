@@ -21,6 +21,7 @@ import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import * as openshellClient from "./openshell/client.mjs";
+import * as openeralCredentials from "./openshell/openeral-credentials.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
 import {
   installOpenShellStack,
@@ -1484,6 +1485,32 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       openshellInstaller.abortController?.abort();
       return { status: "cancelling" };
+    }
+    case "openeralCredentialStatus":
+      return openeralCredentials.getCredentialStatus();
+    case "openeralSetCredential": {
+      const input = args[0] ?? {};
+      const key = String(input.key ?? "").trim();
+      const value = String(input.value ?? "");
+      await openeralCredentials.setCredential(key, value);
+      return openeralCredentials.getCredentialStatus();
+    }
+    case "openeralClearCredential": {
+      const key = String(args[0] ?? "").trim();
+      await openeralCredentials.clearCredential(key);
+      return openeralCredentials.getCredentialStatus();
+    }
+    case "openeralTestDatabase": {
+      // Stub. Phase O3 replaces this with a real probe (spinning up a
+      // short-lived sandbox or shelling out to a psql container) once
+      // we have openeral.mjs wired. For now we just confirm the
+      // credential is present so the renderer's "Test" button has
+      // immediate feedback.
+      const value = await openeralCredentials.getCredential("databaseUrl");
+      if (!value) {
+        throw new Error("DATABASE_URL is not configured.");
+      }
+      return { status: "configured", probedReachable: false };
     }
     case "openshellResetDistro": {
       // Per spec §5 row "Distro corrupts (rare but happens)". Tear the

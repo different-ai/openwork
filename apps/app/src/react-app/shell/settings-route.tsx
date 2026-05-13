@@ -1268,6 +1268,10 @@ export function SettingsRoute() {
             onResetDistro={() => void openshellState.resetDistro()}
             onRefreshDoctor={() => void openshellState.refreshDoctor()}
             onOpenPolicyFolder={() => void openshellState.openPoliciesFolder()}
+            credentialStatus={openshellState.credentialStatus}
+            onSetCredential={(key, value) => openshellState.setCredential(key, value)}
+            onClearCredential={(key) => openshellState.clearCredential(key)}
+            onTestDatabaseUrl={() => openshellState.testDatabaseUrl()}
             os={platform.os}
           />
         );

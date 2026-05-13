@@ -1,9 +1,12 @@
 /** @jsxImportSource react */
+import { useState } from "react";
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, RefreshCcw, XCircle } from "lucide-react";
 
 import type { SandboxBackend, SandboxProfile } from "../../../../app/lib/desktop";
 import { Button } from "../../../design-system/button";
 import type {
+  OpenEralCredentialKey,
+  OpenEralCredentialStatus,
   OpenShellComponent,
   OpenShellDoctorResult,
   OpenShellInstallProgress,
@@ -86,6 +89,10 @@ export type SandboxViewProps = {
   onCancelInstall: () => void;
   onRestartGateway: () => void;
   onResetDistro: () => void;
+  credentialStatus: OpenEralCredentialStatus | null;
+  onSetCredential: (key: OpenEralCredentialKey, value: string) => Promise<void>;
+  onClearCredential: (key: OpenEralCredentialKey) => Promise<void>;
+  onTestDatabaseUrl: () => Promise<{ status: string; probedReachable?: boolean }>;
   onRefreshDoctor: () => void;
   onOpenPolicyFolder?: () => void;
   /** Host OS as reported by the platform kernel. Drives the install-button
@@ -254,6 +261,68 @@ export function SandboxView(props: SandboxViewProps) {
               );
             })}
           </div>
+        </div>
+      ) : null}
+
+      {showOpenShellPanel && props.selectedProfile.startsWith("openeral-") ? (
+        <div className={`${settingsPanelClass} space-y-4`}>
+          <div>
+            <div className="text-sm font-medium text-gray-12">OpenEral configuration</div>
+            <div className="text-xs text-gray-10">
+              OpenEral sandboxes need credentials that aren't shipped with the app. Values are
+              encrypted at rest by your OS keyring (Keychain / DPAPI / libsecret) and never sent to
+              the renderer once saved.
+            </div>
+          </div>
+          {props.credentialStatus && props.credentialStatus.encryptionAvailable === false ? (
+            <div className="rounded-xl border border-amber-7/50 bg-amber-2/30 p-3 text-xs text-amber-12">
+              The OS keyring isn't available in this session. OpenEral credentials cannot be stored
+              securely until you launch from a graphical session (or install gnome-keyring /
+              kwallet on Linux).
+            </div>
+          ) : null}
+          <CredentialRow
+            label="DATABASE_URL"
+            description="PostgreSQL connection string (Supabase / Neon / firm-internal). Required for any OpenEral profile. Raw TCP — do not use the OpenShell generic provider for this."
+            placeholder="postgresql://user:password@host:5432/dbname"
+            statusKey="databaseUrl"
+            status={props.credentialStatus}
+            busy={props.actionBusy}
+            onSet={(v) => props.onSetCredential("databaseUrl", v)}
+            onClear={() => props.onClearCredential("databaseUrl")}
+            extra={
+              props.credentialStatus?.databaseUrl === "set" ? (
+                <Button
+                  variant="outline"
+                  className="h-7 rounded-full px-3 text-xs"
+                  onClick={() => void props.onTestDatabaseUrl()}
+                  disabled={props.actionBusy}
+                >
+                  Test
+                </Button>
+              ) : null
+            }
+          />
+          <CredentialRow
+            label="ANTHROPIC_API_KEY"
+            description="Anthropic API key (sk-ant-...). Required for the OpenClaw agent; Claude Code can use it directly or via the OpenShell provider system."
+            placeholder="sk-ant-..."
+            statusKey="anthropicApiKey"
+            status={props.credentialStatus}
+            busy={props.actionBusy}
+            onSet={(v) => props.onSetCredential("anthropicApiKey", v)}
+            onClear={() => props.onClearCredential("anthropicApiKey")}
+          />
+          <CredentialRow
+            label="STRINGCOST_API_KEY (optional)"
+            description="Routes Claude Code API calls through a StringCost proxy for token + cost metering. Leave unset to talk to Anthropic directly."
+            placeholder="sk-st-..."
+            statusKey="stringcostApiKey"
+            status={props.credentialStatus}
+            busy={props.actionBusy}
+            onSet={(v) => props.onSetCredential("stringcostApiKey", v)}
+            onClear={() => props.onClearCredential("stringcostApiKey")}
+          />
         </div>
       ) : null}
 
@@ -434,6 +503,127 @@ export function SandboxView(props: SandboxViewProps) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+type CredentialRowProps = {
+  label: string;
+  description: string;
+  placeholder: string;
+  statusKey: OpenEralCredentialKey;
+  status: OpenEralCredentialStatus | null;
+  busy: boolean;
+  onSet: (value: string) => Promise<void>;
+  onClear: () => Promise<void>;
+  extra?: React.ReactNode;
+};
+
+function CredentialRow(props: CredentialRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const isSet = props.status?.[props.statusKey] === "set";
+
+  const submit = async () => {
+    if (!value.trim()) return;
+    setLocalError(null);
+    try {
+      await props.onSet(value);
+      setValue("");
+      setEditing(false);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const cancel = () => {
+    setValue("");
+    setEditing(false);
+    setLocalError(null);
+  };
+
+  return (
+    <div className="rounded-2xl border border-dls-border bg-dls-surface p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-12">{props.label}</span>
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                isSet
+                  ? "border-green-7/60 bg-green-3/30 text-green-12"
+                  : "border-gray-7/50 bg-gray-2/40 text-gray-10"
+              }`}
+            >
+              {isSet ? "Set" : "Not set"}
+            </span>
+          </div>
+          <div className="text-xs text-gray-9">{props.description}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {props.extra}
+          {!editing ? (
+            <>
+              <Button
+                variant="outline"
+                className="h-7 rounded-full px-3 text-xs"
+                onClick={() => setEditing(true)}
+                disabled={props.busy}
+              >
+                {isSet ? "Update" : "Configure"}
+              </Button>
+              {isSet ? (
+                <Button
+                  variant="outline"
+                  className="h-7 rounded-full border-red-7/50 px-3 text-xs text-red-12 hover:bg-red-2/30"
+                  onClick={() => void props.onClear()}
+                  disabled={props.busy}
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </div>
+      {editing ? (
+        <div className="mt-3 space-y-2">
+          <input
+            type="password"
+            className="w-full rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 font-mono text-xs"
+            value={value}
+            placeholder={props.placeholder}
+            autoFocus
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void submit();
+              if (e.key === "Escape") cancel();
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              className="h-7 rounded-full px-3 text-xs"
+              onClick={() => void submit()}
+              disabled={props.busy || !value.trim()}
+            >
+              Save
+            </Button>
+            <Button
+              variant="outline"
+              className="h-7 rounded-full px-3 text-xs"
+              onClick={cancel}
+              disabled={props.busy}
+            >
+              Cancel
+            </Button>
+          </div>
+          {localError ? (
+            <div className="text-xs text-red-12">{localError}</div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

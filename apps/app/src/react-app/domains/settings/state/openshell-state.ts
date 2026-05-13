@@ -46,6 +46,18 @@ export type OpenShellInstallStatus = {
   };
 };
 
+export type OpenEralCredentialKey =
+  | "databaseUrl"
+  | "anthropicApiKey"
+  | "stringcostApiKey";
+
+export type OpenEralCredentialStatus = {
+  databaseUrl: "set" | "unset";
+  anthropicApiKey: "set" | "unset";
+  stringcostApiKey: "set" | "unset";
+  encryptionAvailable: boolean;
+};
+
 type ElectronBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>;
 
 function getBridge(): ElectronBridge | null {
@@ -72,6 +84,7 @@ export function useOpenShellState(options: { active: boolean } = { active: false
   const [installStatus, setInstallStatus] = useState<OpenShellInstallStatus | null>(null);
   const [progressLog, setProgressLog] = useState<OpenShellInstallProgress[]>([]);
   const [policies, setPolicies] = useState<string[]>([]);
+  const [credentialStatus, setCredentialStatus] = useState<OpenEralCredentialStatus | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
 
@@ -122,6 +135,16 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     }
   }, []);
 
+  const refreshCredentialStatus = useCallback(async () => {
+    if (!isElectronRuntime()) return;
+    try {
+      const status = await invoke<OpenEralCredentialStatus>("openeralCredentialStatus");
+      if (isMountedRef.current) setCredentialStatus(status);
+    } catch {
+      // Quiet — surfaces only on explicit set/clear attempts.
+    }
+  }, []);
+
   // Subscribe to streaming install progress whenever the bridge exposes
   // the openshell namespace (post-Phase-5 builds). One subscription per
   // mount; unsubscribe on unmount.
@@ -153,12 +176,13 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     void refreshDoctor();
     void refreshInstallStatus();
     void refreshPolicies();
+    void refreshCredentialStatus();
     const id = setInterval(() => {
       void refreshDoctor();
       void refreshInstallStatus();
     }, DOCTOR_POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [active, refreshDoctor, refreshInstallStatus, refreshPolicies]);
+  }, [active, refreshDoctor, refreshInstallStatus, refreshPolicies, refreshCredentialStatus]);
 
   const startInstall = useCallback(async () => {
     setActionBusy(true);
@@ -206,6 +230,58 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     }
   }, []);
 
+  const setCredential = useCallback(
+    async (key: OpenEralCredentialKey, value: string) => {
+      setActionBusy(true);
+      setActionError(null);
+      try {
+        const status = await invoke<OpenEralCredentialStatus>("openeralSetCredential", {
+          key,
+          value,
+        });
+        if (isMountedRef.current) setCredentialStatus(status);
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+        throw err;
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [],
+  );
+
+  const clearCredential = useCallback(
+    async (key: OpenEralCredentialKey) => {
+      setActionBusy(true);
+      setActionError(null);
+      try {
+        const status = await invoke<OpenEralCredentialStatus>("openeralClearCredential", key);
+        if (isMountedRef.current) setCredentialStatus(status);
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [],
+  );
+
+  const testDatabaseUrl = useCallback(async () => {
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const result = await invoke<{ status: string; probedReachable?: boolean }>(
+        "openeralTestDatabase",
+      );
+      return result;
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setActionBusy(false);
+    }
+  }, []);
+
   const resetDistro = useCallback(async () => {
     setActionBusy(true);
     setActionError(null);
@@ -235,13 +311,18 @@ export function useOpenShellState(options: { active: boolean } = { active: false
     policies,
     actionBusy,
     actionError,
+    credentialStatus,
     startInstall,
     cancelInstall,
     restartGateway,
     resetDistro,
     openPoliciesFolder,
+    setCredential,
+    clearCredential,
+    testDatabaseUrl,
     refreshDoctor,
     refreshInstallStatus,
     refreshPolicies,
+    refreshCredentialStatus,
   };
 }
