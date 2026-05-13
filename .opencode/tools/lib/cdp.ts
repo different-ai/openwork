@@ -90,7 +90,22 @@ export async function listTargets(browserUrl: string): Promise<Array<{
   const url = browserUrl.replace(/\/$/, "");
   const res = await fetch(`${url}/json/list`);
   if (!res.ok) throw new Error(`Failed to list targets: ${res.status}`);
-  return res.json();
+  const targets = await res.json();
+
+  // CDP returns ws://localhost:PORT/... URLs. When accessing via a proxy
+  // (e.g. Daytona), we need to rewrite them to use the proxy host.
+  const parsed = new URL(url);
+  const isProxy = !["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname);
+  if (isProxy) {
+    const wsScheme = parsed.protocol === "https:" ? "wss:" : "ws:";
+    for (const target of targets) {
+      if (target.webSocketDebuggerUrl) {
+        const wsPath = new URL(target.webSocketDebuggerUrl).pathname;
+        target.webSocketDebuggerUrl = `${wsScheme}//${parsed.host}${wsPath}`;
+      }
+    }
+  }
+  return targets;
 }
 
 /**
