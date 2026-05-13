@@ -202,6 +202,7 @@ export function registerWebhookRoutes(app: Hono) {
     }
 
     const body = await c.req.json().catch(() => null)
+    console.log("[openrouter-webhook] received payload", JSON.stringify(body, null, 2))
     const spans = parseOtlpSpans(body)
     let ingested = 0
     let skipped = 0
