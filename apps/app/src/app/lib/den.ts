@@ -47,6 +47,7 @@ const BUILD_DEN_REQUIRE_SIGNIN =
     : false);
 
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
+export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
 export type DenSettings = {
   baseUrl: string;
@@ -304,6 +305,11 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   } catch {
     return null;
   }
+}
+
+export function getDenInferenceUrl(baseUrl?: string | null): string {
+  const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
 function isWebAppHost(hostname: string): boolean {

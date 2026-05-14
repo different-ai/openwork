@@ -53,7 +53,7 @@ import { UpdatesView } from "../domains/settings/pages/updates-view";
 import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
 import { useMessagingViewProps } from "../domains/settings/state/messaging-view-state";
 import { useElectronUpdaterState } from "../domains/settings/state/electron-updater-state";
-import { CloudSessionProvider } from "../domains/settings/cloud/cloud-session-provider";
+import { CloudSessionProvider, useCloudSession } from "../domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "../domains/settings/cloud/use-den-session";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "../domains/settings/shell/settings-shell";
@@ -102,6 +102,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "../../app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
+import { getDenInferenceUrl } from "../../app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 
@@ -126,6 +127,16 @@ function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
       workspace.path?.trim() ||
       t("session.workspace_fallback"),
   };
+}
+
+function isOpenWorkCloudProvider(provider: {
+  providerId?: string | null;
+  source?: string | null;
+  sourceProviderId?: string | null;
+}) {
+  return [provider.providerId, provider.source, provider.sourceProviderId].some(
+    (value) => value?.trim().toLowerCase() === "openwork",
+  );
 }
 
 function describeRouteError(error: unknown) {
@@ -701,6 +712,26 @@ function SettingsRouteContent() {
     developerMode,
     openLink: (url) => platform.openLink(url),
   });
+  const cloudSession = useCloudSession();
+
+  const hasOpenWorkCloudProvider = useMemo(
+    () =>
+      providerAuthSnapshot.cloudOrgProviders.some(isOpenWorkCloudProvider) ||
+      Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
+    [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
+  );
+  const showOpenWorkModelsSubscribe = !cloudSession.isSignedIn || !hasOpenWorkCloudProvider;
+
+  const subscribeToOpenWorkModels = useCallback(() => {
+    providerAuthStore.closeProviderAuthModal();
+    const accountPath = selectedWorkspaceId
+      ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account")
+      : "/settings/cloud-account";
+    navigate(accountPath);
+    window.setTimeout(() => {
+      platform.openLink(getDenInferenceUrl(cloudSession.baseUrl));
+    }, 0);
+  }, [cloudSession.baseUrl, navigate, platform, providerAuthStore, selectedWorkspaceId]);
 
   const shareWorkspaceState = useShareWorkspaceState({
     workspaces,
@@ -1569,6 +1600,8 @@ function SettingsRouteContent() {
             cloudProviderIds={new Set(
               Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId)
             )}
+            showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
+            onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
           />
         );
       case "preferences":
@@ -1882,6 +1915,8 @@ function SettingsRouteContent() {
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
+        showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
+        onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <CreateWorkspaceModal
