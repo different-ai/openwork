@@ -131,7 +131,7 @@ export function BillingDashboardScreen() {
     }
   }
 
-  const showPolar = billingSummary?.hasActivePlan === true;
+  const showPolar = billingSummary?.featureGateEnabled === true && billingSummary?.hasActivePlan === true;
   const stripePrice = formatMoneyMinor(stripeBilling?.unitAmount ?? 1000, stripeBilling?.currency ?? "usd");
 
   return (
