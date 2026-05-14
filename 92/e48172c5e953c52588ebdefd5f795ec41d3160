@@ -1,0 +1,50 @@
+apps/app/src/react-app/domains/settings/pages/extensions-view.tsx
+  s_99c8d5a5dfc37b::t_34e402535461fb 66
+apps/app/src/react-app/domains/settings/pages/plugins-view.tsx
+  s_99c8d5a5dfc37b::t_7bdb237b24c793 97,153,166
+apps/app/src/react-app/domains/connections/mcp-auth-modal.tsx
+  s_99c8d5a5dfc37b::t_806517acdff6fd 710,733,739,750,781,865,868
+apps/app/src/react-app/domains/bundles/skill-destination-modal.tsx
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 109
+apps/app/src/react-app/domains/bundles/start-modal.tsx
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 161
+apps/app/src/react-app/domains/cloud/den-signin-surface.tsx
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 228
+apps/app/src/react-app/domains/connections/modals/add-mcp-modal.tsx
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 248
+apps/app/src/react-app/domains/settings/pages/config-view-sections.tsx
+  s_99c8d5a5dfc37b::t_34e402535461fb 71
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 205-207
+apps/app/src/react-app/domains/connections/modals/chrome-connection-setup-modal.tsx
+  s_99c8d5a5dfc37b::t_d3ea39ae63cdaa 217
+apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx
+  s_99c8d5a5dfc37b::t_806517acdff6fd 790,826,882,903,917,974,996,1038
+apps/app/src/react-app/domains/settings/pages/mcp-view.tsx
+  s_99c8d5a5dfc37b::t_806517acdff6fd 878,944
+  s_99c8d5a5dfc37b::t_34e402535461fb 622
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  s_99c8d5a5dfc37b::t_806517acdff6fd 1569
+apps/app/src/react-app/domains/settings/pages/debug-view.tsx
+  s_99c8d5a5dfc37b::t_7bdb237b24c793 338,651,809
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "92e48172c5e953c52588ebdefd5f795ec41d3160",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_99c8d5a5dfc37b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e26bf-996f-7fc1-a014-e93ff4cb5c72",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
