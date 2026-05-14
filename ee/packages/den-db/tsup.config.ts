@@ -8,6 +8,7 @@ export default defineConfig({
     "schema/inference": "src/schema/inference.ts",
     "schema/org": "src/schema/org.ts",
     "schema/sharables/skills": "src/schema/sharables/skills.ts",
+    "schema/subscriptions": "src/schema/subscriptions.ts",
     "schema/teams": "src/schema/teams.ts",
     "schema/workers": "src/schema/workers.ts",
     "schema/system": "src/schema/system.ts",

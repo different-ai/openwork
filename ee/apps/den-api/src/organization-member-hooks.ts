@@ -2,6 +2,7 @@ import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
+import { syncInferenceSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -18,6 +19,7 @@ type OrganizationMemberChangeHookInput = {
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
+  syncInferenceSubscriptionQuantityAfterMemberChange,
   syncInferenceAfterMemberChange,
 ]
 
@@ -38,9 +40,4 @@ export async function runPostOrganizationMemberChangeHooks(input: {
   for (const hook of organizationMemberChangeHooks) {
     await hook({ ...input, memberCount })
   }
-
-  // Future billing hook:
-  // await stripe.subscriptions.update(subscriptionId, {
-  //   items: [{ id: seatItemId, quantity: memberCount }],
-  // })
 }

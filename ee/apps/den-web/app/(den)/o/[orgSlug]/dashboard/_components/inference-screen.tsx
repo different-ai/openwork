@@ -13,9 +13,10 @@ type InferenceStatus = {
   memberCount: number;
   proxyBaseUrl: string;
   upstreamProviderConfigured: boolean;
+  subscribed: boolean;
 };
 
-function parseInferenceStatus(payload: unknown): InferenceStatus | null {
+function parseInferencePayload(payload: unknown): { inference: InferenceStatus; checkoutUrl: string | null } | null {
   if (!payload || typeof payload !== "object" || !("inference" in payload)) {
     return null;
   }
@@ -28,11 +29,15 @@ function parseInferenceStatus(payload: unknown): InferenceStatus | null {
     return null;
   }
   return {
+    inference: {
     enabled: value.enabled,
     tier: value.tier,
     memberCount: typeof value.memberCount === "number" ? value.memberCount : 0,
     proxyBaseUrl: typeof value.proxyBaseUrl === "string" ? value.proxyBaseUrl : "",
     upstreamProviderConfigured: value.upstreamProviderConfigured === true,
+      subscribed: value.subscribed === true,
+    },
+    checkoutUrl: "checkoutUrl" in payload && typeof payload.checkoutUrl === "string" ? payload.checkoutUrl : null,
   };
 }
 
@@ -51,11 +56,11 @@ export function InferenceScreen() {
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load inference settings (${response.status}).`));
       }
-      const parsed = parseInferenceStatus(payload);
+      const parsed = parseInferencePayload(payload);
       if (!parsed) {
         throw new Error("Inference settings response was incomplete.");
       }
-      setStatus(parsed);
+      setStatus(parsed.inference);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load inference settings.");
     } finally {
@@ -83,11 +88,15 @@ export function InferenceScreen() {
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to update inference settings (${response.status}).`));
       }
-      const parsed = parseInferenceStatus(payload);
+      const parsed = parseInferencePayload(payload);
       if (!parsed) {
         throw new Error("Inference settings response was incomplete.");
       }
-      setStatus(parsed);
+      if (parsed.checkoutUrl) {
+        window.location.href = parsed.checkoutUrl;
+        return;
+      }
+      setStatus(parsed.inference);
       await refreshOrgData();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update inference settings.");
@@ -123,7 +132,7 @@ export function InferenceScreen() {
                 Enable OpenWork Models
               </h2>
               <p className="mt-2 text-[14px] leading-6 text-gray-500">
-                Adds the OpenWork provider to each member with models like <span className="font-medium text-gray-800">openwork/model1</span> and <span className="font-medium text-gray-800">openwork/model2</span>. Disabling removes org metadata and revokes active inference keys.
+                Adds the OpenWork provider to each active member. Enabling starts Stripe Checkout first when the workspace does not have an active OpenWork Models subscription.
               </p>
             </div>
             <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
@@ -144,6 +153,10 @@ export function InferenceScreen() {
           <div className="rounded-2xl border border-gray-200 bg-white p-4">
             <p className="text-[12px] text-gray-500">Upstream key</p>
             <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.upstreamProviderConfigured ? "Configured" : "Missing"}</p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <p className="text-[12px] text-gray-500">Subscription</p>
+            <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.subscribed ? "Active" : "Required"}</p>
           </div>
         </div>
 

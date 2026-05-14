@@ -67,6 +67,7 @@ export const idTypesMapNameToPrefix = {
   inferenceUsageLedgerBucketCharge: "iulc",
   inferenceModelAlias: "ima",
   inferenceOrgProviderKey: "iopk",
+  orgSubscription: "osub",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

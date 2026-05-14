@@ -2,6 +2,9 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getInferenceStatus, setInferenceEnabled } from "../../inference.js"
+import { createInferenceCheckoutSession, organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
+import { getRequiredUserEmail } from "../../user.js"
+import { env } from "../../env.js"
 import { jsonValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -18,10 +21,12 @@ const inferenceStatusSchema = z.object({
   memberCount: z.number(),
   proxyBaseUrl: z.string(),
   upstreamProviderConfigured: z.boolean(),
+  subscribed: z.boolean().optional(),
 }).meta({ ref: "InferenceStatus" })
 
 const inferenceStatusResponseSchema = z.object({
   inference: inferenceStatusSchema,
+  checkoutUrl: z.string().nullable().optional(),
 }).meta({ ref: "InferenceStatusResponse" })
 
 const inferenceProviderMissingSchema = z.object({
@@ -45,7 +50,12 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     resolveOrganizationContextMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      return c.json({ inference: await getInferenceStatus(payload.organization.id) })
+      return c.json({
+        inference: {
+          ...await getInferenceStatus(payload.organization.id),
+          subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id),
+        },
+      })
     },
   )
 
@@ -74,13 +84,40 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
 
+      if (input.enabled) {
+        const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
+        if (!subscribed) {
+          const user = c.get("user")
+          const email = getRequiredUserEmail(user)
+          if (!email) {
+            return c.json({ error: "user_email_required" }, 400)
+          }
+          const origin = new URL(c.req.raw.url).origin
+          const session = await createInferenceCheckoutSession({
+            organizationId: payload.organization.id,
+            orgMemberId: payload.currentMember.id,
+            email,
+            name: user.name ?? email,
+            successUrl: env.stripe.billingSuccessUrl ?? `${origin}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: env.stripe.billingCancelUrl ?? `${origin}/dashboard/billing`,
+          })
+          return c.json({
+            inference: {
+              ...await getInferenceStatus(payload.organization.id),
+              subscribed: false,
+            },
+            checkoutUrl: session.url,
+          })
+        }
+      }
+
       try {
         const inference = await setInferenceEnabled({
           organizationId: payload.organization.id,
           enabled: input.enabled,
           tier: input.tier,
         })
-        return c.json({ inference })
+        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
       } catch (error) {
         if (error instanceof Error && error.message === "openrouter_management_api_key_missing") {
           return c.json({
