@@ -15,6 +15,14 @@ const inferenceSettingsSchema = z.object({
   tier: z.enum(["tier1", "tier2"]).optional(),
 })
 
+const inferenceUsageBucketSchema = z.object({
+  windowType: z.enum(["five_hour", "weekly", "monthly"]),
+  windowStartAt: z.string(),
+  windowEndAt: z.string(),
+  limitAmount: z.number(),
+  usedAmount: z.number(),
+})
+
 const inferenceStatusSchema = z.object({
   enabled: z.boolean(),
   tier: z.enum(["tier1", "tier2"]),
@@ -22,6 +30,7 @@ const inferenceStatusSchema = z.object({
   proxyBaseUrl: z.string(),
   upstreamProviderConfigured: z.boolean(),
   subscribed: z.boolean().optional(),
+  buckets: z.array(inferenceUsageBucketSchema),
 }).meta({ ref: "InferenceStatus" })
 
 const inferenceStatusResponseSchema = z.object({

@@ -497,6 +497,31 @@ async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
     })
 }
 
+async function getActiveUsageBuckets(organizationId: OrgId) {
+  const rows = await db
+    .select({
+      windowType: InferenceOrgLimitPolicyTable.window_type,
+      windowStartAt: InferenceOrgUsageBucketTable.window_start_at,
+      windowEndAt: InferenceOrgUsageBucketTable.window_end_at,
+      limitAmount: InferenceOrgUsageBucketTable.limit_amount,
+      usedAmount: InferenceOrgUsageBucketTable.used_amount,
+    })
+    .from(InferenceOrgUsageBucketTable)
+    .innerJoin(
+      InferenceOrgLimitPolicyTable,
+      eq(InferenceOrgUsageBucketTable.id, InferenceOrgLimitPolicyTable.current_bucket_id),
+    )
+    .where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
+
+  return rows.map((row) => ({
+    windowType: row.windowType,
+    windowStartAt: row.windowStartAt.toISOString(),
+    windowEndAt: row.windowEndAt.toISOString(),
+    limitAmount: Number(row.limitAmount ?? 0),
+    usedAmount: Number(row.usedAmount ?? 0),
+  }))
+}
+
 export async function getInferenceStatus(organizationId: OrgId) {
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
@@ -505,12 +530,14 @@ export async function getInferenceStatus(organizationId: OrgId) {
     .limit(1)
   const memberCount = await activeMemberCount(organizationId)
   const inference = readInferenceMetadata(organization?.metadata ?? null)
+  const buckets = inference?.enabled === true ? await getActiveUsageBuckets(organizationId) : []
   return {
     enabled: inference?.enabled === true,
     tier: inference?.tier ?? "tier1",
     memberCount,
     proxyBaseUrl: env.inferenceProxyBaseUrl,
     upstreamProviderConfigured: Boolean(env.openRouterManagementApiKey),
+    buckets,
   }
 }
 
