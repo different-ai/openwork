@@ -1,0 +1,148 @@
+apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx
+  s_2a4abde97db110::t_972f537f8eb6d6 18,21-22,25,684,1045,1049-1052,1054-1055
+  s_2a4abde97db110::t_12e3fcbff2f0d2 16-17,19-20,23-24,670-675,682,1056-1057
+  s_2a4abde97db110::t_1ae172af01571b 676-677
+  s_2a4abde97db110::t_057cd627c9b191 679-680
+apps/app/src/react-app/domains/connections/mcp-auth-modal.tsx
+  s_2a4abde97db110::t_6cbe52e993f8a7 7,10-11,14,612,860,862-863,865,868,870-872,874,877
+  s_2a4abde97db110::t_571aa5299c23d5 607,610
+  s_2a4abde97db110::t_4f9ac9eb0cb145 5-6,8-9,12-13,598-603,609,878-879
+  s_2a4abde97db110::t_1ae172af01571b 3,604-605
+apps/app/src/react-app/domains/workspace/rename-workspace-modal.tsx
+  s_2a4abde97db110::t_96f471e923bbd5 7,67-70,72
+apps/app/src/react-app/domains/workspace/openwork-den-help-link.tsx
+  s_2a4abde97db110::t_94802313d17cc4 7,69,71
+apps/app/src/react-app/design-system/restriction-notice-modal.tsx
+  s_2a4abde97db110::t_1ae172af01571b 41
+  s_2a4abde97db110::t_6e32f8c61d70a6 39,43,50
+  s_2a4abde97db110::t_47a7a9f9efcc5d 2-3,5-6,9-10,32-38,40,45,52,59-60
+  s_2a4abde97db110::t_d51aa1d39e8d8c 4,7-8,11,47,53-54,56-57
+apps/app/src/react-app/domains/session/modals/model-picker-modal-components.tsx
+  s_2a4abde97db110::t_546ac8fedbc7d0 123,126
+  s_2a4abde97db110::t_126c92c62b604f 3
+  s_2a4abde97db110::t_cbfce3351bd113 5-6,8-9,11-12,75-80,111-112,125,128
+  s_2a4abde97db110::t_0c1731b334a92e 7,10,13,105-106,108-109
+  s_2a4abde97db110::t_cc4d40ebfc43d3 81,121
+apps/app/src/react-app/domains/session/modals/question-modal.tsx
+  s_2a4abde97db110::t_7426b600a952be 181,188,199
+  s_2a4abde97db110::t_10365e8909b78a 10,13,266,286,291
+  s_2a4abde97db110::t_e8ddb588223e12 6-9,11-12,180,190,201,292-293
+apps/app/src/react-app/domains/connections/modals/add-mcp-modal.tsx
+  s_2a4abde97db110::t_1ae172af01571b 3,130-131
+  s_2a4abde97db110::t_8317c077aa686d 7,10-11,14,140,241-243,247,254,256,260
+  s_2a4abde97db110::t_d0f4226535300d 133,136
+  s_2a4abde97db110::t_d79d2bc886892d 5-6,8-9,12-13,124-129,135,138,261-262
+apps/app/src/react-app/domains/connections/modals/chrome-connection-setup-modal.tsx
+  s_2a4abde97db110::t_e38582ece36671 14,17-18,21,105,211-212,214-221,225-228
+  s_2a4abde97db110::t_1ae172af01571b 87-89
+  s_2a4abde97db110::t_512c33cb831467 96,99
+  s_2a4abde97db110::t_ea4f3f4a139f81 12-13,15-16,19-20,81-86,98,101
+apps/app/src/components/ui/alert-dialog.tsx
+  s_2a4abde97db110::t_f28b9685aefd4c 1-187
+apps/app/src/react-app/domains/settings/modals/reset-modal.tsx
+  s_2a4abde97db110::t_2cf6b50bf1082b 53-62
+  s_2a4abde97db110::t_861afb9a88de20 93
+  s_2a4abde97db110::t_27750795368976 2-11,45-50,92,95-96,102-103,105-106
+  s_2a4abde97db110::t_3d248a7f4a1908 97
+  s_2a4abde97db110::t_4cb6b22367d9ee 51
+apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx
+  s_2a4abde97db110::t_cc4d40ebfc43d3 254,257
+  s_2a4abde97db110::t_6cdd7f4eb35682 11-12,14-15,17-18,248-253,264,324-325
+  s_2a4abde97db110::t_718f0830e96980 13,16,19,318-319,321-322
+  s_2a4abde97db110::t_e04ecadb3f5329 259-260
+  s_2a4abde97db110::t_126c92c62b604f 9
+apps/app/src/react-app/design-system/modals/confirm-modal.tsx
+  s_2a4abde97db110::t_2012c7b016992c 2,38
+  s_2a4abde97db110::t_1017d9f2ca2e63 5-16,30-37,39,43-49,51-52,55-81
+apps/app/src/react-app/domains/bundles/import-modal.tsx
+  s_2a4abde97db110::t_14d8cfbe9ec4f5 13,16,110
+  s_2a4abde97db110::t_7abc6dd4400467 11-12,14-15,17-18,69-74,85,88,221-222
+  s_2a4abde97db110::t_1ae172af01571b 75,77
+  s_2a4abde97db110::t_89cf9e4fd0d01b 76
+  s_2a4abde97db110::t_38032bea9ce6e7 83,86
+apps/app/src/react-app/domains/workspace/share-workspace-modal.tsx
+  s_2a4abde97db110::t_126c92c62b604f 3
+  s_2a4abde97db110::t_a6d2c8f240bf55 7,10,13,179,200
+  s_2a4abde97db110::t_2f7879a19bad01 5-6,8-9,11-12,172-177,234-235
+  s_2a4abde97db110::t_cc4d40ebfc43d3 178
+  s_2a4abde97db110::t_72ab8e970b2e32 192,197
+apps/app/src/react-app/domains/session/chat/permission-approval-modal.tsx
+  s_2a4abde97db110::t_1c2bf1cff659dd 195
+  s_2a4abde97db110::t_46f09604d4ae4a 7,10,334,339-341,345,347-348,352,354-355,360,362,364
+  s_2a4abde97db110::t_66ff09eb95e934 256,264,267
+  s_2a4abde97db110::t_fd2b72f25f1747 5-6,8-9,11-12,251-252,266,269,365-366
+apps/app/src/react-app/domains/bundles/skill-destination-modal.tsx
+  s_2a4abde97db110::t_1ae172af01571b 180,182
+  s_2a4abde97db110::t_47f78a0262e5d3 222
+  s_2a4abde97db110::t_acf627ca7d3b9d 14,17-18,21,102,117-120,122,138,230
+  s_2a4abde97db110::t_00b5c89a57f427 12-13,15-16,19-20,174-179,225,399-400
+  s_2a4abde97db110::t_89cf9e4fd0d01b 181
+  s_2a4abde97db110::t_d7296973fd2084 220,223
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  s_2a4abde97db110::t_cc4d40ebfc43d3 661-662
+  s_2a4abde97db110::t_ab6f98280680af 663
+  s_2a4abde97db110::t_d65d5fccf6b3d0 13-14,16,19-20,655-660,665,707-708
+  s_2a4abde97db110::t_126c92c62b604f 11
+  s_2a4abde97db110::t_2eb0fb538e0067 15,17-18,21,666,696-700,702-703,705-706
+apps/app/src/react-app/domains/workspace/modal-styles.ts
+  s_2a4abde97db110::t_facb592d96700a 2
+  s_2a4abde97db110::t_cc4d40ebfc43d3 5
+apps/app/src/react-app/shell/command-palette.tsx
+  s_2a4abde97db110::t_cc4d40ebfc43d3 124
+  s_2a4abde97db110::t_59a4047b4640f2 119
+  s_2a4abde97db110::t_126c92c62b604f 11
+  s_2a4abde97db110::t_932bdeb6e88b08 15
+  s_2a4abde97db110::t_afec90b53509d3 13-14,16-18,112-116,118,120-122,189-190
+apps/app/src/react-app/domains/workspace/create-workspace-local-panel.tsx
+  s_2a4abde97db110::t_b3a9ee48819a1b 4-5,159,292,294,297,328,347,349
+  s_2a4abde97db110::t_2a53cec0731b41 299,301,326
+apps/app/src/react-app/domains/session/modals/rename-session-modal.tsx
+  s_2a4abde97db110::t_c7a6d578c7ce2a 7,67-70,72
+apps/app/src/react-app/design-system/extension-detail-modal.tsx
+  s_2a4abde97db110::t_ce25db563aba2d 6,9-10,13,168,273,277,279,283,287,289,291,304,308
+  s_2a4abde97db110::t_dc049b98b0689a 132,163
+  s_2a4abde97db110::t_ad5151dff664a4 8,164
+  s_2a4abde97db110::t_1ae172af01571b 2,134
+  s_2a4abde97db110::t_723695775e35fc 4-5,7,11-12,125-131,309-310
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  s_2a4abde97db110::t_3e638b5f26d07a 1312-1323,1359-1360,1378-1383,1516-1517,1519-1524,1583-1584
+  s_2a4abde97db110::t_cc4d40ebfc43d3 1324-1325,1384
+  s_2a4abde97db110::t_25d5e60b0a9c2b 1395
+  s_2a4abde97db110::t_da6cde9dfb1a75 1327,1394,1397,1525,1528-1529
+  s_2a4abde97db110::t_311d3514d9e588 31,34-35,38,1341,1385,1400,1447-1448,1450-1451,1508-1509,1511-1512,1571-1575,1577-1578,1580-1581
+  s_2a4abde97db110::t_0fd68235628172 29-30,32-33,36-37
+apps/app/src/react-app/domains/bundles/start-modal.tsx
+  s_2a4abde97db110::t_8adab64979b7f6 5-6,8-9,12-13,84-89,100,103,187-188
+  s_2a4abde97db110::t_931215027401a4 7,10-11,14,125,165-166,168,171-172,184-185
+  s_2a4abde97db110::t_1ae172af01571b 3,90,92
+  s_2a4abde97db110::t_89cf9e4fd0d01b 91
+  s_2a4abde97db110::t_fc3ef21c688268 67-70,102
+  s_2a4abde97db110::t_c2291914fda42c 98,101
+apps/app/src/react-app/domains/workspace/create-remote-workspace-modal.tsx
+  s_2a4abde97db110::t_684e6501c67d2e 6,9,12,123,129,131,134,136,154,156
+  s_2a4abde97db110::t_126c92c62b604f 169
+  s_2a4abde97db110::t_4a38844af929b1 4-5,7-8,10-11,87-91,96-97,160-161,163-168,170-172
+  s_2a4abde97db110::t_b677f9547c795e 85-86
+apps/app/src/react-app/domains/workspace/create-workspace-modal.tsx
+  s_2a4abde97db110::t_126c92c62b604f 10,660
+  s_2a4abde97db110::t_a3391027775882 12-13,15-16,18-19,651-652,654-659,661-663
+  s_2a4abde97db110::t_dcec5390e9cfbf 14,17,20,590,597,599,602-603,616,618
+  s_2a4abde97db110::t_ebb18368fe936e 451-452
+  s_2a4abde97db110::t_3d53f446867ba4 453-457,474-475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "832eb160c5263ccc0eb6fbab6fdb542660cfc740",
+  "prompts": {},
+  "sessions": {
+    "s_2a4abde97db110": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e267b-2b4a-7033-aa0e-ed8fb226d61e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
