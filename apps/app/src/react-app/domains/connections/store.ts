@@ -272,6 +272,38 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses };
   };
 
+  const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") {
+      return entry.command;
+    }
+    try {
+      const command = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+      if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
+        return command;
+      }
+    } catch {
+      // Fall through to the published package command.
+    }
+    return entry.command;
+  };
+
+  const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") return undefined;
+    try {
+      const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+        return Object.fromEntries(
+          Object.entries(environment).filter((entry): entry is [string, string] =>
+            typeof entry[0] === "string" && typeof entry[1] === "string"
+          ),
+        );
+      }
+    } catch {
+      // Discovery fallback in openwork-ui-mcp still handles normal launches.
+    }
+    return undefined;
+  };
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -512,7 +544,11 @@ export function createConnectionsStore(options: {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = entry.command;
+        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        const environment = await resolveLocalMcpEnvironment(entry);
+        if (environment) {
+          mcpEntryConfig["environment"] = environment;
+        }
       }
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {

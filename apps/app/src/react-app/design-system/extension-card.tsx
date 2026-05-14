@@ -30,12 +30,14 @@ const kindLabel: Record<ExtensionKind, string> = {
   mcp: "MCP",
   plugin: "Plugin",
   skill: "Skill",
+  "ui-control": "UI Control",
 };
 
 const kindStyle: Record<ExtensionKind, string> = {
   mcp: "bg-dls-hover text-dls-secondary",
   plugin: "bg-violet-3 text-violet-11",
   skill: "bg-amber-3 text-amber-11",
+  "ui-control": "bg-blue-3 text-blue-11",
 };
 
 /**

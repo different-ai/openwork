@@ -1956,6 +1956,17 @@ async function handleDesktopInvoke(event, command, ...args) {
       } catch {
         return null;
       }
+    case "getOpenworkUiMcpCommand": {
+      if (process.env.OPENWORK_DEV_MODE === "1") {
+        return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
+      }
+      return ["npx", "-y", "openwork-ui-mcp"];
+    }
+    case "getOpenworkUiMcpEnvironment": {
+      return {
+        OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
+      };
+    }
     case "getDesktopBootstrapConfig":
       return getDesktopBootstrapConfig();
     case "debugDesktopBootstrapConfig":

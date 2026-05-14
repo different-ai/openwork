@@ -189,6 +189,8 @@ export function McpView(props: McpViewProps) {
   const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
+  const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
+  const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionFilter>("all");
 
@@ -231,6 +233,29 @@ export function McpView(props: McpViewProps) {
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    void (async () => {
+      try {
+        const command = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+        if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
+          setOpenworkUiMcpCommand(command);
+        }
+        const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+        if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+          setOpenworkUiMcpEnvironment(Object.fromEntries(
+            Object.entries(environment).filter((entry): entry is [string, string] =>
+              typeof entry[0] === "string" && typeof entry[1] === "string"
+            ),
+          ));
+        }
+      } catch {
+        setOpenworkUiMcpCommand(null);
+        setOpenworkUiMcpEnvironment(null);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const root = props.selectedWorkspaceRoot.trim();
@@ -414,7 +439,7 @@ export function McpView(props: McpViewProps) {
         entries={
           quickConnectList.filter((entry) => {
             if (filter === "skill") return false;
-            if (filter === "mcp" && (entry.kind ?? "mcp") !== "mcp") return false;
+            if (filter === "mcp" && (entry.kind ?? "mcp") !== "mcp" && entry.kind !== "ui-control") return false;
             if (!search.trim()) return true;
             const q = search.toLowerCase();
             return entry.name.toLowerCase().includes(q) || entry.description.toLowerCase().includes(q);
@@ -543,6 +568,8 @@ export function McpView(props: McpViewProps) {
           kind={detailEntry.kind ?? "mcp"}
           connected={isQuickConnectConfigured(detailEntry)}
           connecting={props.mcpConnectingName === detailEntry.name}
+          launchCommand={detailEntry.serverName === "openwork-ui" ? openworkUiMcpCommand ?? undefined : undefined}
+          environment={detailEntry.serverName === "openwork-ui" ? openworkUiMcpEnvironment ?? undefined : undefined}
           url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
           oauth={detailEntry.oauth}
           onConnect={() => {

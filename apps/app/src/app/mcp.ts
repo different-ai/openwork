@@ -6,6 +6,7 @@ type McpConfigValue = Record<string, unknown> | null | undefined;
 
 type McpIdentity = {
   id?: string;
+  serverName?: string;
   name: string;
 };
 
@@ -14,7 +15,7 @@ export function normalizeMcpSlug(name: string): string {
 }
 
 export function getMcpIdentityKey(entry: McpIdentity): string {
-  return entry.id ?? normalizeMcpSlug(entry.name);
+  return entry.id ?? entry.serverName ?? normalizeMcpSlug(entry.name);
 }
 
 export function validateMcpServerName(name: string): string {

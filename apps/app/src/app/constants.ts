@@ -16,7 +16,7 @@ export const DEFAULT_MODEL: ModelRef = {
 
 export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [];
 
-export type ExtensionKind = "mcp" | "plugin" | "skill";
+export type ExtensionKind = "mcp" | "plugin" | "skill" | "ui-control";
 
 export type McpDirectoryInfo = {
   id?: string;
@@ -118,9 +118,11 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     get name() { return t("mcp.quick_connect_openwork_ui_title"); },
     serverName: "openwork-ui",
     get description() { return t("mcp.quick_connect_openwork_ui_desc"); },
-    type: "remote",
+    type: "local",
+    // Dev builds replace this with the local checkout path before writing config.
+    command: ["npx", "-y", "openwork-ui-mcp"],
     oauth: false,
-    kind: "mcp",
+    kind: "ui-control",
     iconSrc: "/openwork-mark.svg",
   },
 ];

@@ -32,6 +32,10 @@ export type ExtensionDetailModalProps = {
   url?: string;
   /** Whether OAuth is required. */
   oauth?: boolean;
+  /** Exact local command this extension will launch, when known. */
+  launchCommand?: string[];
+  /** Environment passed to the local MCP process, when known. */
+  environment?: Record<string, string>;
   /** Filesystem path (for skills). Not shown directly, used for reveal. */
   path?: string;
   /** Skill trigger phrase (e.g. "when user asks to create an agent"). */
@@ -50,13 +54,49 @@ const kindLabel: Record<ExtensionKind, string> = {
   mcp: "MCP Server",
   plugin: "Plugin",
   skill: "Skill",
+  "ui-control": "UI Control",
 };
 
 const kindDesc: Record<ExtensionKind, string> = {
   mcp: "Connects as a Model Context Protocol server, giving your agent access to external tools and data.",
   plugin: "Extends OpenWork with additional capabilities managed by your organization.",
   skill: "A reusable workflow that your agent can execute on demand.",
+  "ui-control": "Lets another MCP client inspect and drive this OpenWork desktop UI through a local stdio wrapper.",
 };
+
+const uiControlClientConfig = `{
+  "mcpServers": {
+    "openwork-ui": {
+      "command": "npx",
+      "args": ["-y", "openwork-ui-mcp"]
+    }
+  }
+}`;
+
+function uiControlOpencodeConfig(command: string[], environment?: Record<string, string>) {
+  return JSON.stringify({
+    mcp: {
+      "openwork-ui": {
+        type: "local",
+        command,
+        ...(environment ? { environment } : {}),
+        enabled: true,
+      },
+    },
+  }, null, 2);
+}
+
+const fallbackUiControlCommand = ["npx", "-y", "openwork-ui-mcp"];
+
+const fallbackUiControlOpencodeConfig = `{
+  "mcp": {
+    "openwork-ui": {
+      "type": "local",
+      "command": ["npx", "-y", "openwork-ui-mcp"],
+      "enabled": true
+    }
+  }
+}`;
 
 /**
  * Strip YAML-like frontmatter from the beginning of a skill content string.
@@ -112,6 +152,8 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     connecting = false,
     url,
     oauth,
+    launchCommand,
+    environment,
     path,
     trigger,
     contentPreview,
@@ -199,6 +241,13 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                   </div>
                 ) : null}
 
+                {kind === "ui-control" ? (
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="text-dls-secondary">Launch</span>
+                    <span className="max-w-[300px] truncate font-mono text-[11px] text-dls-text">{(launchCommand ?? fallbackUiControlCommand).join(" ")}</span>
+                  </div>
+                ) : null}
+
                 {path && onReveal ? (
                   <div className="flex items-center justify-between text-[13px]">
                     <span className="text-dls-secondary">Location</span>
@@ -232,6 +281,8 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             </div>
 
             {/* Skill-specific: trigger + content preview */}
+            {kind === "ui-control" ? <UiControlConnectionDetails launchCommand={launchCommand} environment={environment} /> : null}
+
             {kind === "skill" && trigger ? (
               <div className={`${surfaceCardClass} space-y-2 p-4`}>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
@@ -259,7 +310,7 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             })() : null}
 
             {/* What this enables (generic, for non-skills or skills without preview) */}
-            {kind !== "skill" || (!trigger && !contentPreview) ? (
+            {(kind !== "skill" && kind !== "ui-control") || (!trigger && !contentPreview && kind !== "ui-control") ? (
               <div className={`${surfaceCardClass} space-y-2 p-4`}>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
                   What this enables
@@ -310,6 +361,52 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function UiControlConnectionDetails(props: { launchCommand?: string[]; environment?: Record<string, string> }) {
+  const opencodeConfig = props.launchCommand ? uiControlOpencodeConfig(props.launchCommand, props.environment) : fallbackUiControlOpencodeConfig;
+
+  return (
+    <div className="space-y-4">
+      <div className={`${surfaceCardClass} space-y-3 p-4`}>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+          How to connect another client
+        </div>
+        <div className="space-y-2 text-[13px] leading-relaxed text-dls-secondary">
+          <div>OpenWork desktop starts a private localhost bridge automatically.</div>
+          <div>Your MCP client starts <span className="font-mono text-dls-text">openwork-ui-mcp</span> over stdio; the wrapper discovers the bridge and proxies UI tools to it.</div>
+          <div>Do not point clients at the random localhost bridge URL directly.</div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+          Claude Desktop, Codex, Cursor
+        </div>
+        <pre className="max-h-[180px] overflow-x-auto rounded-xl border border-dls-border bg-dls-surface p-3 text-[11px] leading-relaxed text-dls-text">
+          <code>{uiControlClientConfig}</code>
+        </pre>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
+          OpenCode
+        </div>
+        <pre className="max-h-[180px] overflow-x-auto rounded-xl border border-dls-border bg-dls-surface p-3 text-[11px] leading-relaxed text-dls-text">
+          <code>{opencodeConfig}</code>
+        </pre>
+      </div>
+
+      <div className={`${surfaceCardClass} space-y-2 p-4 text-[12px] leading-relaxed text-dls-secondary`}>
+        <div>Production discovery file: <span className="font-mono text-dls-text">~/Library/Application Support/com.differentai.openwork/openwork-ui-control.json</span></div>
+        <div>Dev discovery file: <span className="font-mono text-dls-text">~/Library/Application Support/com.differentai.openwork.dev/openwork-ui-control.json</span></div>
+        <div>Override: <span className="font-mono text-dls-text">OPENWORK_UI_CONTROL_DISCOVERY=/path/to/openwork-ui-control.json</span></div>
+        {props.environment?.OPENWORK_UI_CONTROL_DISCOVERY ? (
+          <div>Current override: <span className="font-mono text-dls-text">{props.environment.OPENWORK_UI_CONTROL_DISCOVERY}</span></div>
+        ) : null}
       </div>
     </div>
   );
