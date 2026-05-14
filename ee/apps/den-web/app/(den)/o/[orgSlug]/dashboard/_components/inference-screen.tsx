@@ -116,6 +116,11 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
 
   return (
     <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+      <div className="border-b border-gray-100 px-6 py-4">
+        <p className="text-[13px] leading-5 text-gray-500">
+          Usage limits are shared across your organization and scale with the number of active members.
+        </p>
+      </div>
       <ul className="divide-y divide-gray-100">
         {ordered.map((bucket) => {
           const remaining = computeRemainingPercent(bucket);
@@ -242,14 +247,7 @@ export function InferenceScreen() {
           </div>
         </section>
 
-        {enabled && status ? (
-          <div className="grid gap-3">
-            <p className="text-[13px] leading-5 text-gray-500">
-              Usage limits are shared across your organization and scale with the number of active members.
-            </p>
-            <UsageLimitsCard buckets={status.buckets} />
-          </div>
-        ) : null}
+        {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
       </div>
     </DashboardPageTemplate>
   );
