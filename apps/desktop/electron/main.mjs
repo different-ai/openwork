@@ -33,7 +33,31 @@ import {
   installOpenShellStack,
   loadInstallerState as loadOpenShellInstallerState,
 } from "./openshell/installer.mjs";
-import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, wslRun } from "./openshell/wsl.mjs";
+import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, distroExists, wslRun } from "./openshell/wsl.mjs";
+
+// Preflight gate for every OpenEral entry point. If the WSL distro
+// isn't registered, the very first `wsl -d openwork-openshell -- docker
+// pull ...` call fails with a raw WSL_E_DISTRO_NOT_FOUND error. We
+// surface a phrase the renderer's BootstrapErrorCard recognises so the
+// user sees the "Open Settings → Sandbox" CTA instead of a stack trace.
+async function assertOpenShellReady() {
+  let exists;
+  try {
+    exists = await distroExists();
+  } catch (err) {
+    // wsl.exe missing entirely (non-Windows host or WSL not installed)
+    // surfaces here. Treat as not-ready.
+    throw new Error(
+      `OpenShell is not ready: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!exists) {
+    throw new Error(
+      `OpenShell is not ready: WSL distro "${OPENSHELL_DISTRO_NAME}" is not registered. ` +
+        "Open Settings → Sandbox and run the installer.",
+    );
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
@@ -1536,6 +1560,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       // the openwork-openshell distro. Lazy-pulls the image on first
       // run (~6 MB). Returns reachable=true on a successful SELECT 1,
       // throws with the stderr otherwise so the UI can surface why.
+      await assertOpenShellReady();
       return openeral.probeDatabaseUrl();
     }
     case "openeralStartSession": {
@@ -1552,6 +1577,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       if (profile !== "openeral-claude" && profile !== "openeral-openclaw") {
         throw new Error(`Unsupported OpenEral profile: ${profile}`);
       }
+      await assertOpenShellReady();
       const sandboxName = deriveOpenEralSandboxName(workspaceId);
       emitOpenEralSessionProgress({
         sandboxName,
@@ -1688,6 +1714,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       if (profile !== "openeral-claude" && profile !== "openeral-openclaw") {
         throw new Error(`Unsupported OpenEral profile: ${profile}`);
       }
+      await assertOpenShellReady();
       const sandboxName = deriveOpenEralSandboxName(workspaceId);
       emitOpenEralSessionProgress({
         sandboxName,
