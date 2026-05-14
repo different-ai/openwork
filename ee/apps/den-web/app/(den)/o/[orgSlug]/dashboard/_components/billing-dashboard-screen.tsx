@@ -182,7 +182,7 @@ export function BillingDashboardScreen() {
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
             <h2 className="text-[20px] font-medium text-gray-950">OpenWork Models</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
-              Hosted OpenWork model access is billed at {stripePrice}/user/month for active workspace members.
+              Model access is billed at $10/user/month
             </p>
           </div>
           <DenButton variant="secondary" loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>
