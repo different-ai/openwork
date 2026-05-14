@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CreditCard } from "lucide-react";
 import { DenButton, buttonVariants } from "../../../../_components/ui/button";
-import { formatIsoDate, formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { useDenFlow } from "../../../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -208,11 +208,7 @@ export function BillingDashboardScreen() {
         </div>
 
         {stripeBilling?.hasActiveSubscription ? (
-          <div className="flex flex-col gap-3 rounded-[16px] border border-green-100 bg-green-50 p-4 text-[13px] text-green-800 md:flex-row md:items-center md:justify-between">
-            <span>
-              Subscription quantity is {stripeBilling.subscription?.quantity ?? stripeBilling.memberCount} seats
-              {stripeBilling.subscription?.currentPeriodEnd ? ` and renews on ${formatIsoDate(stripeBilling.subscription.currentPeriodEnd)}.` : "."}
-            </span>
+          <div className="flex justify-end">
             <DenButton disabled={!isOwner} loading={stripeActionBusy === "portal"} onClick={openStripePortal}>
               Manage subscription
             </DenButton>
