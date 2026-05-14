@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../_components/ui/button";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
+import { getBillingRoute } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type InferenceWindowType = "five_hour" | "weekly" | "monthly";
@@ -150,7 +152,8 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
 }
 
 export function InferenceScreen() {
-  const { orgContext, refreshOrgData } = useOrgDashboard();
+  const router = useRouter();
+  const { activeOrg, orgContext, refreshOrgData } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -182,6 +185,10 @@ export function InferenceScreen() {
 
   async function toggleEnabled() {
     if (!status) return;
+    if (status.enabled) {
+      router.push(getBillingRoute(activeOrg?.slug));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -242,7 +249,7 @@ export function InferenceScreen() {
               </h2>
             </div>
             <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
-              {enabled ? "Disable" : "Enable"}
+              {enabled ? "Manage subscription" : "Enable"}
             </DenButton>
           </div>
         </section>
