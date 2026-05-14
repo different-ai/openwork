@@ -49,6 +49,8 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
   monthly: 30 * 24 * 60 * 60 * 1000,
 } as const;
 
+// For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
+
 export const INFERENCE_MODEL_ALIASES = {
   olive: {
     upstreamModel: "openai/gpt-4o-mini",
