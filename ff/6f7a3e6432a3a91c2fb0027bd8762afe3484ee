@@ -1,0 +1,183 @@
+apps/app/src/react-app/domains/workspace/modal-styles.ts
+  s_9224934e9b6941::t_d35c06588620a8 1
+apps/app/src/react-app/domains/connections/mcp-auth-modal.tsx
+  s_2e0e5153e222aa::t_fdf270b5cae7e6 854
+  s_2e0e5153e222aa::t_6adde360a38d16 603
+  s_2e0e5153e222aa::t_b2916f4720a9e9 604-608
+  s_9224934e9b6941::t_7900fd1ae3198b 611
+apps/app/src/react-app/domains/session/modals/model-picker-modal-components.tsx
+  s_2e0e5153e222aa::t_6d2a9d1dc38db7 83-90
+  s_9224934e9b6941::t_83a412d5481fa9 91
+  s_2e0e5153e222aa::t_9bb2f6f39e2d76 11
+  s_7a60fefbc55344::t_88eae8fa38983f 114-118
+  s_2e0e5153e222aa::t_80aa02895d59ff 132,168
+  s_2e0e5153e222aa::t_7dbfa8173ddcd2 82
+apps/app/src/react-app/domains/workspace/share-workspace-modal.tsx
+  s_9224934e9b6941::t_369e06695c7c80 196
+  s_af5fc1844feb34::t_017acebb6b01be 175-190,192
+  s_3fd4c773a7fcd7::t_fc26d2a6c070ac 15
+  s_430cbd14f3bf35::t_7e3e1896d3a7bf 173
+apps/app/src/react-app/design-system/extension-detail-modal.tsx
+  s_2e0e5153e222aa::t_84956dbe93d22f 134
+  s_430cbd14f3bf35::t_0336d8918e80a8 132
+  s_2e0e5153e222aa::t_6154150ab5deb1 272
+apps/app/src/react-app/domains/bundles/import-modal.tsx
+  s_2e0e5153e222aa::t_4c61a4940ded2a 76-77,94-110
+  s_9224934e9b6941::t_2889cff7877e3b 112
+  s_2e0e5153e222aa::t_b63a932e238578 75
+apps/app/src/react-app/design-system/restriction-notice-modal.tsx
+  s_9224934e9b6941::t_cd65a30b201156 50-54
+  s_2e0e5153e222aa::t_1808eab199bce9 41-44,48
+  s_430cbd14f3bf35::t_9e5bc810073dc4 39
+apps/app/src/react-app/domains/session/chat/permission-approval-modal.tsx
+  s_430cbd14f3bf35::t_fa8102c08ab387 257
+  s_2e0e5153e222aa::t_54717c11918902 11
+  s_2e0e5153e222aa::t_9bdd869020200a 259-260,273
+apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx
+  s_2e0e5153e222aa::t_b5524efaa454e4 676-680
+  s_02d4db4748b246::t_34c8f12bc7eebc 691-692
+  s_2e0e5153e222aa::t_ed425e47fef6fe 695
+  s_02d4db4748b246::t_59cabdba9facee 684-690
+  s_2e0e5153e222aa::t_ca4ca3e8b951d4 675
+apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx
+  s_2e0e5153e222aa::t_abe8f914aa40ed 255
+  s_9224934e9b6941::t_a724047a051151 265
+  s_2e0e5153e222aa::t_f175fdc625ce2d 17
+  s_2e0e5153e222aa::t_48eb35f2240e72 267,277
+  s_7a60fefbc55344::t_38640cca9446dc 315-321
+  s_2e0e5153e222aa::t_9bf143b88a9e37 256-263
+apps/app/src/components/ui/dialog.tsx
+  s_430cbd14f3bf35::t_5296ecaa9d3ac7 54
+apps/app/src/react-app/domains/settings/modals/reset-modal.tsx
+  s_e9ded032b420ed::t_d16e9113414690 91
+  s_2e0e5153e222aa::t_d2f30c74baff31 51
+  s_2e0e5153e222aa::t_c9e6e65bb254e5 52-61
+apps/app/src/react-app/shell/command-palette.tsx
+  s_2e0e5153e222aa::t_8f6cf629fe7fec 17,125
+  s_2e0e5153e222aa::t_f15722f89cd652 120
+  s_9224934e9b6941::t_8aa32fcd2ad523 126,149
+  s_2e0e5153e222aa::t_57c939bf0ee907 123-124
+apps/app/src/react-app/domains/bundles/skill-destination-modal.tsx
+  s_2e0e5153e222aa::t_119353f9dac4b9 181-182
+  s_2e0e5153e222aa::t_7a2032156d7bfb 180
+  s_2e0e5153e222aa::t_f8b05c8117f12e 102
+  s_9224934e9b6941::t_b4224ed6e73680 231
+apps/app/src/react-app/domains/connections/modals/add-mcp-modal.tsx
+  s_9224934e9b6941::t_6c24bf5482c8e0 140
+  s_2e0e5153e222aa::t_a4023160134563 239
+  s_2e0e5153e222aa::t_a6e16436bb8554 130
+  s_2e0e5153e222aa::t_57c0f2742d34d4 131-137
+apps/app/src/react-app/domains/workspace/create-remote-workspace-modal.tsx
+  s_2e0e5153e222aa::t_3800b3b3bc7237 83-84,86
+  s_2e0e5153e222aa::t_8be7aa76e5e779 92-147
+  s_2e0e5153e222aa::t_d058ffdaf1e820 87-90
+  s_2e0e5153e222aa::t_c1c07b6dc99a45 85
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  s_af5fc1844feb34::t_5c2ce4b34eef52 1378-1393,1396-1398,1400
+  s_2e0e5153e222aa::t_9de32f034f3bc4 1325-1332
+  s_2e0e5153e222aa::t_7547ee58ccac22 1320,1527
+  s_3fd4c773a7fcd7::t_bddb9a8e848058 1377
+  s_9224934e9b6941::t_0ae1b53bb3b82d 1336,1533
+  s_2e0e5153e222aa::t_8badc0c8d6602d 1528-1531
+  s_2e0e5153e222aa::t_414e0d9f7b8150 1321-1324
+  s_7a60fefbc55344::t_ae01d666593853 1504-1517,1573-1583
+apps/app/src/react-app/domains/session/modals/question-modal.tsx
+  s_2e0e5153e222aa::t_19c7c3a9e7ae12 183-185,192,203
+  s_2e0e5153e222aa::t_4ace22364b822f 11
+  s_9224934e9b6941::t_9c7901f71d47eb 205
+  s_2e0e5153e222aa::t_778219ad8085af 182
+  s_2e0e5153e222aa::t_74e0484c7014ee 267
+apps/app/src/react-app/domains/workspace/create-workspace-modal.tsx
+  s_3fd4c773a7fcd7::t_2652c53546ced9 453
+  s_2e0e5153e222aa::t_9d0b48e4fa5d9f 203,444-452,454,469-470,473,475-598,600-601,603,605-606,609,611,613-642
+  s_430cbd14f3bf35::t_61e15844be5975 204-205
+  s_af5fc1844feb34::t_f4f6156812d8c0 455,457,460-461,464-465,467-468,471
+  s_2e0e5153e222aa::t_7cc291130b9ffb 18
+  s_2e0e5153e222aa::t_7d0a26c5bfc5c8 243,258
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  s_2e0e5153e222aa::t_96c2b795e8c913 659
+  s_2e0e5153e222aa::t_d60283bc1e4049 658
+  s_e9ded032b420ed::t_230a906735d265 693
+apps/app/src/react-app/domains/connections/modals/chrome-connection-setup-modal.tsx
+  s_2e0e5153e222aa::t_73e195cb87796d 85
+  s_2e0e5153e222aa::t_8fc48830af312b 86
+  s_2e0e5153e222aa::t_5a234e5651184c 209
+  s_9224934e9b6941::t_381aa4fb2fd96e 106
+apps/app/src/react-app/domains/bundles/start-modal.tsx
+  s_7a60fefbc55344::t_824e6d0508924f 165-185
+  s_2e0e5153e222aa::t_cc55cb0f3b1f2e 90
+  s_2e0e5153e222aa::t_6935c2036e523a 91-92,109-125
+  s_9224934e9b6941::t_9a98869d12a4a8 127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ff6f7a3e6432a3a91c2fb0027bd8762afe3484ee",
+  "prompts": {},
+  "sessions": {
+    "s_02d4db4748b246": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "468cf216-109c-4b6b-aba4-e4f6ca3a2f96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_2e0e5153e222aa": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b2a72ff7-7c9b-4cb2-8f7b-ee29b5b1cbcb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_3fd4c773a7fcd7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7ded015a-a7de-408f-83ac-adb4708335e6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_430cbd14f3bf35": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "88c86f45-99ef-435b-8c06-5c301a3942e9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_7a60fefbc55344": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1b8a514a-7434-4d31-8b83-f8d9da294e20",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_9224934e9b6941": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c95c4005-bb45-4f14-b9b2-bcd5463435cf",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_af5fc1844feb34": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1cb072f9-aa6f-457b-b8bd-c7bbf6b01bf3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e9ded032b420ed": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d49dd186-14eb-4a32-b8c2-8112b7882165",
+        "model": "composer-2"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
