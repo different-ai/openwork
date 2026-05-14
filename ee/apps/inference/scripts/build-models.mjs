@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(__dirname, "..")
 const sourceDir = path.join(appDir, "src", "models")
-const outputPath = path.join(appDir, "public", "models", "api.json")
+const outputPath = path.join(appDir, "models-site", "models", "api.json")
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"))

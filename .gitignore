@@ -12,7 +12,7 @@ packages/*/dist/
 apps/*/dist/
 ee/apps/*/dist/
 ee/packages/*/dist/
-ee/apps/inference/public/models/api.json
+ee/apps/inference/models-site/models/api.json
 tmp/
 
 # Local git worktrees

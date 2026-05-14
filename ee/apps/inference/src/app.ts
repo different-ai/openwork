@@ -11,8 +11,9 @@ import { registerProxyRoutes } from "./proxy.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
-const modelsApiJsonPath = path.resolve(srcDir, "..", "public", "models", "api.json");
+const modelsApiJsonPath = path.resolve(srcDir, "..", "models-site", "models", "api.json");
 const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
+const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.OPENWORK_DEV_MODE === "1");
 
 const app = new Hono();
 
@@ -39,7 +40,7 @@ if (env.corsOrigins.length > 0) {
 
 app.get("/health", (c) => c.json({ ok: true, service: "inference" }));
 
-if (!isVercelRuntime) {
+if (shouldServeLocalModelCatalog) {
   app.get("/models/api.json", async (c) => {
     const body = await readFile(modelsApiJsonPath, "utf8");
     c.header("Content-Type", "application/json; charset=utf-8");
