@@ -22,6 +22,11 @@ type ProvisionedInstance = {
   region?: string
 }
 
+type DaytonaSandboxListPage = {
+  items: Array<{ id?: unknown }>
+  nextCursor?: string | null
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
 const signedPreviewRefreshLeadMs = 5 * 60 * 1000
@@ -43,6 +48,72 @@ function createDaytonaClient() {
     apiUrl: env.daytona.apiUrl,
     ...(env.daytona.target ? { target: env.daytona.target } : {}),
   })
+}
+
+function daytonaApiUrl(path: string) {
+  return `${env.daytona.apiUrl.replace(/\/+$/, "")}${path}`
+}
+
+function readDaytonaSandboxListPage(value: unknown): DaytonaSandboxListPage {
+  if (Array.isArray(value)) {
+    return { items: value as Array<{ id?: unknown }> }
+  }
+
+  if (!value || typeof value !== "object") {
+    return { items: [] }
+  }
+
+  const page = value as Record<string, unknown>
+  const items = Array.isArray(page.items)
+    ? page.items
+    : Array.isArray(page.data)
+      ? page.data
+      : Array.isArray(page.sandboxes)
+        ? page.sandboxes
+        : []
+  const nextCursor = typeof page.nextCursor === "string"
+    ? page.nextCursor
+    : typeof page.next_cursor === "string"
+      ? page.next_cursor
+      : null
+
+  return { items: items as Array<{ id?: unknown }>, nextCursor }
+}
+
+async function listDaytonaSandboxIdsByLabels(labels: Record<string, string>) {
+  const ids: string[] = []
+  let cursor: string | undefined
+
+  do {
+    const url = new URL(daytonaApiUrl("/sandbox"))
+    url.searchParams.set("limit", "100")
+    url.searchParams.set("labels", JSON.stringify(labels))
+    if (cursor) {
+      url.searchParams.set("cursor", cursor)
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${env.daytona.apiKey}`,
+        "X-Daytona-Source": "openwork-den-api",
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Daytona sandbox list failed with ${response.status}`)
+    }
+
+    const page = readDaytonaSandboxListPage(await response.json())
+    for (const sandbox of page.items) {
+      if (typeof sandbox.id === "string") {
+        ids.push(sandbox.id)
+      }
+    }
+
+    cursor = page.nextCursor ?? undefined
+  } while (cursor)
+
+  return ids
 }
 
 function normalizedSignedPreviewExpirySeconds() {
@@ -546,13 +617,16 @@ export async function deprovisionWorkerOnDaytona(workerId: WorkerId) {
     return
   }
 
-  const sandboxes = await daytona.list(sandboxLabels(workerId), 1, 20)
+  const sandboxIds = await listDaytonaSandboxIdsByLabels(sandboxLabels(workerId))
 
-  for (const sandbox of sandboxes.items) {
-    await sandbox.delete(env.daytona.deleteTimeoutSeconds).catch((error) => {
-      const message = error instanceof Error ? error.message : "unknown_error"
-      console.warn(`[provisioner] failed to delete Daytona sandbox ${sandbox.id}: ${message}`)
-    })
+  for (const sandboxId of sandboxIds) {
+    await daytona
+      .get(sandboxId)
+      .then((sandbox) => sandbox.delete(env.daytona.deleteTimeoutSeconds))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "unknown_error"
+        console.warn(`[provisioner] failed to delete Daytona sandbox ${sandboxId}: ${message}`)
+      })
   }
 
   await cleanupWorkerDataOnDaytona(daytona, workerId)
