@@ -147,9 +147,11 @@ export function BillingDashboardScreen() {
         </div>
       ) : null}
 
-      <div className="mb-6 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
-        Only workspace owners can start checkout or open billing portals. Other members can view the current billing state.
-      </div>
+      {isOwner ? null : (
+        <div className="mb-6 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+          Only workspace owners can start checkout or open billing portals. Other members can view the current billing state.
+        </div>
+      )}
 
       {showPolar ? (
         <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
