@@ -242,7 +242,14 @@ export function InferenceScreen() {
           </div>
         </section>
 
-        {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
+        {enabled && status ? (
+          <div className="grid gap-3">
+            <p className="text-[13px] leading-5 text-gray-500">
+              Usage limits are shared across your organization and scale with the number of active members.
+            </p>
+            <UsageLimitsCard buckets={status.buckets} />
+          </div>
+        ) : null}
       </div>
     </DashboardPageTemplate>
   );
