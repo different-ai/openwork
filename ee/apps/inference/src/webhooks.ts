@@ -77,6 +77,10 @@ function usageUnitsForModel(input: { upstreamModel: string; inputCost: number; o
   return Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
 }
 
+function logWebhookError(message: string, details?: Record<string, unknown>) {
+  console.error(`[openrouter-webhook] ${message}`, details ?? {})
+}
+
 function timeFromSpan(span: JsonRecord) {
   const raw = stringAttr(span, ["endTimeUnixNano", "startTimeUnixNano", "timeUnixNano"])
   if (!raw) return new Date()
@@ -99,7 +103,7 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
 
   const costAmount = usageUnitsForModel({ upstreamModel, inputCost, outputCost })
   if (costAmount === null) {
-    console.warn("[openrouter-webhook] skipped span for unknown priced model", { upstreamModel })
+    logWebhookError("skipped span for unknown priced model", { upstreamModel })
     return null
   }
 
@@ -148,11 +152,11 @@ async function ingestSpan(span: ParsedSpan) {
     .where(eq(InferenceKeyTable.id, normalizeDenTypeId("inferenceKey", span.inferenceKeyId)))
     .limit(1)
   if (!inferenceKey || inferenceKey.status !== "active") {
-    console.warn("[openrouter-webhook] skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })
+    logWebhookError("skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })
     return
   }
   if (inferenceKey.org_membership_id !== normalizeDenTypeId("member", span.orgMembershipId)) {
-    console.warn("[openrouter-webhook] skipped span for mismatched org membership", {
+    logWebhookError("skipped span for mismatched org membership", {
       inferenceKeyId: span.inferenceKeyId,
       spanOrgMembershipId: span.orgMembershipId,
       keyOrgMembershipId: inferenceKey.org_membership_id,
@@ -162,7 +166,7 @@ async function ingestSpan(span: ParsedSpan) {
 
   const limits = await ensureUsableBuckets(inferenceKey.organization_id, span.occurredAt)
   if (!limits.ok) {
-    console.warn("[openrouter-webhook] settling usage after limit was exceeded", {
+    logWebhookError("settling usage after limit was exceeded", {
       inferenceKeyId: span.inferenceKeyId,
       limitedBy: limits.limitedBy,
     })
@@ -231,13 +235,21 @@ export function registerWebhookRoutes(app: Hono) {
       return c.body(null, 204)
     }
     if (!env.webhookSecret) {
+      logWebhookError("webhook secret is not configured")
       return c.json({ error: "webhook_disabled" }, 503)
     }
     if (!isAuthorized(c.req.raw)) {
+      logWebhookError("unauthorized webhook request", {
+        hasAuthorization: Boolean(c.req.header("authorization")),
+        hasSignature: Boolean(c.req.header("x-webhook-signature")),
+      })
       return c.json({ error: "unauthorized" }, 401)
     }
 
-    const body = await c.req.json().catch(() => null)
+    const body = await c.req.json().catch((error) => {
+      logWebhookError("failed to parse webhook JSON", { error: error instanceof Error ? error.message : String(error) })
+      return null
+    })
     const spans = parseOtlpSpans(body)
     let ingested = 0
     let skipped = 0
@@ -247,7 +259,7 @@ export function registerWebhookRoutes(app: Hono) {
         ingested += 1
       } catch (error) {
         skipped += 1
-        console.warn("failed to ingest OpenRouter usage span", error)
+        logWebhookError("failed to ingest OpenRouter usage span", { error: error instanceof Error ? error.message : String(error) })
       }
     }
     return c.json({ ok: true, ingested, skipped })

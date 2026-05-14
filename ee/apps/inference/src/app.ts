@@ -17,7 +17,13 @@ const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !
 
 const app = new Hono();
 
-app.use("*", logger());
+app.use("*", logger((message, ...rest) => {
+  if (/-->\s+\S+\s+\S+\s+[45]\d\d\b/.test(message)) {
+    console.error(message, ...rest);
+    return;
+  }
+  console.log(message, ...rest);
+}));
 
 if (env.corsOrigins.length > 0) {
   app.use(
