@@ -31,6 +31,7 @@ import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { readHiddenModels } from "@/react-app/domains/session/modals/model-picker-modal";
 import { Settings2 } from "lucide-react";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
+import { newProvidersEvent } from "@/app/lib/provider-events";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -40,11 +41,11 @@ function getProviderDisplayName(providerId: string) {
     .join(" ");
 }
 
-function useModelOptions() {
+function useModelOptions(open: boolean) {
   const { client, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
-  const { data } = useQuery({
+  const { data, refetch } = useQuery({
     queryKey: ["model-options", selectedWorkspaceRoot],
     enabled: Boolean(client),
     queryFn: async () => {
@@ -78,6 +79,20 @@ function useModelOptions() {
       );
     },
   });
+
+  React.useEffect(() => {
+    if (!open || !client) return;
+    void refetch();
+  }, [client, open, refetch]);
+
+  React.useEffect(() => {
+    if (!client) return;
+    const handler = () => {
+      void refetch();
+    };
+    window.addEventListener(newProvidersEvent, handler);
+    return () => window.removeEventListener(newProvidersEvent, handler);
+  }, [client, refetch]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
@@ -151,7 +166,7 @@ export function ModelSelect({
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const modelOptions = useModelOptions();
+  const modelOptions = useModelOptions(open);
 
   const focusSearchInput = React.useCallback(() => {
     window.requestAnimationFrame(() => {

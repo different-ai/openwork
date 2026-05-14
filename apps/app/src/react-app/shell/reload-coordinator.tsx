@@ -30,14 +30,18 @@ type ReloadCoordinatorContextValue = {
   clearReloadRequired: () => void;
   reloadWorkspaceEngine: () => Promise<void>;
   canReloadWorkspaceEngine: boolean;
+  reloadPending: boolean;
   registerWorkspaceReloadControls: (controls: WorkspaceReloadControls | null) => () => void;
 };
+
+export const orgOnboardingVisibilityEvent = "openwork-org-onboarding-visibility";
 
 const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | null>(null);
 
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
+  const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
 
   const registerWorkspaceReloadControls = useCallback((controls: WorkspaceReloadControls | null) => {
     controlsRef.current = controls;
@@ -75,6 +79,16 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const systemState = useSystemState(systemStateOptions);
 
   useEffect(() => {
+    const update = (event: Event) => {
+      setOrgOnboardingVisible(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
+    };
+    window.addEventListener(orgOnboardingVisibilityEvent, update);
+    return () => {
+      window.removeEventListener(orgOnboardingVisibilityEvent, update);
+    };
+  }, []);
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
       systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
@@ -98,6 +112,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       clearReloadRequired: systemState.clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
+      reloadPending: systemState.reload.reloadPending,
       registerWorkspaceReloadControls,
     }),
     [
@@ -105,6 +120,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       systemState.canReloadWorkspaceEngine,
       systemState.clearReloadRequired,
       systemState.markReloadRequired,
+      systemState.reload.reloadPending,
       systemState.reloadWorkspaceEngine,
     ],
   );
@@ -115,7 +131,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
         <div className="pointer-events-auto">
           <ReloadWorkspaceToast
-            open={systemState.reload.reloadPending && activeSessions.length === 0}
+            open={systemState.reload.reloadPending && activeSessions.length === 0 && !orgOnboardingVisible}
             title={systemState.reloadCopy.title}
             description={systemState.reloadCopy.body}
             trigger={systemState.reload.reloadTrigger}

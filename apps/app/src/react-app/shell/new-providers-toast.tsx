@@ -8,11 +8,14 @@ import {
   type NewProvidersEventDetail,
 } from "../../app/lib/provider-events";
 import { ProviderIcon } from "../design-system/provider-icon";
+import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
 const SEEN_KEY = "openwork.seenProviderIds";
+const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
 
 /** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
+export const pendingModelPickerProviderIdsKey = PENDING_MODEL_PICKER_KEY;
 
 function readSeenProviderIds(): Set<string> {
   try {
@@ -42,27 +45,52 @@ type ToastState = {
  */
 export function NewProvidersToast() {
   const [state, setState] = useState<ToastState>({ show: false, providers: [] });
+  const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
+  const [pendingProviders, setPendingProviders] = useState<NewProviderInfo[]>([]);
+
+  const showProviders = useCallback((providers: NewProviderInfo[]) => {
+    const seen = readSeenProviderIds();
+    const genuinelyNew = providers.filter((p) => !seen.has(p.id));
+    if (genuinelyNew.length === 0) return;
+
+    setState((prev) => ({
+      show: true,
+      providers: prev.show
+        ? [...prev.providers, ...genuinelyNew.filter((p) => !prev.providers.some((e) => e.id === p.id))]
+        : genuinelyNew,
+    }));
+  }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<NewProvidersEventDetail>).detail;
-      if (detail.source === "sign_in") return;
       if (detail.providers.length === 0) return;
-
-      const seen = readSeenProviderIds();
-      const genuinelyNew = detail.providers.filter((p) => !seen.has(p.id));
-      if (genuinelyNew.length === 0) return;
-
-      setState((prev) => ({
-        show: true,
-        providers: prev.show
-          ? [...prev.providers, ...genuinelyNew.filter((p) => !prev.providers.some((e) => e.id === p.id))]
-          : genuinelyNew,
-      }));
+      if (orgOnboardingVisible) {
+        setPendingProviders((current) => [
+          ...current,
+          ...detail.providers.filter((p) => !current.some((existing) => existing.id === p.id)),
+        ]);
+        return;
+      }
+      showProviders(detail.providers);
     };
     window.addEventListener(newProvidersEvent, handler);
     return () => window.removeEventListener(newProvidersEvent, handler);
+  }, [orgOnboardingVisible, showProviders]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      setOrgOnboardingVisible(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
+    };
+    window.addEventListener(orgOnboardingVisibilityEvent, handler);
+    return () => window.removeEventListener(orgOnboardingVisibilityEvent, handler);
   }, []);
+
+  useEffect(() => {
+    if (orgOnboardingVisible || pendingProviders.length === 0) return;
+    showProviders(pendingProviders);
+    setPendingProviders([]);
+  }, [orgOnboardingVisible, pendingProviders, showProviders]);
 
   const dismiss = useCallback(() => {
     markProvidersSeen(state.providers.map((p) => p.id));
@@ -73,9 +101,19 @@ export function NewProvidersToast() {
     const ids = state.providers.map((p) => p.id);
     markProvidersSeen(ids);
     setState({ show: false, providers: [] });
+    try {
+      window.localStorage.setItem(PENDING_MODEL_PICKER_KEY, JSON.stringify(ids));
+    } catch {}
     // Pass the new provider IDs so the picker can highlight them as
     // "Recently added" even though they were just marked as seen.
     window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { newProviderIds: ids } }));
+    window.setTimeout(() => {
+      try {
+        if (window.localStorage.getItem(PENDING_MODEL_PICKER_KEY)) {
+          window.location.hash = "/session";
+        }
+      } catch {}
+    }, 0);
   }, [state.providers]);
 
   if (!state.show || state.providers.length === 0) return null;

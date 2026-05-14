@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import { ArrowUpRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -161,6 +162,12 @@ function DenSignedOutPanel({
 
 export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
   const { activeOrganization, isSignedIn, statusMessage } = useCloudSession();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (!isSignedIn || !session.needsOrgSelection) return;
+    navigate("/onboarding", { replace: true });
+  }, [isSignedIn, navigate, session.needsOrgSelection]);
 
   return (
     <SettingsStack>

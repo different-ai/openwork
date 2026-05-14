@@ -60,7 +60,9 @@ import type {
   TodoItem,
   WorkspacePreset,
   WorkspaceConnectionState,
+  Client,
   ProviderListItem,
+  WorkspaceDisplay,
   WorkspaceSessionGroup,
 } from "../../app/types";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
@@ -87,9 +89,11 @@ import {
 } from "../domains/session/sync/session-sync";
 import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import { createProviderAuthStore } from "../domains/connections/provider-auth/store";
 import { useRemoteAccessRestart } from "../domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "../domains/workspace/use-remote-workspace-connection-editor";
+import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -120,7 +124,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 import { readDenSettings } from "../../app/lib/den";
 import { denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 
-import { openModelPickerEvent } from "./new-providers-toast";
+import { openModelPickerEvent, pendingModelPickerProviderIdsKey } from "./new-providers-toast";
 import { getModelBehaviorSummary } from "../../app/lib/model-behavior";
 import { filterProviderList, mapConfigProvidersToList } from "../../app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -192,6 +196,16 @@ function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
     t("session.workspace_fallback")
   );
 }
+
+const emptyWorkspaceDisplay: WorkspaceDisplay = {
+  id: "",
+  name: "",
+  path: "",
+  preset: "default",
+  workspaceType: "local",
+};
+
+const reloadAfterOrgOnboardingKey = "openwork.reloadAfterOrgOnboarding";
 
 function describeRouteError(error: unknown) {
   if (error instanceof Error) {
@@ -500,6 +514,7 @@ export function SessionRoute() {
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
+  const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviderIds, setDisabledProviderIds] = useState<string[]>([]);
   // Bump to re-filter provider list when den session changes (sign-in/out)
@@ -516,6 +531,9 @@ export function SessionRoute() {
   // Open model picker when the global toast's "Pick a new default?" is clicked
   useEffect(() => {
     const handler = (event: Event) => {
+      try {
+        window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+      } catch {}
       const ids = (event as CustomEvent<{ newProviderIds?: string[] }>).detail?.newProviderIds;
       if (ids && ids.length > 0) {
         setRecentProviderIds(new Set(ids));
@@ -524,6 +542,21 @@ export function SessionRoute() {
     };
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(pendingModelPickerProviderIdsKey);
+      if (!raw) return;
+      window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) {
+        setRecentProviderIds(new Set(ids));
+      }
+      setModelPickerOpen(true);
+    } catch {
+      window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+    }
   }, []);
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
@@ -933,6 +966,27 @@ export function SessionRoute() {
   }, [activeReloadBlockingSessions, client, reloadCoordinator, reloadWorkspaceEngineFromUi, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!reloadCoordinator.canReloadWorkspaceEngine) return;
+    try {
+      if (window.localStorage.getItem(reloadAfterOrgOnboardingKey) !== "1") return;
+    } catch {
+      return;
+    }
+    if (!reloadCoordinator.reloadPending) {
+      reloadCoordinator.markReloadRequired("config", {
+        type: "config",
+        name: "opencode.json",
+        action: "updated",
+      });
+      return;
+    }
+    try {
+      window.localStorage.removeItem(reloadAfterOrgOnboardingKey);
+    } catch {}
+    void reloadCoordinator.reloadWorkspaceEngine();
+  }, [reloadCoordinator, reloadCoordinator.canReloadWorkspaceEngine, reloadCoordinator.reloadPending]);
+
+  useEffect(() => {
     if (!client || !selectedWorkspaceId) return;
     const endpoint = endpointForWorkspace(selectedWorkspace);
     if (!endpoint) return;
@@ -1314,6 +1368,92 @@ export function SessionRoute() {
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError,
   );
+
+  const sessionProviderAuthStateRef = useRef({
+    opencodeClient: opencodeClient as Client | null,
+    providers,
+    providerDefaults,
+    providerConnectedIds,
+    disabledProviderIds,
+    selectedWorkspace,
+    selectedWorkspaceEndpoint,
+    selectedWorkspaceRoot,
+  });
+  sessionProviderAuthStateRef.current = {
+    opencodeClient,
+    providers,
+    providerDefaults,
+    providerConnectedIds,
+    disabledProviderIds,
+    selectedWorkspace,
+    selectedWorkspaceEndpoint,
+    selectedWorkspaceRoot,
+  };
+
+  const sessionProviderAuthStore = useMemo(
+    () =>
+      createProviderAuthStore({
+        client: () => sessionProviderAuthStateRef.current.opencodeClient,
+        providers: () => sessionProviderAuthStateRef.current.providers,
+        providerDefaults: () => sessionProviderAuthStateRef.current.providerDefaults,
+        providerConnectedIds: () => sessionProviderAuthStateRef.current.providerConnectedIds,
+        disabledProviders: () => sessionProviderAuthStateRef.current.disabledProviderIds,
+        selectedWorkspaceDisplay: () =>
+          sessionProviderAuthStateRef.current.selectedWorkspace
+            ? ({
+                ...sessionProviderAuthStateRef.current.selectedWorkspace,
+                name: workspaceLabel(sessionProviderAuthStateRef.current.selectedWorkspace),
+              } as WorkspaceDisplay)
+            : emptyWorkspaceDisplay,
+        selectedWorkspaceRoot: () => sessionProviderAuthStateRef.current.selectedWorkspaceRoot,
+        runtimeWorkspaceId: () => sessionProviderAuthStateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
+        openworkServer: {
+          getSnapshot: () => ({
+            openworkServerStatus: sessionProviderAuthStateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
+            openworkServerClient: sessionProviderAuthStateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+            openworkServerCapabilities: sessionProviderAuthStateRef.current.selectedWorkspaceEndpoint
+              ? {
+                  config: { read: true, write: true },
+                }
+              : null,
+          }),
+        } as never,
+        setProviders,
+        setProviderDefaults,
+        setProviderConnectedIds,
+        setDisabledProviders: setDisabledProviderIds,
+        markOpencodeConfigReloadRequired: () => {
+          reloadCoordinator.markReloadRequired("config", {
+            type: "config",
+            name: "opencode.json",
+            action: "updated",
+          });
+        },
+      }),
+    [reloadCoordinator],
+  );
+
+  useEffect(() => {
+    sessionProviderAuthStore.start();
+    return () => {
+      sessionProviderAuthStore.dispose();
+    };
+  }, [sessionProviderAuthStore]);
+
+  useEffect(() => {
+    sessionProviderAuthStore.syncFromOptions();
+  }, [
+    opencodeClient,
+    selectedWorkspace?.id,
+    selectedWorkspace?.workspaceType,
+    selectedWorkspaceEndpoint?.workspaceId,
+    selectedWorkspaceRoot,
+    sessionProviderAuthStore,
+  ]);
+
+  // Session is where forced sign-in lands. Keep org-managed cloud providers in
+  // sync here so sign-in applies opencode.json changes before Settings opens.
+  useCloudProviderAutoSync(sessionProviderAuthStore.runCloudProviderSync);
   const permissionQueryKey = useMemo(
     () =>
       selectedWorkspaceId && selectedSessionId
@@ -1385,6 +1525,7 @@ export function SessionRoute() {
   useEffect(() => {
     if (!opencodeClient) {
       setProviders([]);
+      setProviderDefaults({});
       setProviderConnectedIds([]);
       return;
     }
