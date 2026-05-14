@@ -8,15 +8,23 @@ import {
   useRef,
   type SetStateAction,
 } from "react";
-import { Eye, EyeOff, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, Plus, RefreshCw, Trash2 } from "lucide-react";
 
-import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import {
   readOpenworkEnvPendingChanges,
   writeOpenworkEnvPendingChanges,
-} from "../../../../app/lib/openwork-env-runtime";
-import { t } from "../../../../i18n";
-import { Button } from "@/components/ui/button";
+} from "@/app/lib/openwork-env-runtime";
+import { t } from "@/i18n";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
 import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-context";
@@ -641,17 +649,18 @@ function EnvironmentEditorModal(props: {
 }) {
   if (!props.editor) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" aria-label={t("settings.environment.close_editor")} onClick={props.onClose} />
-      <div className="relative w-full max-w-md rounded-2xl border border-gray-6 bg-gray-2 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby={props.titleId}>
-        <div className="flex items-center justify-between">
-          <div id={props.titleId} className="text-sm font-medium text-gray-12">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="w-full max-w-md sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle id={props.titleId}>
             {props.editor.mode === "add" ? t("settings.environment.add_title") : t("settings.environment.edit_title")}
-          </div>
-          <Button variant="ghost" size="icon-sm" onClick={props.onClose} aria-label={t("settings.environment.close_editor")} title={t("settings.environment.close_editor")}>
-            <X size={14} />
-          </Button>
-        </div>
+          </DialogTitle>
+        </DialogHeader>
 
         <div className="mt-4 space-y-3">
           <TextInput
@@ -681,15 +690,18 @@ function EnvironmentEditorModal(props: {
           ) : null}
         </div>
 
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={props.onClose} disabled={props.saving}>
+        <DialogFooter>
+          <DialogClose
+            disabled={props.saving}
+            render={<Button variant="outline" size="sm" disabled={props.saving} />}
+          >
             {t("settings.environment.cancel")}
-          </Button>
+          </DialogClose>
           <Button size="sm" onClick={() => void props.onSubmit()} disabled={props.saving}>
             {props.saving ? t("settings.environment.saving") : t("settings.environment.save")}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

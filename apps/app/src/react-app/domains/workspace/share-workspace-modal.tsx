@@ -1,17 +1,18 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useReducer } from "react";
-import { ArrowLeft, MonitorUp, X } from "lucide-react";
+import { ArrowLeft, MonitorUp } from "lucide-react";
 
-import { t } from "../../../i18n";
 import {
-  modalHeaderButtonClass,
-  modalHeaderClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
-  tagClass,
-} from "./modal-styles";
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { t } from "../../../i18n";
+import { tagClass } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
 import { ShareWorkspaceAccessPanel } from "./share-workspace-access-panel";
 import type { ShareView, ShareWorkspaceModalProps } from "./types";
@@ -162,47 +163,37 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     }
   })();
 
-  if (!props.open) return null;
-
   return (
-    <div className={`${modalOverlayClass} items-start pt-[10vh]`}>
-      <div
-        className={`${modalShellClass} max-h-[78vh] max-w-[640px]`}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className={modalHeaderClass}>
-          <div className="flex min-w-0 items-start gap-3">
-            {activeView !== "chooser" ? (
-              <button
-                onClick={goBack}
-                className={modalHeaderButtonClass}
-                aria-label={t("share.back_hint")}
-              >
-                <ArrowLeft size={16} />
-              </button>
-            ) : null}
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className={modalTitleClass}>{headerTitle}</h2>
-                {activeView === "chooser" ? (
-                  <span className={tagClass}>{workspaceBadge}</span>
-                ) : null}
-              </div>
-              <p className={modalSubtitleClass}>{headerSubtitle}</p>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[78vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader className="flex-row">
+          {activeView !== "chooser" ? (
+            <Button
+              onClick={goBack}
+              variant="ghost"
+              size="icon"
+              aria-label={t("share.back_hint")}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+          ) : null}
+          <div className="min-w-0 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle>{headerTitle}</DialogTitle>
+              {activeView === "chooser" ? (
+                <span className={tagClass}>{workspaceBadge}</span>
+              ) : null}
             </div>
+            <DialogDescription>{headerSubtitle}</DialogDescription>
           </div>
-          <button
-            onClick={props.onClose}
-            className={modalHeaderButtonClass}
-            aria-label={t("share.close_hint")}
-            title={t("share.close_hint")}
-          >
-            <X size={16} />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 pb-7 pt-2 scrollbar-hide">
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
           {activeView === "chooser" ? (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
               <WorkspaceOptionCard
@@ -234,7 +225,7 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
             />
           ) : null}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

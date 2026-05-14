@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -65,13 +66,9 @@ export function OpenWorkDenHelpLink() {
           </div>
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
+            <DialogClose render={<Button type="button" variant="outline" />}>
               Close
-            </Button>
+            </DialogClose>
             <Button
               type="button"
               onClick={() => {

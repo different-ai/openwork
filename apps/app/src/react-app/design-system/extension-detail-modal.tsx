@@ -1,17 +1,20 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ExternalLink, Loader2, Plug2, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Plug2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import type { ExtensionKind } from "../../app/constants";
+import type { ExtensionKind } from "@/app/constants";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
 import {
-  modalOverlayClass,
-  modalShellClass,
-  modalHeaderClass,
-  modalTitleClass,
-  modalSubtitleClass,
   modalBodyClass,
-  modalFooterClass,
   surfaceCardClass,
 } from "../domains/workspace/modal-styles";
 
@@ -160,17 +163,17 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     onUninstall,
   } = props;
 
-  if (!open) return null;
-
   return (
-    <div className={modalOverlayClass} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div
-        className={`${modalShellClass} max-w-[520px]`}
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <DialogContent
+        className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden sm:max-w-xl"
       >
-        {/* Header */}
-        <div className={modalHeaderClass}>
+        <DialogHeader>
           <div className="flex min-w-0 items-start gap-4">
             {/* Icon */}
             <div className="relative shrink-0">
@@ -199,20 +202,11 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             </div>
 
             <div className="min-w-0">
-              <h3 className={modalTitleClass}>{name}</h3>
-              <p className={modalSubtitleClass}>{kindLabel[kind]}</p>
+              <DialogTitle>{name}</DialogTitle>
+              <DialogDescription>{kindLabel[kind]}</DialogDescription>
             </div>
           </div>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X />
-          </Button>
-        </div>
+        </DialogHeader>
 
         {/* Body */}
         <div className={modalBodyClass}>
@@ -326,8 +320,7 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
           </div>
         </div>
 
-        {/* Footer */}
-        <div className={modalFooterClass}>
+        <DialogFooter className="shrink-0">
           <div className="flex justify-between">
             <div>
               {connected && onUninstall ? (
@@ -341,16 +334,11 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
               ) : null}
             </div>
             <div className="flex gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onClose}
-              >
+              <DialogClose render={<Button variant="outline" />}>
                 Close
-              </Button>
+              </DialogClose>
               {!connected && onConnect ? (
                 <Button
-                  size="sm"
                   onClick={onConnect}
                   disabled={connecting}
                 >
@@ -366,9 +354,9 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
               ) : null}
             </div>
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,14 +1,14 @@
 /** @jsxImportSource react */
 import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { DialogClose, DialogFooter } from "@/components/ui/dialog";
 import type { WorkspacePreset } from "../../../app/types";
 import { t } from "../../../i18n";
 import {
   errorBannerClass,
   modalBodyClass,
-  modalFooterClass,
   pillGhostClass,
-  pillPrimaryClass,
   pillSecondaryClass,
   sectionBodyClass,
   sectionTitleClass,
@@ -156,7 +156,7 @@ export function CreateWorkspaceLocalPanel(
         </div>
       </div>
 
-      <div className={modalFooterClass}>
+    <DialogFooter className="flex-col gap-3">
         {props.submitting && progress ? (
           <div className={softCardClass}>
             <div className="flex items-start justify-between gap-3">
@@ -289,17 +289,16 @@ export function CreateWorkspaceLocalPanel(
         ) : null}
 
         <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={props.onClose}
+          <DialogClose
             disabled={props.submitting}
-            className={pillGhostClass}
+            render={<Button variant="outline" disabled={props.submitting} />}
           >
             {t("common.cancel")}
-          </button>
+          </DialogClose>
           {props.onConfirmWorker ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() =>
                 props.onConfirmWorker?.(props.preset, props.selectedFolder)
               }
@@ -314,7 +313,6 @@ export function CreateWorkspaceLocalPanel(
                   ? t("dashboard.choose_folder_continue")
                   : props.workerDisabledReason || undefined
               }
-              className={pillSecondaryClass}
             >
               {props.workerSubmitting ? (
                 <span className="inline-flex items-center gap-2">
@@ -325,9 +323,9 @@ export function CreateWorkspaceLocalPanel(
                 (props.workerLabel ??
                   t("dashboard.create_sandbox_confirm"))
               )}
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             type="button"
             onClick={() => void props.onSubmit()}
             disabled={!props.selectedFolder || props.submitting}
@@ -336,7 +334,6 @@ export function CreateWorkspaceLocalPanel(
                 ? t("dashboard.choose_folder_continue")
                 : undefined
             }
-            className={pillPrimaryClass}
           >
             {props.submitting ? (
               <span className="inline-flex items-center gap-2">
@@ -347,9 +344,9 @@ export function CreateWorkspaceLocalPanel(
               (props.confirmLabel ??
                 t("dashboard.create_workspace_confirm"))
             )}
-          </button>
+          </Button>
         </div>
-      </div>
+    </DialogFooter>
     </>
   );
 }

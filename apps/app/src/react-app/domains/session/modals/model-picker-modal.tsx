@@ -6,8 +6,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, ChevronRight, Search, Star, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Search, Star } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
 import { isDefaultVisibleModel, isRecommendedModel } from "../../../../app/defaults";
@@ -236,34 +246,26 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [props.open]);
 
-  if (!props.open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-1/60 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-        <div className="flex min-h-0 flex-col p-6">
-          {/* Header */}
-          <div className="mb-4 flex items-start justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-dls-text">Models</h2>
-              <p className="mt-0.5 text-[13px] text-dls-secondary">
-                {tab === "default"
-                  ? t("model_picker.default_model_desc")
-                  : "Choose which models appear in the model selector."}
-              </p>
-            </div>
-            <button
-              type="button"
-              className="inline-flex size-9 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-              onClick={() => props.onClose()}
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
-          </div>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Models</DialogTitle>
+          <DialogDescription>
+            {tab === "default"
+              ? t("model_picker.default_model_desc")
+              : "Choose which models appear in the model selector."}
+          </DialogDescription>
+        </DialogHeader>
 
+        <div className="flex min-h-0 flex-1 flex-col">
           {/* Tabs */}
-          <div className="mb-4 flex gap-1 rounded-xl bg-dls-hover p-1">
+          <div className="mb-4 flex shrink-0 gap-1 rounded-xl bg-dls-hover p-1">
             <TabButton active={tab === "default"} onClick={() => setTab("default")}>
               Default model
             </TabButton>
@@ -273,7 +275,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           </div>
 
           {/* Search */}
-          <div className="relative mb-4">
+          <div className="relative mb-4 shrink-0">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
             <input
               ref={searchInputRef}
@@ -310,20 +312,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               ))
             )}
           </div>
-
-          {/* Footer */}
-          <div className="mt-5 flex shrink-0 justify-end">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-full border border-dls-border px-4 py-2 text-[13px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
-              onClick={() => props.onClose()}
-            >
-              Done
-            </button>
-          </div>
         </div>
-      </div>
-    </div>
+
+        {/* Footer */}
+        <DialogFooter className="shrink-0">
+          <DialogClose render={<Button variant="outline" />}>
+            Done
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

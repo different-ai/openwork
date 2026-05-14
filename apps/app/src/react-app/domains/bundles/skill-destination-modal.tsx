@@ -7,13 +7,21 @@ import {
   Globe,
   Loader2,
   Sparkles,
-  X,
 } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import { t } from "../../../i18n";
 import { isSandboxWorkspace } from "../../../app/utils";
-import { Button } from "@/components/ui/button";
 
 type SkillSummary = {
   name: string;
@@ -91,7 +99,7 @@ function SkillDestinationFooter(props: {
   onSubmit: () => void;
 }) {
   return (
-    <div className="border-t border-gray-6 bg-gray-1 px-6 py-4">
+    <DialogFooter className="shrink-0">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {props.selectedWorkspace ? (
           <div className="min-w-0 text-sm text-gray-10">
@@ -106,9 +114,12 @@ function SkillDestinationFooter(props: {
         ) : null}
 
         <div className="flex items-center justify-end gap-3">
-          <Button variant="outline" onClick={props.onClose} disabled={props.footerBusy}>
+          <DialogClose
+            disabled={props.footerBusy}
+            render={<Button variant="outline" disabled={props.footerBusy} />}
+          >
             {t("common.cancel")}
-          </Button>
+          </DialogClose>
           <Button
             onClick={props.onSubmit}
             disabled={!props.selectedWorkspace || props.footerBusy}
@@ -124,7 +135,7 @@ function SkillDestinationFooter(props: {
           </Button>
         </div>
       </div>
-    </div>
+    </DialogFooter>
   );
 }
 
@@ -159,13 +170,16 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
     void props.onSubmitWorkspace(workspaceId);
   };
 
-  if (!props.open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-12/40 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-gray-6 bg-gray-1 shadow-2xl">
-        <div className="border-b border-gray-6 bg-gray-1 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <div className="flex items-start gap-4">
             <div className="min-w-0 space-y-3">
               <div className="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-10">
                 <Sparkles size={12} />
@@ -203,29 +217,18 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
                 </div>
               </div>
               <div>
-                <h4 className="text-sm font-medium text-gray-12">
+                <DialogTitle>
                   {t("share_skill_destination.title")}
-                </h4>
-                <p className="mt-1 text-sm leading-relaxed text-gray-10">
+                </DialogTitle>
+                <DialogDescription>
                   {t("share_skill_destination.subtitle")}
-                </p>
+                </DialogDescription>
               </div>
             </div>
-
-            <button
-              onClick={props.onClose}
-              disabled={footerBusy}
-              className={`rounded-full p-2 text-gray-9 transition hover:bg-gray-2 hover:text-gray-12 ${
-                footerBusy ? "cursor-not-allowed opacity-50" : ""
-              }`.trim()}
-              aria-label={t("common.close")}
-            >
-              <X size={18} />
-            </button>
           </div>
-        </div>
+        </DialogHeader>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-medium text-gray-12">
@@ -392,7 +395,7 @@ export function SkillDestinationModal(props: SkillDestinationModalProps) {
           onClose={props.onClose}
           onSubmit={submitSelectedWorkspace}
         />
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

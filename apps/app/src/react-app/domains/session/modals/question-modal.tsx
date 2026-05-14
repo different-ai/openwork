@@ -3,8 +3,16 @@ import { useEffect, useReducer } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronRight, HelpCircle } from "lucide-react";
 
-import { t } from "../../../../i18n";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 
 export type QuestionModalProps = {
   open: boolean;
@@ -170,18 +178,18 @@ export function QuestionModal(props: QuestionModalProps) {
   if (!props.open || !currentQuestion) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-        <div className="p-6 border-b border-gray-6/40 bg-gray-2/50">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="size-8 rounded-full bg-blue-9/20 flex items-center justify-center text-blue-9">
+    <Dialog open={props.open}>
+      <DialogContent showCloseButton={false} className="flex max-h-[85vh] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <div className="mb-2 flex items-center gap-3">
+            <div className="flex size-8 items-center justify-center rounded-full bg-blue-9/20 text-blue-9">
               <HelpCircle size={18} />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-gray-12">
+              <DialogTitle>
                 {currentQuestion.header || t("common.question")}
-              </h3>
-              <div className="text-xs text-gray-11 font-medium">
+              </DialogTitle>
+              <div className="text-xs font-medium text-gray-11">
                 {t("question_modal.question_counter", undefined, {
                   current: state.currentIndex + 1,
                   total: props.questions.length,
@@ -189,12 +197,12 @@ export function QuestionModal(props: QuestionModalProps) {
               </div>
             </div>
           </div>
-          <p className="text-sm text-gray-11 mt-2 leading-relaxed">
+          <DialogDescription>
             {currentQuestion.question}
-          </p>
-        </div>
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="p-6 overflow-y-auto min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-2">
             {currentQuestion.options.map((opt, idx) => {
               const isSelected = state.currentSelection.includes(opt.description);
@@ -256,7 +264,7 @@ export function QuestionModal(props: QuestionModalProps) {
           ) : null}
         </div>
 
-        <div className="p-6 border-t border-dls-border bg-dls-hover flex justify-between items-center">
+        <DialogFooter className="shrink-0 items-center justify-between">
           <div className="text-xs text-dls-secondary flex items-center gap-2">
             <span className="px-1.5 py-0.5 rounded border border-dls-border bg-dls-active font-mono">
               ↑↓
@@ -271,19 +279,18 @@ export function QuestionModal(props: QuestionModalProps) {
           <div className="flex gap-2">
             {currentQuestion.multiple || currentQuestion.custom ? (
               <Button
-                size="lg"
                 onClick={handleNext}
                 disabled={!canProceed || props.busy}
               >
                 {isLastQuestion ? t("common.submit") : t("common.next")}
                 {!isLastQuestion ? (
-                  <ChevronRight size={16} className="ml-1 -mr-1 opacity-60" />
+                  <ChevronRight data-icon="inline-end" />
                 ) : null}
               </Button>
             ) : null}
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

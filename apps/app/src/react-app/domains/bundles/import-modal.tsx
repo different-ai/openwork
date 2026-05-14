@@ -6,9 +6,16 @@ import {
   ChevronRight,
   Plus,
   Sparkles,
-  X,
 } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { BundleWorkerOption } from "./types";
 
 export type BundleImportModalProps = {
@@ -56,58 +63,53 @@ export function BundleImportModal(props: BundleImportModalProps) {
     [props.items, visibleItems.length],
   );
 
-  if (!props.open) return null;
   const busy = Boolean(props.busy);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-1/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl">
-        <div className="border-b border-gray-6 bg-gray-1 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden sm:max-w-xl">
+        <DialogHeader>
+          <div className="flex items-start gap-4">
             <div className="flex items-start gap-3">
               <div className="flex size-11 items-center justify-center rounded-2xl bg-indigo-9/15 text-indigo-11">
                 <Boxes size={20} />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-12">
+                <DialogTitle>
                   {props.title}
-                </h3>
-                <p className="mt-1 text-sm leading-relaxed text-gray-10">
+                </DialogTitle>
+                <DialogDescription>
                   {props.description}
-                </p>
+                </DialogDescription>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={props.onClose}
-              disabled={busy}
-              className="rounded-full p-1 text-gray-10 transition hover:bg-gray-4 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
           </div>
+        </DialogHeader>
 
-          {visibleItems.length > 0 ? (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {visibleItems.map((item) => (
-                <span
-                  key={item}
-                  className="rounded-full border border-gray-6 bg-gray-3 px-3 py-1 text-xs font-medium text-gray-11"
-                >
-                  {item}
-                </span>
-              ))}
-              {hiddenItemCount > 0 ? (
-                <span className="rounded-full border border-gray-6 bg-gray-3 px-3 py-1 text-xs font-medium text-gray-11">
-                  +{hiddenItemCount} more
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+        {visibleItems.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {visibleItems.map((item) => (
+              <span
+                key={item}
+                className="rounded-full border border-gray-6 bg-gray-3 px-3 py-1 text-xs font-medium text-gray-11"
+              >
+                {item}
+              </span>
+            ))}
+            {hiddenItemCount > 0 ? (
+              <span className="rounded-full border border-gray-6 bg-gray-3 px-3 py-1 text-xs font-medium text-gray-11">
+                +{hiddenItemCount} more
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
-        <div className="space-y-4 p-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
           {props.error?.trim() ? (
             <div className="rounded-xl border border-red-6 bg-red-2 px-4 py-3 text-sm text-red-11">
               {props.error}
@@ -216,7 +218,7 @@ export function BundleImportModal(props: BundleImportModalProps) {
             ) : null}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

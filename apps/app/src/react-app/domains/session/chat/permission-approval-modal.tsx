@@ -2,9 +2,17 @@
 import { Check, ChevronRight, Clock3, HardDrive, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
-import { t } from "../../../../i18n";
-import type { PendingPermission } from "../../../../app/types";
-import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { t } from "@/i18n";
+import type { PendingPermission } from "@/app/types";
 
 type PermissionPresentation = {
   title: string;
@@ -185,7 +193,7 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
 }
 
 export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
-  const dialogRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
   const metadata =
@@ -241,31 +249,28 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[6px]">
-      <section
+    <AlertDialog open>
+      <AlertDialogContent
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="permission-approval-title"
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className="w-full max-w-[560px] overflow-hidden rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-xl overflow-hidden sm:max-w-xl"
       >
-        <div className="border-b border-dls-border px-6 py-5">
-          <div className="flex items-start gap-4">
+        <AlertDialogHeader>
+          <div className="flex items-start gap-4 text-left">
             <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}>
               <Icon size={23} strokeWidth={1.9} />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 id="permission-approval-title" className="text-[20px] font-semibold tracking-[-0.3px] text-dls-text">
+              <AlertDialogTitle>
                 {presentation.title}
-              </h3>
-              <p className="mt-1.5 text-[14px] leading-6 text-dls-secondary">
+              </AlertDialogTitle>
+              <AlertDialogDescription>
                 {presentation.message}
-              </p>
+              </AlertDialogDescription>
             </div>
           </div>
-        </div>
+        </AlertDialogHeader>
 
         <div className="space-y-3 px-6 py-5">
           <div className="rounded-[20px] border border-dls-border bg-dls-hover/45 p-4">
@@ -327,37 +332,38 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
           ) : null}
         </div>
 
-        <div className="border-t border-dls-border bg-dls-hover/30 px-6 py-5">
+        <AlertDialogFooter className="flex-col gap-4">
           <p className="mb-4 text-[12px] leading-5 text-dls-secondary">
             {t("session.permission_decision_hint")}
           </p>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_auto]">
-            <Button
+            <AlertDialogAction
               variant="destructive"
+              className="justify-center sm:justify-self-start"
               onClick={() => props.respondPermission?.(props.permission.id, "reject")}
               disabled={props.busy || !props.respondPermission}
             >
-              <XCircle size={16} />
+              <XCircle data-icon="inline-start" />
               {t("session.deny")}
-            </Button>
-            <Button
+            </AlertDialogAction>
+            <AlertDialogAction
               onClick={() => props.respondPermission?.(props.permission.id, "once")}
               disabled={props.busy || !props.respondPermission}
             >
-              <Clock3 size={16} />
+              <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
-            </Button>
-            <Button
+            </AlertDialogAction>
+            <AlertDialogAction
               variant="outline"
               onClick={() => props.respondPermission?.(props.permission.id, "always")}
               disabled={props.busy || !props.respondPermission}
             >
-              <Check size={16} />
+              <Check data-icon="inline-start" />
               {t("session.allow_for_session")}
-            </Button>
+            </AlertDialogAction>
           </div>
-        </div>
-      </section>
-    </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

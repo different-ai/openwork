@@ -24,12 +24,20 @@ import {
   Trash2,
   Upload,
   Users,
-  X,
 } from "lucide-react";
 
-import { t } from "../../../../i18n";
-import type { SkillBundleV1 } from "../../../../app/bundles/types";
-import { saveInstalledSkillToOpenWorkOrg } from "../../../../app/bundles/skill-org-publish";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { t } from "@/i18n";
+import type { SkillBundleV1 } from "@/app/bundles";
+import { saveInstalledSkillToOpenWorkOrg } from "@/app/bundles/skill-org-publish";
 import {
   buildDenAuthUrl,
   createDenClient,
@@ -49,14 +57,8 @@ import type {
 } from "../../../../app/types";
 import {
   inputClass,
-  modalHeaderButtonClass,
-  modalHeaderClass,
   modalNoticeErrorClass,
   modalNoticeSuccessClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
   pillGhostClass,
   pillPrimaryClass,
   pillSecondaryClass,
@@ -1303,41 +1305,35 @@ export function SkillsView(props: SkillsViewProps) {
         </div>
       ) : null}
 
-      {selectedSkill ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-dls-border px-5 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-dls-text">{selectedSkill.name}</div>
+      <Dialog
+        open={Boolean(selectedSkill)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSkill(null);
+            setSelectedContent("");
+            setSelectedDirty(false);
+            setSelectedError(null);
+            setSelectedLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden sm:max-w-4xl">
+            <DialogHeader>
+              <div className="flex min-w-0 items-center gap-3">
+                <DialogTitle className="min-w-0 flex-1 truncate">{selectedSkill?.name}</DialogTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    disabled={!selectedDirty || props.busy}
+                    onClick={() => void saveSelectedSkill()}
+                  >
+                    {t("common.save")}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    selectedDirty && !props.busy ? "bg-dls-text text-dls-surface hover:opacity-90" : "bg-dls-active text-dls-secondary"
-                  }`}
-                  disabled={!selectedDirty || props.busy}
-                  onClick={() => void saveSelectedSkill()}
-                >
-                  {t("common.save")}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg bg-dls-hover px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-active"
-                  onClick={() => {
-                    setSelectedSkill(null);
-                    setSelectedContent("");
-                    setSelectedDirty(false);
-                    setSelectedError(null);
-                    setSelectedLoading(false);
-                  }}
-                >
-                  {t("common.close")}
-                </button>
-              </div>
-            </div>
+            </DialogHeader>
 
-            <div className="p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {selectedError ? <div className="mb-3 rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">{selectedError}</div> : null}
               {selectedLoading ? (
                 <div className="text-xs text-dls-secondary">{t("skills.loading")}</div>
@@ -1353,9 +1349,8 @@ export function SkillsView(props: SkillsViewProps) {
                 />
               )}
             </div>
-          </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
 
       <ConfirmModal
         open={Boolean(uninstallTarget)}
@@ -1373,30 +1368,36 @@ export function SkillsView(props: SkillsViewProps) {
         }}
       />
 
-      {shareTarget ? (
-        <div className={`${modalOverlayClass} items-start pt-[10vh]`}>
-          <div className={`${modalShellClass} max-h-[78vh] max-w-md`} role="dialog" aria-modal="true">
-            <div className={modalHeaderClass}>
-              <div className="flex min-w-0 items-start gap-3">
-                {shareSubView !== "chooser" ? (
-                  <button type="button" onClick={goBackShareSubView} className={modalHeaderButtonClass} aria-label={t("skills.share_back")}>
-                    <ArrowLeft size={16} />
-                  </button>
+      <Dialog
+        open={Boolean(shareTarget)}
+        onOpenChange={(open) => {
+          if (!open) closeShareLink();
+        }}
+      >
+        <DialogContent className="flex max-h-[78vh] min-h-0 w-full max-w-md flex-col overflow-hidden sm:max-w-md">
+          <DialogHeader className="flex-row">
+            {shareSubView !== "chooser" ? (
+              <Button
+                onClick={goBackShareSubView}
+                variant="ghost"
+                size="icon"
+                aria-label={t("skills.share_back")}
+              >
+                <ArrowLeft className="size-4" />
+              </Button>
+            ) : null}
+            <div className="min-w-0 flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <DialogTitle>{t("skills.share_title")}</DialogTitle>
+                {shareSubView === "chooser" ? (
+                  <span className={tagClass}>{shareTarget?.name}</span>
                 ) : null}
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className={modalTitleClass}>{t("skills.share_title")}</h2>
-                    {shareSubView === "chooser" ? <span className={tagClass}>{shareTarget.name}</span> : null}
-                  </div>
-                  <p className={modalSubtitleClass}>{shareModalSubtitle}</p>
-                </div>
               </div>
-              <button type="button" onClick={closeShareLink} className={modalHeaderButtonClass} aria-label={t("skills.share_close")} title={t("skills.share_close")}>
-                <X size={16} />
-              </button>
+              <DialogDescription>{shareModalSubtitle}</DialogDescription>
             </div>
+          </DialogHeader>
 
-            <div className="flex-1 overflow-y-auto px-6 pb-7 pt-2">
+          <div className="min-h-0 flex-1 overflow-y-auto">
               {shareSubView === "chooser" ? (
                 <div className="animate-in space-y-4 fade-in slide-in-from-bottom-3 duration-300">
                   <WorkspaceOptionCard
@@ -1440,11 +1441,6 @@ export function SkillsView(props: SkillsViewProps) {
                         </button>
                       </>
                     )}
-                  </div>
-                  <div className="flex justify-end">
-                    <button type="button" onClick={closeShareLink} className={pillSecondaryClass}>
-                      {t("skills.share_done")}
-                    </button>
                   </div>
                 </div>
               ) : null}
@@ -1502,27 +1498,39 @@ export function SkillsView(props: SkillsViewProps) {
                     </button>
                     {!shareCloudSignedIn ? <p className="mt-3 text-[12px] text-dls-secondary">{t("skills.share_team_sign_in_hint")}</p> : null}
                   </div>
-                  <div className="flex justify-end">
-                    <button type="button" onClick={closeShareLink} className={pillSecondaryClass}>
-                      {t("skills.share_done")}
-                    </button>
-                  </div>
                 </div>
               ) : null}
             </div>
-          </div>
-        </div>
-      ) : null}
+            {shareSubView === "public" ? (
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" />}>
+                  {t("skills.share_done")}
+                </DialogClose>
+              </DialogFooter>
+            ) : null}
+            {shareSubView === "team" ? (
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" />}>
+                  {t("skills.share_done")}
+                </DialogClose>
+              </DialogFooter>
+            ) : null}
+        </DialogContent>
+      </Dialog>
 
-      {customRepoOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-2xl">
-            <div className="space-y-4 p-6">
-              <div>
-                <h3 className="text-lg font-semibold text-dls-text">{t("skills.add_custom_repo")}</h3>
-                <p className="mt-1 text-sm text-dls-secondary">{t("skills.github_repo_hint")}</p>
-              </div>
+      <Dialog
+        open={customRepoOpen}
+        onOpenChange={(open) => {
+          if (!open) closeCustomRepoModal();
+        }}
+      >
+        <DialogContent showCloseButton={false} className="w-full max-w-lg overflow-hidden sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{t("skills.add_custom_repo")}</DialogTitle>
+              <DialogDescription>{t("skills.github_repo_hint")}</DialogDescription>
+            </DialogHeader>
 
+            <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="space-y-1">
                   <div className="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{t("skills.owner_label")}</div>
@@ -1561,19 +1569,20 @@ export function SkillsView(props: SkillsViewProps) {
               </label>
 
               {customRepoError ? <div className="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">{customRepoError}</div> : null}
-
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={closeCustomRepoModal} disabled={props.busy}>
-                  {t("common.cancel")}
-                </Button>
-                <Button onClick={saveCustomRepo} disabled={props.busy}>
-                  {t("skills.save_and_load")}
-                </Button>
-              </div>
             </div>
-          </div>
-        </div>
-      ) : null}
+            <DialogFooter>
+              <DialogClose
+                disabled={props.busy}
+                render={<Button variant="outline" disabled={props.busy} />}
+              >
+                {t("common.cancel")}
+              </DialogClose>
+              <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
+                {t("skills.save_and_load")}
+              </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

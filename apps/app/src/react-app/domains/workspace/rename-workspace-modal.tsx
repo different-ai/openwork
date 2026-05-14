@@ -4,6 +4,7 @@ import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -63,9 +64,12 @@ export function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
         </Field>
 
         <DialogFooter>
-          <Button variant="outline" type="button" onClick={props.onClose} disabled={props.busy}>
+          <DialogClose
+            disabled={props.busy}
+            render={<Button variant="outline" type="button" disabled={props.busy} />}
+          >
             {t("common.cancel")}
-          </Button>
+          </DialogClose>
           <Button type="button" onClick={props.onSave} disabled={!props.canSave}>
             {t("common.save")}
           </Button>

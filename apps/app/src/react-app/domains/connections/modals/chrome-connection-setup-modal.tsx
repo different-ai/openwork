@@ -7,12 +7,19 @@ import {
   Loader2,
   MonitorSmartphone,
   RefreshCw,
-  X,
 } from "lucide-react";
 
-import { t } from "../../../../i18n";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { t } from "@/i18n";
 import { Button } from "@/components/ui/button";
-import { isElectronRuntime } from "../../../../app/utils";
 
 export type ChromeConnectionSetupModalProps = {
   open: boolean;
@@ -52,8 +59,6 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
     void testConnection();
   }, [props.open, testConnection]);
 
-  if (!props.open) return null;
-
   const statusColor =
     status === "connected"
       ? "bg-green-3 text-green-11 border-green-6"
@@ -71,45 +76,34 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
           : t("chrome_setup.status_unknown");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-gray-1/70 backdrop-blur-sm"
-        aria-label={t("common.close")}
-        onClick={props.onClose}
-      />
-
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-gray-6/70 bg-gray-2 shadow-2xl" role="dialog" aria-modal="true">
-        {/* Header */}
-        <div className="border-b border-gray-6 px-6 py-5 sm:px-7">
-          <div className="flex items-start justify-between gap-4">
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <div className="flex items-start gap-4">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 rounded-full border border-gray-6 bg-gray-3 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">
                 <Chrome size={12} />
                 {t("chrome_setup.badge")}
               </div>
               <div>
-                <h2 className="text-xl font-semibold text-gray-12 sm:text-2xl">
+                <DialogTitle>
                   {t("chrome_setup.title")}
-                </h2>
-                <p className="mt-1 max-w-xl text-sm leading-6 text-gray-11">
+                </DialogTitle>
+                <DialogDescription className="max-w-xl">
                   {t("chrome_setup.subtitle")}
-                </p>
+                </DialogDescription>
               </div>
             </div>
-            <button
-              type="button"
-              className="rounded-xl p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
-              onClick={props.onClose}
-              aria-label={t("common.cancel")}
-            >
-              <X size={20} />
-            </button>
           </div>
-        </div>
+        </DialogHeader>
 
         {/* Body */}
-        <div className="space-y-5 p-6 sm:px-7">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
           {/* Connection status */}
           <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${statusColor}`}>
             {status === "checking" ? (
@@ -212,19 +206,22 @@ export function ChromeConnectionSetupModal(props: ChromeConnectionSetupModalProp
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex flex-col-reverse gap-3 border-t border-gray-6 bg-gray-2/80 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-7">
-          <Button variant="outline" onClick={props.onClose}>
+        <DialogFooter className="shrink-0">
+          <DialogClose render={<Button variant="outline" />}>
             {t("common.cancel")}
-          </Button>
-          <Button
-            onClick={props.onClose}
+          </DialogClose>
+          <DialogClose
+            render={
+              <Button
+                disabled={status === "checking"}
+              />
+            }
             disabled={status === "checking"}
           >
             {status === "connected" ? t("chrome_setup.done") : t("chrome_setup.close")}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

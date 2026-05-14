@@ -1,11 +1,20 @@
 /** @jsxImportSource react */
 import { useId, useReducer } from "react";
-import { Loader2, Plus, X } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
-import type { McpDirectoryInfo } from "../../../../app/constants";
-import { t } from "../../../../i18n";
+import type { McpDirectoryInfo } from "@/app/constants";
+import { t } from "@/i18n";
 
 export type AddMcpModalProps = {
   open: boolean;
@@ -111,40 +120,24 @@ export function AddMcpModal(props: AddMcpModalProps) {
     handleClose();
   };
 
-  if (!props.open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
-        aria-label={t("common.close")}
-        onClick={handleClose}
-      />
-      <div
-        className="relative w-full max-w-lg bg-gray-2 border border-gray-6 rounded-2xl shadow-2xl overflow-hidden"
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-6">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-12">
-              {t("mcp.add_modal_title")}
-            </h2>
-            <p className="text-sm text-gray-11">
-              {t("mcp.add_modal_subtitle")}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
-            onClick={handleClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {t("mcp.add_modal_title")}
+          </DialogTitle>
+          <DialogDescription>
+            {t("mcp.add_modal_subtitle")}
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
           <TextInput
             label={t("mcp.server_name")}
             placeholder={t("mcp.server_name_placeholder")}
@@ -243,27 +236,26 @@ export function AddMcpModal(props: AddMcpModalProps) {
           ) : null}
         </div>
 
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-6 bg-gray-2/50">
-          <Button
-            variant="outline"
-            onClick={handleClose}
+        <DialogFooter className="shrink-0">
+          <DialogClose
+            render={<Button variant="outline" disabled={state.submitting} />}
             disabled={state.submitting}
           >
             {t("mcp.auth.cancel")}
-          </Button>
+          </DialogClose>
           <Button
             onClick={() => void handleSubmit()}
             disabled={props.busy || state.submitting}
           >
             {props.busy || state.submitting ? (
-              <Loader2 size={16} className="animate-spin" />
+              <Loader2 data-icon="inline-start" className="animate-spin" />
             ) : (
-              <Plus size={16} />
+              <Plus data-icon="inline-start" />
             )}
             {t("mcp.add_server_button")}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

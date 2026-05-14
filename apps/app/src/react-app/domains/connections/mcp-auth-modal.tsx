@@ -1,14 +1,23 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCcw } from "lucide-react";
 
-import type { McpDirectoryInfo } from "../../../app/constants";
-import { openDesktopUrl, opencodeMcpAuth } from "../../../app/lib/desktop";
-import { unwrap } from "../../../app/lib/opencode";
-import { validateMcpServerName } from "../../../app/mcp";
-import type { Client } from "../../../app/types";
-import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
-import { t } from "../../../i18n";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { McpDirectoryInfo } from "@/app/constants";
+import { openDesktopUrl, opencodeMcpAuth } from "@/app/lib/desktop";
+import { unwrap } from "@/app/lib/opencode";
+import { validateMcpServerName } from "@/app/mcp";
+import type { Client } from "@/app/types";
+import { isDesktopRuntime, normalizeDirectoryPath } from "@/app/utils";
+import { t } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 
@@ -580,38 +589,26 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setStatusChecking(false);
   };
 
-  if (!props.open) return null;
-
   const isBusy = loading || statusChecking || manualAuthBusy;
   const isPreparingReload = awaitingReload || reloadStarting;
   const serverName = props.entry?.name ?? "MCP Server";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button type="button" className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" aria-label={t("common.close")} onClick={handleClose} />
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {t("mcp.auth.connect_server", { server: serverName })}
+          </DialogTitle>
+          <DialogDescription>{t("mcp.auth.open_browser_signin")}</DialogDescription>
+        </DialogHeader>
 
-      <div
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="flex items-center justify-between border-b border-gray-6 px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-12">
-              {t("mcp.auth.connect_server", { server: serverName })}
-            </h2>
-            <p className="text-sm text-gray-11">{t("mcp.auth.open_browser_signin")}</p>
-          </div>
-          <button
-            type="button"
-            className="rounded-lg p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
-            onClick={handleClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-5 px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
           {isBusy ? (
             <div className="space-y-4 rounded-xl border border-gray-6/60 bg-gray-1/40 px-5 py-6 text-center">
               <div className="flex items-center justify-center">
@@ -854,25 +851,25 @@ export function McpAuthModal(props: McpAuthModalProps) {
           ) : null}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/50 px-6 py-4">
+        <DialogFooter className="shrink-0">
           {alreadyConnected ? (
             <Button onClick={() => void handleComplete()}>
-              <CheckCircle2 size={16} />
+              <CheckCircle2 data-icon="inline-start" />
               {t("mcp.auth.done")}
             </Button>
           ) : (
             <>
-              <Button variant="outline" onClick={handleClose}>
+              <DialogClose render={<Button variant="outline" />}>
                 {t("mcp.auth.cancel")}
-              </Button>
+              </DialogClose>
               <Button onClick={() => void handleComplete()}>
-                <CheckCircle2 size={16} />
+                <CheckCircle2 data-icon="inline-start" />
                 {t("mcp.auth.im_done")}
               </Button>
             </>
           )}
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

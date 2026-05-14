@@ -5,12 +5,11 @@ import {
   useReducer,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MutableRefObject,
   type RefObject,
 } from "react";
 import { Search, X } from "lucide-react";
 
-import { t } from "../../i18n";
+import { t } from "@/i18n";
 
 export type PaletteItem = {
   id: string;

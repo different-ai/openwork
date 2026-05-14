@@ -7,8 +7,18 @@ import {
   useRef,
   type SetStateAction,
 } from "react";
-import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-react";
+import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2 } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { t } from "../../../i18n";
 import {
   buildDenAuthUrl,
@@ -30,14 +40,7 @@ import {
 import { CreateWorkspaceSharedPanel } from "./create-workspace-shared-panel";
 import {
   modalBodyClass,
-  modalHeaderButtonClass,
-  modalHeaderClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
   pillGhostClass,
-  pillPrimaryClass,
   tagClass,
 } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
@@ -150,7 +153,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
-  const isInline = props.inline ?? false;
   const submitting = props.submitting ?? false;
   const remoteSubmitting = props.remoteSubmitting ?? false;
   const workerSubmitting = props.workerSubmitting ?? false;
@@ -198,7 +200,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   }, [workerSearch, workers]);
 
   const modalWidthClass =
-    screen === "shared" ? "max-w-[640px]" : "max-w-[560px]";
+    screen === "shared"
+      ? "max-w-2xl sm:max-w-2xl"
+      : "max-w-xl sm:max-w-xl";
 
   const headerTitle = (() => {
     switch (screen) {
@@ -236,7 +240,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
 
   // React to Den session changes.
   useEffect(() => {
-    if (!props.open && !isInline) return;
+    if (!props.open) return;
     const handler = () => {
       const settings = readDenSettings();
       setCloudSettings(settings);
@@ -251,7 +255,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         "openwork-den-session-updated",
         handler as EventListener,
       );
-  }, [isInline, props.open]);
+  }, [props.open]);
 
   // Tick the "elapsed" clock while submitting.
   useEffect(() => {
@@ -437,219 +441,207 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     props.onConfirm(preset, selectedFolder);
   };
 
-  if (!props.open && !isInline) {
-    return null;
-  }
-
-  const content = (
-    <div className={`${modalShellClass} ${modalWidthClass}`}>
-      <div className={modalHeaderClass}>
-        <div className="flex min-w-0 items-start gap-3">
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton={showClose}
+        className={`flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden ${modalWidthClass}`}
+      >
+        <DialogHeader className="flex-row">
           {screen !== "chooser" ? (
-            <button
-              type="button"
+            <Button
               onClick={() => setScreen("chooser")}
               disabled={submitting || remoteSubmitting}
-              className={modalHeaderButtonClass}
+              variant="ghost"
+              size="icon"
               aria-label={t("dashboard.modal_back")}
             >
-              <ArrowLeft size={18} />
-            </button>
+              <ArrowLeft className="size-4" />
+            </Button>
           ) : null}
-          <div className="min-w-0">
-            <h3 className={modalTitleClass}>{headerTitle}</h3>
-            <p className={modalSubtitleClass}>{headerSubtitle}</p>
+          <div className="min-w-0 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle>{headerTitle}</DialogTitle>
+            </div>
+            <DialogDescription>{headerSubtitle}</DialogDescription>
           </div>
-        </div>
-        {showClose ? (
-          <button
-            type="button"
-            onClick={props.onClose}
-            disabled={submitting || remoteSubmitting}
-            className={modalHeaderButtonClass}
-            aria-label={t("dashboard.modal_close")}
-          >
-            <X size={18} />
-          </button>
-        ) : null}
-      </div>
+        </DialogHeader>
 
-      {screen === "chooser" ? (
-        <div className={modalBodyClass}>
-          <div className="space-y-3">
-            <WorkspaceOptionCard
-              title={t("dashboard.create_local_workspace_title")}
-              description={
-                props.localDisabled
-                  ? props.localDisabledReason?.trim() ||
-                    t("dashboard.chooser_local_desc")
-                  : t("dashboard.chooser_local_desc")
-              }
-              icon={FolderPlus}
-              onClick={() => setScreen("local")}
-              disabled={props.localDisabled}
-              endAdornment={
-                props.localDisabled ? (
-                  <span className={tagClass}>
-                    {t("dashboard.desktop_badge")}
-                  </span>
-                ) : undefined
-              }
-            />
-            <WorkspaceOptionCard
-              title={t("dashboard.create_remote_custom_title")}
-              description={t("dashboard.chooser_remote_desc")}
-              icon={Globe}
-              onClick={() => setScreen("remote")}
-            />
-            <WorkspaceOptionCard
-              title={t("dashboard.create_shared_title")}
-              description={t("dashboard.chooser_shared_desc")}
-              icon={Cloud}
-              onClick={() => setScreen("shared")}
-            />
-
-            {props.onImportConfig ? (
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => props.onImportConfig?.()}
-                  disabled={props.importingConfig}
-                  className={pillGhostClass}
-                >
-                  {props.importingConfig ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" />
-                      {t("dashboard.importing")}
-                    </span>
-                  ) : (
-                    t("dashboard.import_config")
-                  )}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {screen === "local" ? (
-        <CreateWorkspaceLocalPanel
-          selectedFolder={selectedFolder}
-          hasSelectedFolder={hasSelectedFolder}
-          pickingFolder={pickingFolder}
-          onPickFolder={() => void handlePickFolder()}
-          submitting={submitting}
-          localError={localError}
-          onClose={props.onClose}
-          onSubmit={() => void handleLocalSubmit()}
-          confirmLabel={props.confirmLabel}
-          workerLabel={props.workerLabel}
-          onConfirmWorker={props.onConfirmWorker}
-          preset={preset}
-          workerSubmitting={workerSubmitting}
-          workerDisabled={workerDisabled}
-          workerDisabledReason={workerDisabledReason}
-          workerCtaLabel={props.workerCtaLabel}
-          workerCtaDescription={props.workerCtaDescription}
-          onWorkerCta={props.onWorkerCta}
-          workerRetryLabel={props.workerRetryLabel}
-          onWorkerRetry={props.onWorkerRetry}
-          workerDebugLines={workerDebugLines}
-          progress={progress}
-          elapsedSeconds={elapsedSeconds}
-          showProgressDetails={showProgressDetails}
-          onToggleProgressDetails={() =>
-            setShowProgressDetails((prev) => !prev)
-          }
-        />
-      ) : null}
-
-      {screen === "remote" ? (
-        <>
+        {screen === "chooser" ? (
           <div className={modalBodyClass}>
-            <RemoteWorkspaceFields
-              hostUrl={remoteUrl}
-              onHostUrlInput={setRemoteUrl}
-              token={remoteToken}
-              tokenVisible={remoteTokenVisible}
-              onTokenInput={setRemoteToken}
-              onToggleTokenVisible={() =>
-                setRemoteTokenVisible((prev) => !prev)
-              }
-              displayName={remoteDisplayName}
-              onDisplayNameInput={setRemoteDisplayName}
-              submitting={remoteSubmitting}
-              hostInputRef={remoteUrlRef}
-              title={t("dashboard.remote_server_details_title")}
-              description={t("dashboard.remote_server_details_hint")}
-            />
-          </div>
-          <div className="space-y-3 border-t border-dls-border px-6 py-5">
-            {remoteError ? (
-              <div className="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
-                {remoteError}
-              </div>
-            ) : null}
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                className={pillGhostClass}
-                onClick={props.onClose}
-                disabled={remoteSubmitting}
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                className={pillPrimaryClass}
-                disabled={!remoteUrl.trim() || remoteSubmitting}
-                onClick={() => void handleRemoteSubmit()}
-              >
-                {remoteSubmitting ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 size={16} className="animate-spin" />
-                    {t("dashboard.connecting")}
-                  </span>
-                ) : (
-                  t("dashboard.connect_remote_button")
-                )}
-              </button>
+            <div className="space-y-3">
+              <WorkspaceOptionCard
+                title={t("dashboard.create_local_workspace_title")}
+                description={
+                  props.localDisabled
+                    ? props.localDisabledReason?.trim() ||
+                      t("dashboard.chooser_local_desc")
+                    : t("dashboard.chooser_local_desc")
+                }
+                icon={FolderPlus}
+                onClick={() => setScreen("local")}
+                disabled={props.localDisabled}
+                endAdornment={
+                  props.localDisabled ? (
+                    <span className={tagClass}>
+                      {t("dashboard.desktop_badge")}
+                    </span>
+                  ) : undefined
+                }
+              />
+              <WorkspaceOptionCard
+                title={t("dashboard.create_remote_custom_title")}
+                description={t("dashboard.chooser_remote_desc")}
+                icon={Globe}
+                onClick={() => setScreen("remote")}
+              />
+              <WorkspaceOptionCard
+                title={t("dashboard.create_shared_title")}
+                description={t("dashboard.chooser_shared_desc")}
+                icon={Cloud}
+                onClick={() => setScreen("shared")}
+              />
+
+              {props.onImportConfig ? (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => props.onImportConfig?.()}
+                    disabled={props.importingConfig}
+                    className={pillGhostClass}
+                  >
+                    {props.importingConfig ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" />
+                        {t("dashboard.importing")}
+                      </span>
+                    ) : (
+                      t("dashboard.import_config")
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
-        </>
-      ) : null}
+        ) : null}
 
-      {screen === "shared" ? (
-        <CreateWorkspaceSharedPanel
-          signedIn={isSignedIn}
-          orgs={orgs}
-          activeOrgId={activeOrgId}
-          onActiveOrgChange={(orgId) => {
-            const nextOrg = orgs.find((org) => org.id === orgId) ?? null;
-            applyActiveOrg(nextOrg);
-          }}
-          orgsBusy={orgsBusy}
-          orgsError={orgsError}
-          workers={workers}
-          workersBusy={workersBusy}
-          workersError={workersError}
-          workerSearch={workerSearch}
-          onWorkerSearchInput={setWorkerSearch}
-          filteredWorkers={filteredWorkers}
-          openingWorkerId={openingWorkerId}
-          workerStatusMeta={(status) => workerStatusMeta(status)}
-          workerSecondaryLine={(worker) => workerSecondaryLine(worker)}
-          onOpenWorker={(worker) => void handleOpenWorker(worker)}
-          onOpenCloudSignIn={openCloudSignIn}
-          onRefreshWorkers={() => void refreshWorkers()}
-          onOpenCloudDashboard={openCloudDashboard}
-        />
-      ) : null}
-    </div>
-  );
+        {screen === "local" ? (
+          <CreateWorkspaceLocalPanel
+            selectedFolder={selectedFolder}
+            hasSelectedFolder={hasSelectedFolder}
+            pickingFolder={pickingFolder}
+            onPickFolder={() => void handlePickFolder()}
+            submitting={submitting}
+            localError={localError}
+            onClose={props.onClose}
+            onSubmit={() => void handleLocalSubmit()}
+            confirmLabel={props.confirmLabel}
+            workerLabel={props.workerLabel}
+            onConfirmWorker={props.onConfirmWorker}
+            preset={preset}
+            workerSubmitting={workerSubmitting}
+            workerDisabled={workerDisabled}
+            workerDisabledReason={workerDisabledReason}
+            workerCtaLabel={props.workerCtaLabel}
+            workerCtaDescription={props.workerCtaDescription}
+            onWorkerCta={props.onWorkerCta}
+            workerRetryLabel={props.workerRetryLabel}
+            onWorkerRetry={props.onWorkerRetry}
+            workerDebugLines={workerDebugLines}
+            progress={progress}
+            elapsedSeconds={elapsedSeconds}
+            showProgressDetails={showProgressDetails}
+            onToggleProgressDetails={() =>
+              setShowProgressDetails((prev) => !prev)
+            }
+          />
+        ) : null}
 
-  return (
-    <div className={isInline ? "w-full" : modalOverlayClass}>{content}</div>
+        {screen === "remote" ? (
+          <>
+            <div className={modalBodyClass}>
+              <RemoteWorkspaceFields
+                hostUrl={remoteUrl}
+                onHostUrlInput={setRemoteUrl}
+                token={remoteToken}
+                tokenVisible={remoteTokenVisible}
+                onTokenInput={setRemoteToken}
+                onToggleTokenVisible={() =>
+                  setRemoteTokenVisible((prev) => !prev)
+                }
+                displayName={remoteDisplayName}
+                onDisplayNameInput={setRemoteDisplayName}
+                submitting={remoteSubmitting}
+                hostInputRef={remoteUrlRef}
+                title={t("dashboard.remote_server_details_title")}
+                description={t("dashboard.remote_server_details_hint")}
+              />
+            </div>
+            <DialogFooter className="flex-col gap-3">
+              {remoteError ? (
+                <div className="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
+                  {remoteError}
+                </div>
+              ) : null}
+              <div className="flex justify-end gap-3">
+                <DialogClose
+                  disabled={remoteSubmitting}
+                  render={<Button variant="outline" disabled={remoteSubmitting} />}
+                >
+                  {t("common.cancel")}
+                </DialogClose>
+                <Button
+                  type="button"
+                  disabled={!remoteUrl.trim() || remoteSubmitting}
+                  onClick={() => void handleRemoteSubmit()}
+                >
+                  {remoteSubmitting ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={16} className="animate-spin" />
+                      {t("dashboard.connecting")}
+                    </span>
+                  ) : (
+                    t("dashboard.connect_remote_button")
+                  )}
+                </Button>
+              </div>
+            </DialogFooter>
+          </>
+        ) : null}
+
+        {screen === "shared" ? (
+          <CreateWorkspaceSharedPanel
+            signedIn={isSignedIn}
+            orgs={orgs}
+            activeOrgId={activeOrgId}
+            onActiveOrgChange={(orgId) => {
+              const nextOrg = orgs.find((org) => org.id === orgId) ?? null;
+              applyActiveOrg(nextOrg);
+            }}
+            orgsBusy={orgsBusy}
+            orgsError={orgsError}
+            workers={workers}
+            workersBusy={workersBusy}
+            workersError={workersError}
+            workerSearch={workerSearch}
+            onWorkerSearchInput={setWorkerSearch}
+            filteredWorkers={filteredWorkers}
+            openingWorkerId={openingWorkerId}
+            workerStatusMeta={(status) => workerStatusMeta(status)}
+            workerSecondaryLine={(worker) => workerSecondaryLine(worker)}
+            onOpenWorker={(worker) => void handleOpenWorker(worker)}
+            onOpenCloudSignIn={openCloudSignIn}
+            onRefreshWorkers={() => void refreshWorkers()}
+            onOpenCloudDashboard={openCloudDashboard}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

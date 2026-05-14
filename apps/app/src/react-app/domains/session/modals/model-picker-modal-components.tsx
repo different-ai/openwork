@@ -1,7 +1,17 @@
 /** @jsxImportSource react */
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
-import { CheckCircle2, Circle, Search, X } from "lucide-react";
+import { CheckCircle2, Circle, Search } from "lucide-react";
 
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
 import { modelEquals } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
@@ -63,10 +73,22 @@ export function ModelPickerDialog(props: {
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-      <div className="bg-dls-surface border border-dls-border w-full max-w-lg rounded-[24px] shadow-[var(--dls-shell-shadow)] overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
-        <div className="p-6 flex flex-col min-h-0">
-          <ModelPickerHeader target={props.target} onClose={props.onClose} />
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {t(props.target === "default" ? "model_picker.default_model_title" : "model_picker.chat_model_title")}
+          </DialogTitle>
+          <DialogDescription>
+            {t(props.target === "default" ? "model_picker.default_model_desc" : "model_picker.chat_model_desc")}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col">
           <ModelPickerSearch
             query={props.query}
             totalOptions={props.totalOptions}
@@ -88,43 +110,14 @@ export function ModelPickerDialog(props: {
             onOpenSettings={props.onOpenSettings}
             onClose={props.onClose}
           />
-          <div className="mt-5 flex justify-end shrink-0">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-full border border-dls-border px-4 py-2 text-[13px] font-medium text-dls-text transition-colors hover:bg-[var(--dls-hover)]"
-              onClick={() => props.onClose()}
-            >
-              {t("settings.done")}
-            </button>
-          </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function ModelPickerHeader(props: {
-  target: "default" | "session";
-  onClose: (options?: { restorePromptFocus?: boolean }) => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <h3 className="text-lg font-semibold text-gray-12">
-          {t(props.target === "default" ? "model_picker.default_model_title" : "model_picker.chat_model_title")}
-        </h3>
-        <p className="text-sm text-gray-11 mt-1">
-          {t(props.target === "default" ? "model_picker.default_model_desc" : "model_picker.chat_model_desc")}
-        </p>
-      </div>
-      <button
-        type="button"
-        className="inline-flex size-8 items-center justify-center rounded-full text-gray-10 transition-colors hover:bg-[var(--dls-hover)]"
-        onClick={() => props.onClose()}
-      >
-        <X size={16} />
-      </button>
-    </div>
+        <DialogFooter className="shrink-0">
+          <DialogClose render={<Button variant="outline" />}>
+            {t("settings.done")}
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -136,7 +129,7 @@ function ModelPickerSearch(props: {
   onSetQuery: (value: string) => void;
 }) {
   return (
-    <div className="mt-5">
+    <div className="mt-5 shrink-0">
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
         <input
@@ -172,7 +165,7 @@ function ModelPickerSections(props: {
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
 }) {
   return (
-    <div className="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
+    <div className="-mr-1 mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
       <ModelOptionsSection
         title={t("model_picker.recommended")}
         options={props.recommendedOptions}

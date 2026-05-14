@@ -1,8 +1,15 @@
 /** @jsxImportSource react */
-import { X } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { t } from "../../../../i18n";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { t } from "@/i18n";
 
 const RESET_CONFIRM_PLACEHOLDER = "{resetWord}";
 const RESET_CONFIRM_WORD = "RESET";
@@ -34,33 +41,24 @@ export function ResetModal(props: ResetModalProps) {
     );
   };
 
-  if (!props.open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gray-2 border border-gray-6/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-12">
-                {props.mode === "onboarding"
-                  ? t("settings.reset_onboarding_title")
-                  : t("settings.reset_app_data_title")}
-              </h3>
-              <p className="text-sm text-gray-11 mt-1">
-                {resetConfirmationHint()}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={props.onClose}
-              disabled={props.busy}
-              aria-label={t("settings.reset_cancel")}
-            >
-              <X />
-            </Button>
-          </div>
+    <AlertDialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <AlertDialogContent className="w-full max-w-xl overflow-hidden sm:max-w-xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {props.mode === "onboarding"
+              ? t("settings.reset_onboarding_title")
+              : t("settings.reset_app_data_title")}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {resetConfirmationHint()}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
 
           <div className="mt-6 space-y-4">
             <div className="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11">
@@ -90,26 +88,19 @@ export function ResetModal(props: ResetModalProps) {
             </label>
           </div>
 
-          <div className="mt-6 flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={props.onClose}
-              disabled={props.busy}
-            >
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={props.busy}>
               {t("settings.reset_cancel")}
-            </Button>
-            <Button
+            </AlertDialogCancel>
+            <AlertDialogAction
               variant="destructive"
-              size="sm"
               onClick={props.onConfirm}
               disabled={!props.canReset}
             >
               {t("settings.reset_confirm_button")}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
