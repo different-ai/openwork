@@ -115,7 +115,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "LLM Providers";
   }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "Inference";
+    return "OpenWork Models";
   }
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
@@ -177,15 +177,15 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     //   badge: "Alpha",
     // },
     {
+      href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
+      label: "OpenWork Models",
+      icon: Sparkles,
+      badge: "Beta",
+    },
+    {
       href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
       label: "LLM Providers",
       icon: Cpu,
-    },
-    {
-      href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
-      label: "Inference",
-      icon: Sparkles,
-      badge: "Beta",
     },
     // NOTE: Skill Hubs soft-disabled — uncomment to re-enable
     // {
