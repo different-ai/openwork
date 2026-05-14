@@ -112,7 +112,7 @@ export function InferenceScreen() {
       icon={Sparkles}
       badgeLabel="OpenWork Models"
       title="Inference"
-      description="Enable organization-managed OpenWork model aliases backed by the inference proxy. Each member gets their own provider access and usage rolls up to org limits."
+      description="OpenWork Models are hand picked to provide the best AI agent experience for your work"
       colors={["#0f172a", "#3155ff", "#22d3ee", "#f8fafc"]}
     >
       <div className="grid gap-4">
@@ -131,37 +131,11 @@ export function InferenceScreen() {
               <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950">
                 Enable OpenWork Models
               </h2>
-              <p className="mt-2 text-[14px] leading-6 text-gray-500">
-                Adds the OpenWork provider to each active member. Enabling starts Stripe Checkout first when the workspace does not have an active OpenWork Models subscription.
-              </p>
             </div>
             <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
               {enabled ? "Disable" : "Enable"}
             </DenButton>
           </div>
-        </section>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-gray-200 bg-white p-4">
-            <p className="text-[12px] text-gray-500">Tier</p>
-            <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.tier ?? "tier1"}</p>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-4">
-            <p className="text-[12px] text-gray-500">Members counted</p>
-            <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.memberCount ?? orgContext?.members.length ?? 0}</p>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-4">
-            <p className="text-[12px] text-gray-500">Upstream key</p>
-            <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.upstreamProviderConfigured ? "Configured" : "Missing"}</p>
-          </div>
-          <div className="rounded-2xl border border-gray-200 bg-white p-4">
-            <p className="text-[12px] text-gray-500">Subscription</p>
-            <p className="mt-1 text-[18px] font-medium text-gray-950">{status?.subscribed ? "Active" : "Required"}</p>
-          </div>
-        </div>
-
-        <section className="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-[13px] text-gray-600">
-          Proxy base URL: <span className="font-mono text-gray-900">{status?.proxyBaseUrl || "Not configured"}</span>
         </section>
       </div>
     </DashboardPageTemplate>
