@@ -228,7 +228,7 @@ export function InferenceScreen() {
       icon={Sparkles}
       badgeLabel="Beta"
       title="OpenWork Models"
-      description="OpenWork Models are hand picked to provide the best AI agent experience for your work"
+      description="Frontier intelligence, hand picked for your team's most ambitious work."
       colors={["#0f172a", "#3155ff", "#22d3ee", "#f8fafc"]}
     >
       <div className="grid gap-4">
