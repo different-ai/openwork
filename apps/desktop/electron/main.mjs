@@ -2494,12 +2494,10 @@ if (!app.requestSingleInstanceLock()) {
       flushPendingDeepLinks();
     });
 
-    // Kick the packaged-only updater after the window is up so the user
-    // sees a working app first. This is a no-op in dev.
-    void ensureAutoUpdater().then((updater) => {
-      if (!updater) return;
-      void updater.checkForUpdates().catch(() => undefined);
-    });
+    // Initialize the packaged updater after the window is up so the user sees
+    // a working app first. Renderer-owned checks pass the selected release
+    // channel explicitly, avoiding stale stable-feed results for alpha users.
+    void ensureAutoUpdater();
   });
 
   app.on("activate", async () => {

@@ -228,7 +228,10 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:check", async () => {
+  ipcMain.handle("openwork:updater:check", async (_event, rawChannel) => {
+    if (rawChannel !== undefined) {
+      await writeElectronUpdaterChannel(app, rawChannel);
+    }
     const updater = await ensureAutoUpdater();
     const channelState = updater
       ? await applyElectronUpdaterFeed(app, updater)
