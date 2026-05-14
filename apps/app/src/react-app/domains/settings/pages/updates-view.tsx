@@ -140,7 +140,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
-                      onClick={props.checkForUpdates}
+                      onClick={() => void props.checkForUpdates()}
                       disabled={props.busy || updateState === "checking" || updateState === "downloading"}
                     >
                       {updateState === "checking" ? <Spinner className="size-4" /> : null}
@@ -150,7 +150,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                     {updateState === "available" ? (
                       <Button
                         variant="secondary"
-                        onClick={props.downloadUpdate}
+                        onClick={() => void props.downloadUpdate()}
                         disabled={props.busy}
                       >
                         {t("settings.update_download_button")}
@@ -160,7 +160,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                     {updateState === "ready" ? (
                       <Button
                         variant="secondary"
-                        onClick={props.installUpdateAndRestart}
+                        onClick={() => void props.installUpdateAndRestart()}
                         disabled={props.busy || props.anyActiveRuns}
                         title={updateRestartBlockedMessage ?? ""}
                       >
