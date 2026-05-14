@@ -448,6 +448,14 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
       : actionKind === "sync"
         ? t("den.syncing")
         : t("den.removing");
+  const source = row.provider?.source === "custom" ? "custom" : "managed";
+  const modelCount = row.provider?.models.length ?? 0;
+  const cloudProviderDetail = modelCount === 0
+    ? `All Models · ${source} provider`
+    : t("den.cloud_provider_detail", { count: modelCount, source });
+  const cloudProviderSyncDetail = modelCount === 0
+    ? `Cloud provider changed. Sync the All Models ${source} config into opencode.jsonc.`
+    : t("den.cloud_provider_sync_detail", { count: modelCount, source });
 
   return (
     <SettingsListItem>
@@ -473,14 +481,8 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
                   providerId: row.imported?.providerId ?? row.name,
                 })
               : row.status === "out_of_sync"
-                ? t("den.cloud_provider_sync_detail", {
-                    count: row.provider?.models.length ?? 0,
-                    source: row.provider?.source === "custom" ? "custom" : "managed",
-                  })
-                : t("den.cloud_provider_detail", {
-                    count: row.provider?.models.length ?? 0,
-                    source: row.provider?.source === "custom" ? "custom" : "managed",
-                  }),
+                ? cloudProviderSyncDetail
+                : cloudProviderDetail,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
       </SettingsListItemContent>

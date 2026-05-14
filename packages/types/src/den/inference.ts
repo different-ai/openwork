@@ -54,15 +54,33 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
 // For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
 
 export const INFERENCE_MODEL_ALIASES = {
-  olive: {
-    upstreamModel: "openai/gpt-4o-mini",
-    displayName: "OpenWork OliveInf",
+  "tencent/hy3-preview": {
+    upstreamModel: "tencent/hy3-preview",
+    displayName: "OpenWork: Hy3 Preview",
     enabled: true,
     usageFactor: 1,
   },
-  sarah: {
+  "anthropic/claude-opus-4.7": {
     upstreamModel: "anthropic/claude-opus-4.7",
-    displayName: "OpenWork Sarah",
+    displayName: "OpenWork: Claude Opus 4.7",
+    enabled: true,
+    usageFactor: 0.75,
+  },
+  "moonshotai/kimi-k2.6": {
+    upstreamModel: "moonshotai/kimi-k2.6",
+    displayName: "OpenWork: Kimi K2.6",
+    enabled: true,
+    usageFactor: 1,
+  },
+  "deepseek/deepseek-v4-flash": {
+    upstreamModel: "deepseek/deepseek-v4-flash",
+    displayName: "OpenWork: DeepSeek V4 Flash",
+    enabled: true,
+    usageFactor: 1,
+  },
+  "google/gemini-3-flash-preview": {
+    upstreamModel: "google/gemini-3-flash-preview",
+    displayName: "OpenWork: Gemini 3 Flash Preview",
     enabled: true,
     usageFactor: 1,
   },

@@ -187,7 +187,7 @@ export function OrgOnboardingPage() {
                   icon={<Cloud size={16} />}
                   title="AI Providers"
                   description="Models you can use in your workspace."
-                  count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
+                  count={totalModels > 0 ? `${totalModels} model${totalModels === 1 ? "" : "s"}` : null}
                 >
                   {providers.map((provider) => (
                     <ProviderCard
@@ -294,7 +294,7 @@ function Section({
   icon: React.ReactNode;
   title: string;
   description: string;
-  count: string;
+  count: string | null;
   children: React.ReactNode;
 }) {
   return (
@@ -303,7 +303,7 @@ function Section({
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-dls-secondary">
           {icon}
           {title}
-          <span className="text-dls-secondary/60">{count}</span>
+          {count ? <span className="text-dls-secondary/60">{count}</span> : null}
         </div>
         <div className="mt-0.5 pl-6 text-xs text-dls-secondary/80">{description}</div>
       </div>
@@ -360,11 +360,13 @@ function ProviderCard({
           <div className="text-sm font-medium text-dls-text">
             {resolveProviderDisplayName(provider.name || provider.providerId)}
           </div>
-          <div className="mt-0.5 text-xs text-dls-secondary">
-            {provider.models.length === 1
-              ? "1 model"
-              : `${provider.models.length} models`}
-          </div>
+          {provider.models.length > 0 ? (
+            <div className="mt-0.5 text-xs text-dls-secondary">
+              {provider.models.length === 1
+                ? "1 model"
+                : `${provider.models.length} models`}
+            </div>
+          ) : null}
         </div>
         {firstModel ? (
           <button

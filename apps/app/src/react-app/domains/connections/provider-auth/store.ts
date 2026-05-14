@@ -157,8 +157,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     a.length === b.length && a.every((value, index) => value === b[index]);
 
   const getCloudManagedProviderId = (
-    provider: Pick<DenOrgLlmProvider, "id" | "providerId">,
-  ) => provider.id.trim();
+    provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source">,
+  ) => provider.source === "openwork" ? "openwork" : provider.id.trim();
 
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
