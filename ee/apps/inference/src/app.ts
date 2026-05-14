@@ -1,4 +1,7 @@
 import "./load-env.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
@@ -6,7 +9,10 @@ import { z } from "zod";
 import { env } from "./env.js";
 import { registerProxyRoutes } from "./proxy.js";
 import { registerWebhookRoutes } from "./webhooks.js";
-import models from "./models.json";
+
+const srcDir = path.dirname(fileURLToPath(import.meta.url));
+const modelsApiJsonPath = path.resolve(srcDir, "..", "public", "models", "api.json");
+const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
 
 const app = new Hono();
 
@@ -32,9 +38,15 @@ if (env.corsOrigins.length > 0) {
 }
 
 app.get("/health", (c) => c.json({ ok: true, service: "inference" }));
-app.get("/models/api.json", (c) => {
-  return c.json(models);
-});
+
+if (!isVercelRuntime) {
+  app.get("/models/api.json", async (c) => {
+    const body = await readFile(modelsApiJsonPath, "utf8");
+    c.header("Content-Type", "application/json; charset=utf-8");
+    c.header("Cache-Control", "no-store");
+    return c.body(body);
+  });
+}
 
 registerProxyRoutes(app);
 registerWebhookRoutes(app);

@@ -1,0 +1,74 @@
+{
+  "openwork": {
+    "id": "openwork",
+    "env": ["OPENWORK_API_KEY"],
+    "npm": "@openrouter/ai-sdk-provider",
+    "name": "OpenWork Clarity",
+    "api": "https://inference.openworklabs.com/api/v1",
+    "models": {
+      "olive": {
+        "id": "olive",
+        "name": "Olive 40 Mini",
+        "family": "olive",
+        "attachment": true,
+        "reasoning": false,
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "knowledge": "2023-09",
+        "release_date": "2024-07-18",
+        "last_updated": "2024-07-18",
+        "modalities": {
+          "input": ["text", "image", "pdf"],
+          "output": ["text"]
+        },
+        "open_weights": false,
+        "limit": {
+          "context": 128000,
+          "output": 16384
+        }
+      },
+      "sarah": {
+        "id": "sarah",
+        "name": "Sarah 4.7",
+        "family": "sarah",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": false,
+        "knowledge": "2026-01-31",
+        "release_date": "2026-04-16",
+        "last_updated": "2026-04-16",
+        "modalities": {
+          "input": ["text", "image", "pdf"],
+          "output": ["text"]
+        },
+        "open_weights": false,
+        "limit": {
+          "context": 1000000,
+          "output": 128000
+        },
+        "experimental": {
+          "modes": {
+            "fast": {
+              "cost": {
+                "input": 30,
+                "output": 150,
+                "cache_read": 3,
+                "cache_write": 37.5
+              },
+              "provider": {
+                "body": {
+                  "speed": "fast"
+                },
+                "headers": {
+                  "anthropic-beta": "fast-mode-2026-02-01"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
