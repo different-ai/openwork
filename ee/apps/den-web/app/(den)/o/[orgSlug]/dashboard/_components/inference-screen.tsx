@@ -226,8 +226,8 @@ export function InferenceScreen() {
   return (
     <DashboardPageTemplate
       icon={Sparkles}
-      badgeLabel="OpenWork Models"
-      title="Inference"
+      badgeLabel="Beta"
+      title="OpenWork Models"
       description="OpenWork Models are hand picked to provide the best AI agent experience for your work"
       colors={["#0f172a", "#3155ff", "#22d3ee", "#f8fafc"]}
     >
