@@ -105,6 +105,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
   const oauthAutoPollRef = useRef<number | null>(null);
+  const oauthAutoBusyRef = useRef(false);
   const oauthCodeCopiedResetRef = useRef<number | null>(null);
   const autoOpenedPreferredProviderIdRef = useRef<string | null>(null);
 
@@ -354,6 +355,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isActiveProviderConnected =
     !!activeProviderId && (props.connectedProviderIds ?? []).includes(activeProviderId);
 
+  const closeConnectedOauthView = () => {
+    stopOauthAutoPolling();
+    stopProviderPolling();
+    handleClose();
+  };
+
   const pollProviders = async () => {
     const id = activeProviderId;
     if (!id || pollingBusy) return;
@@ -364,7 +371,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       setPollingBusy(false);
     }
     if ((props.connectedProviderIds ?? []).includes(id)) {
-      handleClose();
+      closeConnectedOauthView();
     }
   };
 
@@ -383,7 +390,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
     if (isActiveProviderConnected) {
-      handleClose();
+      closeConnectedOauthView();
       return;
     }
     startProviderPolling();
@@ -433,14 +440,20 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const attemptOauthAutoCompletion = async () => {
     const session = oauthSession;
-    if (!session || oauthAutoBusy) return;
+    if (!session || oauthAutoBusyRef.current) return;
+    oauthAutoBusyRef.current = true;
     setOauthAutoBusy(true);
     try {
-      const result = await submitOauth(session.providerId, session.methodIndex);
+      const result = await submitOauth(
+        session.providerId,
+        session.methodIndex,
+        oauthDisplayCode || undefined,
+      );
       if (result?.connected) {
-        stopOauthAutoPolling();
+        closeConnectedOauthView();
       }
     } finally {
+      oauthAutoBusyRef.current = false;
       setOauthAutoBusy(false);
     }
   };
