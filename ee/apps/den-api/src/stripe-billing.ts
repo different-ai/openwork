@@ -41,15 +41,6 @@ function requireInferencePriceId() {
   return env.stripe.inferencePriceId
 }
 
-async function requireInferenceUsdPriceId() {
-  const priceId = requireInferencePriceId()
-  const price = await stripe().prices.retrieve(priceId)
-  if (price.currency.toLowerCase() !== "usd") {
-    throw new Error("stripe_inference_price_must_be_usd")
-  }
-  return price.id
-}
-
 function fromUnixSeconds(value: number | null | undefined) {
   return typeof value === "number" ? new Date(value * 1000) : null
 }
@@ -208,7 +199,7 @@ export async function createInferenceCheckoutSession(input: {
   successUrl: string
   cancelUrl: string
 }) {
-  const priceId = await requireInferenceUsdPriceId()
+  const priceId = requireInferencePriceId()
   const quantity = Math.max(1, await activeMemberCount(input.organizationId))
   const customer = await ensureStripeCustomer(input)
   return stripe().checkout.sessions.create({
