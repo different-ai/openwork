@@ -13,7 +13,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
-  INFERENCE_MODEL_ALIASES,
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
   INFERENCE_WINDOW_DURATIONS_MS,
@@ -108,23 +107,6 @@ function buildOpenWorkProviderConfig() {
   }
 }
 
-function buildOpenWorkModelRows(llmProviderId: DenTypeId<"llmProvider">, now: Date) {
-  return Object.entries(INFERENCE_MODEL_ALIASES)
-    .filter(([, model]) => model.enabled)
-    .map(([alias, model]) => ({
-      id: createDenTypeId("llmProviderModel"),
-      llmProviderId,
-      modelId: `${OPENWORK_PROVIDER_ID}/${alias}`,
-      name: model.displayName,
-      modelConfig: {
-        id: `${OPENWORK_PROVIDER_ID}/${alias}`,
-        name: model.displayName,
-        limit: model.limit,
-      },
-      createdAt: now,
-    }))
-}
-
 async function revokeMemberInferenceKeys(memberId: MemberId) {
   await db
     .update(InferenceKeyTable)
@@ -212,7 +194,6 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
       })
     }
 
-    await tx.insert(LlmProviderModelTable).values(buildOpenWorkModelRows(providerId, now))
     await tx.insert(LlmProviderAccessTable).values({
       id: createDenTypeId("llmProviderAccess"),
       llmProviderId: providerId,
@@ -301,21 +282,18 @@ export async function syncInferenceAfterMemberChange(input: {
 
 async function syncInferenceLimitPolicies(input: { organizationId: OrgId; tier: InferenceTier; memberCount: number }) {
   const now = new Date()
-  for (const [windowType, baseLimit] of Object.entries(INFERENCE_TIER_LIMITS[input.tier])) {
-    const limit = baseLimit * input.memberCount
+  for (const windowType of Object.keys(INFERENCE_TIER_LIMITS[input.tier])) {
     await db
       .insert(InferenceOrgLimitPolicyTable)
       .values({
         id: createDenTypeId("inferenceOrgLimitPolicy"),
         organization_id: input.organizationId,
         window_type: windowType as keyof typeof INFERENCE_TIER_LIMITS[InferenceTier],
-        limit_amount: limit,
         reset_strategy: INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE[windowType as keyof typeof INFERENCE_TIER_LIMITS[InferenceTier]],
         anchor_at: now,
       })
       .onDuplicateKeyUpdate({
         set: {
-          limit_amount: limit,
           reset_strategy: INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE[windowType as keyof typeof INFERENCE_TIER_LIMITS[InferenceTier]],
         },
       })
@@ -328,12 +306,12 @@ async function syncInferenceLimitPolicies(input: { organizationId: OrgId; tier: 
       resetStrategy: InferenceOrgLimitPolicyTable.reset_strategy,
       anchorAt: InferenceOrgLimitPolicyTable.anchor_at,
       currentBucketId: InferenceOrgLimitPolicyTable.current_bucket_id,
-      limitAmount: InferenceOrgLimitPolicyTable.limit_amount,
     })
     .from(InferenceOrgLimitPolicyTable)
     .where(eq(InferenceOrgLimitPolicyTable.organization_id, input.organizationId))
 
   for (const policy of policies) {
+    const limitAmount = INFERENCE_TIER_LIMITS[input.tier][policy.windowType] * input.memberCount
     const currentBucket = policy.currentBucketId
       ? (await db.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, policy.currentBucketId)).limit(1))[0]
       : null
@@ -341,7 +319,7 @@ async function syncInferenceLimitPolicies(input: { organizationId: OrgId; tier: 
     if (currentBucket && currentBucket.window_start_at <= now && currentBucket.window_end_at > now) {
       await db
         .update(InferenceOrgUsageBucketTable)
-        .set({ limit_amount: policy.limitAmount })
+        .set({ limit_amount: limitAmount })
         .where(eq(InferenceOrgUsageBucketTable.id, currentBucket.id))
       continue
     }
@@ -361,7 +339,7 @@ async function syncInferenceLimitPolicies(input: { organizationId: OrgId; tier: 
       policy_id: policy.id,
       window_start_at: window.start,
       window_end_at: window.end,
-      limit_amount: policy.limitAmount,
+      limit_amount: limitAmount,
       used_amount: 0,
     })
     await db

@@ -7,14 +7,7 @@ export type ModelCatalogEntry = {
   upstreamModel: string
   displayName: string
   enabled: boolean
-  limit: {
-    context: number
-    output: number
-  }
-  usageUnitsPerMillionTokens: {
-    input: number
-    output: number
-  }
+  usageFactor: number
 }
 
 const models: ModelCatalogEntry[] = Object.entries(INFERENCE_MODEL_ALIASES).map(([alias, model]) => ({
@@ -22,8 +15,7 @@ const models: ModelCatalogEntry[] = Object.entries(INFERENCE_MODEL_ALIASES).map(
   upstreamModel: model.upstreamModel,
   displayName: model.displayName,
   enabled: model.enabled,
-  limit: model.limit,
-  usageUnitsPerMillionTokens: model.usageUnitsPerMillionTokens,
+  usageFactor: model.usageFactor,
 }))
 
 const enabledModels = models.filter((model) => model.enabled)

@@ -42,7 +42,6 @@ export const InferenceOrgLimitPolicyTable = mysqlTable(
     id: denTypeIdColumn("inferenceOrgLimitPolicy", "id").notNull().primaryKey(),
     organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
     window_type: mysqlEnum("window_type", INFERENCE_WINDOW_TYPES).notNull(),
-    limit_amount: bigint("limit_amount", { mode: "number" }).notNull(),
     reset_strategy: mysqlEnum("reset_strategy", INFERENCE_RESET_STRATEGIES).notNull(),
     anchor_at: timestamp("anchor_at", { fsp: 3 }),
     current_bucket_id: denTypeIdColumn("inferenceOrgUsageBucket", "current_bucket_id"),

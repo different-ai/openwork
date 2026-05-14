@@ -3,6 +3,7 @@ import type { Hono } from "hono"
 import { InferenceKeyTable, InferenceUsageLedgerBucketChargeTable, InferenceUsageLedgerEntryTable, InferenceOrgUsageBucketTable } from "@openwork-ee/den-db"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { constantTimeEquals } from "./keys.js"
@@ -19,8 +20,8 @@ type ParsedSpan = {
   costAmount: number
   occurredAt: Date
   upstreamModel: string
-  inputTokens: number
-  outputTokens: number
+  inputCost: number
+  outputCost: number
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -70,12 +71,10 @@ function numberAttr(attrs: JsonRecord, keys: string[]) {
   return null
 }
 
-function usageUnitsForModel(input: { upstreamModel: string; inputTokens: number; outputTokens: number }) {
+function usageUnitsForModel(input: { upstreamModel: string; inputCost: number; outputCost: number }) {
   const model = resolveModelByUpstreamModel(input.upstreamModel)
   if (!model) return null
-  const inputUnits = input.inputTokens * model.usageUnitsPerMillionTokens.input
-  const outputUnits = input.outputTokens * model.usageUnitsPerMillionTokens.output
-  return Math.max(1, Math.ceil((inputUnits + outputUnits) / 1_000_000))
+  return Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
 }
 
 function timeFromSpan(span: JsonRecord) {
@@ -92,13 +91,13 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
   const openworkRequestId = stringAttr(attrs, ["trace.metadata.openwork_request_id", "trace.openwork_request_id", "metadata.openwork_request_id", "openwork_request_id", "trace_id"])
     ?? (typeof span.traceId === "string" ? span.traceId : null)
   const upstreamModel = stringAttr(attrs, ["gen_ai.request.model", "gen_ai.response.model"])
-  const inputTokens = numberAttr(attrs, ["gen_ai.usage.input_tokens"])
-  const outputTokens = numberAttr(attrs, ["gen_ai.usage.output_tokens"])
-  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !upstreamModel || inputTokens === null || outputTokens === null) {
+  const inputCost = numberAttr(attrs, ["gen_ai.usage.input_cost"])
+  const outputCost = numberAttr(attrs, ["gen_ai.usage.output_cost"])
+  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !upstreamModel || inputCost === null || outputCost === null) {
     return null
   }
 
-  const costAmount = usageUnitsForModel({ upstreamModel, inputTokens, outputTokens })
+  const costAmount = usageUnitsForModel({ upstreamModel, inputCost, outputCost })
   if (costAmount === null) {
     console.warn("[openrouter-webhook] skipped span for unknown priced model", { upstreamModel })
     return null
@@ -112,8 +111,8 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
     costAmount,
     occurredAt: timeFromSpan(span),
     upstreamModel,
-    inputTokens,
-    outputTokens,
+    inputCost,
+    outputCost,
   }
 }
 
@@ -196,7 +195,11 @@ async function ingestSpan(span: ParsedSpan) {
   if (!entry) return
 
   await db.transaction(async (tx) => {
-    for (const bucketId of Object.values(limits.bucketIds).filter((id): id is DenTypeId<"inferenceOrgUsageBucket"> => Boolean(id))) {
+    const bucketLimits = limits.bucketLimits as Record<string, number | undefined>
+    for (const [windowType, bucketId] of Object.entries(limits.bucketIds)) {
+      if (!bucketId) continue
+      const limitAmount = bucketLimits[windowType]
+      if (limitAmount === undefined) continue
       const [charge] = await tx.select({ id: InferenceUsageLedgerBucketChargeTable.id })
         .from(InferenceUsageLedgerBucketChargeTable)
         .where(and(
@@ -215,6 +218,7 @@ async function ingestSpan(span: ParsedSpan) {
         amount: span.costAmount,
       })
       await tx.update(InferenceOrgUsageBucketTable).set({
+        limit_amount: limitAmount,
         used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${span.costAmount}`,
       }).where(eq(InferenceOrgUsageBucketTable.id, bucketId))
     }

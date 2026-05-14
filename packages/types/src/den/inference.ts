@@ -1,3 +1,5 @@
+export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
+
 export const INFERENCE_WINDOW_TYPES = [
   "five_hour",
   "weekly",
@@ -13,14 +15,14 @@ export const INFERENCE_TIER_LIMITS: Record<
   Record<InferenceWindowType, number>
 > = {
   tier1: {
-    five_hour: 10_000_000,
-    weekly: 50_000_000,
-    monthly: 100_000_000,
+    five_hour: 100_000_000,
+    weekly: 500_000_000,
+    monthly: 1_000_000_000,
   },
   tier2: {
-    five_hour: 15_000_000,
-    weekly: 75_000_000,
-    monthly: 150_000_000,
+    five_hour: 150_000_000,
+    weekly: 750_000_000,
+    monthly: 1_500_000_000,
   },
 } as const;
 
@@ -56,27 +58,13 @@ export const INFERENCE_MODEL_ALIASES = {
     upstreamModel: "openai/gpt-4o-mini",
     displayName: "OpenWork OliveInf",
     enabled: true,
-    limit: {
-      context: 200_000,
-      output: 65_536,
-    },
-    usageUnitsPerMillionTokens: {
-      input: 150_000,
-      output: 600_000,
-    },
+    usageFactor: 1,
   },
   sarah: {
-    upstreamModel: "anthropic/claude-opus-4-7",
+    upstreamModel: "anthropic/claude-opus-4.7",
     displayName: "OpenWork Sarah",
     enabled: true,
-    limit: {
-      context: 200_000,
-      output: 65_536,
-    },
-    usageUnitsPerMillionTokens: {
-      input: 3_000_000,
-      output: 15_000_000,
-    },
+    usageFactor: 1,
   },
 } as const;
 

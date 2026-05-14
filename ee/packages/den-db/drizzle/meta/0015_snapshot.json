@@ -1371,13 +1371,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "limit_amount": {
-          "name": "limit_amount",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "reset_strategy": {
           "name": "reset_strategy",
           "type": "enum('anchored','activity_based')",
