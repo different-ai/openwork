@@ -1,0 +1,161 @@
+apps/desktop/electron/browser-native-tools.mjs
+  s_4e5d0c2415ae47::t_842abf4040f638 37,46-50,58,183,185
+  s_4e5d0c2415ae47::t_dd627715363665 59-62
+  s_4e5d0c2415ae47::t_8474efefd6b001 197-201,206-214,231-241
+  s_4e5d0c2415ae47::t_82af779fb91e0e 769,773,776-786,792-823,825-830
+apps/desktop/electron/main.mjs
+  s_e8ab8f3d52fd83::t_e24342fa9d546f 21
+  s_4e5d0c2415ae47::t_845e035865a353 339-341,343-344,540-606,790-792,801-803,806-807,811-865,867-880,882-903,926-930,934-940,944,953,955-959,961,963,965,973-975,987-995
+  s_e8ab8f3d52fd83::t_d0e487f753bc1a 346-347,350-351
+  s_96fe6b50330841::t_51c727d246d287 348
+  s_3fdc5a4f0073e0::t_dea61a8a4a7dad 349,352-353,355-384,670-672,679,688,693-694,703,753,755,757-759
+  s_3fdc5a4f0073e0::t_d98c2a0446e867 354,700,746-747,750,756
+  s_e8ab8f3d52fd83::t_fd5803f242ad80 607-669,673-678,680,684-687,689-692,695-699,701-702,704-745,748-749,751-752,754,760-789
+  s_3fdc5a4f0073e0::t_0bdd11af24f5b3 681-683
+  s_65f89308ca176c::t_06dfa46f8438b7 797,2884-2887
+  s_4e5d0c2415ae47::t_9330708c6bd645 808
+  s_e8ab8f3d52fd83::t_434da1e3029d03 866,881,904-923
+  s_4e5d0c2415ae47::t_249e8c40064f77 924-925
+  s_4e5d0c2415ae47::t_98175645ca774e 931-933
+  s_e8ab8f3d52fd83::t_b11218a4efd4be 971
+  s_e8ab8f3d52fd83::t_817d4fefbc047d 983-986
+  s_4e5d0c2415ae47::t_5499f206c78f34 1010-1014,1020-1023
+  s_4e5d0c2415ae47::t_eac3e7e6c3007f 2842-2843,2846-2847,2850-2851,2853,2855-2858,2861-2864,2868-2870
+  s_4e5d0c2415ae47::t_3ce38630375d02 2866
+  s_e8ab8f3d52fd83::t_542f60c24f988f 2867,2871,2877-2883,2888-2889
+  s_3fdc5a4f0073e0::t_6878c0780471c8 2873-2876
+apps/app/overlay.html
+  s_e8ab8f3d52fd83::t_7c73eecf926440 1-27
+apps/app/src/app/lib/desktop.ts
+  s_4e5d0c2415ae47::t_0f4d33964c3694 90-109,111-131,134-151
+  s_4e5d0c2415ae47::t_5ad12dc6aaa278 110
+  s_e8ab8f3d52fd83::t_dc4e715a302cf4 132
+apps/app/src/react-app/domains/session/browser/browser-panel.tsx
+  s_e8ab8f3d52fd83::t_44cab68347d63a 3,101-120
+  s_886d8a5511d5ce::t_7c4e55946ae298 4,13,15-16,19,23-33,37-38,43-44,49-100,128-130,132-134,136-144
+  s_886d8a5511d5ce::t_dbeed3310faa09 6,398-400,455-457
+  s_6d2f08e089ec13::t_41ab6face326e8 7-11,436,451,453-454
+  s_6d2f08e089ec13::t_7e93fd747d2163 12,403-434
+  s_4e5d0c2415ae47::t_46678b97ae341c 121
+  s_886d8a5511d5ce::t_8b16d356266fff 172-175,177,179-180,196-204,211,264-267,270-271
+  s_e8ab8f3d52fd83::t_3970714ee3b3d2 176
+  s_e8ab8f3d52fd83::t_99ea5366daba1e 178,189-193,206-210,212-249,251-263
+  s_1d8f5e421a1100::t_d666d9ceab1e85 181-186,194-195
+  s_886d8a5511d5ce::t_3b3e4e137147c3 205
+  s_bdd565b78b4e0d::t_1e2d66a83fc1bd 250
+  s_886d8a5511d5ce::t_db8a32e133b51d 285,292,351-359,368,380-397,401-402
+  s_6d2f08e089ec13::t_48ba31a5d10e19 435,439,452
+  s_886d8a5511d5ce::t_5ac4e20a1471c4 437-438,440-450
+apps/desktop/electron/browser-mcp.mjs
+  s_4e5d0c2415ae47::t_d1e712c50120d5 251-255,260-268,276-279
+apps/desktop/electron/preload.mjs
+  s_65f89308ca176c::t_312f7565ddea00 33-48,157-159
+  s_4e5d0c2415ae47::t_a65ff8bb9cdb9d 108-109,111-113
+  s_4e5d0c2415ae47::t_48501161dab8a8 110
+  s_e8ab8f3d52fd83::t_c84b39bda38530 114
+apps/app/vite.config.ts
+  s_e8ab8f3d52fd83::t_e1ae3651773f24 104-109
+apps/desktop/electron/browser-content-preload.cjs
+  s_65f89308ca176c::t_8e12621013fbfd 1-17
+apps/app/src/overlay/index.tsx
+  s_e8ab8f3d52fd83::t_b372bd885df636 1-4,8-24,26-30,33-36,39-48,50-53,55,58-60,67-69,71-72,74-77,80-84,87-89,91-99,102-103,106-128
+  s_e8ab8f3d52fd83::t_0e64bdbf26bb01 5,7
+  s_1c8916eb185325::t_5bcb2dc072d226 6
+  s_3fdc5a4f0073e0::t_28fa62ce8d7e5e 25,100-101,104-105
+  s_96fe6b50330841::t_ded1202efcf16f 31-32,37-38,56,70,73,78-79,85-86,90
+  s_e8ab8f3d52fd83::t_c41375223f3a49 57,61-66
+apps/app/tsconfig.json
+  s_e8ab8f3d52fd83::t_d412a1bbf45504 26
+apps/desktop/electron/menu-overlay-preload.mjs
+  s_e8ab8f3d52fd83::t_9a499ecdc3d520 1-2,11,15,25-32
+  s_e8ab8f3d52fd83::t_8d11f34898a83b 3-10,16-24
+  s_3fdc5a4f0073e0::t_dd903885178f72 12-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "cf750a56739a4af10fc32018dc61b4e80b82af70",
+  "prompts": {},
+  "sessions": {
+    "s_1c8916eb185325": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "85fb1e3c-6ed4-4183-bf58-5fc07f7af5d7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_1d8f5e421a1100": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2f334ce1-380e-4a7e-9e9b-2b83b4947bf6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_3fdc5a4f0073e0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d6527beb-8b74-419d-afb2-57e0f59a27d6",
+        "model": "gpt-5.5-extra-high-fast"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_4e5d0c2415ae47": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "14a6f4f2-da89-490c-b9ec-d1ccaa219085",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_65f89308ca176c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f2ec6c34-a82f-4043-b71b-ee4e401dfed8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_6d2f08e089ec13": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "549b464f-5e84-468b-a69f-20e550b02843",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_886d8a5511d5ce": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e39e8081-cb0e-421b-8312-2024f398c481",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_96fe6b50330841": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ade5805c-3190-4989-9ff3-df5e96756448",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_bdd565b78b4e0d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b742b0c4-c5a4-41d4-9bb5-a73234acea5c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e8ab8f3d52fd83": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c76e3b33-03c0-436b-ab38-812a959802e5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
