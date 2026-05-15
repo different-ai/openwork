@@ -24,6 +24,8 @@ type PricingCard = {
   isCustomPricing?: boolean;
 };
 
+const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 function PricingCardView({ card }: { card: PricingCard }) {
   return (
     <div className="flex h-full flex-col relative group">
@@ -109,8 +111,9 @@ export function PricingGrid(props: PricingGridProps) {
       title: "Solo",
       price: "$0",
       priceSub: "open source",
-      ctaLabel: "Download free",
-      href: "/download",
+      ctaLabel: "Get Started for free",
+      href: CLOUD_SIGNUP_URL,
+      external: true,
       features: [
         { text: "Open source desktop app", icon: Download },
         { text: "macOS and Linux downloads", icon: Download },

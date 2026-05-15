@@ -14,7 +14,10 @@ declare global {
 }
 
 function normalizeDeepLinks(urls: readonly string[]): string[] {
-  return urls.map((url) => url.trim()).filter(Boolean);
+  return urls.flatMap((url) => {
+    const trimmed = url.trim();
+    return trimmed ? [trimmed] : [];
+  });
 }
 
 export function pushPendingDeepLinks(target: Window, urls: readonly string[]): string[] {

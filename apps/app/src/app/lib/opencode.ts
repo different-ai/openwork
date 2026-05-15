@@ -139,9 +139,11 @@ async function postSessionRequest<T>(
 function resolveOpenworkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
   try {
     const url = new URL(baseUrl);
-    const match = url.pathname.replace(/\/+$/, "").match(/^(.*\/w\/([^/]+))\/opencode$/);
-    if (!match?.[1] || !match[2]) return null;
-    url.pathname = match[1];
+    const match = url.pathname
+      .replace(/\/+$/, "")
+      .match(/^(.*)\/(?:w|workspace)\/([^/]+)\/opencode$/);
+    if (!match || match[1] === undefined || !match[2]) return null;
+    url.pathname = match[1] || "/";
     url.search = "";
     return {
       baseUrl: url.toString().replace(/\/+$/, ""),

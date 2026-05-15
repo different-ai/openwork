@@ -37,6 +37,7 @@ import {
   SettingsListSearchInput,
 } from "../settings-list";
 import { t } from "@/i18n";
+import { useCloudSession } from "./cloud-session-provider";
 
 type ResourceActionKind = "import" | "remove" | "sync";
 
@@ -263,9 +264,9 @@ function MarketplacePluginListItem({
   onImportPlugin,
 }: MarketplacePluginListItemProps) {
   const actionBusy = actionId === row.plugin.id;
-  const counts = Object.entries(row.plugin.componentCounts)
-    .filter(([, count]) => count > 0)
-    .map(([type, count]) => `${count} ${type}${count === 1 ? "" : "s"}`);
+  const counts = Object.entries(row.plugin.componentCounts).flatMap(([type, count]) =>
+    count > 0 ? [`${count} ${type}${count === 1 ? "" : "s"}`] : [],
+  );
 
   return (
     <SettingsListItem>
@@ -434,7 +435,7 @@ interface CloudProviderListItemProps {
   actionKind: ResourceActionKind | null;
   row: CloudProviderRow;
   onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onRemove: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 
@@ -447,6 +448,14 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
       : actionKind === "sync"
         ? t("den.syncing")
         : t("den.removing");
+  const source = row.provider?.source === "custom" ? "custom" : "managed";
+  const modelCount = row.provider?.models.length ?? 0;
+  const cloudProviderDetail = modelCount === 0
+    ? `All Models · ${source} provider`
+    : t("den.cloud_provider_detail", { count: modelCount, source });
+  const cloudProviderSyncDetail = modelCount === 0
+    ? `Cloud provider changed. Sync the All Models ${source} config into opencode.jsonc.`
+    : t("den.cloud_provider_sync_detail", { count: modelCount, source });
 
   return (
     <SettingsListItem>
@@ -472,14 +481,8 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
                   providerId: row.imported?.providerId ?? row.name,
                 })
               : row.status === "out_of_sync"
-                ? t("den.cloud_provider_sync_detail", {
-                    count: row.provider?.models.length ?? 0,
-                    source: row.provider?.source === "custom" ? "custom" : "managed",
-                  })
-                : t("den.cloud_provider_detail", {
-                    count: row.provider?.models.length ?? 0,
-                    source: row.provider?.source === "custom" ? "custom" : "managed",
-                  }),
+                ? cloudProviderSyncDetail
+                : cloudProviderDetail,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
       </SettingsListItemContent>
@@ -504,7 +507,7 @@ function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, 
             {actionBusy ? actionLabel : t("den.import_provider")}
           </Button>
         ) : null}
-        {row.status !== "available" ? (
+        {row.status !== "available" && onRemove ? (
           <Button
             variant="destructive"
             size="sm"
@@ -523,9 +526,7 @@ export interface CloudSkillsSectionProps {
   actionError: string | null;
   actionId: string | null;
   actionKind: ResourceActionKind | null;
-  activeOrgName: string;
   busy: boolean;
-  hasActiveOrg: boolean;
   rows: CloudSkillRow[];
   statusError: string | null;
   onImportSkill: (cloudSkillId: string, title: string) => void | Promise<void>;
@@ -539,7 +540,6 @@ export function CloudSkillsSection({
   actionId,
   actionKind,
   busy,
-  hasActiveOrg,
   rows,
   statusError,
   onImportSkill,
@@ -547,6 +547,7 @@ export function CloudSkillsSection({
   onRemoveSkill,
   onSyncSkill,
 }: CloudSkillsSectionProps) {
+  const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: skillSearchKeys, query: searchQuery });
   const skillGroups = [
@@ -639,9 +640,7 @@ export interface MarketplacePluginsSectionProps {
   actionError: string | null;
   actionId: string | null;
   activeMarketplaceId: string | null;
-  activeOrgName: string;
   busy: boolean;
-  hasActiveOrg: boolean;
   marketplaces: DenOrgMarketplaceResolved[];
   rowsByMarketplace: Record<string, CloudPluginRow[]>;
   statusError: string | null;
@@ -655,7 +654,6 @@ export function MarketplacePluginsSection({
   actionId,
   activeMarketplaceId,
   busy,
-  hasActiveOrg,
   marketplaces,
   rowsByMarketplace,
   statusError,
@@ -663,6 +661,7 @@ export function MarketplacePluginsSection({
   onRefresh,
   onSelectMarketplace,
 }: MarketplacePluginsSectionProps) {
+  const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const selectedMarketplace =
     marketplaces.find((entry) => entry.marketplace.id === activeMarketplaceId) ?? marketplaces[0] ?? null;
@@ -777,9 +776,7 @@ export function MarketplacePluginsSection({
 }
 
 export interface CloudWorkersSectionProps {
-  activeOrgName: string;
   openingWorkerId: string | null;
-  refreshDisabled: boolean;
   workers: CloudWorker[];
   workersBusy: boolean;
   workersError: string | null;
@@ -789,29 +786,32 @@ export interface CloudWorkersSectionProps {
 
 export function CloudWorkersSection({
   openingWorkerId,
-  refreshDisabled,
   workers,
   workersBusy,
   workersError,
   onOpenWorker,
   onRefreshWorkers,
 }: CloudWorkersSectionProps) {
+  const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleWorkers = useSearch({ items: workers, keys: workerSearchKeys, query: searchQuery });
   const workerGroups: { value: string; label: string; rows: CloudWorker[] }[] = [];
+  const workerGroupsByValue = new Map<string, { value: string; label: string; rows: CloudWorker[] }>();
 
   for (const worker of visibleWorkers) {
     const value = workerStatusValue(worker.status);
-    const group = workerGroups.find((entry) => entry.value === value);
+    const group = workerGroupsByValue.get(value);
 
     if (group) {
       group.rows.push(worker);
     } else {
-      workerGroups.push({ value, label: workerStatusMeta(worker.status).label, rows: [worker] });
+      const nextGroup = { value, label: workerStatusMeta(worker.status).label, rows: [worker] };
+      workerGroups.push(nextGroup);
+      workerGroupsByValue.set(value, nextGroup);
     }
   }
 
-  const workerDefaultGroups = workerGroups.filter((group) => group.value !== "stopped").map((group) => group.value);
+  const workerDefaultGroups = workerGroups.flatMap((group) => group.value !== "stopped" ? [group.value] : []);
 
   return (
     <SettingsSection>
@@ -825,7 +825,7 @@ export function CloudWorkersSection({
         <SettingsSectionHeaderActions>
           <RefreshButton
             busy={workersBusy}
-            disabled={refreshDisabled}
+            disabled={[workersBusy, !hasActiveOrg].some(Boolean)}
             onRefresh={onRefreshWorkers}
           >
             {t("den.refresh")}
@@ -889,9 +889,7 @@ export interface SkillHubsSectionProps {
   actionError: string | null;
   actionId: string | null;
   actionKind: ResourceActionKind | null;
-  activeOrgName: string;
   busy: boolean;
-  hasActiveOrg: boolean;
   rows: CloudSkillHubRow[];
   statusError: string | null;
   onImport: (hubId: string) => void | Promise<void>;
@@ -905,7 +903,6 @@ export function SkillHubsSection({
   actionId,
   actionKind,
   busy,
-  hasActiveOrg,
   rows,
   statusError,
   onImport,
@@ -913,6 +910,7 @@ export function SkillHubsSection({
   onRemove,
   onSync,
 }: SkillHubsSectionProps) {
+  const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const skillHubGroups = [
@@ -1005,13 +1003,11 @@ export interface CloudProvidersSectionProps {
   actionError: string | null;
   actionId: string | null;
   actionKind: ResourceActionKind | null;
-  activeOrgName: string;
   busy: boolean;
-  hasActiveOrg: boolean;
   rows: CloudProviderRow[];
   onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
-  onRemove: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
 }
 
@@ -1020,13 +1016,13 @@ export function CloudProvidersSection({
   actionId,
   actionKind,
   busy,
-  hasActiveOrg,
   rows,
   onImport,
   onRefresh,
   onRemove,
   onSync,
 }: CloudProvidersSectionProps) {
+  const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const providerGroups = [

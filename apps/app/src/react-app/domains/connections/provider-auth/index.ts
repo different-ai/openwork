@@ -1,7 +1,7 @@
 import {
   createContext,
   createElement,
-  useContext,
+  use,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -33,7 +33,7 @@ export function ProviderAuthStoreProvider({
 }
 
 export function useProviderAuth() {
-  const store = useContext(ProviderAuthContext);
+  const store = use(ProviderAuthContext);
   if (!store) {
     throw new Error("useProviderAuth must be used within a ProviderAuthStoreProvider");
   }

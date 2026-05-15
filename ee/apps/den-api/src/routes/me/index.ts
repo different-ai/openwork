@@ -2,10 +2,12 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-app-restrictions"
 import { z } from "zod"
-import { requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
-import { denTypeIdSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { jsonValidator, requireUserMiddleware, resolveOrganizationContextMiddleware, resolveUserOrganizationsMiddleware, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { resolveUserOrganizations, setSessionActiveOrganization } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
 const meResponseSchema = z.object({
   user: z.object({}).passthrough(),
@@ -24,6 +26,18 @@ const meOrganizationsResponseSchema = z.object({
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
 })
+
+const setActiveOrganizationSchema = z.object({
+  organizationId: denTypeIdSchema("organization").optional(),
+  organizationSlug: z.string().trim().min(1).max(255).optional(),
+}).refine((value) => value.organizationId !== undefined || value.organizationSlug !== undefined, {
+  message: "Provide an organization id or slug.",
+})
+
+const activeOrganizationResponseSchema = z.object({
+  activeOrgId: denTypeIdSchema("organization"),
+  activeOrgSlug: z.string().nullable(),
+}).meta({ ref: "ActiveOrganizationResponse" })
 
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   app.get(
@@ -68,6 +82,51 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
     })
+    },
+  )
+
+  app.post(
+    "/v1/me/active-organization",
+    describeRoute({
+      tags: ["Users"],
+      hide: true,
+      summary: "Set active organization for current session",
+      description: "Updates the current database-backed session's active organization. This is used by desktop bearer-token sessions that cannot call Better Auth's cookie-backed organization endpoint.",
+      responses: {
+        200: jsonResponse("Active organization updated successfully.", activeOrganizationResponseSchema),
+        400: jsonResponse("The active organization request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update active organization.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot switch this kind of session.", forbiddenSchema),
+      },
+    }),
+    requireUserMiddleware,
+    jsonValidator(setActiveOrganizationSchema),
+    async (c) => {
+      const user = c.get("user")
+      const session = c.get("session")
+      const input = c.req.valid("json")
+
+      if (c.get("apiKey") || !session?.id) {
+        return c.json({ error: "forbidden", message: "Active organization can only be updated for a user session." }, 403)
+      }
+
+      const requestedOrgId = input.organizationId ?? null
+      const resolved = await resolveUserOrganizations({
+        activeOrganizationId: requestedOrgId,
+        userId: normalizeDenTypeId("user", user.id),
+      })
+      const activeOrg = requestedOrgId
+        ? resolved.orgs.find((org) => org.id === requestedOrgId) ?? null
+        : resolved.orgs.find((org) => org.slug === input.organizationSlug) ?? null
+      if (!activeOrg) {
+        return c.json({ error: "forbidden", message: "You do not have access to this organization." }, 403)
+      }
+
+      const sessionId = normalizeDenTypeId("session", session.id)
+      await setSessionActiveOrganization(sessionId, activeOrg.id)
+      c.set("session", { ...session, activeOrganizationId: activeOrg.id })
+
+      return c.json({ activeOrgId: activeOrg.id, activeOrgSlug: activeOrg.slug })
     },
   )
 

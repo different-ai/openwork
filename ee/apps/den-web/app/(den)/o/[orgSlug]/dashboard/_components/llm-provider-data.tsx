@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../../../_lib/den-flow";
 
-export type DenLlmProviderSource = "models_dev" | "custom";
+export type DenLlmProviderSource = "models_dev" | "custom" | "openwork";
 
 export type DenLlmProviderModel = {
   id: string;
@@ -174,7 +174,10 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
   const createdByOrgMembershipId = asString(value.createdByOrgMembershipId);
   const providerId = asString(value.providerId);
   const name = asString(value.name);
-  const source = value.source === "models_dev" || value.source === "custom" ? value.source : null;
+  const source =
+    value.source === "models_dev" || value.source === "custom" || value.source === "openwork"
+      ? value.source
+      : null;
   if (!id || !organizationId || !createdByOrgMembershipId || !providerId || !name || !source) {
     return null;
   }
@@ -386,10 +389,14 @@ export async function requestLlmProviderCatalogDetail(orgId: string, providerId:
   return detail;
 }
 
-export function useOrgLlmProviders(orgId: string | null) {
+export function useOrgLlmProviders(
+  orgId: string | null,
+  options: { scope?: "usable" | "manageable" } = {},
+) {
   const [llmProviders, setLlmProviders] = useState<DenLlmProvider[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scope = options.scope ?? "manageable";
 
   async function loadProviders() {
     if (!orgId) {
@@ -401,7 +408,11 @@ export function useOrgLlmProviders(orgId: string | null) {
     setBusy(true);
     setError(null);
     try {
-      const { response, payload } = await requestJson(`/v1/llm-providers`, { method: "GET" }, 15000);
+      const { response, payload } = await requestJson(
+        `/v1/llm-providers?scope=${encodeURIComponent(scope)}`,
+        { method: "GET" },
+        15000,
+      );
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load providers (${response.status}).`));
       }
@@ -419,7 +430,7 @@ export function useOrgLlmProviders(orgId: string | null) {
 
   useEffect(() => {
     void loadProviders();
-  }, [orgId]);
+  }, [orgId, scope]);
 
   return {
     llmProviders,

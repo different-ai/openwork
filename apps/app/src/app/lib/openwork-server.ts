@@ -308,7 +308,7 @@ export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
-const STORAGE_HOST_TOKEN = "openwork.server.hostToken";
+const STORAGE_HOST_AUTH_KEY = "openwork.server.hostToken";
 const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 export function normalizeOpenworkServerUrl(input: string) {
@@ -336,12 +336,17 @@ export function parseOpenworkWorkspaceIdFromUrl(input: string) {
   try {
     const url = new URL(normalized);
     const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] ?? "";
-    const prev = segments[segments.length - 2] ?? "";
-    if (prev !== "w" || !last) return null;
-    return decodeURIComponent(last);
+    const legacyIndex = segments.indexOf("w");
+    if (legacyIndex >= 0 && segments[legacyIndex + 1]) {
+      return decodeURIComponent(segments[legacyIndex + 1]);
+    }
+    const workspaceIndex = segments.indexOf("workspace");
+    if (workspaceIndex >= 0 && segments[workspaceIndex + 1]) {
+      return decodeURIComponent(segments[workspaceIndex + 1]);
+    }
+    return null;
   } catch {
-    const match = normalized.match(/\/w\/([^/?#]+)/);
+    const match = normalized.match(/\/(?:w|workspace)\/([^/?#]+)/);
     if (!match?.[1]) return null;
     try {
       return decodeURIComponent(match[1]);
@@ -358,10 +363,14 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   try {
     const url = new URL(normalized);
     const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] ?? "";
-    const prev = segments[segments.length - 2] ?? "";
-    const alreadyMounted = prev === "w" && Boolean(last);
-    if (alreadyMounted) {
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = `${prefix ? `/${prefix}` : ""}/workspace/${encodeURIComponent(
+        decodeURIComponent(segments[mountIndex + 1]),
+      )}`;
       return url.toString().replace(/\/+$/, "");
     }
 
@@ -369,12 +378,12 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
     if (!id) return url.toString().replace(/\/+$/, "");
 
     const basePath = url.pathname.replace(/\/+$/, "");
-    url.pathname = `${basePath}/w/${encodeURIComponent(id)}`;
+    url.pathname = `${basePath}/workspace/${encodeURIComponent(id)}`;
     return url.toString().replace(/\/+$/, "");
   } catch {
     const id = (workspaceId ?? "").trim();
     if (!id) return normalized;
-    return `${normalized.replace(/\/+$/, "")}/w/${encodeURIComponent(id)}`;
+    return `${normalized.replace(/\/+$/, "")}/workspace/${encodeURIComponent(id)}`;
   }
 }
 
@@ -382,6 +391,42 @@ const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
 const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
+
+export type OpenworkOpenCodeRouterHealthSnapshot = {
+  ok: boolean;
+  opencode: Record<string, unknown>;
+  channels: Record<string, unknown>;
+  config: Record<string, unknown>;
+  activity?: {
+    inboundToday?: number;
+    outboundToday?: number;
+    lastMessageAt?: number | null;
+    [key: string]: unknown;
+  };
+  agent?: {
+    loaded?: boolean;
+    selected?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+export type OpenworkOpenCodeRouterIdentityItem = {
+  id: string;
+  channel?: string;
+  enabled?: boolean;
+  peerId?: string;
+  [key: string]: unknown;
+};
+
+export type OpenworkOpenCodeRouterSendResult = {
+  ok: boolean;
+  sent: number;
+  attempted: number;
+  failures?: Array<{ identityId: string; peerId: string; error: string }>;
+  reason?: string;
+  [key: string]: unknown;
+};
 
 export type OpenworkConnectInvite = {
   url: string;
@@ -435,7 +480,7 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
-    const hostToken = window.localStorage.getItem(STORAGE_HOST_TOKEN) ?? undefined;
+    const hostToken = window.localStorage.getItem(STORAGE_HOST_AUTH_KEY) ?? undefined;
     const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
@@ -477,9 +522,9 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     }
 
     if (hostToken) {
-      window.localStorage.setItem(STORAGE_HOST_TOKEN, hostToken);
+      window.localStorage.setItem(STORAGE_HOST_AUTH_KEY, hostToken);
     } else {
-      window.localStorage.removeItem(STORAGE_HOST_TOKEN);
+      window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     }
 
     if (remoteAccessEnabled) {
@@ -554,7 +599,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
-    window.localStorage.removeItem(STORAGE_HOST_TOKEN);
+    window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore

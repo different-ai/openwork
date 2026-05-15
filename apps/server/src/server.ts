@@ -49,6 +49,9 @@ import {
   stripSensitiveWorkspaceExportData,
   type WorkspaceExportSensitiveMode,
 } from "./workspace-export-safety.js";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { serve, type ServeResult } from "./serve-node.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -167,6 +170,19 @@ function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath:
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
+function parseWorkspaceOpencodeMount(pathname: string): { workspaceId: string; restPath: string } | null {
+  if (!pathname.startsWith("/workspace/")) return null;
+  const remainder = pathname.slice("/workspace/".length);
+  if (!remainder) return null;
+  const slash = remainder.indexOf("/");
+  if (slash === -1) return null;
+  const workspaceId = remainder.slice(0, slash);
+  const restPath = remainder.slice(slash) || "/";
+  if (!workspaceId.trim()) return null;
+  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/")) return null;
+  return { workspaceId: decodeURIComponent(workspaceId), restPath };
+}
+
 function normalizeOpencodeProxyPath(proxyPath: string): string {
   const raw = (proxyPath ?? "").trim() || "/";
   const withoutPrefix = raw.startsWith("/opencode") ? raw.slice("/opencode".length) : raw;
@@ -215,7 +231,7 @@ interface RequestContext {
   actor?: Actor;
 }
 
-export function startServer(config: ServerConfig) {
+export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -260,12 +276,7 @@ export function startServer(config: ServerConfig) {
         return wrapped;
       };
 
-      if (request.method === "OPTIONS") {
-        return finalize(new Response(null, { status: 204 }));
-      }
-
-      const mount = parseWorkspaceMount(url.pathname);
-      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+      const proxyWorkspaceOpencodeMount = async (mount: { workspaceId: string; restPath: string }) => {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
@@ -282,6 +293,20 @@ export function startServer(config: ServerConfig) {
           errorMessage = apiError.message;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
+      };
+
+      if (request.method === "OPTIONS") {
+        return finalize(new Response(null, { status: 204 }));
+      }
+
+      const canonicalOpencodeMount = parseWorkspaceOpencodeMount(url.pathname);
+      if (canonicalOpencodeMount) {
+        return proxyWorkspaceOpencodeMount(canonicalOpencodeMount);
+      }
+
+      const mount = parseWorkspaceMount(url.pathname);
+      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+        return proxyWorkspaceOpencodeMount(mount);
       }
 
       // Allow clients to use a mounted base URL (e.g. http://host:8787/w/<id>) while
@@ -359,9 +384,10 @@ export function startServer(config: ServerConfig) {
     },
   };
 
-  (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
-
-  const server = Bun.serve(serverOptions);
+  const server = await serve({
+    ...serverOptions,
+    idleTimeout: 120,
+  });
 
   return server;
 }
@@ -502,13 +528,17 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  // Buffer the request body so it can be forwarded reliably across Node.js
+  // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
+  // always accepted directly by Node's global fetch as a body).
+  const body = method === "GET" || method === "HEAD"
+    ? undefined
+    : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
   if (isSessionCommandProxyRequest(method, proxyPath)) {
-    const bufferedBody = body ? await input.request.arrayBuffer() : undefined;
     void fetch(targetUrl, {
       method,
       headers,
-      body: bufferedBody,
+      body,
     }).catch(() => {
       // Command failures are surfaced through the OpenCode event stream.
     });
@@ -1792,7 +1822,8 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
+    return new Response(stream, { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/inbox", "client", async (ctx) => {
@@ -1881,7 +1912,8 @@ function createRoutes(
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
     headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
-    return new Response((Bun as any).file(absPath), { status: 200, headers });
+    const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
+    return new Response(stream, { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/files/sessions", "client", async (ctx) => {
@@ -3304,9 +3336,20 @@ async function readOpenworkConfig(workspaceRoot: string): Promise<Record<string,
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
-  if (explicit) return explicit;
-  if (workspace.workspaceType === "local") return workspace.path;
+  if (explicit) return normalizeOpencodeDirectory(explicit);
+  if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+function normalizeOpencodeDirectory(directory: string): string {
+  // OpenCode stores/list-filters Windows sessions by regular drive paths
+  // (`C:\Users\...`). Electron can persist local workspaces as extended-length
+  // paths (`\\?\C:\Users\...`); passing those through as the directory query
+  // makes OpenCode return an empty session list even though the sessions exist.
+  if (process.platform === "win32") {
+    return directory.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+  }
+  return directory;
 }
 
 function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {

@@ -188,10 +188,6 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
-        if (response.status === 402) {
-          router.push("/checkout");
-          return;
-        }
         throw new Error(getErrorMessage(payload, `Failed to create organization (${response.status}).`));
       }
 

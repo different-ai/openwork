@@ -1,4 +1,5 @@
 import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
+import { EmailSendError, sendEmail, type FeedbackEmailProps } from "@openwork/email";
 
 type FeedbackContext = {
   source?: string;
@@ -23,7 +24,6 @@ type FeedbackPayload = {
   context?: FeedbackContext;
 };
 
-const LOOPS_TRANSACTIONAL_API_URL = "https://app.loops.so/api/v1/transactional";
 const DEFAULT_INTERNAL_FEEDBACK_EMAIL = "team@openworklabs.com";
 
 function sanitizeValue(value: unknown, maxLength = 240) {
@@ -86,20 +86,10 @@ export async function POST(request: Request) {
     return jsonResponse(request, { error: botProtection.error }, botProtection.status);
   }
 
-  const apiKey = process.env.LOOPS_API_KEY?.trim();
-  const transactionalId =
-    process.env.LOOPS_TRANSACTIONAL_ID_APP_FEEDBACK?.trim();
   const internalEmail =
+    process.env.OPENWORK_FEEDBACK_EMAIL?.trim() ||
     process.env.LOOPS_INTERNAL_FEEDBACK_EMAIL?.trim() ||
     DEFAULT_INTERNAL_FEEDBACK_EMAIL;
-
-  if (!apiKey || !transactionalId) {
-    return jsonResponse(
-      request,
-      { error: "App feedback is not configured on this deployment." },
-      500,
-    );
-  }
 
   let payload: FeedbackPayload;
   try {
@@ -149,62 +139,48 @@ export async function POST(request: Request) {
   const diagnosticsSummary = formatDiagnosticsSummary(context);
   const submittedAt = new Date().toISOString();
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("[DEV] Skipping Loops app feedback email", {
-      internalEmail,
-      transactionalId,
-      message,
-      name,
-      email,
-      context,
-    });
-    return jsonResponse(request, { ok: true });
-  }
+  const feedbackProps = {
+    name,
+    email,
+    message,
+    source: context.source || "openwork-app",
+    entrypoint: context.entrypoint || "unknown",
+    deployment: context.deployment || "desktop",
+    appVersion: context.appVersion || "unknown",
+    openworkServerVersion: context.openworkServerVersion || "unknown",
+    opencodeVersion: context.opencodeVersion || "unknown",
+    orchestratorVersion: context.orchestratorVersion || "unknown",
+    opencodeRouterVersion: context.opencodeRouterVersion || "unknown",
+    osName: context.osName || "unknown",
+    osVersion: context.osVersion || "",
+    platform: context.platform || "unknown",
+    diagnosticsSummary,
+    submittedAt,
+  } satisfies FeedbackEmailProps;
 
-  const response = await fetch(LOOPS_TRANSACTIONAL_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      transactionalId,
-      email: internalEmail,
-      dataVariables: {
-        name,
-        email,
-        message,
-        source: context.source || "openwork-app",
-        entrypoint: context.entrypoint || "unknown",
-        deployment: context.deployment || "desktop",
-        appVersion: context.appVersion || "unknown",
-        openworkServerVersion: context.openworkServerVersion || "unknown",
-        opencodeVersion: context.opencodeVersion || "unknown",
-        orchestratorVersion: context.orchestratorVersion || "unknown",
-        opencodeRouterVersion: context.opencodeRouterVersion || "unknown",
-        osName: context.osName || "unknown",
-        osVersion: context.osVersion || "",
-        platform: context.platform || "unknown",
-        diagnosticsSummary,
-        submittedAt,
+  try {
+    await sendEmail({
+      to: internalEmail,
+      template: "feedback",
+      props: feedbackProps,
+      config: {
+        devMode: process.env.NODE_ENV === "development",
+        from: process.env.EMAIL_FROM?.trim(),
+        resendApiKey: process.env.RESEND_API_KEY?.trim(),
+        smtp: {
+          host: process.env.SMTP_HOST?.trim(),
+          port: Number(process.env.SMTP_PORT ?? "587"),
+          user: process.env.SMTP_USER?.trim(),
+          pass: process.env.SMTP_PASS,
+          secure: (process.env.SMTP_SECURE ?? "false").toLowerCase() === "true",
+        },
       },
-    }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    let detail = "Failed to send feedback email.";
-
-    try {
-      const errorBody = await response.text();
-      if (errorBody.trim()) {
-        detail = errorBody.slice(0, 600);
-      }
-    } catch {
-      // Ignore invalid upstream error bodies.
+    });
+  } catch (error) {
+    if (error instanceof EmailSendError) {
+      return jsonResponse(request, { error: error.detail ?? error.message }, 502);
     }
-
-    return jsonResponse(request, { error: detail }, 502);
+    throw error;
   }
 
   return jsonResponse(request, { ok: true });

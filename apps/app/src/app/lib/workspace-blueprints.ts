@@ -65,7 +65,10 @@ function normalizeSessionTemplate(value: unknown, index: number): WorkspaceBluep
   const title = typeof record.title === "string" ? record.title.trim() : "";
   const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : `template-session-${index + 1}`;
   const messages = Array.isArray(record.messages)
-    ? record.messages.map(normalizeSessionMessage).filter((item): item is WorkspaceBlueprintSessionMessage => Boolean(item))
+    ? record.messages.flatMap((message) => {
+        const normalized = normalizeSessionMessage(message);
+        return normalized ? [normalized] : [];
+      })
     : [];
   if (!title && messages.length === 0) return null;
   return {
@@ -89,14 +92,16 @@ function normalizeBlueprint(value: unknown): WorkspaceBlueprint | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as WorkspaceBlueprint & Record<string, unknown>;
   const sessions = Array.isArray(candidate.sessions)
-    ? candidate.sessions
-        .map((session, index) => normalizeSessionTemplate(session, index))
-        .filter((item): item is WorkspaceBlueprintSessionTemplate => Boolean(item))
+    ? candidate.sessions.flatMap((session, index) => {
+        const normalized = normalizeSessionTemplate(session, index);
+        return normalized ? [normalized] : [];
+      })
     : null;
   const materializedSessions = Array.isArray(candidate.materialized?.sessions?.items)
-    ? candidate.materialized?.sessions?.items
-        .map(normalizeMaterializedSession)
-        .filter((item): item is WorkspaceBlueprintMaterializedSession => Boolean(item))
+    ? candidate.materialized.sessions.items.flatMap((session) => {
+        const normalized = normalizeMaterializedSession(session);
+        return normalized ? [normalized] : [];
+      })
     : null;
 
   return {

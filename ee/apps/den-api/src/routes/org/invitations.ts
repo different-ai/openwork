@@ -5,11 +5,11 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { DenEmailSendError, sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
+import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
 
@@ -27,7 +27,7 @@ const invitationResponseSchema = z.object({
 
 const invitationEmailFailedSchema = z.object({
   error: z.literal("invitation_email_failed"),
-  reason: z.enum(["loops_not_configured", "loops_rejected", "loops_network"]),
+  reason: z.enum(["email_not_configured", "resend_rejected", "resend_network", "nodemailer_rejected"]),
   message: z.string(),
   invitationId: denTypeIdSchema("invitation"),
 }).meta({ ref: "InvitationEmailFailedError" })
@@ -49,7 +49,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the email provider (Loops) failed to send; the client should surface the error and give the user a retry affordance.",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance.",
       responses: {
         200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
@@ -58,7 +58,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
-        502: jsonResponse("The invitation was saved but the email provider (Loops) rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
+        502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
     requireUserMiddleware,
@@ -155,13 +155,16 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }
 
     try {
-      await sendDenOrganizationInvitationEmail({
-        email,
-        inviteLink: buildInvitationLink(invitationId),
-        invitedByName: user.name ?? user.email ?? "OpenWork",
-        invitedByEmail: user.email ?? "",
-        organizationName: payload.organization.name,
-        role,
+      await sendEmail({
+        to: email,
+        template: "organizationInvite",
+        props: {
+          inviteLink: buildInvitationLink(invitationId),
+          invitedByName: user.name ?? user.email ?? "OpenWork",
+          invitedByEmail: user.email ?? "",
+          organizationName: payload.organization.name,
+          role,
+        },
       })
     } catch (error) {
       if (error instanceof DenEmailSendError) {
@@ -177,9 +180,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           error: "invitation_email_failed" as const,
           reason: error.reason,
           message:
-            error.reason === "loops_not_configured"
-              ? "The invitation email provider (Loops) is not configured on this deployment."
-              : error.reason === "loops_network"
+            error.reason === "email_not_configured"
+              ? "The invitation email provider is not configured on this deployment."
+              : error.reason === "resend_network"
                 ? "Could not reach the invitation email provider. The invitation is saved; retry to send again."
                 : `The invitation email provider rejected the send${error.detail ? `: ${error.detail}` : "."}`,
           invitationId,

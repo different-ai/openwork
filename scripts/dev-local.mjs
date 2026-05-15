@@ -12,6 +12,7 @@ const composeProject = "openwork-den-local"
 
 const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
 const workerProxyPort = process.env.DEN_WORKER_PROXY_PORT?.trim() || "8789"
+const inferencePort = process.env.INFERENCE_PORT?.trim() || "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
 const databaseUrl = process.env.DATABASE_URL?.trim() || "mysql://root:password@127.0.0.1:3306/openwork_den"
@@ -149,7 +150,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 async function main() {
-  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["den-worker-proxy", workerProxyPort]]) {
+  for (const [name, port] of [["den-web", webPort], ["den-api", apiPort], ["den-worker-proxy", workerProxyPort], ["inference", inferencePort]]) {
     const available = await canListenOnPort(Number(port))
     if (!available) {
       throw new Error(`${name} local port ${port} is already in use. Stop the existing process or rerun with a different port env override.`)
@@ -191,6 +192,7 @@ async function main() {
       "dev:local",
       "--output-logs=full",
         "--filter=@openwork-ee/den-api",
+        "--filter=@openwork-ee/inference",
         "--filter=@openwork-ee/den-worker-proxy",
         "--filter=@openwork-ee/den-web",
     ],
@@ -211,6 +213,10 @@ async function main() {
         DEN_API_PORT: apiPort,
         DEN_CONTROLLER_PORT: apiPort,
         DEN_WORKER_PROXY_PORT: workerProxyPort,
+        INFERENCE_PORT: inferencePort,
+        INFERENCE_PROXY_BASE_URL: process.env.INFERENCE_PROXY_BASE_URL?.trim() || `http://127.0.0.1:${inferencePort}`,
+        INFERENCE_ADMIN_TOKEN: process.env.INFERENCE_ADMIN_TOKEN?.trim() || "local-dev-admin-token",
+        INFERENCE_WEBHOOK_SECRET: process.env.INFERENCE_WEBHOOK_SECRET?.trim() || "local-dev-webhook-secret",
         DEN_WEB_PORT: webPort,
         DEN_API_BASE: process.env.DEN_API_BASE?.trim() || `http://127.0.0.1:${apiPort}`,
         DEN_AUTH_ORIGIN: process.env.DEN_AUTH_ORIGIN?.trim() || `http://localhost:${webPort}`,

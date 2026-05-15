@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Download, Menu, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { OpenWorkMark } from "./openwork-mark";
 
@@ -25,10 +25,9 @@ export function SiteNav(props: Props) {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
   const callHref = props.callUrl || "/enterprise#book";
-  const downloadHref = props.downloadHref || "/download";
-  const downloadPageHref = "/download";
-  const mobilePrimaryHref = props.mobilePrimaryHref || downloadHref;
-  const mobilePrimaryLabel = props.mobilePrimaryLabel || "Desktop";
+  const cloudSignupHref = "https://app.openworklabs.com?mode=sign-up";
+  const mobilePrimaryHref = props.mobilePrimaryHref || cloudSignupHref;
+  const mobilePrimaryLabel = props.mobilePrimaryLabel || "Get Started for free";
   const callExternal = /^https?:\/\//.test(callHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems = [
@@ -93,12 +92,14 @@ export function SiteNav(props: Props) {
               </svg>
               {props.stars}
             </a>
-            <Link
-              href={downloadPageHref}
+            <a
+              href={cloudSignupHref}
               className="doc-button !hidden items-center gap-2 md:!inline-flex"
+              rel="noreferrer"
+              target="_blank"
             >
-              Desktop <Download size={16} />
-            </Link>
+              Get Started for free
+            </a>
             <button
               type="button"
               className="rounded-full p-2 text-[#011627] transition-colors hover:bg-white/70 md:hidden"

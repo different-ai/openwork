@@ -177,6 +177,71 @@ export function AuthPanel({
     }, 1800);
   };
 
+  /* ------------------------------------------------------------------ */
+  /*  Already signed in + desktop handoff: simplified view               */
+  /* ------------------------------------------------------------------ */
+  const isSignedInWithDesktopHandoff = desktopAuthRequested && desktopRedirectUrl && showAuthFeedback && authInfo && !authError;
+
+  if (isSignedInWithDesktopHandoff) {
+    return (
+      <div className="den-frame grid gap-6 p-6 md:p-7">
+        <div className="grid gap-3">
+          <p className="den-eyebrow">{eyebrow}</p>
+          <div className="grid gap-2">
+            <h2 className="den-title-lg">You&apos;re signed in.</h2>
+            <p className="den-copy">Open the desktop app to continue.</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="den-button-primary w-full"
+          onClick={() => window.location.assign(desktopRedirectUrl)}
+        >
+          Open OpenWork
+          <ArrowRight className="h-4 w-4" />
+        </button>
+
+        <div className="grid gap-2 text-center">
+          <p className="m-0 text-xs text-[var(--dls-text-secondary)]">
+            App didn&apos;t open?
+          </p>
+          <div className="flex justify-center gap-3">
+            <button
+              type="button"
+              className="den-button-secondary"
+              onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
+            >
+              {copiedDesktopField === "link" ? "Copied!" : "Copy sign-in link"}
+            </button>
+            {desktopGrant ? (
+              <button
+                type="button"
+                className="den-button-secondary"
+                onClick={() => void copyDesktopValue("code", desktopGrant)}
+              >
+                {copiedDesktopField === "code" ? "Copied!" : "Copy code"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="border-t border-[var(--dls-border)] pt-4 text-center">
+          <button
+            type="button"
+            className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+            onClick={async () => {
+              const target = await resolveUserLandingRoute();
+              if (target) router.replace(target);
+            }}
+          >
+            Go to dashboard &rarr;
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="den-frame grid gap-5 p-6 md:p-7">
       <div className="grid gap-3">
@@ -187,41 +252,19 @@ export function AuthPanel({
         </div>
       </div>
 
-      {desktopAuthRequested ? (
-        <div className="den-notice is-info grid gap-3 text-[13px]">
-          <p className="m-0">Finish sign-in here, then jump back into the OpenWork desktop app.</p>
-          {desktopRedirectUrl ? (
-            <div className="grid gap-3">
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  className="den-button-secondary w-full sm:w-auto"
-                  onClick={() => window.location.assign(desktopRedirectUrl)}
-                >
-                  Open OpenWork
-                </button>
-                <button
-                  type="button"
-                  className="den-button-secondary w-full sm:w-auto"
-                  onClick={() => void copyDesktopValue("link", desktopRedirectUrl)}
-                >
-                  {copiedDesktopField === "link" ? "Copied link" : "Copy sign-in link"}
-                </button>
-                {desktopGrant ? (
-                  <button
-                    type="button"
-                    className="den-button-secondary w-full sm:w-auto"
-                    onClick={() => void copyDesktopValue("code", desktopGrant)}
-                  >
-                    {copiedDesktopField === "code" ? "Copied code" : "Copy one-time code"}
-                  </button>
-                ) : null}
-              </div>
-              <p className="m-0 text-xs leading-5 text-sky-800/80">
-                If OpenWork does not open automatically, copy the sign-in link or one-time code and paste it into the OpenWork desktop app.
-              </p>
-            </div>
-          ) : null}
+      {desktopAuthRequested && desktopRedirectUrl ? (
+        <div className="grid gap-3">
+          <button
+            type="button"
+            className="den-button-primary w-full"
+            onClick={() => window.location.assign(desktopRedirectUrl)}
+          >
+            Open OpenWork
+            <ArrowRight className="h-4 w-4" />
+          </button>
+          <p className="m-0 text-center text-xs text-[var(--dls-text-secondary)]">
+            Sign in below, then click above to return to the app.
+          </p>
         </div>
       ) : null}
 

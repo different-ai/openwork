@@ -102,15 +102,10 @@ export function parseSessionChoiceOverrides(
 export function serializeSessionChoiceOverrides(
   overrides: Record<string, SessionChoiceOverride>,
 ): string | null {
-  const entries = Object.entries(overrides)
-    .map(
-      ([sessionId, choice]) =>
-        [sessionId, normalizeSessionChoice(choice)] as const,
-    )
-    .filter(
-      (entry): entry is readonly [string, SessionChoiceOverride] =>
-        Boolean(entry[1]),
-    );
+  const entries = Object.entries(overrides).flatMap(([sessionId, choice]) => {
+    const normalized = normalizeSessionChoice(choice);
+    return normalized ? [[sessionId, normalized] as const] : [];
+  });
 
   if (!entries.length) return null;
 

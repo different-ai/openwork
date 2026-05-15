@@ -114,7 +114,7 @@ Known regressions this catches:
 
 **Why**: The most common first-run path: pick a local folder and
 create a workspace. After creation, onboarding must be marked complete
-and the user lands on `/settings/general`.
+and the user lands in the new workspace session surface.
 
 Steps:
 1. From `/welcome`, click "Get started".
@@ -129,7 +129,8 @@ Steps:
    - "Select folder" button.
 4. Click "Select folder" and choose a folder.
 5. Click "Create Workspace".
-6. Expect: workspace is created; URL changes to `/settings/general`.
+6. Expect: workspace is created; URL changes to
+   `/workspace/<new-workspace-id>/session/<new-session-id>`.
 7. Navigate to `/welcome`.
 8. Expect: URL redirects back to `/session` (not `/welcome`), because
    `hasCompletedOnboarding` is now true.
@@ -144,13 +145,18 @@ chrome-devtools_take_snapshot
 chrome-devtools_click { uid: <Select folder> }
 -- native picker interaction --
 chrome-devtools_click { uid: <Create Workspace> }
-chrome-devtools_wait_for { text: ["Settings"], timeout: 15000 }
+chrome-devtools_wait_for { text: ["New session"], timeout: 15000 }
 chrome-devtools_take_snapshot
 ```
 
 Pass criteria:
 - Folder explanation (bullets, hint) is visible before picking.
-- After workspace creation, URL is `/settings/general`.
+- After workspace creation, URL contains `/workspace/` and `/session/ses_`.
+- Main panel heading is "New session".
+- Composer is visible with the "Run task" action.
+- Composer is focused so typing starts in "Describe your task..." without an
+  extra click.
+- "Select or create a session to get started." is not visible.
 - Navigating to `/welcome` redirects away (onboarding flagged done).
 - `localStorage` contains `hasCompletedOnboarding: true` in
   `openwork.preferences`.

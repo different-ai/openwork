@@ -112,7 +112,10 @@ function metadataValue(key: string, value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (key === "files" && Array.isArray(value)) {
-    const lines = value.map(fileChangeLine).filter(Boolean);
+    const lines = value.flatMap((item) => {
+      const line = fileChangeLine(item);
+      return line ? [line] : [];
+    });
     return lines.length ? lines.join("\n") : null;
   }
   return null;

@@ -34,7 +34,7 @@ export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
           </div>
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            className="inline-flex size-9 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
             aria-label={t("common.close")}
             onClick={props.onClose}
           >
@@ -42,7 +42,7 @@ export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
           </button>
         </div>
 
-        <div className="px-6 py-6">
+        <div className="p-6">
           <p className="text-[14px] leading-6 text-dls-secondary">
             {props.message}
           </p>

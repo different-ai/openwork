@@ -48,7 +48,7 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
   }
 }
 
-const server = startServer(config);
+const server = await startServer(config);
 
 const url = `http://${config.host}:${server.port}`;
 logger.log("info", `OpenWork server listening on ${url}`);

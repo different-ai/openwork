@@ -1,10 +1,12 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState, type SetStateAction } from "react";
 import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  Chrome,
   CircleAlert,
+  Cloud,
   Code2,
   CreditCard,
   ExternalLink,
@@ -15,13 +17,15 @@ import {
   Plug2,
   Plus,
   Power,
-  Settings,
+  Search,
   Settings2,
   Unplug,
   Zap,
 } from "lucide-react";
 
 import { type McpDirectoryInfo } from "../../../../app/constants";
+import { ExtensionCard } from "../../../design-system/extension-card";
+import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
   openDesktopPath,
   readOpencodeConfig,
@@ -29,11 +33,8 @@ import {
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
 import {
-  buildChromeDevtoolsCommand,
   getMcpIdentityKey,
-  isChromeDevtoolsMcp,
   normalizeMcpSlug,
-  usesChromeDevtoolsAutoConnect,
 } from "../../../../app/mcp";
 import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
@@ -41,7 +42,13 @@ import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
-import { ControlChromeSetupModal } from "../../connections/modals/control-chrome-setup-modal";
+import { ChromeConnectionSetupModal } from "../../connections/modals/chrome-connection-setup-modal";
+import {
+  initialMcpViewLocalState,
+  mcpViewLocalReducer,
+  type ConfigScope,
+  type McpViewLocalState,
+} from "./mcp-view-state";
 
 export type ReactMcpStatus =
   | "connected"
@@ -51,10 +58,23 @@ export type ReactMcpStatus =
   | "disabled"
   | "disconnected";
 
+export type SkillItem = {
+  name: string;
+  description?: string;
+  trigger?: string;
+  path: string;
+};
+
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
+  /** Installed skills to render alongside MCPs in the grid. */
+  installedSkills?: SkillItem[];
+  /** Uninstall a skill by name. */
+  uninstallSkill?: (name: string) => void;
+  /** Read skill content by name. */
+  readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
@@ -129,6 +149,8 @@ const serviceIcon = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return MonitorSmartphone;
   }
+  if (lower.includes("openwork") && lower.includes("cloud")) return Cloud;
+  if (lower.includes("openwork") && lower.includes("ui")) return MonitorSmartphone;
   return Plug2;
 };
 
@@ -142,6 +164,7 @@ const serviceColor = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return "text-amber-11";
   }
+  if (lower.includes("openwork")) return "text-gray-12";
   return "text-dls-secondary";
 };
 
@@ -155,31 +178,84 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("chrome") || lower.includes("devtools")) {
     return "bg-amber-3 border-amber-6";
   }
+  if (lower.includes("openwork")) return "bg-gray-3 border-gray-6";
   return "bg-dls-hover border-dls-border";
 };
 
+type ExtensionFilter = "all" | "mcp" | "skill" | "plugin";
+
 export function McpView(props: McpViewProps) {
   const showHeader = props.showHeader !== false;
+  const [detailEntry, setDetailEntry] = useState<McpDirectoryInfo | null>(null);
+  const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
+  const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
+  const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
+  const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<ExtensionFilter>("all");
 
-  const [logoutOpen, setLogoutOpen] = useState(false);
-  const [logoutTarget, setLogoutTarget] = useState<string | null>(null);
-  const [logoutBusy, setLogoutBusy] = useState(false);
-  const [removeOpen, setRemoveOpen] = useState(false);
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const [configScope, setConfigScope] = useState<"project" | "global">("project");
-  const [projectConfig, setProjectConfig] = useState<OpencodeConfigFile | null>(null);
-  const [globalConfig, setGlobalConfig] = useState<OpencodeConfigFile | null>(null);
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [revealBusy, setRevealBusy] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [addMcpModalOpen, setAddMcpModalOpen] = useState(false);
-  const [togglingMcp, setTogglingMcp] = useState<string | null>(null);
-  const [controlChromeModalOpen, setControlChromeModalOpen] = useState(false);
-  const [controlChromeModalMode, setControlChromeModalMode] = useState<"connect" | "edit">("connect");
-  const [controlChromeExistingProfile, setControlChromeExistingProfile] = useState(false);
+  const [localState, dispatchLocal] = useReducer(
+    mcpViewLocalReducer,
+    initialMcpViewLocalState,
+  );
+  const {
+    logoutOpen,
+    logoutTarget,
+    logoutBusy,
+    removeOpen,
+    removeTarget,
+    configScope,
+    projectConfig,
+    globalConfig,
+    configError,
+    revealBusy,
+    showAdvanced,
+    addMcpModalOpen,
+    togglingMcp,
+    chromeSetupOpen,
+  } = localState;
+  const setLocal = <K extends keyof McpViewLocalState>(
+    key: K,
+    value: SetStateAction<McpViewLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setLogoutOpen = (value: SetStateAction<boolean>) => setLocal("logoutOpen", value);
+  const setLogoutTarget = (value: SetStateAction<string | null>) => setLocal("logoutTarget", value);
+  const setLogoutBusy = (value: SetStateAction<boolean>) => setLocal("logoutBusy", value);
+  const setRemoveOpen = (value: SetStateAction<boolean>) => setLocal("removeOpen", value);
+  const setRemoveTarget = (value: SetStateAction<string | null>) => setLocal("removeTarget", value);
+  const setConfigScope = (value: SetStateAction<ConfigScope>) => setLocal("configScope", value);
+  const setConfigError = (value: SetStateAction<string | null>) => setLocal("configError", value);
+  const setRevealBusy = (value: SetStateAction<boolean>) => setLocal("revealBusy", value);
+  const setShowAdvanced = (value: SetStateAction<boolean>) => setLocal("showAdvanced", value);
+  const setAddMcpModalOpen = (value: SetStateAction<boolean>) => setLocal("addMcpModalOpen", value);
+  const setTogglingMcp = (value: SetStateAction<string | null>) => setLocal("togglingMcp", value);
+  const setChromeSetupOpen = (value: SetStateAction<boolean>) => setLocal("chromeSetupOpen", value);
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    void (async () => {
+      try {
+        const command = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+        if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
+          setOpenworkUiMcpCommand(command);
+        }
+        const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+        if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+          setOpenworkUiMcpEnvironment(Object.fromEntries(
+            Object.entries(environment).filter((entry): entry is [string, string] =>
+              typeof entry[0] === "string" && typeof entry[1] === "string"
+            ),
+          ));
+        }
+      } catch {
+        setOpenworkUiMcpCommand(null);
+        setOpenworkUiMcpEnvironment(null);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     const root = props.selectedWorkspaceRoot.trim();
@@ -188,9 +264,7 @@ export function McpView(props: McpViewProps) {
     const readConfig = props.readConfigFile;
 
     if (!readConfig && !isDesktopRuntime()) {
-      setProjectConfig(null);
-      setGlobalConfig(null);
-      setConfigError(null);
+      dispatchLocal({ type: "configUnavailable" });
       return;
     }
 
@@ -206,15 +280,17 @@ export function McpView(props: McpViewProps) {
           readConfig ? readConfig("global") : readOpencodeConfig("global", root),
         ]);
         if (nextId !== configRequestId.current) return;
-        setProjectConfig(project);
-        setGlobalConfig(global);
+        dispatchLocal({
+          type: "configLoaded",
+          project: project as OpencodeConfigFile | null,
+          global: global as OpencodeConfigFile | null,
+        });
       } catch (error) {
         if (nextId !== configRequestId.current) return;
-        setProjectConfig(null);
-        setGlobalConfig(null);
-        setConfigError(
-          error instanceof Error ? error.message : t("mcp.config_load_failed"),
-        );
+        dispatchLocal({
+          type: "configLoadError",
+          error: error instanceof Error ? error.message : t("mcp.config_load_failed"),
+        });
       }
     })();
   }, [props.readConfigFile, props.selectedWorkspaceRoot]);
@@ -248,32 +324,6 @@ export function McpView(props: McpViewProps) {
 
   const isQuickConnectConfigured = (entry: McpDirectoryInfo) =>
     props.mcpServers.some((server) => server.name === getMcpIdentityKey(entry));
-
-  const openControlChromeModal = (
-    mode: "connect" | "edit",
-    existingEntry?: McpServerEntry | null,
-  ) => {
-    setControlChromeModalMode(mode);
-    setControlChromeExistingProfile(
-      usesChromeDevtoolsAutoConnect(existingEntry?.config.command),
-    );
-    setControlChromeModalOpen(true);
-  };
-
-  const saveControlChromeSettings = (useExistingProfile: boolean) => {
-    const controlChrome = quickConnectList.find((entry) => isChromeDevtoolsMcp(entry));
-    if (!controlChrome) return;
-    const existingEntry = props.mcpServers.find((entry) => isChromeDevtoolsMcp(entry.name));
-
-    props.connectMcp({
-      ...controlChrome,
-      command: buildChromeDevtoolsCommand(
-        existingEntry?.config.command ?? controlChrome.command,
-        useExistingProfile,
-      ),
-    });
-    setControlChromeModalOpen(false);
-  };
 
   const supportsOauth = (entry: McpServerEntry) =>
     entry.config.type === "remote" && entry.config.oauth !== false;
@@ -322,13 +372,14 @@ export function McpView(props: McpViewProps) {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
         : await readOpencodeConfig(configScope, root);
-      if (!resolved) {
+      const configFile = resolved as OpencodeConfigFile | null;
+      if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
       }
       if (isWindowsPlatform()) {
-        await openDesktopPath(resolved.path);
+        await openDesktopPath(configFile.path);
       } else {
-        await revealDesktopItemInDir(resolved.path);
+        await revealDesktopItemInDir(configFile.path);
       }
     } catch (error) {
       setConfigError(
@@ -340,20 +391,9 @@ export function McpView(props: McpViewProps) {
   };
 
   return (
-    <section className="space-y-8 animate-in fade-in duration-300">
+    <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
       {showHeader ? (
-        <div>
-          <h2 className="text-3xl font-bold text-dls-text">{t("mcp.apps_title")}</h2>
-          <p className="mt-1.5 text-sm text-dls-secondary">{t("mcp.apps_subtitle")}</p>
-          {connectedCount > 0 ? (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-              <div className="h-2 w-2 rounded-full bg-green-9" />
-              <span className="text-xs font-medium text-green-11">
-                {connectedCount} {connectedCount === 1 ? t("mcp.app_connected") : t("mcp.apps_connected")}
-              </span>
-            </div>
-          ) : null}
-        </div>
+        <McpViewHeader connectedCount={connectedCount} />
       ) : null}
 
       {props.mcpStatus ? (
@@ -362,326 +402,98 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] px-5 py-5 sm:px-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <div className="text-base font-semibold text-dls-text">{t("mcp.add_modal_title")}</div>
-            <div className="text-sm text-dls-secondary">{t("mcp.custom_app_cta_hint")}</div>
-          </div>
-          <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
-            <Plus size={14} />
-            {t("mcp.add_modal_title")}
-          </Button>
+      {/* Chrome setup card removed -- built-in browser handles this automatically */}
+
+      <McpCustomAppCard onOpen={() => setAddMcpModalOpen(true)} />
+
+      {/* Search + filter */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
+          <input
+            className="w-full rounded-lg border border-dls-border bg-dls-surface py-2 pl-9 pr-3 text-xs text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+            placeholder="Search extensions..."
+            value={search}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          {(["all", "mcp", "skill"] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+                filter === f
+                  ? "border-dls-text/20 bg-dls-text/10 text-dls-text"
+                  : "border-dls-border text-dls-secondary hover:text-dls-text"
+              }`}
+              onClick={() => setFilter(f)}
+            >
+              {f === "all" ? "All" : f === "mcp" ? "MCPs" : "Skills"}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-dls-secondary">
-            {t("mcp.available_apps")}
-          </h3>
-          <span className="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
-        </div>
+      <McpQuickConnectSection
+        entries={
+          quickConnectList.filter((entry) => {
+            if (filter === "skill") return false;
+            if (filter === "mcp" && (entry.kind ?? "mcp") !== "mcp" && entry.kind !== "ui-control") return false;
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            return entry.name.toLowerCase().includes(q) || entry.description.toLowerCase().includes(q);
+          })
+        }
+        installedSkills={
+          (props.installedSkills ?? []).filter((skill) => {
+            if (filter === "mcp") return false;
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            return skill.name.toLowerCase().includes(q) || (skill.description ?? "").toLowerCase().includes(q);
+          })
+        }
+        busy={props.busy}
+        connectingName={props.mcpConnectingName}
+        isConfigured={isQuickConnectConfigured}
+        statusForEntry={quickConnectStatus}
+        onConnect={props.connectMcp}
+        onDetail={setDetailEntry}
+        onSkillDetail={(skill) => {
+          setDetailSkill(skill);
+          setDetailSkillContent(null);
+          if (props.readSkill) {
+            void props.readSkill(skill.name).then((result) => {
+              if (result?.content) {
+                setDetailSkillContent(result.content.slice(0, 2000));
+              }
+            });
+          }
+        }}
+      />
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {quickConnectList.map((entry) => {
-            const configured = isQuickConnectConfigured(entry);
-            const connecting = props.mcpConnectingName === entry.name;
-            const Icon = serviceIcon(entry.name);
-            const controlChrome = isChromeDevtoolsMcp(entry);
-            const quickStatus = !configured ? quickConnectStatus(entry) : undefined;
-
-            return (
-              <div key={getMcpIdentityKey(entry)} className="relative">
-                {controlChrome && configured ? (
-                  <button
-                    type="button"
-                    className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-green-6 bg-white/90 text-green-11 transition-colors hover:bg-white"
-                    aria-label={t("mcp.control_chrome_edit")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const existingEntry = props.mcpServers.find(
-                        (server) => server.name === getMcpIdentityKey(entry),
-                      );
-                      openControlChromeModal("edit", existingEntry);
-                    }}
-                  >
-                    <Settings size={14} />
-                  </button>
-                ) : null}
-
-                <button
-                  type="button"
-                  disabled={configured || props.busy || connecting}
-                  onClick={() => {
-                    if (configured) return;
-                    if (controlChrome) {
-                      openControlChromeModal("connect");
-                      return;
-                    }
-                    props.connectMcp(entry);
-                  }}
-                  className={`group w-full rounded-xl border p-4 text-left transition-all ${
-                    configured
-                      ? "border-green-6 bg-green-2"
-                      : "border-dls-border bg-dls-surface hover:bg-dls-hover hover:shadow-[0_4px_16px_rgba(17,24,39,0.06)]"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${
-                        configured ? "border-green-6 bg-green-3" : serviceIconBg(entry.name)
-                      }`}
-                    >
-                      {connecting ? (
-                        <Loader2 size={18} className="animate-spin text-dls-secondary" />
-                      ) : configured ? (
-                        <CheckCircle2 size={18} className="text-green-11" />
-                      ) : (
-                        <Icon size={18} className={serviceColor(entry.name)} />
-                      )}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 pr-10">
-                        <h4 className="text-sm font-semibold text-dls-text">{entry.name}</h4>
-                        {configured ? (
-                          <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
-                            {t("mcp.connected_badge")}
-                          </span>
-                        ) : null}
-                        {!configured && quickStatus ? (
-                          <span
-                            className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${statusBadgeStyle(
-                              quickStatus.status,
-                            )}`}
-                          >
-                            {friendlyStatus(quickStatus.status)}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">
-                        {entry.description}
-                      </p>
-                      {!configured && !connecting ? (
-                        <div className="mt-2 text-[11px] font-medium text-blue-11 transition-colors group-hover:text-blue-12">
-                          {t("mcp.tap_to_connect")}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-[11px] font-bold uppercase tracking-widest text-dls-secondary">
-            {t("mcp.your_apps")}
-          </h3>
-          {props.mcpLastUpdatedAt ? (
-            <span className="tabular-nums text-[11px] text-dls-secondary">
-              {t("mcp.last_synced")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
-            </span>
-          ) : null}
-        </div>
-
-        {props.mcpServers.length ? (
-          <div className="space-y-2">
-            {props.mcpServers.map((entry) => {
-              const status = resolveStatus(entry);
-              const Icon = serviceIcon(entry.name);
-              const isSelected = props.selectedMcp === entry.name;
-              const resolvedStatus = props.mcpStatuses[entry.name];
-              const errorInfo =
-                resolvedStatus && resolvedStatus.status === "failed"
-                  ? "error" in resolvedStatus
-                    ? resolvedStatus.error
-                    : t("mcp.connection_failed")
-                  : null;
-
-              return (
-                <div
-                  key={entry.name}
-                  className={`rounded-xl border transition-all ${
-                    isSelected
-                      ? "border-blue-7 bg-blue-2 shadow-sm"
-                      : "border-dls-border bg-dls-surface hover:bg-dls-hover"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    className="w-full px-4 py-3.5 text-left"
-                    onClick={() => props.setSelectedMcp(isSelected ? null : entry.name)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${
-                          status === "connected"
-                            ? "border-green-6 bg-green-3"
-                            : serviceIconBg(entry.name)
-                        }`}
-                      >
-                        <Icon
-                          size={15}
-                          className={
-                            status === "connected" ? "text-green-11" : serviceColor(entry.name)
-                          }
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-dls-text">
-                          {displayName(entry.name)}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <div className={`h-2 w-2 rounded-full ${statusDot(status)}`} />
-                        <span className="text-[11px] text-dls-secondary">
-                          {friendlyStatus(status)}
-                        </span>
-                      </div>
-                      <div className={`transition-transform ${isSelected ? "rotate-180" : ""}`}>
-                        <ChevronDown size={14} className="text-dls-secondary/40" />
-                      </div>
-                    </div>
-                  </button>
-
-                  {isSelected ? (
-                    <div className="animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-blue-6/20 px-4 py-3 duration-200">
-                      <div className="flex items-center gap-4 text-xs">
-                        <span className="text-dls-secondary">{t("mcp.connection_type")}</span>
-                        <span className="text-dls-text">
-                          {entry.config.type === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-md border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-dls-text">
-                          {t("mcp.cap_tools")}
-                        </span>
-                        {entry.config.type === "remote" ? (
-                          <span className="rounded-md border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-dls-text">
-                            {t("mcp.cap_signin")}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {errorInfo ? (
-                        <div className="rounded-lg border border-red-6 bg-red-2 px-3 py-2 text-xs text-red-11">
-                          {errorInfo}
-                        </div>
-                      ) : null}
-
-                      <details className="group">
-                        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-dls-secondary transition-colors hover:text-dls-text">
-                          <Code2 size={11} />
-                          {t("mcp.technical_details")}
-                          <ChevronDown size={10} className="transition-transform group-open:rotate-180" />
-                        </summary>
-                        <div className="mt-1.5 break-all rounded-lg bg-dls-hover px-3 py-2 font-mono text-[11px] text-dls-secondary">
-                          {entry.config.type === "remote"
-                            ? entry.config.url
-                            : entry.config.command?.join(" ")}
-                        </div>
-                      </details>
-
-                      {supportsOauth(entry) && status !== "connected" ? (
-                        <>
-                          <div className="flex items-center justify-between gap-3 pt-1">
-                            <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
-                            <Button
-                              variant="secondary"
-                              className="px-3 py-1.5 text-xs"
-                              disabled={props.busy}
-                              onClick={() => props.authorizeMcp(entry)}
-                            >
-                              {t("mcp.login_action")}
-                            </Button>
-                          </div>
-                          <div className="text-[11px] text-dls-secondary/70">{t("mcp.login_hint")}</div>
-                        </>
-                      ) : null}
-
-                      {supportsOauth(entry) && status === "connected" ? (
-                        <>
-                          <div className="flex items-center justify-between gap-3 pt-1">
-                            <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
-                            <Button
-                              variant="danger"
-                              className="px-3 py-1.5 text-xs"
-                              disabled={props.busy || logoutBusy}
-                              onClick={() => requestLogout(entry.name)}
-                            >
-                              {logoutBusy && logoutTarget === entry.name
-                                ? t("mcp.logout_working")
-                                : t("mcp.logout_action")}
-                            </Button>
-                          </div>
-                          <div className="text-[11px] text-dls-secondary/70">{t("mcp.logout_hint")}</div>
-                        </>
-                      ) : null}
-
-                      <div className="flex justify-end gap-2 pt-1">
-                        {isChromeDevtoolsMcp(entry.name) ? (
-                          <Button
-                            variant="outline"
-                            className="!px-3 !py-1.5 !text-xs"
-                            onClick={() => openControlChromeModal("edit", entry)}
-                          >
-                            <Settings size={13} />
-                            {t("mcp.control_chrome_edit")}
-                          </Button>
-                        ) : null}
-                        {props.setMcpEnabled && entry.source !== "config.global" ? (
-                          <Button
-                            variant="outline"
-                            className="!px-3 !py-1.5 !text-xs"
-                            disabled={props.busy || togglingMcp === entry.name}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (togglingMcp) return;
-                              const next = entry.config.enabled !== false ? false : true;
-                              setTogglingMcp(entry.name);
-                              void Promise.resolve(props.setMcpEnabled?.(entry.name, next)).finally(
-                                () => setTogglingMcp(null),
-                              );
-                            }}
-                          >
-                            <Power size={13} />
-                            {entry.config.enabled === false
-                              ? t("mcp.enable_app")
-                              : t("mcp.disable_app")}
-                          </Button>
-                        ) : null}
-                        <Button
-                          variant="danger"
-                          className="!px-3 !py-1.5 !text-xs"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setRemoveTarget(entry.name);
-                            setRemoveOpen(true);
-                          }}
-                        >
-                          {t("mcp.remove_app")}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
-            <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
-            <div className="text-sm font-medium text-dls-secondary">{t("mcp.no_apps_yet")}</div>
-            <div className="mt-1 text-xs text-dls-secondary/60">{t("mcp.no_apps_hint")}</div>
-          </div>
-        )}
-      </div>
+      <McpConfiguredServersSection
+        servers={props.mcpServers}
+        statuses={props.mcpStatuses}
+        lastUpdatedAt={props.mcpLastUpdatedAt}
+        selectedMcp={props.selectedMcp}
+        busy={props.busy}
+        logoutBusy={logoutBusy}
+        logoutTarget={logoutTarget}
+        togglingMcp={togglingMcp}
+        displayName={displayName}
+        resolveStatus={resolveStatus}
+        supportsOauth={supportsOauth}
+        onSelect={props.setSelectedMcp}
+        onAuthorize={props.authorizeMcp}
+        onRequestLogout={requestLogout}
+        onRemove={(name) => {
+          setRemoveTarget(name);
+          setRemoveOpen(true);
+        }}
+        onToggleEnabled={props.setMcpEnabled}
+        onToggleBusy={setTogglingMcp}
+      />
 
       <ConfirmModal
         open={logoutOpen}
@@ -718,92 +530,18 @@ export function McpView(props: McpViewProps) {
         }}
       />
 
-      <div className="overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
-        <button
-          type="button"
-          className="flex w-full items-center justify-between px-5 py-4 transition-colors hover:bg-dls-hover"
-          onClick={() => setShowAdvanced((current) => !current)}
-        >
-          <div className="flex items-center gap-3">
-            <Settings2 size={16} className="text-dls-secondary" />
-            <div className="text-left">
-              <div className="text-sm font-medium text-dls-text">{t("mcp.advanced_settings")}</div>
-              <div className="text-xs text-dls-secondary">{t("mcp.advanced_settings_hint")}</div>
-            </div>
-          </div>
-          <div className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`}>
-            <ChevronDown size={16} className="text-dls-secondary" />
-          </div>
-        </button>
-
-        {showAdvanced ? (
-          <div className="animate-in fade-in slide-in-from-top-1 space-y-4 border-t border-dls-border px-5 py-4 duration-200">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  configScope === "project"
-                    ? "bg-dls-active text-dls-text"
-                    : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
-                }`}
-                onClick={() => setConfigScope("project")}
-              >
-                {t("mcp.scope_project")}
-              </button>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  configScope === "global"
-                    ? "bg-dls-active text-dls-text"
-                    : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
-                }`}
-                onClick={() => setConfigScope("global")}
-              >
-                {t("mcp.scope_global")}
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-1 text-xs">
-              <div className="text-dls-secondary">{t("mcp.config_file")}</div>
-              <div className="truncate font-mono text-[11px] text-dls-secondary/80">
-                {activeConfig?.path ?? t("mcp.config_not_loaded")}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={() => void revealConfig()} disabled={!canRevealConfig}>
-                  {revealBusy ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      {t("mcp.opening_label")}
-                    </>
-                  ) : (
-                    <>
-                      <FolderOpen size={14} />
-                      {revealLabel}
-                    </>
-                  )}
-                </Button>
-                <a
-                  href="https://opencode.ai/docs/mcp-servers/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-dls-secondary transition-colors hover:text-dls-text"
-                >
-                  {t("mcp.docs_link")}
-                  <ExternalLink size={11} />
-                </a>
-              </div>
-              {activeConfig && activeConfig.exists === false ? (
-                <div className="text-[11px] text-dls-secondary">{t("mcp.file_not_found")}</div>
-              ) : null}
-            </div>
-
-            {configError ? <div className="text-xs text-red-11">{configError}</div> : null}
-          </div>
-        ) : null}
-      </div>
+      <McpAdvancedConfigSection
+        open={showAdvanced}
+        configScope={configScope}
+        activeConfig={activeConfig}
+        canRevealConfig={canRevealConfig}
+        revealBusy={revealBusy}
+        revealLabel={revealLabel}
+        configError={configError}
+        onToggle={() => setShowAdvanced((current) => !current)}
+        onScopeChange={setConfigScope}
+        onReveal={revealConfig}
+      />
 
       <AddMcpModal
         open={addMcpModalOpen}
@@ -813,15 +551,471 @@ export function McpView(props: McpViewProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
       />
 
-      <ControlChromeSetupModal
-        open={controlChromeModalOpen}
-        busy={props.busy || props.mcpConnectingName === "Control Chrome"}
-        mode={controlChromeModalMode}
-        initialUseExistingProfile={controlChromeExistingProfile}
-        onClose={() => setControlChromeModalOpen(false)}
-        onSave={saveControlChromeSettings}
+      <ChromeConnectionSetupModal
+        open={chromeSetupOpen}
+        onClose={() => setChromeSetupOpen(false)}
       />
+
+      {detailEntry ? (
+        <ExtensionDetailModal
+          open={!!detailEntry}
+          onClose={() => setDetailEntry(null)}
+          name={detailEntry.name}
+          description={detailEntry.description}
+          iconSlug={detailEntry.iconSlug}
+          iconSrc={detailEntry.iconSrc}
+          fallbackIcon={serviceIcon(detailEntry.name)}
+          kind={detailEntry.kind ?? "mcp"}
+          connected={isQuickConnectConfigured(detailEntry)}
+          connecting={props.mcpConnectingName === detailEntry.name}
+          launchCommand={detailEntry.serverName === "openwork-ui" ? openworkUiMcpCommand ?? undefined : undefined}
+          environment={detailEntry.serverName === "openwork-ui" ? openworkUiMcpEnvironment ?? undefined : undefined}
+          url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
+          oauth={detailEntry.oauth}
+          onConnect={() => {
+            props.connectMcp(detailEntry);
+            setDetailEntry(null);
+          }}
+          onUninstall={isQuickConnectConfigured(detailEntry) ? () => {
+            const slug = getMcpIdentityKey(detailEntry);
+            props.removeMcp(slug);
+            setDetailEntry(null);
+          } : undefined}
+        />
+      ) : null}
+
+      {detailSkill ? (
+        <ExtensionDetailModal
+          open={!!detailSkill}
+          onClose={() => { setDetailSkill(null); setDetailSkillContent(null); }}
+          name={detailSkill.name}
+          description={detailSkill.description ?? "Installed skill"}
+          kind="skill"
+          connected={true}
+          path={detailSkill.path}
+          trigger={detailSkill.trigger}
+          contentPreview={detailSkillContent ?? undefined}
+          onReveal={detailSkill.path ? () => {
+            void revealDesktopItemInDir(detailSkill.path);
+          } : undefined}
+          onUninstall={props.uninstallSkill ? () => {
+            props.uninstallSkill?.(detailSkill.name);
+            setDetailSkill(null);
+          } : undefined}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function McpViewHeader(props: { connectedCount: number }) {
+  return (
+    <div>
+      <h2 className="text-3xl font-semibold text-dls-text">{t("mcp.apps_title")}</h2>
+      <p className="mt-1.5 text-sm text-dls-secondary">{t("mcp.apps_subtitle")}</p>
+      {props.connectedCount > 0 ? (
+        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
+          <div className="size-2 rounded-full bg-green-9" />
+          <span className="text-xs font-medium text-green-11">
+            {props.connectedCount} {props.connectedCount === 1 ? t("mcp.app_connected") : t("mcp.apps_connected")}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function McpChromeSetupCard(props: { onOpen: () => void }) {
+  return (
+    <div className="rounded-2xl border border-amber-6/30 bg-[linear-gradient(180deg,rgba(245,158,11,0.08),rgba(245,158,11,0.03))] p-5 sm:px-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <div className="text-base font-semibold text-dls-text">{t("chrome_setup.title")}</div>
+          <div className="text-sm text-dls-secondary">{t("chrome_setup.subtitle")}</div>
+        </div>
+        <Button variant="outline" onClick={props.onOpen}>
+          <Chrome size={14} />
+          {t("chrome_setup.test_connection")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function McpCustomAppCard(props: { onOpen: () => void }) {
+  return (
+    <div className="rounded-2xl border border-blue-6/30 bg-[linear-gradient(180deg,rgba(59,130,246,0.08),rgba(59,130,246,0.03))] p-5 sm:px-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <div className="text-base font-semibold text-dls-text">{t("mcp.add_modal_title")}</div>
+          <div className="text-sm text-dls-secondary">{t("mcp.custom_app_cta_hint")}</div>
+        </div>
+        <Button variant="secondary" onClick={props.onOpen}>
+          <Plus size={14} />
+          {t("mcp.add_modal_title")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function McpQuickConnectSection(props: {
+  entries: McpDirectoryInfo[];
+  installedSkills?: SkillItem[];
+  busy: boolean;
+  connectingName: string | null;
+  isConfigured: (entry: McpDirectoryInfo) => boolean;
+  statusForEntry: (entry: McpDirectoryInfo) => { status: ReactMcpStatus } | undefined;
+  onConnect: (entry: McpDirectoryInfo) => void;
+  onDetail: (entry: McpDirectoryInfo) => void;
+  onSkillDetail?: (skill: SkillItem) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
+          {t("mcp.available_apps")}
+        </h3>
+        <span className="text-[11px] text-dls-secondary">{t("mcp.one_click_connect")}</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* MCP entries */}
+        {props.entries.map((entry) => {
+          const configured = props.isConfigured(entry);
+          const connecting = props.connectingName === entry.name;
+          const FallbackIcon = serviceIcon(entry.name);
+
+          return (
+            <ExtensionCard
+              key={getMcpIdentityKey(entry)}
+              name={entry.name}
+              description={entry.description}
+              iconSlug={entry.iconSlug}
+              iconSrc={entry.iconSrc}
+              fallbackIcon={FallbackIcon}
+              kind={entry.kind ?? "mcp"}
+              connected={configured}
+              connecting={connecting}
+              disabled={props.busy}
+              actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
+              onClick={() => props.onDetail(entry)}
+            />
+          );
+        })}
+
+        {/* Installed skills */}
+        {(props.installedSkills ?? []).map((skill) => (
+          <ExtensionCard
+            key={`skill:${skill.name}`}
+            name={skill.name}
+            description={skill.description ?? "Installed skill"}
+            kind="skill"
+            connected={true}
+            actionLabel="View details"
+            onClick={() => props.onSkillDetail?.(skill)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function McpConfiguredServersSection(props: {
+  servers: McpServerEntry[];
+  statuses: McpStatusMap;
+  lastUpdatedAt: number | null;
+  selectedMcp: string | null;
+  busy: boolean;
+  logoutBusy: boolean;
+  logoutTarget: string | null;
+  togglingMcp: string | null;
+  displayName: (name: string) => string;
+  resolveStatus: (entry: McpServerEntry) => ReactMcpStatus;
+  supportsOauth: (entry: McpServerEntry) => boolean;
+  onSelect: (name: string | null) => void;
+  onAuthorize: (entry: McpServerEntry) => void;
+  onRequestLogout: (name: string) => void;
+  onRemove: (name: string) => void;
+  onToggleEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
+  onToggleBusy: (value: SetStateAction<string | null>) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-widest text-dls-secondary">
+          {t("mcp.your_apps")}
+        </h3>
+        {props.lastUpdatedAt ? (
+          <span className="tabular-nums text-[11px] text-dls-secondary">
+            {t("mcp.last_synced")} {formatRelativeTime(props.lastUpdatedAt)}
+          </span>
+        ) : null}
+      </div>
+
+      {props.servers.length ? (
+        <div className="space-y-2">
+          {props.servers.map((entry) => (
+            <McpConfiguredServerRow
+              key={entry.name}
+              entry={entry}
+              status={props.resolveStatus(entry)}
+              errorInfo={readMcpErrorInfo(props.statuses[entry.name])}
+              selected={props.selectedMcp === entry.name}
+              busy={props.busy}
+              logoutBusy={props.logoutBusy}
+              logoutTarget={props.logoutTarget}
+              togglingMcp={props.togglingMcp}
+              displayName={props.displayName}
+              supportsOauth={props.supportsOauth}
+              onSelect={props.onSelect}
+              onAuthorize={props.onAuthorize}
+              onRequestLogout={props.onRequestLogout}
+              onRemove={props.onRemove}
+              onToggleEnabled={props.onToggleEnabled}
+              onToggleBusy={props.onToggleBusy}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
+          <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
+          <div className="text-sm font-medium text-dls-secondary">{t("mcp.no_apps_yet")}</div>
+          <div className="mt-1 text-xs text-dls-secondary/60">{t("mcp.no_apps_hint")}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function readMcpErrorInfo(status: McpStatusMap[string] | undefined) {
+  if (!status || status.status !== "failed") return null;
+  return "error" in status ? status.error : t("mcp.connection_failed");
+}
+
+function McpConfiguredServerRow(props: {
+  entry: McpServerEntry;
+  status: ReactMcpStatus;
+  errorInfo: string | null;
+  selected: boolean;
+  busy: boolean;
+  logoutBusy: boolean;
+  logoutTarget: string | null;
+  togglingMcp: string | null;
+  displayName: (name: string) => string;
+  supportsOauth: (entry: McpServerEntry) => boolean;
+  onSelect: (name: string | null) => void;
+  onAuthorize: (entry: McpServerEntry) => void;
+  onRequestLogout: (name: string) => void;
+  onRemove: (name: string) => void;
+  onToggleEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
+  onToggleBusy: (value: SetStateAction<string | null>) => void;
+}) {
+  const Icon = serviceIcon(props.entry.name);
+  return (
+    <div className={`rounded-xl border transition-all ${props.selected ? "border-blue-7 bg-blue-2 shadow-sm" : "border-dls-border bg-dls-surface hover:bg-dls-hover"}`}>
+      <button type="button" className="w-full px-4 py-3.5 text-left" onClick={() => props.onSelect(props.selected ? null : props.entry.name)}>
+        <div className="flex items-center gap-3">
+          <div className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${props.status === "connected" ? "border-green-6 bg-green-3" : serviceIconBg(props.entry.name)}`}>
+            <Icon size={15} className={props.status === "connected" ? "text-green-11" : serviceColor(props.entry.name)} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-dls-text">{props.displayName(props.entry.name)}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className={`size-2 rounded-full ${statusDot(props.status)}`} />
+            <span className="text-[11px] text-dls-secondary">{friendlyStatus(props.status)}</span>
+          </div>
+          <div className={`transition-transform ${props.selected ? "rotate-180" : ""}`}>
+            <ChevronDown size={14} className="text-dls-secondary/40" />
+          </div>
+        </div>
+      </button>
+
+      {props.selected ? <McpConfiguredServerDetails {...props} /> : null}
+    </div>
+  );
+}
+
+function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServerRow>[0]) {
+  return (
+    <div className="animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-blue-6/20 px-4 py-3 duration-200">
+      <div className="flex items-center gap-4 text-xs">
+        <span className="text-dls-secondary">{t("mcp.connection_type")}</span>
+        <span className="text-dls-text">{props.entry.config.type === "remote" ? t("mcp.type_cloud") : t("mcp.type_local")}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="rounded-md border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-dls-text">
+          {t("mcp.cap_tools")}
+        </span>
+        {props.entry.config.type === "remote" ? (
+          <span className="rounded-md border border-dls-border bg-dls-surface px-2 py-0.5 text-[10px] font-medium text-dls-text">
+            {t("mcp.cap_signin")}
+          </span>
+        ) : null}
+      </div>
+      {props.errorInfo ? <div className="rounded-lg border border-red-6 bg-red-2 px-3 py-2 text-xs text-red-11">{props.errorInfo}</div> : null}
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-dls-secondary transition-colors hover:text-dls-text">
+          <Code2 size={11} />
+          {t("mcp.technical_details")}
+          <ChevronDown size={10} className="transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="mt-1.5 break-all rounded-lg bg-dls-hover px-3 py-2 font-mono text-[11px] text-dls-secondary">
+          {props.entry.config.type === "remote" ? props.entry.config.url : props.entry.config.command?.join(" ")}
+        </div>
+      </details>
+      <McpConfiguredServerAuthActions {...props} />
+      <div className="flex justify-end gap-2 pt-1">
+        {props.onToggleEnabled && props.entry.source !== "config.global" ? (
+          <Button
+            variant="outline"
+            className="!px-3 !py-1.5 !text-xs"
+            disabled={props.busy || props.togglingMcp === props.entry.name}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (props.togglingMcp) return;
+              const next = props.entry.config.enabled !== false ? false : true;
+              props.onToggleBusy(props.entry.name);
+              void Promise.resolve(props.onToggleEnabled?.(props.entry.name, next)).finally(() => props.onToggleBusy(null));
+            }}
+          >
+            <Power size={13} />
+            {props.entry.config.enabled === false ? t("mcp.enable_app") : t("mcp.disable_app")}
+          </Button>
+        ) : null}
+        <Button
+          variant="danger"
+          className="!px-3 !py-1.5 !text-xs"
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onRemove(props.entry.name);
+          }}
+        >
+          {t("mcp.remove_app")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function McpConfiguredServerAuthActions(props: Parameters<typeof McpConfiguredServerRow>[0]) {
+  if (!props.supportsOauth(props.entry)) return null;
+  if (props.status !== "connected") {
+    return (
+      <>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
+          <Button variant="secondary" className="px-3 py-1.5 text-xs" disabled={props.busy} onClick={() => props.onAuthorize(props.entry)}>
+            {t("mcp.login_action")}
+          </Button>
+        </div>
+        <div className="text-[11px] text-dls-secondary/70">{t("mcp.login_hint")}</div>
+      </>
+    );
+  }
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
+        <Button
+          variant="danger"
+          className="px-3 py-1.5 text-xs"
+          disabled={props.busy || props.logoutBusy}
+          onClick={() => props.onRequestLogout(props.entry.name)}
+        >
+          {props.logoutBusy && props.logoutTarget === props.entry.name ? t("mcp.logout_working") : t("mcp.logout_action")}
+        </Button>
+      </div>
+      <div className="text-[11px] text-dls-secondary/70">{t("mcp.logout_hint")}</div>
+    </>
+  );
+}
+
+function McpAdvancedConfigSection(props: {
+  open: boolean;
+  configScope: ConfigScope;
+  activeConfig: OpencodeConfigFile | null;
+  canRevealConfig: boolean;
+  revealBusy: boolean;
+  revealLabel: string;
+  configError: string | null;
+  onToggle: () => void;
+  onScopeChange: (scope: ConfigScope) => void;
+  onReveal: () => Promise<void>;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
+      <button type="button" className="flex w-full items-center justify-between px-5 py-4 transition-colors hover:bg-dls-hover" onClick={props.onToggle}>
+        <div className="flex items-center gap-3">
+          <Settings2 size={16} className="text-dls-secondary" />
+          <div className="text-left">
+            <div className="text-sm font-medium text-dls-text">{t("mcp.advanced_settings")}</div>
+            <div className="text-xs text-dls-secondary">{t("mcp.advanced_settings_hint")}</div>
+          </div>
+        </div>
+        <div className={`transition-transform ${props.open ? "rotate-180" : ""}`}>
+          <ChevronDown size={16} className="text-dls-secondary" />
+        </div>
+      </button>
+      {props.open ? (
+        <div className="animate-in fade-in slide-in-from-top-1 space-y-4 border-t border-dls-border px-5 py-4 duration-200">
+          <div className="flex items-center gap-1.5">
+            <McpConfigScopeButton scope="project" activeScope={props.configScope} onScopeChange={props.onScopeChange} />
+            <McpConfigScopeButton scope="global" activeScope={props.configScope} onScopeChange={props.onScopeChange} />
+          </div>
+          <div className="flex flex-col gap-1 text-xs">
+            <div className="text-dls-secondary">{t("mcp.config_file")}</div>
+            <div className="truncate font-mono text-[11px] text-dls-secondary/80">
+              {props.activeConfig?.path ?? t("mcp.config_not_loaded")}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={() => void props.onReveal()} disabled={!props.canRevealConfig}>
+                {props.revealBusy ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    {t("mcp.opening_label")}
+                  </>
+                ) : (
+                  <>
+                    <FolderOpen size={14} />
+                    {props.revealLabel}
+                  </>
+                )}
+              </Button>
+              <a href="https://opencode.ai/docs/mcp-servers/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-dls-secondary transition-colors hover:text-dls-text">
+                {t("mcp.docs_link")}
+                <ExternalLink size={11} />
+              </a>
+            </div>
+            {props.activeConfig && props.activeConfig.exists === false ? <div className="text-[11px] text-dls-secondary">{t("mcp.file_not_found")}</div> : null}
+          </div>
+          {props.configError ? <div className="text-xs text-red-11">{props.configError}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function McpConfigScopeButton(props: {
+  scope: ConfigScope;
+  activeScope: ConfigScope;
+  onScopeChange: (scope: ConfigScope) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+        props.activeScope === props.scope
+          ? "bg-dls-active text-dls-text"
+          : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+      }`}
+      onClick={() => props.onScopeChange(props.scope)}
+    >
+      {props.scope === "project" ? t("mcp.scope_project") : t("mcp.scope_global")}
+    </button>
   );
 }
 

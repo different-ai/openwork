@@ -54,7 +54,7 @@ function startMockOpencode() {
   return { server, requests };
 }
 
-function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
+async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: string }) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -80,7 +80,7 @@ function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseUrl: st
     logFormat: "pretty",
     logRequests: false,
   };
-  const server = startServer(config) as Served;
+  const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
   return { server, hostToken: config.hostToken };
 }
@@ -89,7 +89,7 @@ describe("workspace activation", () => {
   test("reloads the bound OpenCode engine on activate", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
-    const openwork = startOpenworkServer({
+    const openwork = await startOpenworkServer({
       workspaceRoot,
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });

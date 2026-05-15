@@ -36,8 +36,19 @@ export function useRemoteAccessRestart(options: UseRemoteAccessRestartOptions) {
       options.onSettingsChanged();
 
       try {
-        const info = await openworkServerRestart({ remoteAccessEnabled: enabled });
+        const info = await openworkServerRestart({ remoteAccessEnabled: enabled }) as OpenworkServerInfo;
+        writeOpenworkServerSettings({
+          urlOverride: info.baseUrl?.trim() || undefined,
+          token:
+            info.ownerToken?.trim() ||
+            info.clientToken?.trim() ||
+            undefined,
+          hostToken: info.hostToken?.trim() || undefined,
+          portOverride: info.port ?? undefined,
+          remoteAccessEnabled: info.remoteAccessEnabled === true,
+        });
         options.onHostInfo(info);
+        options.onSettingsChanged();
         setPhase("idle");
       } catch (caught) {
         writeOpenworkServerSettings(previous);

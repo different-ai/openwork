@@ -324,7 +324,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setCliAuthResult(null);
 
     try {
-      const result = await opencodeMcpAuth(props.projectDir, props.entry.name);
+      const result = await opencodeMcpAuth(props.projectDir, props.entry.name) as { ok: boolean; stderr?: string; stdout?: string };
       if (result.ok) {
         setError(null);
         setNeedsReload(true);
@@ -588,11 +588,12 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" onClick={handleClose} />
+      <button type="button" className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" aria-label={t("common.close")} onClick={handleClose} />
 
       <div
         className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         <div className="flex items-center justify-between border-b border-gray-6 px-6 py-4">
           <div>
@@ -677,7 +678,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
           {!isBusy && alreadyConnected ? (
             <div className="space-y-4 rounded-xl border border-green-7/20 bg-green-7/10 p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
                   <CheckCircle2 size={24} className="text-green-11" />
                 </div>
                 <div>
@@ -807,7 +808,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
             <>
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     1
                   </div>
                   <div>
@@ -819,7 +820,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     2
                   </div>
                   <div>
@@ -829,7 +830,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     3
                   </div>
                   <div>

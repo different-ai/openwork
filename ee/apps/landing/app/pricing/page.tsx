@@ -19,7 +19,7 @@ const pricingSchema = {
       name: "Solo",
       price: "0",
       priceCurrency: "USD",
-      url: "https://openworklabs.com/download",
+      url: "https://app.openworklabs.com?mode=sign-up",
       availability: "https://schema.org/InStock",
       description: "Free forever. Open source desktop app with bring-your-own-keys."
     },

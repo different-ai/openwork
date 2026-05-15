@@ -122,7 +122,26 @@ describe("deriveRenderedSessionMessages", () => {
         { id: "msg_old_user", role: "user", text: "old prompt" },
         { id: "msg_old_assistant", role: "assistant", text: "old answer" },
       ]),
-      includeLiveOnlyMessages: true,
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
+      "msg_current_user",
+      "msg_current_assistant",
+    ]);
+  });
+
+  it("keeps live-only tail messages after the stream flips idle before the snapshot catches up", () => {
+    const messages = deriveRenderedSessionMessages({
+      transcriptState: [
+        uiMessage("msg_current_user", "user", "latest prompt"),
+        uiMessage("msg_current_assistant", "assistant", "latest answer"),
+      ],
+      snapshot: snapshotWithMessages([
+        { id: "msg_old_user", role: "user", text: "old prompt" },
+        { id: "msg_old_assistant", role: "assistant", text: "old answer" },
+      ]),
     });
 
     expect(messages.map((message) => message.id)).toEqual([

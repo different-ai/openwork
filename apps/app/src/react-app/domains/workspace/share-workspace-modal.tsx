@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import { ArrowLeft, MonitorUp, X } from "lucide-react";
 
 import { t } from "../../../i18n";
@@ -16,14 +16,83 @@ import { WorkspaceOptionCard } from "./option-card";
 import { ShareWorkspaceAccessPanel } from "./share-workspace-access-panel";
 import type { ShareView, ShareWorkspaceModalProps } from "./types";
 
+type ShareWorkspaceModalState = {
+  activeView: ShareView;
+  revealedByKey: Record<string, boolean>;
+  copiedKey: string | null;
+  collaboratorExpanded: boolean;
+  remoteAccessEnabled: boolean;
+};
+
+type ShareWorkspaceModalAction =
+  | { type: "reset"; remoteAccessEnabled: boolean }
+  | { type: "setActiveView"; view: ShareView }
+  | { type: "toggleReveal"; key: string }
+  | { type: "setCopiedKey"; key: string | null }
+  | { type: "clearCopiedKey"; key: string }
+  | { type: "toggleCollaboratorExpanded" }
+  | { type: "setRemoteAccessEnabled"; enabled: boolean };
+
+const initialShareWorkspaceModalState: ShareWorkspaceModalState = {
+  activeView: "chooser",
+  revealedByKey: {},
+  copiedKey: null,
+  collaboratorExpanded: false,
+  remoteAccessEnabled: false,
+};
+
+function shareWorkspaceModalReducer(
+  state: ShareWorkspaceModalState,
+  action: ShareWorkspaceModalAction,
+): ShareWorkspaceModalState {
+  switch (action.type) {
+    case "reset":
+      return {
+        activeView: "chooser",
+        revealedByKey: {},
+        copiedKey: null,
+        collaboratorExpanded: false,
+        remoteAccessEnabled: action.remoteAccessEnabled,
+      };
+    case "setActiveView":
+      return { ...state, activeView: action.view };
+    case "toggleReveal":
+      return {
+        ...state,
+        revealedByKey: {
+          ...state.revealedByKey,
+          [action.key]: !state.revealedByKey[action.key],
+        },
+      };
+    case "setCopiedKey":
+      return { ...state, copiedKey: action.key };
+    case "clearCopiedKey":
+      return {
+        ...state,
+        copiedKey: state.copiedKey === action.key ? null : state.copiedKey,
+      };
+    case "toggleCollaboratorExpanded":
+      return {
+        ...state,
+        collaboratorExpanded: !state.collaboratorExpanded,
+      };
+    case "setRemoteAccessEnabled":
+      return { ...state, remoteAccessEnabled: action.enabled };
+  }
+}
+
 export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
-  const [activeView, setActiveView] = useState<ShareView>("chooser");
-  const [revealedByKey, setRevealedByKey] = useState<Record<string, boolean>>(
-    {},
+  const [state, dispatch] = useReducer(
+    shareWorkspaceModalReducer,
+    initialShareWorkspaceModalState,
   );
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [collaboratorExpanded, setCollaboratorExpanded] = useState(false);
-  const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(false);
+  const {
+    activeView,
+    revealedByKey,
+    copiedKey,
+    collaboratorExpanded,
+    remoteAccessEnabled,
+  } = state;
 
   const title = props.title ?? t("share.title");
   const workspaceBadge = useMemo(() => {
@@ -35,18 +104,11 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   // Reset state whenever the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    setActiveView("chooser");
-    setRevealedByKey({});
-    setCopiedKey(null);
-    setCollaboratorExpanded(false);
-    setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
+    dispatch({
+      type: "reset",
+      remoteAccessEnabled: props.remoteAccess?.enabled === true,
+    });
   }, [props.open, props.remoteAccess?.enabled, props.workspaceName]);
-
-  // Mirror remote-access-enabled changes from the parent while open.
-  useEffect(() => {
-    if (!props.open) return;
-    setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
-  }, [props.open, props.remoteAccess?.enabled]);
 
   // Escape key handling: chooser closes the modal, sub-views step back.
   useEffect(() => {
@@ -54,20 +116,18 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setActiveView((view) => {
-        if (view === "chooser") {
-          props.onClose();
-          return view;
-        }
-        return "chooser";
-      });
+      if (activeView === "chooser") {
+        props.onClose();
+        return;
+      }
+      dispatch({ type: "setActiveView", view: "chooser" });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props]);
+  }, [activeView, props]);
 
   const goBack = useCallback(() => {
-    setActiveView("chooser");
+    dispatch({ type: "setActiveView", view: "chooser" });
   }, []);
 
   const handleCopy = useCallback(async (value: string, key: string) => {
@@ -75,9 +135,9 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
+      dispatch({ type: "setCopiedKey", key });
       window.setTimeout(() => {
-        setCopiedKey((current) => (current === key ? null : current));
+        dispatch({ type: "clearCopiedKey", key });
       }, 2000);
     } catch {
       // ignore clipboard failures
@@ -149,7 +209,7 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
                 title={t("share.option_access_title")}
                 description={t("share.option_access_desc")}
                 icon={MonitorUp}
-                onClick={() => setActiveView("access")}
+                onClick={() => dispatch({ type: "setActiveView", view: "access" })}
               />
             </div>
           ) : null}
@@ -160,19 +220,16 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
               copiedKey={copiedKey}
               onCopy={(value, key) => void handleCopy(value, key)}
               revealedByKey={revealedByKey}
-              onToggleReveal={(key) =>
-                setRevealedByKey((prev) => ({
-                  ...prev,
-                  [key]: !prev[key],
-                }))
-              }
+              onToggleReveal={(key) => dispatch({ type: "toggleReveal", key })}
               collaboratorExpanded={collaboratorExpanded}
               onToggleCollaboratorExpanded={() =>
-                setCollaboratorExpanded((value) => !value)
+                dispatch({ type: "toggleCollaboratorExpanded" })
               }
               remoteAccess={props.remoteAccess}
               remoteAccessEnabled={remoteAccessEnabled}
-              onRemoteAccessEnabledChange={setRemoteAccessEnabled}
+              onRemoteAccessEnabledChange={(enabled) =>
+                dispatch({ type: "setRemoteAccessEnabled", enabled })
+              }
               note={props.note}
             />
           ) : null}

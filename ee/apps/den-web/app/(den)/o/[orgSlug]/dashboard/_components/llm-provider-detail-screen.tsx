@@ -145,7 +145,7 @@ export function LlmProviderDetailScreen({
                 </Link>
 
                 <div className="flex flex-wrap gap-3">
-                    {provider.canManage ? (
+                    {provider.canManage && provider.source !== "openwork" ? (
                         <>
                             <Link
                                 href={getEditLlmProviderRoute(

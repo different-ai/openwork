@@ -55,7 +55,7 @@ function loadMigrationReleaseEnv(): Record<string, string> {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
+    const eq = trimmed.search("=");
     if (eq < 0) continue;
     const key = trimmed.slice(0, eq).trim();
     if (!key.startsWith("VITE_")) continue;

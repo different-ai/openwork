@@ -1,0 +1,42 @@
+{
+  "name": "@openwork/email",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./templates": {
+      "types": "./src/templates/index.ts",
+      "development": "./src/templates/index.ts",
+      "default": "./dist/templates/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "emails"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "email dev --dir emails"
+  },
+  "dependencies": {
+    "@react-email/components": "^1.0.12",
+    "@react-email/render": "^2.0.7",
+    "nodemailer": "^8.0.6",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-email": "6.1.1",
+    "resend": "^6.12.2"
+  },
+  "devDependencies": {
+    "@react-email/ui": "6.1.1",
+    "@types/nodemailer": "^8.0.0",
+    "@types/react": "^19.2.14",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}

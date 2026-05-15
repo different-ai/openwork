@@ -13,9 +13,10 @@ export function clearOpenworkEnvSystemContextCache(): void {
 function normalizeEnvKeys(keys: string[]): string[] {
   return Array.from(
     new Set(
-      keys
-        .map((key) => key.trim())
-        .filter((key) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)),
+      keys.flatMap((key) => {
+        const trimmed = key.trim();
+        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) ? [trimmed] : [];
+      }),
     ),
   ).sort((a, b) => a.localeCompare(b));
 }

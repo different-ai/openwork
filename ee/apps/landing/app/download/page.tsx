@@ -4,14 +4,16 @@ import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
 import { baseOpenGraph } from "../../lib/seo";
 
+const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 const downloadSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   name: "OpenWork",
   description:
-    "Open source Claude Cowork alternative. Desktop app for macOS, Windows, and Linux that lets teams use 50+ LLMs with their own provider keys.",
+    "Open source Claude Cowork alternative. Sign up for OpenWork Cloud to get access to the desktop app for macOS, Windows, and Linux.",
   url: "https://openworklabs.com/download",
-  downloadUrl: "https://github.com/different-ai/openwork/releases/latest",
+  downloadUrl: CLOUD_SIGNUP_URL,
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",
   offers: {
@@ -27,9 +29,9 @@ const downloadSchema = {
 };
 
 export const metadata = {
-  title: "Download OpenWork — macOS, Windows, Linux",
+  title: "Get Started with OpenWork — macOS, Windows, Linux",
   description:
-    "Download OpenWork desktop for macOS, Windows, and Linux. Direct Electron build downloads are resolved from the latest GitHub release.",
+    "Create a free OpenWork Cloud account to get access to the OpenWork desktop app for macOS, Windows, and Linux.",
   alternates: {
     canonical: "/download"
   },
@@ -41,8 +43,6 @@ export const metadata = {
 
 export default async function Download() {
   const github = await getGithubData();
-  const releaseLabel = github.releaseTag || "latest";
-  const releaseUrl = github.releaseUrl;
 
   return (
     <div className="min-h-screen">
@@ -55,178 +55,40 @@ export default async function Download() {
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
-          <div className="animate-fade-up">
+          <div className="animate-fade-up max-w-3xl">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
               OpenWork desktop
             </div>
             <h1 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
-              Download OpenWork
+              Get Started with OpenWork
             </h1>
-            <p className="mb-4 max-w-3xl text-[17px] leading-relaxed text-gray-700">
-              Install OpenWork on macOS, Windows, or Linux. Pick the package that
-              matches your distro and architecture.
-            </p>
-            <p className="mb-10 text-[14px] text-gray-600">
-              Latest stable release: 
-              <a
-                href={releaseUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="font-semibold text-gray-900 underline decoration-gray-300 underline-offset-4 transition hover:decoration-gray-700"
-              >
-                {releaseLabel}
-              </a>
-            </p>
-          </div>
-
-          <div className="mb-10 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <a
-              href="#macos"
-              className="feature-card border-sky-100 bg-sky-50/60 transition hover:border-sky-200"
-            >
-              <span className="mb-2 block text-[16px] font-semibold text-gray-900">macOS</span>
-              <p className="text-[14px] text-gray-700">Apple Silicon and Intel builds</p>
-            </a>
-            <a
-              href="#windows"
-              className="feature-card border-violet-100 bg-violet-50/50 transition hover:border-violet-200"
-            >
-              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Windows</span>
-              <p className="text-[14px] text-gray-700">x64 NSIS installer</p>
-            </a>
-            <a
-              href="#linux"
-              className="feature-card border-emerald-100 bg-emerald-50/60 transition hover:border-emerald-200"
-            >
-              <span className="mb-2 block text-[16px] font-semibold text-gray-900">Linux</span>
-              <p className="text-[14px] text-gray-700">AppImage and tarball builds</p>
-            </a>
-          </div>
-
-          <section id="macos" className="py-6">
-            <h2 className="mb-2 text-2xl font-bold md:text-3xl">macOS</h2>
-            <p className="mb-8 text-[15px] text-gray-700">
-              Download the DMG that matches your Mac.
-            </p>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="feature-card bg-white/90">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Apple Silicon (M-series)</h3>
-                <p className="mb-4 text-[14px] text-gray-600">Recommended for M1, M2, M3, and M4 chips.</p>
-                <a
-                  href={github.installers.macos.appleSilicon}
-                  className="doc-button"
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Download .dmg
-                </a>
-              </div>
-
-              <div className="feature-card bg-white/90">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Intel (x64)</h3>
-                <p className="mb-4 text-[14px] text-gray-600">For Intel-based Macs.</p>
-                <a
-                  href={github.installers.macos.intel}
-                  className="doc-button"
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Download .dmg
-                </a>
-              </div>
-            </div>
-          </section>
-
-          <hr />
-
-          <section id="windows" className="py-6">
-            <h2 className="mb-2 text-2xl font-bold md:text-3xl">Windows</h2>
-            <p className="mb-6 text-[15px] text-gray-700">
-              OpenWork for Windows is available as an x64 Electron installer.
+            <p className="mb-6 text-[17px] leading-relaxed text-gray-700">
+              Create a free OpenWork Cloud account first. After signup, we guide
+              you to the desktop app and connect it to your cloud workspace.
             </p>
             <a
-              href={github.installers.windows.x64}
-              className="doc-button"
-              rel="noreferrer"
+              href={CLOUD_SIGNUP_URL}
               target="_blank"
+              rel="noreferrer"
+              className="doc-button inline-flex"
             >
-              Download Windows x64 (.exe)
+              Get Started for free
             </a>
-          </section>
+          </div>
 
-          <hr />
-
-          <section id="linux" className="py-6">
-            <h2 className="mb-2 text-2xl font-bold md:text-3xl">Linux</h2>
-            <p className="mb-8 text-[15px] text-gray-700">
-              Download Electron builds directly for x64 and arm64 Linux systems.
-            </p>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="feature-card border-amber-100 bg-white/90 ring-1 ring-amber-100/60">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">AppImage</h3>
-                <p className="mb-4 text-[14px] text-gray-600">
-                  Portable desktop builds for most Linux distributions.
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <a
-                    href={github.installers.linux.appImageX64}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="doc-button"
-                  >
-                    x64 AppImage
-                  </a>
-                  <a
-                    href={github.installers.linux.appImageArm64}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="doc-button"
-                  >
-                    arm64 AppImage
-                  </a>
-                </div>
-              </div>
-
-              <div className="feature-card border-sky-100 bg-white/90 ring-1 ring-sky-100/60">
-                <h3 className="mb-2 text-[16px] font-semibold text-gray-900">Tarball</h3>
-                <p className="mb-4 text-[14px] text-gray-600">
-                  Compressed Electron builds for manual installation.
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  <a
-                    href={github.installers.linux.tarX64}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="doc-button"
-                  >
-                    x64 .tar.gz
-                  </a>
-                  <a
-                    href={github.installers.linux.tarArm64}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="doc-button"
-                  >
-                    arm64 .tar.gz
-                  </a>
-                </div>
-              </div>
+          <section className="my-12 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="feature-card border-sky-100 bg-sky-50/60">
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">1. Sign up</span>
+              <p className="text-[14px] text-gray-700">Create your free OpenWork Cloud account.</p>
             </div>
-
-            <p className="mt-8 text-[14px] text-gray-600">
-              Need another format? 
-              <a
-                href={releaseUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="font-semibold text-gray-900 underline decoration-gray-300 underline-offset-4 transition hover:decoration-gray-700"
-              >
-                Browse all release assets
-              </a>
-              .
-            </p>
+            <div className="feature-card border-violet-100 bg-violet-50/50">
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">2. Create a workspace</span>
+              <p className="text-[14px] text-gray-700">Set up your personal or team workspace before installing.</p>
+            </div>
+            <div className="feature-card border-emerald-100 bg-emerald-50/60">
+              <span className="mb-2 block text-[16px] font-semibold text-gray-900">3. Open the app</span>
+              <p className="text-[14px] text-gray-700">Use the guided desktop app access flow from Cloud.</p>
+            </div>
           </section>
 
           <SiteFooter />

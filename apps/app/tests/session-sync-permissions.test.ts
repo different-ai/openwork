@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { UIMessage } from "ai";
 import type { PermissionRequest } from "@opencode-ai/sdk/v2/client";
 
+import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
   permissionKey,
   seedPermissionState,
+  seedSessionState,
+  transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 
 function permission(id: string, sessionID: string): PermissionRequest {
@@ -19,6 +23,49 @@ function permission(id: string, sessionID: string): PermissionRequest {
       project: false,
     },
   };
+}
+
+function uiMessage(id: string, role: "user" | "assistant", text: string): UIMessage {
+  return {
+    id,
+    role,
+    parts: [{ type: "text", text, state: "done" }],
+  };
+}
+
+function snapshotWithMessages(
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string }>,
+  sessionId = "session-a",
+): OpenworkSessionSnapshot {
+  return {
+    session: {
+      id: sessionId,
+      parentID: undefined,
+      title: "Test session",
+      time: { created: 1, updated: 2 },
+      share: undefined,
+      version: "0",
+    },
+    messages: messages.map((message, index) => ({
+      info: {
+        id: message.id,
+        role: message.role,
+        sessionID: sessionId,
+        time: { created: index + 1 },
+      },
+      parts: [
+        {
+          id: `part_${message.id}`,
+          type: "text",
+          text: message.text,
+          sessionID: sessionId,
+          messageID: message.id,
+        },
+      ],
+    })),
+    todos: [],
+    status: { type: "idle" },
+  } as unknown as OpenworkSessionSnapshot;
 }
 
 afterEach(() => {
@@ -77,5 +124,36 @@ describe("session permission sync", () => {
     seedPermissionState("workspace-a", "session-a", [], { snapshotStartedAt: 200 });
 
     expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
+  });
+});
+
+describe("session transcript sync", () => {
+  test("keeps live-only messages when an idle snapshot is stale", () => {
+    getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
+      uiMessage("msg-user", "user", "hello"),
+      uiMessage("msg-assistant", "assistant", "finished answer"),
+    ]);
+
+    seedSessionState("workspace-a", snapshotWithMessages([
+      { id: "msg-user", role: "user", text: "hello" },
+    ]));
+
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+    expect(transcript?.map((message) => message.id)).toEqual(["msg-user", "msg-assistant"]);
+  });
+
+  test("keeps longer live text when an idle snapshot lags the event stream", () => {
+    getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
+      uiMessage("msg-user", "user", "hello"),
+      uiMessage("msg-assistant", "assistant", "finished answer"),
+    ]);
+
+    seedSessionState("workspace-a", snapshotWithMessages([
+      { id: "msg-user", role: "user", text: "hello" },
+      { id: "msg-assistant", role: "assistant", text: "finished" },
+    ]));
+
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+    expect(transcript?.[1]?.parts[0]).toMatchObject({ text: "finished answer" });
   });
 });

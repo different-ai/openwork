@@ -14,16 +14,26 @@ import {
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
+import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import {
   getWorkspaceTaskLoadErrorDisplay,
+  isRemoteConnectionErrorMessage,
+  isRemoteConnectionWorkspace,
   isSandboxWorkspace,
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { WorkspaceIcon } from "../../../design-system/workspace-icon";
+
+const WORKSPACE_SESSION_SKELETON_ROWS = [
+  { id: "short", width: "62%" },
+  { id: "medium", width: "78%" },
+  { id: "compact", width: "54%" },
+];
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -163,17 +173,7 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
       : t("workspace.remote_badge")
     : t("workspace.local_badge");
 
-const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 
-const workspaceSwatchColor = (seed: string) => {
-  const value = seed.trim() || "workspace";
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(index);
-    hash |= 0;
-  }
-  return WORKSPACE_SWATCHES[Math.abs(hash) % WORKSPACE_SWATCHES.length];
-};
 
 function RemoteConnectionIssueCard(props: {
   message: string;
@@ -196,9 +196,9 @@ function RemoteConnectionIssueCard(props: {
     : "border-red-7/25 bg-red-1/40 text-red-11";
 
   return (
-    <div className={`w-full rounded-[15px] border px-3 py-3 text-left ${shellClass}`}>
+    <div className={`w-full rounded-[15px] border p-3 text-left ${shellClass}`}>
       <div className="flex items-start gap-2.5">
-        <div className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+        <div className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
           <AlertCircle size={14} />
         </div>
         <div className="min-w-0 flex-1">
@@ -214,6 +214,7 @@ function RemoteConnectionIssueCard(props: {
           >
             {props.message}
           </div>
+          <OpenWorkDenHelpLink />
           <div className="mt-2 flex flex-wrap gap-1.5">
             {props.canRecover ? (
               <button
@@ -448,7 +449,7 @@ export function WorkspaceSessionList(props: Props) {
             {hasChildren ? (
               <button
                 type="button"
-                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="-ml-1 flex size-6 shrink-0 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={isExpanded ? t("workspace_list.hide_child_sessions") : t("workspace_list.show_child_sessions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -462,7 +463,7 @@ export function WorkspaceSessionList(props: Props) {
               <span className="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
             ) : null}
 
-            {isSessionActive ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" /> : null}
+            {isSessionActive ? <span className="size-1.5 shrink-0 rounded-full bg-amber-9" /> : null}
             <span
               className={`block min-w-0 truncate ${
                 isSelected ? "font-medium text-gray-12" : "font-normal text-current"
@@ -477,7 +478,7 @@ export function WorkspaceSessionList(props: Props) {
             {canManageSession ? (
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                className="flex size-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
                 aria-label={t("workspace_list.session_actions")}
                 onClick={(event) => {
                   event.preventDefault();
@@ -495,7 +496,6 @@ export function WorkspaceSessionList(props: Props) {
           <div
             ref={sessionMenuRef}
             className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
-            onClick={(event) => event.stopPropagation()}
           >
             {props.onOpenRenameSession ? (
               <button
@@ -547,16 +547,16 @@ export function WorkspaceSessionList(props: Props) {
             };
             const isConnectionActionBusy =
               isConnecting || connectionState.status === "connecting";
-            const canRecover =
-              workspace.workspaceType === "remote" && connectionState.status === "error";
+            const isRemoteWorkspace = isRemoteConnectionWorkspace(workspace);
+            const canRecover = isRemoteWorkspace && connectionState.status === "error";
             const isMenuOpen = workspaceMenuId === workspace.id;
             const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
             const connectionIssueMessage =
               connectionState.status === "error"
                 ? connectionState.message?.trim() || taskLoadError.message
-                : taskLoadError.message;
+                : group.error?.trim() || taskLoadError.message;
             const showRemoteConnectionIssue =
-              workspace.workspaceType === "remote" &&
+              (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
               Boolean(connectionIssueMessage) &&
               (connectionState.status === "error" || group.status === "error");
             const statusLabel = (() => {
@@ -610,12 +610,7 @@ export function WorkspaceSessionList(props: Props) {
                     }}
                   >
                     <div className="flex min-w-0 items-center gap-3.5">
-                      <div
-                        className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-full"
-                        style={{
-                          backgroundColor: workspaceSwatchColor(workspace.id || workspaceLabel(workspace)),
-                        }}
-                      />
+                      <WorkspaceIcon seed={workspaceLabel(workspace)} sizeClass="size-5.5" />
                       <div className="min-w-0 flex-1">
                         <div className="min-w-0 truncate text-[14px] font-normal text-dls-text">
                           {workspaceLabel(workspace)}
@@ -692,7 +687,6 @@ export function WorkspaceSessionList(props: Props) {
                     <div
                       ref={workspaceMenuRef}
                       className="absolute right-0 top-[calc(100%+6px)] z-20 w-48 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
-                      onClick={(event) => event.stopPropagation()}
                     >
                       <button
                         type="button"
@@ -798,17 +792,16 @@ export function WorkspaceSessionList(props: Props) {
                             props.onEditWorkspaceConnection(workspace.id);
                           }}
                         />
-                      ) : null}
-                      {props.showInitialLoading ? (
+                      ) : props.showInitialLoading ? (
                         <div className="space-y-2">
-                          {[0, 1, 2].map((idx) => (
+                          {WORKSPACE_SESSION_SKELETON_ROWS.map((row) => (
                             <div
-                              key={`${workspace.id}:skeleton:${idx}`}
+                              key={`${workspace.id}:skeleton:${row.id}`}
                               className="w-full rounded-[15px] border border-dls-border/70 bg-dls-hover/30 px-3 py-2.5"
                             >
                               <div
                                 className="h-2.5 rounded-full bg-dls-hover/80 animate-pulse"
-                                style={{ width: idx === 0 ? "62%" : idx === 1 ? "78%" : "54%" }}
+                                style={{ width: row.width }}
                               />
                             </div>
                           ))}
@@ -845,7 +838,7 @@ export function WorkspaceSessionList(props: Props) {
                             </button>
                           ) : null}
                         </>
-                      ) : showRemoteConnectionIssue ? null : group.status === "error" ? (
+                      ) : group.status === "error" ? (
                         <div
                           className={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
                             taskLoadError.tone === "offline"

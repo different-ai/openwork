@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useSyncExternalStore, type ReactNode } from "react";
 
 import type { SessionActionsStore } from "./actions-store";
 
@@ -22,7 +22,7 @@ export function SessionActionsProvider({
 }
 
 export function useSessionActions(): SessionActionsStore {
-  const context = useContext(SessionActionsContext);
+  const context = use(SessionActionsContext);
   if (!context) {
     throw new Error("useSessionActions must be used within a SessionActionsProvider");
   }

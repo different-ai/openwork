@@ -4,14 +4,13 @@ import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 
 import { t } from "../../../i18n";
 import {
-  CHROME_DEVTOOLS_MCP_ID,
+  getMcpServerName,
   MCP_QUICK_CONNECT,
   type McpDirectoryInfo,
 } from "../../../app/constants";
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
-  getDesktopHomeDir,
   readOpencodeConfig,
   writeOpencodeConfig,
   type OpencodeConfigFile,
@@ -20,8 +19,6 @@ import { toSessionTransportDirectory } from "../../../app/lib/session-scope";
 import {
   parseMcpServersFromContent,
   removeMcpFromConfig,
-  resolveChromeDevtoolsMcpCommand,
-  usesChromeDevtoolsAutoConnect,
   validateMcpServerName,
 } from "../../../app/mcp";
 import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
@@ -32,7 +29,7 @@ import type {
   ReloadReason,
   ReloadTrigger,
 } from "../../../app/types";
-import { isDesktopRuntime, isElectronRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
+import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { OpenworkServerStore } from "./openwork-server-store";
 
@@ -156,7 +153,7 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    return readOpencodeConfig(scope, projectDir);
+    return readOpencodeConfig(scope, projectDir) as Promise<OpencodeConfigFile>;
   };
 
   const ensureActiveClient = async () => {
@@ -275,6 +272,38 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses };
   };
 
+  const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") {
+      return entry.command;
+    }
+    try {
+      const command = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+      if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
+        return command;
+      }
+    } catch {
+      // Fall through to the published package command.
+    }
+    return entry.command;
+  };
+
+  const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") return undefined;
+    try {
+      const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+        return Object.fromEntries(
+          Object.entries(environment).filter((entry): entry is [string, string] =>
+            typeof entry[0] === "string" && typeof entry[1] === "string"
+          ),
+        );
+      }
+    } catch {
+      // Discovery fallback in openwork-ui-mcp still handles normal launches.
+    }
+    return undefined;
+  };
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -345,8 +374,8 @@ export function createConnectionsStore(options: {
         projectDir,
       });
       const [globalConfig, projectConfig] = await Promise.all([
-        readOpencodeConfig("global", projectDir),
-        readOpencodeConfig("project", projectDir),
+        readOpencodeConfig("global", projectDir) as Promise<OpencodeConfigFile>,
+        readOpencodeConfig("project", projectDir) as Promise<OpencodeConfigFile>,
       ]);
       const globalServers = globalConfig.exists && globalConfig.content
         ? parseMcpServersFromContent(globalConfig.content).map((entry) => ({
@@ -470,13 +499,28 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = entry.id ?? getMcpServerName(entry);
     const action = snapshot.mcpServers.some((server) => server.name === slug) ? "updated" : "added";
 
     try {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
 
-      let mcpEnvironment: Record<string, string> | undefined;
+      // Resolve dynamic URLs for built-in MCPs
+      let resolvedUrl = entry.url;
+      let resolvedHeaders: Record<string, string> | undefined;
+      if (!resolvedUrl && entry.serverName === "openwork-ui") {
+        try {
+          const bridgeInfo = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          if (bridgeInfo?.baseUrl) {
+            resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
+            if (bridgeInfo.token) {
+              resolvedHeaders = { Authorization: `Bearer ${bridgeInfo.token}` };
+            }
+          }
+        } catch {
+          // Bridge not available
+        }
+      }
 
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
@@ -484,11 +528,14 @@ export function createConnectionsStore(options: {
       };
 
       if (entryType === "remote") {
-        if (!entry.url) {
-          throw new Error("Missing MCP URL.");
+        if (!resolvedUrl) {
+          throw new Error("Missing MCP URL. Is the OpenWork desktop app running?");
         }
-        mcpEntryConfig["url"] = entry.url;
-        if (entry.oauth) {
+        mcpEntryConfig["url"] = resolvedUrl;
+        if (resolvedHeaders) {
+          mcpEntryConfig["headers"] = resolvedHeaders;
+        }
+        if (entry.oauth && !resolvedHeaders) {
           mcpEntryConfig["oauth"] = {};
         }
       }
@@ -497,32 +544,10 @@ export function createConnectionsStore(options: {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
-
-        // For chrome-devtools in Electron, resolve the bundled binary so we
-        // don't need npx/npm at runtime.  Only carry over -- prefixed flags
-        // from the original command (skip npx flags like -y).
-        let resolvedCommand = entry.command;
-        if (slug === CHROME_DEVTOOLS_MCP_ID && isElectronRuntime()) {
-          const bundled = await resolveChromeDevtoolsMcpCommand();
-          const extraArgs = entry.command.filter((arg) => arg.startsWith("--"));
-          resolvedCommand = [...bundled, ...extraArgs];
-        }
-        mcpEntryConfig["command"] = resolvedCommand;
-
-        if (
-          slug === CHROME_DEVTOOLS_MCP_ID &&
-          usesChromeDevtoolsAutoConnect(resolvedCommand) &&
-          isDesktopRuntime()
-        ) {
-          try {
-            const hostHome = (await getDesktopHomeDir()).replace(/[\\/]+$/, "");
-            if (hostHome) {
-              mcpEnvironment = { HOME: hostHome };
-              mcpEntryConfig["environment"] = mcpEnvironment;
-            }
-          } catch {
-            // ignore and let the MCP use the default worker environment
-          }
+        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        const environment = await resolveLocalMcpEnvironment(entry);
+        if (environment) {
+          mcpEntryConfig["environment"] = environment;
         }
       }
 
@@ -532,7 +557,7 @@ export function createConnectionsStore(options: {
           config: mcpEntryConfig,
         });
       } else {
-        const configFile = await readOpencodeConfig("project", resolvedProjectDir);
+        const configFile = await readOpencodeConfig("project", resolvedProjectDir) as OpencodeConfigFile;
 
         const raw = configFile.exists && configFile.content?.trim()
           ? configFile.content
@@ -562,7 +587,7 @@ export function createConnectionsStore(options: {
           "project",
           resolvedProjectDir,
           updated.endsWith("\n") ? updated : `${updated}\n`,
-        );
+        ) as { ok: boolean; stderr?: string; stdout?: string };
         if (!writeResult.ok) {
           throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
         }
@@ -589,7 +614,6 @@ export function createConnectionsStore(options: {
                 type: "local" as const,
                 command: (mcpEntryConfig["command"] as string[]) ?? entry.command!,
                 enabled: true,
-                ...(mcpEnvironment ? { environment: mcpEnvironment } : {}),
               };
 
         const status = unwrap(

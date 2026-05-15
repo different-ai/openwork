@@ -9,12 +9,12 @@ const results = {
   steps: [] as Array<Record<string, unknown>>,
 };
 
-async function step(name: string, fn: () => void | Promise<void>) {
+function step(name: string, fn: () => void) {
   results.steps.push({ name, status: "running" });
   const index = results.steps.length - 1;
 
   try {
-    await fn();
+    fn();
     results.steps[index] = { name, status: "ok" };
   } catch (error) {
     results.ok = false;
@@ -30,12 +30,12 @@ async function step(name: string, fn: () => void | Promise<void>) {
 try {
   clearDevLogs();
 
-  await step("disabled logging does not retain entries", () => {
+  step("disabled logging does not retain entries", () => {
     recordDevLog(false, { level: "debug", source: "workspace", label: "connect:start" });
     assert.equal(readDevLogs(0).length, 0);
   });
 
-  await step("enabled logging retains ordered entries", () => {
+  step("enabled logging retains ordered entries", () => {
     recordDevLog(true, { level: "debug", source: "workspace", label: "connect:start", payload: { root: "/tmp/demo" } });
     recordDevLog(true, { level: "warn", source: "session", label: "stream:error", payload: { code: 500 } });
     const logs = readDevLogs(0);
@@ -44,7 +44,7 @@ try {
     assert.equal(logs[1]?.level, "warn");
   });
 
-  await step("formatted output stays readable and exportable", () => {
+  step("formatted output stays readable and exportable", () => {
     const line = formatDevLogLine(readDevLogs(1)[0]!);
     assert.match(line, /WARN session:stream:error/);
     const text = formatDevLogText(0);

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import {
   createContext,
-  useContext,
+  use,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -22,7 +22,7 @@ export function ConnectionsProvider(props: {
 }
 
 export function useConnections() {
-  const store = useContext(ConnectionsContext);
+  const store = use(ConnectionsContext);
   if (!store) {
     throw new Error("useConnections must be used within a ConnectionsProvider");
   }

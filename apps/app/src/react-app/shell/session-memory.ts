@@ -6,6 +6,7 @@
 
 const ACTIVE_WORKSPACE_KEY = "openwork.react.activeWorkspace";
 const SESSION_BY_WORKSPACE_KEY = "openwork.react.sessionByWorkspace";
+const WORKSPACE_ORDER_KEY = "openwork.react.workspaceOrder";
 
 function safeGet(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -36,6 +37,29 @@ export function readActiveWorkspaceId(): string | null {
 
 export function writeActiveWorkspaceId(id: string | null): void {
   safeSet(ACTIVE_WORKSPACE_KEY, id?.trim() || null);
+}
+
+export function readWorkspaceOrderIds(): string[] {
+  const raw = safeGet(WORKSPACE_ORDER_KEY);
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((value) => {
+      const trimmed = typeof value === "string" ? value.trim() : "";
+      return trimmed ? [trimmed] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function writeWorkspaceOrderIds(ids: string[]): void {
+  const normalized = ids.flatMap((id) => {
+    const trimmed = id.trim();
+    return trimmed ? [trimmed] : [];
+  });
+  safeSet(WORKSPACE_ORDER_KEY, normalized.length ? JSON.stringify(normalized) : null);
 }
 
 type SessionByWorkspace = Record<string, string>;
@@ -91,4 +115,8 @@ export function forgetWorkspaceMemory(workspaceId: string): void {
   }
   const active = readActiveWorkspaceId();
   if (active === wsId) writeActiveWorkspaceId(null);
+  const workspaceOrderIds = readWorkspaceOrderIds();
+  if (workspaceOrderIds.includes(wsId)) {
+    writeWorkspaceOrderIds(workspaceOrderIds.filter((id) => id !== wsId));
+  }
 }

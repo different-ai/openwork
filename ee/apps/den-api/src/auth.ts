@@ -1,11 +1,8 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
-import {
-  sendDenOrganizationInvitationEmail,
-  sendDenVerificationEmail,
-} from "./email.js";
 import { syncDenSignupContact } from "./loops.js";
+import { sendEmail } from "./utils/email/send-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_RATE_LIMIT_MAX,
@@ -228,9 +225,10 @@ export const auth = betterAuth({
       expiresIn: 600,
       allowedAttempts: 5,
       async sendVerificationOTP({ email, otp, type }) {
-        await sendDenVerificationEmail({
-          email,
-          verificationCode: otp,
+        await sendEmail({
+          to: email,
+          template: "verification",
+          props: { verificationCode: otp },
         });
       },
     }),
@@ -249,13 +247,16 @@ export const auth = betterAuth({
         },
       },
       async sendInvitationEmail(data) {
-        await sendDenOrganizationInvitationEmail({
-          email: data.email,
-          inviteLink: buildInvitationLink(data.id),
-          invitedByName: data.inviter.user.name ?? data.inviter.user.email,
-          invitedByEmail: data.inviter.user.email,
-          organizationName: data.organization.name,
-          role: data.role,
+        await sendEmail({
+          to: data.email,
+          template: "organizationInvite",
+          props: {
+            inviteLink: buildInvitationLink(data.id),
+            invitedByName: data.inviter.user.name ?? data.inviter.user.email,
+            invitedByEmail: data.inviter.user.email,
+            organizationName: data.organization.name,
+            role: data.role,
+          },
         });
       },
       organizationHooks: {

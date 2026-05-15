@@ -18,16 +18,29 @@ import {
 import { RemoteWorkspaceFields } from "./remote-workspace-fields";
 import type { CreateRemoteWorkspaceModalProps } from "./types";
 
+type RemoteWorkspaceFormState = {
+  openworkHostUrl: string;
+  openworkToken: string;
+  openworkTokenVisible: boolean;
+  directory: string;
+  displayName: string;
+};
+
+const emptyRemoteWorkspaceForm: RemoteWorkspaceFormState = {
+  openworkHostUrl: "",
+  openworkToken: "",
+  openworkTokenVisible: false,
+  directory: "",
+  displayName: "",
+};
+
 export function CreateRemoteWorkspaceModal(
   props: CreateRemoteWorkspaceModalProps,
 ) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const [openworkHostUrl, setOpenworkHostUrl] = useState("");
-  const [openworkToken, setOpenworkToken] = useState("");
-  const [openworkTokenVisible, setOpenworkTokenVisible] = useState(false);
-  const [directory, setDirectory] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [form, setForm] = useState<RemoteWorkspaceFormState>(emptyRemoteWorkspaceForm);
+  const { openworkHostUrl, openworkToken, openworkTokenVisible, directory, displayName } = form;
 
   const showClose = props.showClose ?? true;
   const title = props.title ?? t("dashboard.create_remote_workspace_title");
@@ -52,11 +65,13 @@ export function CreateRemoteWorkspaceModal(
   useEffect(() => {
     if (!props.open) return;
     const defaults = props.initialValues ?? {};
-    setOpenworkHostUrl(defaults.openworkHostUrl?.trim() ?? "");
-    setOpenworkToken(defaults.openworkToken?.trim() ?? "");
-    setOpenworkTokenVisible(false);
-    setDirectory(defaults.directory?.trim() ?? "");
-    setDisplayName(defaults.displayName?.trim() ?? "");
+    setForm({
+      openworkHostUrl: defaults.openworkHostUrl?.trim() ?? "",
+      openworkToken: defaults.openworkToken?.trim() ?? "",
+      openworkTokenVisible: false,
+      directory: defaults.directory?.trim() ?? "",
+      displayName: defaults.displayName?.trim() ?? "",
+    });
   }, [props.initialValues, props.open]);
 
   if (!props.open && !isInline) {
@@ -84,17 +99,17 @@ export function CreateRemoteWorkspaceModal(
       <div className={modalBodyClass}>
         <RemoteWorkspaceFields
           hostUrl={openworkHostUrl}
-          onHostUrlInput={setOpenworkHostUrl}
+          onHostUrlInput={(value) => setForm((current) => ({ ...current, openworkHostUrl: value }))}
           token={openworkToken}
           tokenVisible={openworkTokenVisible}
-          onTokenInput={setOpenworkToken}
+          onTokenInput={(value) => setForm((current) => ({ ...current, openworkToken: value }))}
           onToggleTokenVisible={() =>
-            setOpenworkTokenVisible((prev) => !prev)
+            setForm((current) => ({ ...current, openworkTokenVisible: !current.openworkTokenVisible }))
           }
           displayName={displayName}
-          onDisplayNameInput={setDisplayName}
+          onDisplayNameInput={(value) => setForm((current) => ({ ...current, displayName: value }))}
           directory={directory}
-          onDirectoryInput={setDirectory}
+          onDirectoryInput={(value) => setForm((current) => ({ ...current, directory: value }))}
           showDirectory
           submitting={submitting}
           hostInputRef={inputRef}

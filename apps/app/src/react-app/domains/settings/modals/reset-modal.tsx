@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import type { ReactNode } from "react";
 import { X } from "lucide-react";
 
 import { t } from "../../../../i18n";
@@ -27,22 +26,18 @@ export type ResetModalProps = {
 };
 
 export function ResetModal(props: ResetModalProps) {
-  const resetConfirmationHint = (): ReactNode => {
+  const resetConfirmationHint = () => {
     const template = t("settings.reset_confirmation_hint");
     const parts = template.split(RESET_CONFIRM_PLACEHOLDER);
     if (parts.length === 1) return template;
-    const nodes: ReactNode[] = [];
-    parts.forEach((part, index) => {
-      nodes.push(<span key={`part-${index}`}>{part}</span>);
-      if (index < parts.length - 1) {
-        nodes.push(
-          <span key={`word-${index}`} className="font-mono">
-            {RESET_CONFIRM_WORD}
-          </span>,
-        );
-      }
-    });
-    return nodes;
+    const [beforeReset, afterReset] = parts;
+    return (
+      <>
+        {beforeReset}
+        <span className="font-mono">{RESET_CONFIRM_WORD}</span>
+        {afterReset}
+      </>
+    );
   };
 
   if (!props.open) return null;

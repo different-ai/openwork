@@ -1,13 +1,13 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Box, Cpu } from "lucide-react";
+import { Cpu } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "../../../design-system/button";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
-export type ExtensionsSection = "all" | "mcp" | "plugins";
+export type ExtensionsSection = "all" | "mcp" | "skills" | "plugins";
 
 type SuggestedPlugin = {
   name: string;
@@ -26,10 +26,6 @@ type SuggestedPlugin = {
   }>;
 };
 
-// The Solid ExtensionsView pulled the MCP-connected count from
-// useConnections(). In React we let the parent pass that plus an
-// already-rendered MCP view so we can ship this page before the full
-// connections provider is ported.
 export type ExtensionsViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
@@ -40,141 +36,61 @@ export type ExtensionsViewProps = {
   suggestedPlugins: SuggestedPlugin[];
   extensions: PluginsExtensionsStore;
   mcpConnectedAppsCount: number;
+  /** The MCP view (quick-connect grid + configured servers). Skills are injected into it. */
   mcpView: ReactNode;
   onRefresh: () => void;
   initialSection?: ExtensionsSection;
-  setSectionRoute?: (tab: "mcp" | "plugins") => void;
+  setSectionRoute?: (tab: "mcp" | "skills" | "plugins") => void;
   showHeader?: boolean;
 };
 
 export function ExtensionsView(props: ExtensionsViewProps) {
-  const [section, setSection] = useState<ExtensionsSection>(
-    props.initialSection ?? "all",
-  );
-
-  useEffect(() => {
-    if (!props.initialSection || props.initialSection === section) return;
-    setSection(props.initialSection);
-    // Intentional: only react to incoming prop changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.initialSection]);
-
   const pluginCount = useMemo(
     () => props.extensions.pluginList().length,
     [props.extensions],
   );
 
-  const selectSection = (nextSection: ExtensionsSection) => {
-    setSection(nextSection);
-    if (nextSection === "mcp" || nextSection === "plugins") {
-      props.setSectionRoute?.(nextSection);
-    }
-  };
-
-  const pillClass = (active: boolean) =>
-    `px-3 py-1 rounded-full text-xs font-medium border transition-colors flex items-center gap-2 ${
-      active
-        ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-        : "text-gray-10 border-gray-6 hover:text-gray-12"
-    }`;
-
   return (
-    <section className="space-y-6 animate-in fade-in duration-300">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-1">
-          {props.showHeader !== false ? (
-            <>
-              <h2 className="text-3xl font-bold text-dls-text">
-                {t("extensions.title")}
-              </h2>
-              <p className="text-sm text-dls-secondary mt-1.5">
-                {t("extensions.subtitle")}
-              </p>
-            </>
-          ) : null}
-          <div
-            className={`${props.showHeader === false ? "" : "mt-3"} flex flex-wrap items-center gap-2`}
-          >
-            {props.mcpConnectedAppsCount > 0 ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-                <div className="w-2 h-2 rounded-full bg-green-9" />
-                <span className="text-xs font-medium text-green-11">
-                  {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
-                </span>
-              </div>
-            ) : null}
-            {pluginCount > 0 ? (
-              <div className="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
-                <Cpu size={14} className="text-gray-11" />
-                <span className="text-xs font-medium text-gray-11">
-                  {t("extensions.plugin_count", { count: pluginCount })}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
+    <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
+      <div className="flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className={pillClass(section === "all")}
-              aria-pressed={section === "all"}
-              onClick={() => selectSection("all")}
-            >
-              {t("extensions.filter_all")}
-            </button>
-            <button
-              type="button"
-              className={pillClass(section === "mcp")}
-              aria-pressed={section === "mcp"}
-              onClick={() => selectSection("mcp")}
-            >
-              <Box size={14} />
-              {t("extensions.filter_apps")}
-            </button>
-            <button
-              type="button"
-              className={pillClass(section === "plugins")}
-              aria-pressed={section === "plugins"}
-              onClick={() => selectSection("plugins")}
-            >
-              <Cpu size={14} />
-              {t("extensions.filter_plugins")}
-            </button>
-          </div>
-          <Button variant="ghost" onClick={props.onRefresh}>
-            {t("common.refresh")}
-          </Button>
+          {props.mcpConnectedAppsCount > 0 ? (
+            <div className="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
+              <div className="size-2 rounded-full bg-green-9" />
+              <span className="text-xs font-medium text-green-11">
+                {t("extensions.app_count", { count: props.mcpConnectedAppsCount })}
+              </span>
+            </div>
+          ) : null}
         </div>
+        <Button variant="ghost" onClick={props.onRefresh}>
+          {t("common.refresh")}
+        </Button>
       </div>
 
-      {section === "all" || section === "mcp" ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Box size={16} className="text-gray-11" />
-            <span>{t("extensions.apps_mcp_header")}</span>
-          </div>
-          {props.mcpView}
-        </div>
-      ) : null}
+      {/* All extensions: MCPs + skills in one view */}
+      {props.mcpView}
 
-      {section === "all" || section === "plugins" ? (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-12">
-            <Cpu size={16} className="text-gray-11" />
-            <span>{t("extensions.plugins_opencode_header")}</span>
+      {/* OpenCode plugins -- advanced, collapsed */}
+      {pluginCount > 0 ? (
+        <details className="group">
+          <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
+            <Cpu size={14} />
+            <span>OpenCode Plugins</span>
+            <span className="text-[11px] text-dls-secondary">({pluginCount})</span>
+          </summary>
+          <div className="mt-3">
+            <PluginsView
+              extensions={props.extensions}
+              busy={props.busy}
+              selectedWorkspaceRoot={props.selectedWorkspaceRoot}
+              canEditPlugins={props.canEditPlugins}
+              canUseGlobalScope={props.canUseGlobalScope}
+              accessHint={props.accessHint}
+              suggestedPlugins={props.suggestedPlugins}
+            />
           </div>
-          <PluginsView
-            extensions={props.extensions}
-            busy={props.busy}
-            selectedWorkspaceRoot={props.selectedWorkspaceRoot}
-            canEditPlugins={props.canEditPlugins}
-            canUseGlobalScope={props.canUseGlobalScope}
-            accessHint={props.accessHint}
-            suggestedPlugins={props.suggestedPlugins}
-          />
-        </div>
+        </details>
       ) : null}
     </section>
   );
