@@ -1,0 +1,91 @@
+apps/app/src/components/ui/autocomplete.tsx
+  s_a1485f1a4c9782::t_ede6a5b24feeca 37,51-66
+  s_15eda4a29a66d8::t_71b5c3339ca896 227
+  s_7413704d69a6d0::t_4a0e58f28033fe 46-47
+apps/app/src/react-app/shell/command-palette.tsx
+  s_458831db25ba45::t_e296e262a1072c 243
+  s_458831db25ba45::t_80cbe4f5d8da5e 5,195-200,202-206,223-227
+  s_458831db25ba45::t_fc6398d6444972 250,269,271,290
+  s_458831db25ba45::t_cd33aa3a86f38e 10-16,18-22,70,74,81,86-94,96-105,107-115,117-128,130-137,139-147,149-157,159-167,169-177,179-184,187,189-190,192-194,207-208,210,213,215,220-222,229,233-236,239,242,276,298-299
+  s_458831db25ba45::t_5494e75662e7bf 258-266
+  s_458831db25ba45::t_30fdb107b81d71 17,251,267
+  s_458831db25ba45::t_11b2e022d7681e 268,270,272-274,277-289,291-297
+  s_458831db25ba45::t_fa26d8a568daf3 32,201
+apps/app/src/components/model-select.tsx
+  s_458831db25ba45::t_a41eda43842c5f 23,247,254,256,262-284,286-288,290
+  s_1b3719d656a648::t_f7db7e6706c801 26
+  s_458831db25ba45::t_821c313f769e27 27,248-253
+  s_81deef98910fd8::t_4c9ab818d0f9aa 132-133,258-259,261
+  s_b2d2b6eae00290::t_1ba17ad42530b7 243
+apps/app/src/components/ui/scroll-area.tsx
+  s_15eda4a29a66d8::t_3a4ab4031992aa 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "c68eaf69d325667cfd11e6a83f3d2bb4696a3d39",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_15eda4a29a66d8": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "18aeb537-b0c5-43b9-9465-0768b7fcc9f3",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_1b3719d656a648": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b0a4d125-a84b-481a-b3ee-f88da5f7bbc9",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_458831db25ba45": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7652a486-24e8-4841-a014-ef0745232d29",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_7413704d69a6d0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5265f2b0-4d35-4a9f-8e65-7ceea7310cc7",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_81deef98910fd8": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7f9cc167-3cf8-4955-80c2-a8bc6c0b2c6e",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_a1485f1a4c9782": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "681e0d5a-b984-41a8-b669-bb58b889c678",
+        "model": "composer-2"
+      },
+      "human_author": null
+    },
+    "s_b2d2b6eae00290": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "588c2045-fce9-4502-807d-5ac0a6ab0e68",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}
