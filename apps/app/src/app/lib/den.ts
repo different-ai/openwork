@@ -312,38 +312,15 @@ export function getDenInferenceUrl(baseUrl?: string | null): string {
   return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
-function isWebAppHost(hostname: string): boolean {
+function isLikelyDirectDenApiHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
-
-  if (
-    normalized === "localhost" ||
-    normalized === "0.0.0.0" ||
-    normalized === "::1" ||
-    normalized === "[::1]" ||
-    /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  ) {
-    return true;
-  }
-
-  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number);
-    const octets = [first, second, third, fourth];
-    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
-      if (
-        first === 10 ||
-        first === 127 ||
-        (first === 172 && second >= 16 && second <= 31) ||
-        (first === 192 && second === 168) ||
-        (first === 169 && second === 254) ||
-        (first === 100 && second >= 64 && second <= 127)
-      ) {
-        return true;
-      }
-    }
-  }
-
-  return normalized === "app.openworklabs.com" || normalized === "app.openwork.software" || normalized.startsWith("app.");
+  return normalized === "api.openworklabs.com" ||
+    normalized === "api.openwork.software" ||
+    normalized.startsWith("api.") ||
+    normalized.startsWith("api-") ||
+    normalized.includes(".api.") ||
+    normalized.includes("-api") ||
+    normalized.includes("den-api");
 }
 
 function stripDenApiBasePath(input: string | null | undefined): string | null {
@@ -392,14 +369,38 @@ function deriveDenApiBaseUrl(input: string | null | undefined): string {
     if (pathname.toLowerCase().endsWith("/api/den")) {
       return normalized;
     }
-    if (isWebAppHost(url.hostname)) {
-      return ensureDenApiBasePath(normalized) ?? normalized;
+    if (isLikelyDirectDenApiHost(url.hostname)) {
+      return normalized;
     }
+
+    return ensureDenApiBasePath(normalized) ?? normalized;
   } catch {
     return normalized;
   }
 
   return normalized;
+}
+
+function isUnproxiedDenWebApiBase(
+  baseUrl: string | null,
+  apiBaseUrl: string | null,
+): boolean {
+  if (!baseUrl || !apiBaseUrl) return false;
+
+  try {
+    const apiUrl = new URL(apiBaseUrl);
+    const apiPathname = apiUrl.pathname.replace(/\/+$/, "");
+    if (apiPathname.toLowerCase().endsWith("/api/den")) {
+      return false;
+    }
+    if (isLikelyDirectDenApiHost(apiUrl.hostname)) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  return stripDenApiBasePath(baseUrl) === stripDenApiBasePath(apiBaseUrl);
 }
 
 export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
@@ -408,10 +409,13 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
   const normalizedBaseUrl = normalizeDenBaseUrl(rawBaseUrl);
   const normalizedApiBaseUrl = normalizeDenBaseUrl(rawApiBaseUrl);
   const seedUrl = normalizedBaseUrl ?? normalizedApiBaseUrl ?? DEFAULT_DEN_BASE_URL;
+  const apiBaseUrl = normalizedApiBaseUrl && !isUnproxiedDenWebApiBase(normalizedBaseUrl, normalizedApiBaseUrl)
+    ? normalizedApiBaseUrl
+    : deriveDenApiBaseUrl(seedUrl);
 
   return {
     baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
-    apiBaseUrl: normalizedApiBaseUrl ?? deriveDenApiBaseUrl(seedUrl),
+    apiBaseUrl,
   };
 }
 
