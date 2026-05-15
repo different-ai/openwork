@@ -56,4 +56,28 @@ Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama serv
 
 Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
 
+### Functional example: Atomic Chat (local OpenAI-compatible API)
+
+[Atomic Chat](https://github.com/AtomicBot-ai/Atomic-Chat) exposes a local OpenAI-compatible API (default `http://127.0.0.1:1337`). List models with `GET /v1/models` and use `POST /v1/chat/completions` for chat.
+
+Replace `your-model-id` with an `id` from `/v1/models`. Set `ATOMIC_CHAT_API_KEY` only if your server requires a Bearer token (many local setups accept any value).
+
+```
+{
+  "provider": {
+    "atomic-chat": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Atomic Chat",
+      "api": "http://127.0.0.1:1337/v1",
+      "env": ["ATOMIC_CHAT_API_KEY"],
+      "models": {
+        "your-model-id": {
+          "name": "Your model"
+        }
+      }
+    }
+  }
+}
+```
+
 For teams, you can manage the provider in OpenWork Cloud under [LLM Providers](/cloud/share-with-your-team/managed-llm-provider), then import it into each workspace from `Settings -> Cloud`.

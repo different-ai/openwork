@@ -14,7 +14,8 @@ async function readJson(filePath) {
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1"
 const base = await readJson(path.join(sourceDir, "base.json"))
 const openwork = await readJson(path.join(sourceDir, isDevMode ? "openwork-dev.json" : "openwork-prod.json"))
-const models = { ...base, ...openwork }
+const localProviders = await readJson(path.join(sourceDir, "local-providers.json"))
+const models = { ...base, ...openwork, ...localProviders }
 
 await mkdir(path.dirname(outputPath), { recursive: true })
 await writeFile(outputPath, `${JSON.stringify(models)}\n`)

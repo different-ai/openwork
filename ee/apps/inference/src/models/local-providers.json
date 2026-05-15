@@ -1,0 +1,27 @@
+{
+  "atomic-chat": {
+    "id": "atomic-chat",
+    "env": ["ATOMIC_CHAT_API_KEY"],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "http://127.0.0.1:1337/v1",
+    "name": "Atomic Chat",
+    "doc": "https://github.com/AtomicBot-ai/Atomic-Chat",
+    "models": {
+      "atomic-chat/default": {
+        "id": "atomic-chat/default",
+        "name": "Default (replace id from GET /v1/models)",
+        "family": "atomic-chat",
+        "attachment": false,
+        "reasoning": false,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-01-01",
+        "last_updated": "2026-01-01",
+        "modalities": { "input": ["text"], "output": ["text"] },
+        "open_weights": true,
+        "limit": { "context": 131072, "output": 32768 },
+        "cost": { "input": 0, "output": 0 }
+      }
+    }
+  }
+}

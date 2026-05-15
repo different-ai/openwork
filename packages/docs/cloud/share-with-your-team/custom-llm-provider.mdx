@@ -126,6 +126,43 @@ Pick the model and it's live in the session footer:
 
 Add more entries under `models` to expose other routes the gateway supports (e.g. `openai/gpt-5.4`, `google/gemini-2.5-flash`).
 
+### Functional example: Atomic Chat (local OpenAI-compatible API)
+
+Use this when [Atomic Chat](https://github.com/AtomicBot-ai/Atomic-Chat) (or another compatible server) is running locally. Replace the model `id` with one returned by `GET http://127.0.0.1:1337/v1/models`. Use a placeholder API key if the server does not require auth.
+
+```json
+{
+  "id": "atomic-chat",
+  "name": "Atomic Chat",
+  "npm": "@ai-sdk/openai-compatible",
+  "env": ["ATOMIC_CHAT_API_KEY"],
+  "doc": "https://github.com/AtomicBot-ai/Atomic-Chat",
+  "api": "http://127.0.0.1:1337/v1",
+  "models": [
+    {
+      "id": "your-model-id",
+      "name": "Your model",
+      "attachment": false,
+      "reasoning": false,
+      "tool_call": true,
+      "temperature": true,
+      "release_date": "2026-01-01",
+      "last_updated": "2026-01-01",
+      "open_weights": true,
+      "limit": {
+        "context": 131072,
+        "input": 131072,
+        "output": 32768
+      },
+      "modalities": {
+        "input": ["text"],
+        "output": ["text"]
+      }
+    }
+  ]
+}
+```
+
 ## When to use a cloud provider
 
 Use a Cloud provider when the setup is meant to be shared across an org or team. For solo use, configuring it directly in the desktop app is simpler.
