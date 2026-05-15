@@ -26,43 +26,6 @@
           "cache_write": 0.029
         }
       },
-      "anthropic/claude-opus-4.7": {
-        "id": "anthropic/claude-opus-4.7",
-        "name": "Claude Opus 4.7",
-        "family": "claude-opus",
-        "attachment": true,
-        "reasoning": true,
-        "tool_call": true,
-        "structured_output": true,
-        "temperature": false,
-        "knowledge": "2026-01-31",
-        "release_date": "2026-04-16",
-        "last_updated": "2026-04-16",
-        "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-        "open_weights": false,
-        "limit": { "context": 1000000, "output": 128000 },
-        "cost": {
-          "input": 5,
-          "output": 25,
-          "cache_read": 0.5,
-          "cache_write": 6.25,
-          "tiers": [
-            {
-              "input": 10,
-              "output": 37.5,
-              "cache_read": 1,
-              "cache_write": 12.5,
-              "tier": { "type": "context", "size": 200000 }
-            }
-          ],
-          "context_over_200k": {
-            "input": 10,
-            "output": 37.5,
-            "cache_read": 1,
-            "cache_write": 12.5
-          }
-        }
-      },
       "moonshotai/kimi-k2.6": {
         "id": "moonshotai/kimi-k2.6",
         "name": "Kimi K2.6",

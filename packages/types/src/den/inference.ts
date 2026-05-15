@@ -60,12 +60,6 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
-  "anthropic/claude-opus-4.7": {
-    upstreamModel: "anthropic/claude-opus-4.7",
-    displayName: "OpenWork: Claude Opus 4.7",
-    enabled: true,
-    usageFactor: 0.75,
-  },
   "moonshotai/kimi-k2.6": {
     upstreamModel: "moonshotai/kimi-k2.6",
     displayName: "OpenWork: Kimi K2.6",
