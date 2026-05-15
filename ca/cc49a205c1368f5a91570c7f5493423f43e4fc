@@ -1,0 +1,14 @@
+apps/app/src/react-app/shell/command-palette.tsx
+  h_2169b0bd9b5c87 106-109,112-114,135-141,188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "cacc49a205c1368f5a91570c7f5493423f43e4fc",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
