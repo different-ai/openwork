@@ -1,0 +1,32 @@
+apps/app/src/react-app/shell/font-zoom.ts
+  h_2169b0bd9b5c87 27
+apps/app/vite.config.ts
+  h_2169b0bd9b5c87 104-109
+apps/desktop/electron/browser-mcp.mjs
+  h_2169b0bd9b5c87 251-255,262-265,267
+apps/desktop/electron/main.mjs
+  h_2169b0bd9b5c87 21,339-341,343-344,346-384,540-787,790-792,797,801-803,806-808,811-816,818-940,944,953,955-959,961,963,965,971,973-976,983-986,988-995,1010-1014,1022,2842-2843,2846-2847,2850-2851,2853,2855-2858,2861-2864,2866-2871,2873-2889
+apps/app/tsconfig.json
+  h_2169b0bd9b5c87 26
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  h_2169b0bd9b5c87 447-453,461,465-467,477
+apps/desktop/electron/preload.mjs
+  h_2169b0bd9b5c87 33-48,108-114,157-159
+apps/desktop/electron/browser-native-tools.mjs
+  h_2169b0bd9b5c87 37,46-50,58-60,183,185,197-201,208-211,213,231-241,769,773,776-786,792-822,825-830
+apps/app/src/react-app/domains/session/browser/browser-panel.tsx
+  h_2169b0bd9b5c87 2-4,6-19,21,23-26,28-30,32-44,46,48-49,51-57,61,63-65,71,77-78,87-108,110-186,190,201-202,204-206,213-214,223,230-231,233-234,240,242-243,245-246,255,265,268,273,275,280,290-309,319,321,324,331-394,397,408-416,418-419,421
+apps/app/src/app/lib/desktop.ts
+  h_2169b0bd9b5c87 35,96-133,140-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "811a711bb1bb35153131de6e0e7804cc57647efc",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
