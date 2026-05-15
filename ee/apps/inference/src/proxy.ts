@@ -71,6 +71,10 @@ function buildRequestId() {
   return createHash("sha256").update(`${Date.now()}:${Math.random()}`).digest("hex").slice(0, 32)
 }
 
+function secondsUntil(date: Date) {
+  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
+}
+
 function trackStream(body: ReadableStream<Uint8Array> | null, done: () => Promise<void>, fail: () => Promise<void>) {
   if (!body) return body
   const reader = body.getReader()
@@ -167,7 +171,24 @@ export function registerProxyRoutes(app: Hono) {
         orgMembershipId: inferenceKey.org_membership_id,
         limitedBy: limits.limitedBy,
       })
-      return c.json({ error: { message: "Inference usage limit exceeded.", type: "rate_limit_error", code: "usage_limit_exceeded", bucket_id: limits.limitedBy } }, 429)
+      c.header("x-openwork-limit-bucket-id", limits.limitedBy)
+      c.header("x-openwork-limit-window-type", limits.windowType)
+      const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
+      if (limitedBucket) {
+        const retryAfter = secondsUntil(limitedBucket.windowEndAt)
+        c.header("retry-after", String(retryAfter))
+        c.header("x-ratelimit-limit-tokens", String(limitedBucket.limitAmount))
+        c.header("x-ratelimit-remaining-tokens", "0")
+        c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
+      }
+      return c.json({
+        error: {
+          message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
+          type: "tokens",
+          param: null,
+          code: "rate_limit_exceeded",
+        },
+      }, 429)
     }
 
     const providerKey = await getOpenRouterProviderKey(inferenceKey.organization_id)

@@ -107,7 +107,18 @@ export async function ensureUsableBuckets(organizationId: string, now = new Date
     }
     const remaining = effectiveLimit - bucket.used_amount
     if (remaining <= 0) {
-      return { ok: false as const, bucketIds, bucketLimits, limitedBy: bucket.id, windowType: policy.window_type }
+      return {
+        ok: false as const,
+        bucketIds,
+        bucketLimits,
+        limitedBy: bucket.id,
+        windowType: policy.window_type,
+        limitedBucket: {
+          limitAmount: effectiveLimit,
+          usedAmount: bucket.used_amount,
+          windowEndAt: bucket.window_end_at,
+        },
+      }
     }
     bucketIds[policy.window_type] = bucket.id
     bucketLimits[policy.window_type] = effectiveLimit
