@@ -1,0 +1,49 @@
+apps/app/src/react-app/shell/font-zoom.ts
+  s_be37b885c45420::t_667448998824f7 27
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_5d8ecb58ac519b::t_c8784b0760c249 447-449,461
+  s_5d8ecb58ac519b::t_0a13114fc32c3a 450,453
+apps/app/src/react-app/domains/session/browser/use-browser-state.ts
+  s_be37b885c45420::t_cdbb99e767588f 1-23,25-29,31-124
+  s_be37b885c45420::t_21390cb9aa12fa 24,30
+apps/app/src/app/lib/desktop.ts
+  s_be37b885c45420::t_258c389dead4d0 35
+apps/app/src/react-app/domains/session/browser/browser-panel.tsx
+  s_5eb6d83dd1a5c4::t_f8ebba134638e2 413
+  s_be37b885c45420::t_6fee5781be70f0 280
+  s_be37b885c45420::t_1c1996624e4a32 331-360,362,421
+  s_be37b885c45420::t_cdab6432f3e098 2,14-19,190
+  s_be37b885c45420::t_a1745aa3ceb309 39,48-51,53,60-62,65,71,77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "48885c2645936d73def228e663f0e67c64cedc87",
+  "prompts": {},
+  "sessions": {
+    "s_5d8ecb58ac519b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "41764fb5-a434-4f99-8e04-173fd547ea9a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_5eb6d83dd1a5c4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "08ce2e9d-fc39-40ae-8f2a-7d46b83fdeab",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_be37b885c45420": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d9fcaea3-25ad-4408-b02f-1cd7b4cf2e9b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
