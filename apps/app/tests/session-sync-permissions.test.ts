@@ -5,6 +5,7 @@ import type { PermissionRequest } from "@opencode-ai/sdk/v2/client";
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
+  coalescePendingDeltas,
   permissionKey,
   seedPermissionState,
   seedSessionState,
@@ -128,6 +129,21 @@ describe("session permission sync", () => {
 });
 
 describe("session transcript sync", () => {
+  test("coalesces token-sized deltas by transcript part", () => {
+    const deltas = coalescePendingDeltas([
+      { sessionId: "session-a", messageId: "msg-a", partId: "part-a", reasoning: false, delta: "hel" },
+      { sessionId: "session-a", messageId: "msg-a", partId: "part-a", reasoning: false, delta: "lo" },
+      { sessionId: "session-a", messageId: "msg-a", partId: "part-b", reasoning: true, delta: "think" },
+      { sessionId: "session-b", messageId: "msg-b", partId: "part-a", reasoning: false, delta: "other" },
+    ]);
+
+    expect(deltas).toEqual([
+      { sessionId: "session-a", messageId: "msg-a", partId: "part-a", reasoning: false, delta: "hello" },
+      { sessionId: "session-a", messageId: "msg-a", partId: "part-b", reasoning: true, delta: "think" },
+      { sessionId: "session-b", messageId: "msg-b", partId: "part-a", reasoning: false, delta: "other" },
+    ]);
+  });
+
   test("keeps live-only messages when an idle snapshot is stale", () => {
     getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
       uiMessage("msg-user", "user", "hello"),

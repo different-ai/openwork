@@ -15,7 +15,7 @@ type SyncOptions = {
   openworkToken: string;
 };
 
-type PendingDelta = {
+export type PendingDelta = {
   sessionId: string;
   messageId: string;
   partId: string;
@@ -302,6 +302,27 @@ function appendDelta(messages: UIMessage[], messageId: string, partId: string, d
   return nextMessages;
 }
 
+export function coalescePendingDeltas(items: PendingDelta[]) {
+  if (items.length < 2) return items;
+
+  const ordered: PendingDelta[] = [];
+  const byKey = new Map<string, PendingDelta>();
+  for (const item of items) {
+    const key = `${item.sessionId}\u0000${item.messageId}\u0000${item.partId}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.delta += item.delta;
+      existing.reasoning = existing.reasoning || item.reasoning;
+      continue;
+    }
+
+    const next = { ...item };
+    byKey.set(key, next);
+    ordered.push(next);
+  }
+  return ordered;
+}
+
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
 
@@ -464,7 +485,7 @@ function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
 
 function flushDeltas(entry: SyncEntry, workspaceId: string) {
   const queryClient = getReactQueryClient();
-  const pending = entry.deltaFlushBuffer;
+  const pending = coalescePendingDeltas(entry.deltaFlushBuffer);
   entry.deltaFlushBuffer = [];
 
   // Group by session id so each transcript cache is touched at most once
