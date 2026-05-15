@@ -17,7 +17,7 @@
     "@paper-design/shaders-react": "0.0.72",
     "@tanstack/react-query": "^5.96.2",
     "lucide-react": "^0.577.0",
-    "next": "16.2.1",
+    "next": "16.2.5",
     "react": "catalog:",
     "react-dom": "catalog:"
   },
