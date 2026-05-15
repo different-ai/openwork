@@ -1,0 +1,19 @@
+apps/app/src/react-app/domains/session/browser/browser-panel.tsx
+  s_191118879cde04::t_10ddbd832e2e23 134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "4734d0117bdea73ec2ba87cb777baa31796c84c9",
+  "prompts": {},
+  "sessions": {
+    "s_191118879cde04": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "00303467-cc28-4af3-b7f7-b497a7e167e6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
