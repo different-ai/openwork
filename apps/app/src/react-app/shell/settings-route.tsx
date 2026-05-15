@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { SUGGESTED_PLUGINS } from "../../app/constants";
-import { createClient } from "../../app/lib/opencode";
+import { createClient, unwrap } from "../../app/lib/opencode";
 import {
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
@@ -469,6 +469,7 @@ function SettingsRouteContent() {
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
+  const [zenProviderToggleBusy, setZenProviderToggleBusy] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerInitialTab, setModelPickerInitialTab] = useState<"default" | "available">("default");
   const [modelPickerQuery, setModelPickerQuery] = useState("");
@@ -1233,6 +1234,69 @@ function SettingsRouteContent() {
     }
   }, [autoCompactContext, autoCompactContextBusy, openworkClient, reloadCoordinator, selectedWorkspaceId]);
 
+  const zenProviderBlockedByCloud = desktopConfig.cloudConfig.blockZenModel === true;
+  const zenProviderBlockedLocally = desktopConfig.localConfig.blockZenModel === true;
+  const zenProviderBlocked = checkDesktopRestriction({ restriction: "blockZenModel" });
+
+  const toggleZenProviderBlocked = useCallback(async () => {
+    if (zenProviderToggleBusy || zenProviderBlockedByCloud) return;
+
+    const nextBlocked = !zenProviderBlockedLocally;
+    const previousDisabledProviders = routeStateRef.current.disabledProviders;
+    const nextDisabledProviders = nextBlocked
+      ? Array.from(new Set([...previousDisabledProviders, "opencode"]))
+      : previousDisabledProviders.filter((id) => id !== "opencode");
+
+    desktopConfig.setLocalRestriction("blockZenModel", nextBlocked);
+    setDisabledProviders(nextDisabledProviders);
+    setZenProviderToggleBusy(true);
+    setConfigActionStatus(null);
+
+    try {
+      const client = routeStateRef.current.activeClient;
+      if (client) {
+        const config = unwrap(await client.config.get()) as Record<string, unknown> & {
+          disabled_providers?: unknown;
+        };
+        const currentDisabledProviders = Array.isArray(config.disabled_providers)
+          ? config.disabled_providers.filter((entry): entry is string => typeof entry === "string")
+          : [];
+        const updatedDisabledProviders = nextBlocked
+          ? Array.from(new Set([...currentDisabledProviders, "opencode"]))
+          : currentDisabledProviders.filter((id) => id !== "opencode");
+
+        await client.config.update({
+          config: { ...config, disabled_providers: updatedDisabledProviders },
+        });
+        reloadCoordinator.markReloadRequired("config", {
+          type: "config",
+          name: "opencode.json",
+          action: "updated",
+        });
+        await providerAuthStore.refreshProviders({ dispose: true });
+      }
+
+      setConfigActionStatus(
+        nextBlocked
+          ? "OpenCode Zen is disabled locally."
+          : "OpenCode Zen is enabled locally.",
+      );
+    } catch (error) {
+      desktopConfig.setLocalRestriction("blockZenModel", zenProviderBlockedLocally);
+      setDisabledProviders(previousDisabledProviders);
+      setConfigActionStatus(error instanceof Error ? error.message : t("app.unknown_error"));
+    } finally {
+      setZenProviderToggleBusy(false);
+    }
+  }, [
+    desktopConfig,
+    providerAuthStore,
+    reloadCoordinator,
+    zenProviderBlockedByCloud,
+    zenProviderBlockedLocally,
+    zenProviderToggleBusy,
+  ]);
+
   useEffect(() => {
     openworkServerStore.start();
     connectionsStore.start();
@@ -1315,14 +1379,21 @@ function SettingsRouteContent() {
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
     : t("settings.default_label");
   const defaultModelVariantLabel = local.prefs.modelVariant ?? t("settings.default_label");
-  const providerStatusLabel = providerConnectedIds.length > 0 ? t("status.connected") : t("status.disconnected_label");
-  const providerStatusStyle = providerConnectedIds.length > 0
+  const visibleProviderConnectedIds = providerConnectedIds.filter(
+    (providerId) =>
+      !isDesktopProviderBlocked({
+        providerId,
+        checkRestriction: checkDesktopRestriction,
+      }),
+  );
+  const providerStatusLabel = visibleProviderConnectedIds.length > 0 ? t("status.connected") : t("status.disconnected_label");
+  const providerStatusStyle = visibleProviderConnectedIds.length > 0
     ? "bg-green-7/10 text-green-11 border-green-7/20"
     : "bg-gray-4/60 text-gray-11 border-gray-7/50";
-  const providerSummary = providerConnectedIds.length > 0
-    ? t("status.providers_connected", { count: providerConnectedIds.length })
+  const providerSummary = visibleProviderConnectedIds.length > 0
+    ? t("status.providers_connected", { count: visibleProviderConnectedIds.length })
     : t("settings.no_providers_connected");
-  const providerConnectedIdSet = new Set(providerConnectedIds);
+  const providerConnectedIdSet = new Set(visibleProviderConnectedIds);
   const connectedProviders = providers.flatMap((provider) =>
     providerConnectedIdSet.has(provider.id)
       ? [{
@@ -1651,6 +1722,10 @@ function SettingsRouteContent() {
             cloudProviderIds={new Set(
               Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId)
             )}
+            zenProviderBlocked={zenProviderBlocked}
+            zenProviderBlockedByCloud={zenProviderBlockedByCloud}
+            zenProviderToggleBusy={zenProviderToggleBusy}
+            onToggleZenProviderBlocked={toggleZenProviderBlocked}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
           />

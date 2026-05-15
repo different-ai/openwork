@@ -77,7 +77,7 @@ import { t } from "../../i18n";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
 import { SessionPage } from "../domains/session/chat/session-page";
-import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
+import { isDesktopModelBlocked, isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
@@ -1384,8 +1384,16 @@ export function SessionRoute() {
   });
   const selectedModelUnavailable = Boolean(
     local.prefs.defaultModel &&
-      providerListQuery.data &&
-      !isModelAvailableInConnectedProviders(providerListQuery.data, local.prefs.defaultModel),
+      (
+        isDesktopModelBlocked({
+          model: local.prefs.defaultModel,
+          checkRestriction: checkDesktopRestriction,
+        }) ||
+        (
+          providerListQuery.data &&
+          !isModelAvailableInConnectedProviders(providerListQuery.data, local.prefs.defaultModel)
+        )
+      ),
   );
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,

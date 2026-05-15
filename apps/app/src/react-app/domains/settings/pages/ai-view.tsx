@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -40,6 +41,10 @@ export type AiSettingsViewProps = {
   canDisconnectProvider: (source?: ConnectedProvider["source"]) => boolean;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
+  zenProviderBlocked: boolean;
+  zenProviderBlockedByCloud: boolean;
+  zenProviderToggleBusy: boolean;
+  onToggleZenProviderBlocked: () => void | Promise<void>;
   showOpenWorkModelsSubscribe?: boolean;
   onSubscribeOpenWorkModels?: () => void | Promise<void>;
 };
@@ -88,6 +93,28 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               </Button>
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>Disable OpenCode Zen</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              Hide the built-in OpenCode Zen provider and keep its models out of local model selection.
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label="Disable OpenCode Zen"
+                checked={props.zenProviderBlocked}
+                disabled={props.busy || props.zenProviderToggleBusy || props.zenProviderBlockedByCloud}
+                onCheckedChange={() => void props.onToggleZenProviderBlocked()}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+          {props.zenProviderBlockedByCloud ? (
+            <LayoutSectionItemDescription>
+              This restriction is managed by your organization.
+            </LayoutSectionItemDescription>
+          ) : null}
         </LayoutSectionItem>
 
         {props.showOpenWorkModelsSubscribe ? (

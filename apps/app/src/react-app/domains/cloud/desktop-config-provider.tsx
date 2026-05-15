@@ -13,6 +13,7 @@ import {
 
 import {
   checkDesktopAppRestriction,
+  type DesktopAppRestrictionKey,
   type DesktopAppRestrictionChecker,
 } from "../../../app/cloud/desktop-app-restrictions";
 import {
@@ -31,8 +32,14 @@ import { useDenAuth } from "./den-auth-provider";
 
 export type DesktopConfigStore = {
   config: DenDesktopConfig;
+  cloudConfig: DenDesktopConfig;
+  localConfig: DenDesktopConfig;
   loading: boolean;
   refresh: () => Promise<void>;
+  setLocalRestriction: (
+    restriction: DesktopAppRestrictionKey,
+    enabled: boolean,
+  ) => void;
   /**
    * Stable checker function that matches the `DesktopAppRestrictionChecker`
    * shape Solid passes to its stores. Useful when wiring restriction gates
@@ -48,6 +55,12 @@ const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
 const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
 const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
 const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
+const LOCAL_DESKTOP_CONFIG_KEY = "openwork.desktop.localRestrictions";
+const DESKTOP_RESTRICTION_KEYS: DesktopAppRestrictionKey[] = [
+  "disallowNonCloudModels",
+  "blockZenModel",
+  "blockMultipleWorkspaces",
+];
 
 function getDesktopConfigCacheKey(): string {
   const settings = readDenSettings();
@@ -81,12 +94,54 @@ function writeCachedDesktopConfig(key: string, config: DenDesktopConfig) {
   }
 }
 
+function readLocalDesktopConfig(): DenDesktopConfig {
+  if (typeof window === "undefined") return DEFAULT_DESKTOP_CONFIG;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_DESKTOP_CONFIG_KEY);
+    return raw ? normalizeDenDesktopConfig(JSON.parse(raw)) : DEFAULT_DESKTOP_CONFIG;
+  } catch {
+    return DEFAULT_DESKTOP_CONFIG;
+  }
+}
+
+function writeLocalDesktopConfig(config: DenDesktopConfig) {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeDenDesktopConfig(config);
+  try {
+    if (Object.keys(normalized).length === 0) {
+      window.localStorage.removeItem(LOCAL_DESKTOP_CONFIG_KEY);
+      return;
+    }
+    window.localStorage.setItem(LOCAL_DESKTOP_CONFIG_KEY, JSON.stringify(normalized));
+  } catch {
+    // Local policy persistence failures are non-fatal. The UI falls back to the current session state.
+  }
+}
+
+function mergeDesktopConfigs(
+  cloudConfig: DenDesktopConfig,
+  localConfig: DenDesktopConfig,
+): DenDesktopConfig {
+  const merged: DenDesktopConfig = {
+    ...(cloudConfig.allowedDesktopVersions ? { allowedDesktopVersions: cloudConfig.allowedDesktopVersions } : {}),
+  };
+
+  for (const key of DESKTOP_RESTRICTION_KEYS) {
+    if (cloudConfig[key] === true || localConfig[key] === true) {
+      merged[key] = true;
+    }
+  }
+
+  return normalizeDenDesktopConfig(merged);
+}
+
 type DesktopConfigProviderProps = {
   children: ReactNode;
 };
 
 type DesktopConfigState = {
-  config: DenDesktopConfig;
+  cloudConfig: DenDesktopConfig;
+  localConfig: DenDesktopConfig;
   loading: boolean;
 };
 
@@ -103,10 +158,11 @@ type DesktopConfigState = {
 export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) {
   const denAuth = useDenAuth();
   const [desktopConfigState, setDesktopConfigState] = useState<DesktopConfigState>({
-    config: DEFAULT_DESKTOP_CONFIG,
+    cloudConfig: DEFAULT_DESKTOP_CONFIG,
+    localConfig: readLocalDesktopConfig(),
     loading: false,
   });
-  const { config, loading } = desktopConfigState;
+  const { cloudConfig, localConfig, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
@@ -120,7 +176,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const cacheKey = getDesktopConfigCacheKey();
 
     if (!isSignedIn || !token || !settings.activeOrgId?.trim()) {
-      setDesktopConfigState({ config: DEFAULT_DESKTOP_CONFIG, loading: false });
+      setDesktopConfigState((current) => ({
+        ...current,
+        cloudConfig: DEFAULT_DESKTOP_CONFIG,
+        loading: false,
+      }));
       return;
     }
 
@@ -139,7 +199,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       if (currentRun !== refreshRunRef.current) return;
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
-      setDesktopConfigState((current) => ({ ...current, config: nextConfig }));
+      setDesktopConfigState((current) => ({ ...current, cloudConfig: nextConfig }));
     } catch (error) {
       if (currentRun !== refreshRunRef.current) return;
 
@@ -157,7 +217,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       setDesktopConfigState((current) => ({
         ...current,
-        config: cached ?? DEFAULT_DESKTOP_CONFIG,
+        cloudConfig: cached ?? DEFAULT_DESKTOP_CONFIG,
       }));
     } finally {
       if (currentRun === refreshRunRef.current) {
@@ -174,14 +234,19 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     void settingsVersion;
 
     if (!isSignedIn) {
-      setDesktopConfigState({ config: DEFAULT_DESKTOP_CONFIG, loading: false });
+      setDesktopConfigState((current) => ({
+        ...current,
+        cloudConfig: DEFAULT_DESKTOP_CONFIG,
+        loading: false,
+      }));
       return;
     }
 
     const cacheKey = getDesktopConfigCacheKey();
     const cached = readCachedDesktopConfig(cacheKey);
     setDesktopConfigState({
-      config: cached ?? DEFAULT_DESKTOP_CONFIG,
+      cloudConfig: cached ?? DEFAULT_DESKTOP_CONFIG,
+      localConfig: readLocalDesktopConfig(),
       loading: !cached,
     });
     void refresh();
@@ -209,13 +274,33 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     };
   }, [isSignedIn, refresh]);
 
+  const setLocalRestriction = useCallback<DesktopConfigStore["setLocalRestriction"]>((restriction, enabled) => {
+    setDesktopConfigState((current) => {
+      const nextLocalConfig = normalizeDenDesktopConfig({
+        ...current.localConfig,
+        [restriction]: enabled ? true : undefined,
+      });
+      writeLocalDesktopConfig(nextLocalConfig);
+      return { ...current, localConfig: nextLocalConfig };
+    });
+  }, []);
+
   const value = useMemo<DesktopConfigStore>(() => {
+    const config = mergeDesktopConfigs(cloudConfig, localConfig);
     // Bind the checker to the latest `config` so callers see the most
     // recent org restrictions without having to recompute every render.
     const checkRestriction: DesktopAppRestrictionChecker = ({ restriction }) =>
       checkDesktopAppRestriction({ config, restriction });
-    return { config, loading, refresh, checkRestriction };
-  }, [config, loading, refresh]);
+    return {
+      config,
+      cloudConfig,
+      localConfig,
+      loading,
+      refresh,
+      setLocalRestriction,
+      checkRestriction,
+    };
+  }, [cloudConfig, loading, localConfig, refresh, setLocalRestriction]);
 
   return (
     <DesktopConfigContext.Provider value={value}>
