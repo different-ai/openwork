@@ -145,7 +145,10 @@ export function useDenSession({
   }, []);
 
   const clearSignedInState = React.useCallback(
-    (message?: string | null) => {
+    (
+      message?: string | null,
+      eventDetail?: Pick<DenSessionUpdatedDetail, "baseUrl">,
+    ) => {
       clearDenSession({ includeBaseUrls: !developerMode });
       if (!developerMode) {
         setBaseUrl(DEFAULT_DEN_BASE_URL);
@@ -177,7 +180,7 @@ export function useDenSession({
         }
       } catch {}
       // Notify provider auth store so it can clean up cloud-imported providers
-      dispatchDenSessionUpdated({ status: "signed_out" });
+      dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
     },
     [clearSessionState, developerMode, setAuthToken, setBaseUrl],
   );
@@ -219,7 +222,17 @@ export function useDenSession({
 
     setBaseUrl(resolved.baseUrl);
     setBaseUrlDraft(resolved.baseUrl);
-    clearSignedInState(t("den.status_base_url_updated"));
+    writeDenSettings({
+      baseUrl: resolved.baseUrl,
+      apiBaseUrl: resolved.apiBaseUrl,
+      authToken: null,
+      activeOrgId: null,
+      activeOrgSlug: null,
+      activeOrgName: null,
+    });
+    clearSignedInState(t("den.status_base_url_updated"), {
+      baseUrl: resolved.baseUrl,
+    });
   }, [baseUrl, baseUrlDraft, clearSignedInState]);
 
   React.useEffect(() => {
