@@ -59,6 +59,15 @@ export const idTypesMapNameToPrefix = {
   workerBundle: "wkb",
   auditEvent: "aev",
   telemetryEvent: "tev",
+  inferenceKey: "ink",
+  inferenceOrgLimitPolicy: "iolp",
+  inferenceOrgUsageBucket: "ioub",
+  inferenceRequest: "ireq",
+  inferenceUsageLedgerEntry: "iule",
+  inferenceUsageLedgerBucketCharge: "iulc",
+  inferenceModelAlias: "ima",
+  inferenceOrgProviderKey: "iopk",
+  orgSubscription: "osub",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

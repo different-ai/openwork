@@ -56,10 +56,14 @@ async function findFreePort(preferred, maxAttempts = 100) {
   );
 }
 
+function needsShell(command) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
 function run(command, args, options = {}) {
   return spawn(command, args, {
     stdio: ["ignore", "inherit", "inherit"],
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     ...options,
   });
 }
@@ -67,7 +71,7 @@ function run(command, args, options = {}) {
 function runSync(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     ...options,
   });
   if (result.status !== 0) {
@@ -271,11 +275,10 @@ if (!viteReady) {
 
 const resolvedStartUrl = await waitForVite(startUrl);
 
-// Default Electron CDP on a stable dev port so chrome-devtools MCP / raw CDP
-// clients can attach without each launch picking a random port. Override with
-// OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=<port> or set to "0" to disable.
-const defaultCdpPort = "9823";
-const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? defaultCdpPort;
+// Optional Electron CDP for external debugging / raw CDP clients.
+// NOT required for the built-in browser (uses native webContents APIs).
+// Set OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9823 to enable.
+const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {

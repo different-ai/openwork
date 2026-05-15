@@ -40,12 +40,15 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  opencode: "OpenCode",
+  openwork: "OpenWork",
+  opencode: "OpenCode Zen",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
   openrouter: "OpenRouter",
 };
+
+const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 
 export type ProviderAuthModalProps = {
   open: boolean;
@@ -66,6 +69,8 @@ export type ProviderAuthModalProps = {
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
+  showOpenWorkModelsSubscribe?: boolean;
+  onSubscribeOpenWorkModels?: () => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -74,7 +79,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto"
+    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -88,12 +93,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
-  const [autoOpenedPreferredProviderId, setAutoOpenedPreferredProviderId] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
   const oauthAutoPollRef = useRef<number | null>(null);
   const oauthCodeCopiedResetRef = useRef<number | null>(null);
+  const autoOpenedPreferredProviderIdRef = useRef<string | null>(null);
 
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
@@ -108,13 +113,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
     return cleaned
       .split(" ")
-      .filter(Boolean)
-      .map((word) => {
+      .flatMap((word) => {
+        if (!word) return [];
         if (/\d/.test(word) || word.length <= 3) {
-          return word.toUpperCase();
+          return [word.toUpperCase()];
         }
         const lower = word.toLowerCase();
-        return lower.charAt(0).toUpperCase() + lower.slice(1);
+        return [lower.charAt(0).toUpperCase() + lower.slice(1)];
       })
       .join(" ");
   };
@@ -136,6 +141,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     return normalizedId === "anthropic" || normalizedName === "anthropic";
   };
 
+  const isOpencodeZenProvider = (id: string) => id.trim().toLowerCase() === "opencode";
+
+  const OPENCODE_ZEN_KEY_URL = "https://opencode.ai/auth";
+
+  const openExternalUrl = async (url: string) => {
+    if (!url) return;
+    if (isDesktopRuntime()) {
+      await openDesktopUrl(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
     const label = method.label.toLowerCase();
     return method.type === "oauth" && (label.includes("pro/max") || label.includes("create an api key"));
@@ -146,9 +164,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const connected = new Set(props.connectedProviderIds ?? []);
     const providers = props.providers ?? [];
 
-    return Object.keys(methods)
-      .map((id): ProviderAuthEntry => {
-        const provider = providers.find((item) => item.id === id);
+    const providersById = new Map(providers.map((provider) => [provider.id, provider]));
+    const nextEntries = Object.keys(methods)
+      .flatMap((id) => {
+        const provider = providersById.get(id);
         const entryMethods = (methods[id] ?? []).filter((method) => {
           if (isAnthropicProvider(id, provider?.name) && isClaudeProMaxMethod(method)) {
             return false;
@@ -158,17 +177,33 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           if (isRemoteWorker) return isOpenAiHeadlessMethod(method);
           return !isOpenAiHeadlessMethod(method);
         });
-        return {
+        if (entryMethods.length === 0) return [];
+        return [{
           id,
           name: formatProviderName(id, provider?.name),
           methods: entryMethods,
           connected: connected.has(id),
           env: Array.isArray(provider?.env) ? provider.env : [],
-        };
+        } satisfies ProviderAuthEntry];
       })
-      .filter((entry) => entry.methods.length > 0)
       .sort(compareProviders);
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers]);
+
+    if (props.showOpenWorkModelsSubscribe) {
+      const connectedToOpenWork = connected.has(OPENWORK_MODELS_PROVIDER_ID);
+      return [
+        {
+          id: OPENWORK_MODELS_PROVIDER_ID,
+          name: "OpenWork",
+          methods: [{ type: "cloud", label: "Subscribe" }],
+          connected: connectedToOpenWork,
+          env: [],
+        },
+        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== OPENWORK_MODELS_PROVIDER_ID),
+      ];
+    }
+
+    return nextEntries;
+  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showOpenWorkModelsSubscribe]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -254,7 +289,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   useEffect(() => {
     if (!props.open) {
-      setAutoOpenedPreferredProviderId(null);
+      autoOpenedPreferredProviderIdRef.current = null;
       resetState();
     }
   }, [props.open]);
@@ -278,17 +313,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (!props.open || props.loading || resolvedView !== "list") return;
 
     const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
-    if (!preferredId || autoOpenedPreferredProviderId === preferredId) return;
+    if (!preferredId || autoOpenedPreferredProviderIdRef.current === preferredId) return;
 
     const entry = entries.find((item) => item.id.trim().toLowerCase() === preferredId);
     if (!entry) return;
 
-    setAutoOpenedPreferredProviderId(preferredId);
+    autoOpenedPreferredProviderIdRef.current = preferredId;
     queueMicrotask(() => {
       handleEntrySelect(entry);
     });
   }, [
-    autoOpenedPreferredProviderId,
     entries,
     props.loading,
     props.open,
@@ -486,6 +520,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setSelectedProviderId(entry.id);
 
+    if (props.showOpenWorkModelsSubscribe && entry.id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID) {
+      setView("openwork-subscribe");
+      return;
+    }
+
     if (entry.methods.length === 1) {
       void handleMethodSelect(entry.methods[0]);
       return;
@@ -511,6 +550,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      // Close the modal after a successful save
+      props.onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
       setLocalError(message);
@@ -523,6 +564,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onConnectCloudProvider(selectedCloudMethod.cloudProviderId);
+      props.onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to connect organization provider";
       setLocalError(message);
@@ -542,6 +584,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
+    if (resolvedView === "openwork-subscribe") {
+      resetState();
+      return;
+    }
+
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
@@ -635,6 +682,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (method.type === "cloud") {
       return method.description ?? "Use the provider and credential managed by your organization.";
     }
+    if (isOpencodeZenProvider(entry.id)) {
+      return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
+    }
     return "Paste a secret key that OpenWork stores locally on this device.";
   };
 
@@ -663,7 +713,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               </div>
             ) : props.loading ? (
               <div className="rounded-xl border border-gray-6 bg-gray-1/60 px-4 py-3 text-sm text-gray-10 animate-pulse">
-                Loading providers...
+                Loading providers…
               </div>
             ) : null}
           </div>
@@ -671,7 +721,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           {!props.loading ? (
             <div className="flex-1 space-y-2 overflow-y-auto pr-1 -mr-1">
               {resolvedView === "list" ? (
-                <div className="space-y-3" onKeyDown={handleListKeyDown}>
+                <div className="space-y-3" role="presentation" onKeyDown={handleListKeyDown}>
                   <div className="relative flex items-center mb-1">
                     <Search size={16} className="absolute left-3 text-gray-9" />
                     <input
@@ -703,7 +753,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         onMouseEnter={() => setActiveEntryIndex(index)}
                         onClick={() => handleEntrySelect(entry)}
                       >
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm overflow-hidden">
+                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm overflow-hidden">
                           <ProviderIcon providerId={entry.id} size={18} className="text-gray-12" />
                         </div>
 
@@ -798,16 +848,34 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Paste your API key to connect.</div>
+                      <div className="text-xs text-gray-10 mt-1">
+                        {isOpencodeZenProvider(selectedEntry.id)
+                          ? "Sign in to OpenCode Zen with an API key from opencode.ai/auth."
+                          : "Paste your API key to connect."}
+                      </div>
                     </div>
                     <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
                       Back
                     </Button>
                   </div>
+                  {isOpencodeZenProvider(selectedEntry.id) ? (
+                    <div className="rounded-lg border border-indigo-5/30 bg-indigo-3/15 px-3 py-2.5 text-xs text-indigo-12 space-y-1.5">
+                      <div>
+                        OpenCode Zen gives you access to the best coding models. Free models keep working without a key.
+                      </div>
+                      <button
+                        type="button"
+                        className="text-indigo-11 hover:text-indigo-12 underline underline-offset-2 font-medium"
+                        onClick={() => void openExternalUrl(OPENCODE_ZEN_KEY_URL)}
+                      >
+                        Get an API key →
+                      </button>
+                    </div>
+                  ) : null}
                   <TextInput
                     label="API key"
                     type="password"
-                    placeholder="sk-..."
+                    placeholder={isOpencodeZenProvider(selectedEntry.id) ? "ock_..." : "sk-..."}
                     value={apiKeyInput}
                     onChange={(event) => {
                       setApiKeyInput(event.currentTarget.value);
@@ -830,7 +898,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       onClick={handleApiSubmit}
                       disabled={actionDisabled || !apiKeyInput.trim()}
                     >
-                      {props.submitting ? "Saving..." : "Save key"}
+                      {props.submitting ? "Saving…" : "Save key"}
                     </Button>
                   </div>
                 </div>
@@ -866,6 +934,27 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                     <Button variant="secondary" onClick={handleCloudSubmit} disabled={actionDisabled}>
                       {props.submitting ? "Connecting..." : "Connect provider"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {resolvedView === "openwork-subscribe" && selectedEntry ? (
+                <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-medium text-gray-12">OpenWork Models</div>
+                      <div className="text-xs text-gray-10 mt-1">
+                        Frontier intelligence, hand picked for your team&apos;s most ambitious work.
+                      </div>
+                    </div>
+                    <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
+                      Back
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <Button onClick={() => void props.onSubscribeOpenWorkModels?.()} disabled={actionDisabled}>
+                      Subscribe
                     </Button>
                   </div>
                 </div>
@@ -953,7 +1042,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   )}
                   {oauthDisplayCode ? (
-                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-3 flex items-center gap-3">
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="text-[10px] uppercase tracking-wide text-gray-8">Confirmation code</div>
                         <div className="text-sm text-gray-12 font-mono break-all">{oauthDisplayCode}</div>
@@ -970,7 +1059,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   ) : (
                     <div className="flex items-center gap-2 text-xs text-gray-9">
                       <Loader2 size={14} className={props.submitting || pollingBusy || oauthAutoBusy ? "animate-spin" : ""} />
-                      <span>Checking connection status automatically...</span>
+                      <span>Checking connection status automatically…</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-3">

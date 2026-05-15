@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useId, useReducer } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 
 import { Button } from "../../../design-system/button";
@@ -15,47 +15,61 @@ export type AddMcpModalProps = {
   isRemoteWorkspace: boolean;
 };
 
+type AddMcpState = {
+  name: string;
+  serverType: "remote" | "local";
+  url: string;
+  command: string;
+  oauthRequired: boolean;
+  error: string | null;
+  submitting: boolean;
+};
+
+const initialAddMcpState: AddMcpState = {
+  name: "",
+  serverType: "remote",
+  url: "",
+  command: "",
+  oauthRequired: false,
+  error: null,
+  submitting: false,
+};
+
+function addMcpReducer(state: AddMcpState, patch: Partial<AddMcpState> | "reset") {
+  if (patch === "reset") return initialAddMcpState;
+  return { ...state, ...patch };
+}
+
 export function AddMcpModal(props: AddMcpModalProps) {
-  const [name, setName] = useState("");
-  const [serverType, setServerType] = useState<"remote" | "local">("remote");
-  const [url, setUrl] = useState("");
-  const [command, setCommand] = useState("");
-  const [oauthRequired, setOauthRequired] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [state, dispatch] = useReducer(addMcpReducer, initialAddMcpState);
+  const oauthRequiredId = useId();
 
   const reset = () => {
-    setName("");
-    setServerType("remote");
-    setUrl("");
-    setCommand("");
-    setOauthRequired(false);
-    setError(null);
+    dispatch("reset");
   };
 
   const handleClose = () => {
-    if (submitting) return;
+    if (state.submitting) return;
     reset();
     props.onClose();
   };
 
   const handleSubmit = async () => {
-    if (submitting) return;
-    setError(null);
+    if (state.submitting) return;
+    dispatch({ error: null });
 
-    const trimmedName = name.trim();
+    const trimmedName = state.name.trim();
     if (!trimmedName) {
-      setError(t("mcp.name_required"));
+      dispatch({ error: t("mcp.name_required") });
       return;
     }
 
-    setSubmitting(true);
+    dispatch({ submitting: true });
 
-    if (serverType === "remote") {
-      const trimmedUrl = url.trim();
+    if (state.serverType === "remote") {
+      const trimmedUrl = state.url.trim();
       if (!trimmedUrl) {
-        setError(t("mcp.url_or_command_required"));
-        setSubmitting(false);
+        dispatch({ error: t("mcp.url_or_command_required"), submitting: false });
         return;
       }
 
@@ -66,17 +80,16 @@ export function AddMcpModal(props: AddMcpModalProps) {
             description: "",
             type: "remote",
             url: trimmedUrl,
-            oauth: oauthRequired,
+            oauth: state.oauthRequired,
           }),
         );
       } finally {
-        setSubmitting(false);
+        dispatch({ submitting: false });
       }
     } else {
-      const trimmedCommand = command.trim();
+      const trimmedCommand = state.command.trim();
       if (!trimmedCommand) {
-        setError(t("mcp.url_or_command_required"));
-        setSubmitting(false);
+        dispatch({ error: t("mcp.url_or_command_required"), submitting: false });
         return;
       }
 
@@ -91,7 +104,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
           }),
         );
       } finally {
-        setSubmitting(false);
+        dispatch({ submitting: false });
       }
     }
 
@@ -102,13 +115,16 @@ export function AddMcpModal(props: AddMcpModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div
+      <button
+        type="button"
         className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
+        aria-label={t("common.close")}
         onClick={handleClose}
       />
       <div
         className="relative w-full max-w-lg bg-gray-2 border border-gray-6 rounded-2xl shadow-2xl overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-6">
           <div>
@@ -132,9 +148,8 @@ export function AddMcpModal(props: AddMcpModalProps) {
           <TextInput
             label={t("mcp.server_name")}
             placeholder={t("mcp.server_name_placeholder")}
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-            autoFocus
+            value={state.name}
+            onChange={(event) => dispatch({ name: event.currentTarget.value })}
           />
 
           <div>
@@ -145,11 +160,11 @@ export function AddMcpModal(props: AddMcpModalProps) {
               <button
                 type="button"
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  serverType === "remote"
+                  state.serverType === "remote"
                     ? "bg-dls-active text-dls-text"
                     : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
                 }`}
-                onClick={() => setServerType("remote")}
+                onClick={() => dispatch({ serverType: "remote" })}
               >
                 {t("mcp.type_remote")}
               </button>
@@ -157,13 +172,13 @@ export function AddMcpModal(props: AddMcpModalProps) {
                 type="button"
                 disabled={props.isRemoteWorkspace}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  serverType === "local"
+                  state.serverType === "local"
                     ? "bg-dls-active text-dls-text"
                     : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
                 } ${props.isRemoteWorkspace ? "opacity-50 cursor-not-allowed" : ""}`}
                 onClick={() => {
                   if (props.isRemoteWorkspace) return;
-                  setServerType("local");
+                  dispatch({ serverType: "local" });
                 }}
               >
                 {t("mcp.type_local_cmd")}
@@ -176,53 +191,54 @@ export function AddMcpModal(props: AddMcpModalProps) {
             ) : null}
           </div>
 
-          {serverType === "remote" ? (
+          {state.serverType === "remote" ? (
             <div className="space-y-3">
               <TextInput
                 label={t("mcp.server_url")}
                 placeholder={t("mcp.server_url_placeholder")}
-                value={url}
-                onChange={(event) => setUrl(event.currentTarget.value)}
+                value={state.url}
+                onChange={(event) => dispatch({ url: event.currentTarget.value })}
               />
-              <div className="rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-3">
+              <div className="rounded-xl border border-dls-border bg-dls-hover/40 p-3">
                 <div className="mb-2 text-xs font-medium text-dls-text">
                   {t("mcp.sign_in_section_label")}
                 </div>
-                <label className="flex items-start gap-2 text-xs text-dls-secondary">
+                <div className="flex items-start gap-2 text-xs text-dls-secondary">
                   <input
+                    id={oauthRequiredId}
                     type="checkbox"
-                    className="mt-0.5 h-4 w-4 rounded border border-dls-border"
-                    checked={oauthRequired}
+                    className="mt-0.5 size-4 rounded border border-dls-border"
+                    checked={state.oauthRequired}
                     onChange={(event) =>
-                      setOauthRequired(event.currentTarget.checked)
+                      dispatch({ oauthRequired: event.currentTarget.checked })
                     }
                   />
-                  <span>
+                  <label htmlFor={oauthRequiredId}>
                     <span className="block text-dls-text">
                       {t("mcp.oauth_optional_label")}
                     </span>
                     <span className="mt-0.5 block text-dls-secondary">
                       {t("mcp.oauth_optional_hint")}
                     </span>
-                  </span>
-                </label>
+                  </label>
+                </div>
               </div>
             </div>
           ) : null}
 
-          {serverType === "local" ? (
+          {state.serverType === "local" ? (
             <TextInput
               label={t("mcp.server_command")}
               placeholder={t("mcp.server_command_placeholder")}
               hint={t("mcp.server_command_hint")}
-              value={command}
-              onChange={(event) => setCommand(event.currentTarget.value)}
+              value={state.command}
+              onChange={(event) => dispatch({ command: event.currentTarget.value })}
             />
           ) : null}
 
-          {error ? (
+          {state.error ? (
             <div className="rounded-lg bg-red-2 border border-red-6 px-3 py-2 text-xs text-red-11">
-              {error}
+              {state.error}
             </div>
           ) : null}
         </div>
@@ -231,16 +247,16 @@ export function AddMcpModal(props: AddMcpModalProps) {
           <Button
             variant="ghost"
             onClick={handleClose}
-            disabled={submitting}
+            disabled={state.submitting}
           >
             {t("mcp.auth.cancel")}
           </Button>
           <Button
             variant="secondary"
             onClick={() => void handleSubmit()}
-            disabled={props.busy || submitting}
+            disabled={props.busy || state.submitting}
           >
-            {props.busy || submitting ? (
+            {props.busy || state.submitting ? (
               <Loader2 size={16} className="animate-spin" />
             ) : (
               <Plus size={16} />

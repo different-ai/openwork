@@ -1,7 +1,6 @@
 import type { WorkspaceConnectionState } from "../../../app/types";
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import {
-  buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   normalizeOpenworkServerUrl,
   parseOpenworkWorkspaceIdFromUrl,
@@ -60,6 +59,24 @@ function endpointLabel(baseUrl: string) {
   }
 }
 
+function stripOpenworkWorkspaceMount(baseUrl: string) {
+  try {
+    const url = new URL(baseUrl);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // Fall through to the already-normalized value below.
+  }
+  return baseUrl.replace(/\/+$/, "");
+}
+
 function isValidHttpEndpoint(baseUrl: string) {
   try {
     const url = new URL(baseUrl);
@@ -83,7 +100,11 @@ function isServerErrorStatus(error: unknown, status: number | number[]) {
 }
 
 function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
-  return `Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`;
+  return remoteSupportMessage(`Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`);
+}
+
+function remoteSupportMessage(message: string) {
+  return `${message} Upgrade the OpenWork host and try again. If this continues, contact team@openworklabs.com.`;
 }
 
 export function redactRemoteDiagnosticText(value: string): string {
@@ -156,7 +177,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
       ok: false,
       state: {
         status: "error",
-        message: "Remote worker URL is missing. Edit connection and add a server URL.",
+        message: remoteSupportMessage("Remote worker URL is missing. Edit connection and add a server URL."),
         checkedAt: Date.now(),
       },
     };
@@ -168,7 +189,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
       ok: false,
       state: {
         status: "error",
-        message: "Remote worker URL is invalid. Edit connection and use an http:// or https:// URL.",
+        message: remoteSupportMessage("Remote worker URL is invalid. Edit connection and use an http:// or https:// URL."),
         checkedAt: Date.now(),
       },
     };
@@ -179,9 +200,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     parseOpenworkWorkspaceIdFromUrl(normalizedHostUrl) ||
     parseOpenworkWorkspaceIdFromUrl(trim(workspace.baseUrl)) ||
     null;
-  const baseUrl = workspaceId
-    ? buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, workspaceId) ?? normalizedHostUrl
-    : normalizedHostUrl;
+  const hostBaseUrl = stripOpenworkWorkspaceMount(normalizedHostUrl);
   const token =
     trim(workspace.openworkToken) ||
     trim(workspace.openworkClientToken) ||
@@ -191,8 +210,8 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     ok: true,
     target: {
       kind: "openwork",
-      baseUrl,
-      endpointLabel: endpointLabel(baseUrl),
+      baseUrl: hostBaseUrl,
+      endpointLabel: endpointLabel(hostBaseUrl),
       token,
       workspaceId,
     },
@@ -222,20 +241,20 @@ export async function testRemoteWorkspaceConnection(
     const health = await client.health();
     if (!health?.ok) {
       return fail(
-        `Cannot reach ${target.endpointLabel}. Health check returned an unhealthy response.`,
+        remoteSupportMessage(`Cannot reach ${target.endpointLabel}. Health check returned an unhealthy response.`),
         checkedAt,
       );
     }
   } catch (error) {
     return fail(
-      `Cannot reach ${target.endpointLabel}. Health check failed: ${describeUnknownError(error)}`,
+      remoteSupportMessage(`Cannot reach ${target.endpointLabel}. Health check failed: ${describeUnknownError(error)}`),
       checkedAt,
     );
   }
 
   if (!target.token) {
     return fail(
-      `Token is missing for ${target.endpointLabel}. Edit connection and paste a valid OpenWork token.`,
+      remoteSupportMessage(`Token is missing for ${target.endpointLabel}. Edit connection and paste a valid OpenWork token.`),
       checkedAt,
     );
   }
@@ -247,15 +266,22 @@ export async function testRemoteWorkspaceConnection(
       return fail(rejectedTokenMessage(target), checkedAt);
     }
     return fail(
-      `Connected to ${target.endpointLabel}, but capabilities failed: ${describeUnknownError(error)}`,
+      remoteSupportMessage(`Connected to ${target.endpointLabel}, but capabilities failed: ${describeUnknownError(error)}`),
       checkedAt,
     );
   }
 
   if (target.workspaceId) {
     try {
-      const status = await client.status();
-      const name = displayWorkspaceName(status.workspace) || target.workspaceId;
+      const list = await client.listWorkspaces();
+      const workspace = list.items.find((item) => item.id === target.workspaceId) ?? null;
+      if (!workspace) {
+        return fail(
+          remoteSupportMessage(`Workspace ${target.workspaceId} was not found on ${target.endpointLabel}. Reconnect the worker.`),
+          checkedAt,
+        );
+      }
+      const name = displayWorkspaceName(workspace) || target.workspaceId;
       return {
         ok: true,
         target,
@@ -266,20 +292,14 @@ export async function testRemoteWorkspaceConnection(
         },
       };
     } catch (error) {
-      if (isServerErrorStatus(error, 404)) {
-        return fail(
-          `Workspace ${target.workspaceId} was not found on ${target.endpointLabel}. Reconnect the worker.`,
-          checkedAt,
-        );
-      }
       if (isServerErrorStatus(error, 403)) {
         return fail(
-          `Workspace ${target.workspaceId} is not authorized on ${target.endpointLabel}. Check the token or server access rules.`,
+          remoteSupportMessage(`Workspace ${target.workspaceId} is not authorized on ${target.endpointLabel}. Check the token or server access rules.`),
           checkedAt,
         );
       }
       return fail(
-        `Connected to ${target.endpointLabel}, but workspace status failed: ${describeUnknownError(error)}`,
+        remoteSupportMessage(`Connected to ${target.endpointLabel}, but workspace list failed: ${describeUnknownError(error)}`),
         checkedAt,
       );
     }
@@ -306,7 +326,7 @@ export async function testRemoteWorkspaceConnection(
       return fail(rejectedTokenMessage(target), checkedAt);
     }
     return fail(
-      `Connected to ${target.endpointLabel}, but workspace list failed: ${describeUnknownError(error)}`,
+      remoteSupportMessage(`Connected to ${target.endpointLabel}, but workspace list failed: ${describeUnknownError(error)}`),
       checkedAt,
     );
   }

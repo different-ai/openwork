@@ -2,15 +2,15 @@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
-import { t } from "../../../../i18n";
+import { t } from "@/i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
-  SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderTitle,
-} from "../settings-section";
+  LayoutSectionItem,
+  LayoutSectionItemDescription,
+  LayoutSectionItemFootnote,
+  LayoutSectionItemHeader,
+  LayoutSectionItemTitle,
+} from "../settings-layout";
 
 type ThemeMode = AppearanceViewProps["themeMode"];
 
@@ -19,13 +19,11 @@ interface ThemeSectionProps
 
 export function ThemeSection(props: ThemeSectionProps) {
   return (
-    <SettingsSection className="items-center">
-      <SettingsSectionHeader className="w-full">
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{t("settings.appearance_title")}</SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("settings.appearance_hint")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-      </SettingsSectionHeader>
+    <LayoutSectionItem className="items-center">
+      <LayoutSectionItemHeader className="w-full">
+        <LayoutSectionItemTitle>{t("settings.theme_title")}</LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>{t("settings.appearance_hint")}</LayoutSectionItemDescription>
+      </LayoutSectionItemHeader>
 
       <ThemePicker
         className="pt-1"
@@ -34,8 +32,8 @@ export function ThemeSection(props: ThemeSectionProps) {
         setThemeMode={props.setThemeMode}
       />
 
-      <div className="text-xs text-muted-foreground">{t("settings.theme_system_hint")}</div>
-    </SettingsSection>
+      <LayoutSectionItemFootnote>{t("settings.theme_system_hint")}</LayoutSectionItemFootnote>
+    </LayoutSectionItem>
   );
 }
 
@@ -78,7 +76,7 @@ function ThemePicker(props: ThemePickerProps) {
         value="dark"
         label={t("settings.theme_dark")}
       >
-        <ThemePreview value="dark" className="bg-black" />
+        <ThemePreview value="dark" className="bg-zinc-950" />
         <ThemePickerLabel>{t("settings.theme_dark")}</ThemePickerLabel>
       </ThemePickerItem>
     </ToggleGroup>
@@ -96,7 +94,7 @@ function ThemePickerItem(props: ThemePickerItemProps) {
     <ToggleGroupItem
       value={props.value}
       aria-label={props.label}
-      className="group/theme h-auto flex-1 flex-col gap-3 rounded-sm px-0 py-0 hover:bg-transparent aria-pressed:bg-transparent"
+      className="group/theme h-auto flex-1 flex-col gap-3 rounded-sm p-0 hover:bg-transparent aria-pressed:bg-transparent"
     >
       {props.children}
     </ToggleGroupItem>
@@ -119,7 +117,7 @@ function ThemePreview(props: ThemePreviewProps) {
       {props.value === "system" && (
         <div className="flex h-full">
           <div className="w-1/2 bg-white" />
-          <div className="w-1/2 bg-black" />
+          <div className="w-1/2 bg-zinc-950" />
         </div>
       )}
     </div>

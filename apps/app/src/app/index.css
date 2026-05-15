@@ -51,9 +51,10 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #f3f4f6;
-  --dls-accent: var(--blue-9);
-  --dls-accent-hover: var(--blue-10);
-  --dls-accent-rgb: 0 144 255;
+  --dls-accent: #011627;
+  --dls-accent-hover: #000000;
+  --dls-accent-fg: #ffffff;
+  --dls-accent-rgb: 1 22 39;
   --dls-secondary-rgb: 96 100 108;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -69,6 +70,7 @@
   --card-foreground: var(--slate-12);
   --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
+  --primary: var(--blue-9);
   --primary-foreground: white;
   --secondary: var(--slate-3);
   --secondary-foreground: var(--slate-12);
@@ -77,6 +79,7 @@
   --accent: var(--slate-3);
   --accent-foreground: var(--slate-12);
   --destructive: var(--red-9);
+  --warning: var(--amber-11);
   --border: var(--slate-5);
   --input: var(--slate-6);
   --ring: var(--slate-8);
@@ -105,9 +108,10 @@
   --dls-canvas: var(--slate-2);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #262626;
-  --dls-accent: var(--blue-8);
-  --dls-accent-hover: var(--blue-9);
-  --dls-accent-rgb: 59 158 255;
+  --dls-accent: #011627;
+  --dls-accent-hover: #0a2540;
+  --dls-accent-fg: #ffffff;
+  --dls-accent-rgb: 1 22 39;
   --dls-secondary-rgb: 176 180 186;
   --dls-text-primary: var(--slate-12);
   --dls-text-secondary: var(--slate-11);
@@ -405,6 +409,7 @@ select:disabled {
   --card-foreground: var(--slate-12);
   --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
+  --primary: var(--blue-8);
   --primary-foreground: var(--slate-12);
   --secondary: var(--slate-3);
   --secondary-foreground: var(--slate-12);
@@ -413,6 +418,7 @@ select:disabled {
   --accent: var(--slate-3);
   --accent-foreground: var(--slate-12);
   --destructive: var(--red-9);
+  --warning: var(--amber-11);
   --border: var(--slate-3);
   --input: var(--slate-6);
   --ring: var(--slate-8);
@@ -451,6 +457,7 @@ select:disabled {
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -458,7 +465,7 @@ select:disabled {
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--dls-accent);
+  --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);

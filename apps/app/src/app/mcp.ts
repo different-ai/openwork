@@ -6,6 +6,7 @@ type McpConfigValue = Record<string, unknown> | null | undefined;
 
 type McpIdentity = {
   id?: string;
+  serverName?: string;
   name: string;
 };
 
@@ -14,7 +15,7 @@ export function normalizeMcpSlug(name: string): string {
 }
 
 export function getMcpIdentityKey(entry: McpIdentity): string {
-  return entry.id ?? normalizeMcpSlug(entry.name);
+  return entry.id ?? entry.serverName ?? normalizeMcpSlug(entry.name);
 }
 
 export function validateMcpServerName(name: string): string {
@@ -35,7 +36,7 @@ export async function removeMcpFromConfig(
   projectDir: string,
   name: string,
 ): Promise<void> {
-  const configFile = await readOpencodeConfig("project", projectDir);
+  const configFile = await readOpencodeConfig("project", projectDir) as { path: string; exists: boolean; content: string | null };
   const raw = configFile.exists && configFile.content?.trim()
     ? configFile.content
     : "{}\n";
@@ -58,7 +59,7 @@ export async function removeMcpFromConfig(
     "project",
     projectDir,
     updated.endsWith("\n") ? updated : `${updated}\n`,
-  );
+  ) as { ok: boolean; stderr?: string; stdout?: string };
   if (!writeResult.ok) {
     throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
   }

@@ -42,6 +42,15 @@ function extractDiff(output: unknown) {
   return null;
 }
 
+function toKeyedLines(value: string) {
+  let offset = 0;
+  return value.split("\n").map((line) => {
+    const key = `${offset}:${line}`;
+    offset += line.length + 1;
+    return { key, line };
+  });
+}
+
 async function copyText(text: string) {
   await navigator.clipboard.writeText(text);
 }
@@ -83,7 +92,7 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
   const output = props.part.state === "output-available" ? props.part.output : undefined;
   const error = props.part.state === "output-error" ? props.part.errorText : "";
   const diff = extractDiff(output);
-  const diffLines = diff ? normalizeToolText(diff).split("\n") : [];
+  const diffLines = diff ? toKeyedLines(normalizeToolText(diff)) : [];
   const expandable = hasStructuredValue(input) || hasStructuredValue(output) || Boolean(diff) || Boolean(error);
 
   return (
@@ -135,9 +144,9 @@ export function ToolCallView(props: { part: DynamicToolUIPart; developerMode: bo
                 </button>
               </div>
               <div className="mt-2 grid gap-1 overflow-hidden rounded-md">
-                {diffLines.map((line, index) => (
+                {diffLines.map(({ key, line }) => (
                   <div
-                    key={`${props.part.toolCallId}-diff-${index}`}
+                    key={`${props.part.toolCallId}-diff-${key}`}
                     className={`whitespace-pre-wrap break-words px-2 py-0.5 font-mono text-[11px] leading-relaxed ${diffLineClass(line)}`}
                   >
                     {line || " "}

@@ -15,6 +15,7 @@ import { db } from "../../db.js"
 import {
   jsonValidator,
   paramValidator,
+  queryValidator,
   requireUserMiddleware,
   resolveMemberTeamsMiddleware,
   resolveOrganizationContextMiddleware,
@@ -43,6 +44,10 @@ const providerCatalogParamsSchema = z.object({
 })
 
 const orgLlmProviderParamsSchema = idParamSchema("llmProviderId", "llmProvider")
+
+const llmProviderListQuerySchema = z.object({
+  scope: z.enum(["usable", "manageable"]).optional().default("usable"),
+})
 
 const customModelSchema = z.object({
   id: z.string().trim().min(1).max(255),
@@ -146,12 +151,7 @@ async function canAccessLlmProvider(input: {
   llmProviderId: LlmProviderId
   currentMemberId: MemberId
   memberTeams: Array<{ id: TeamId }>
-  isAdmin: boolean
 }) {
-  if (input.isAdmin) {
-    return true
-  }
-
   const access = await listAccessibleProviderAccess({
     organizationId: input.organizationId,
     currentMemberId: input.currentMemberId,
@@ -337,31 +337,35 @@ async function loadLlmProviders(input: {
   currentMemberId: MemberId
   memberTeams: Array<{ id: TeamId }>
   isAdmin: boolean
+  scope: "usable" | "manageable"
 }) {
-  const accessibleAccess = input.isAdmin
-    ? []
-    : await listAccessibleProviderAccess({
-        organizationId: input.organizationId,
-        currentMemberId: input.currentMemberId,
-        memberTeams: input.memberTeams,
-      })
+  const accessibleAccess = await listAccessibleProviderAccess({
+    organizationId: input.organizationId,
+    currentMemberId: input.currentMemberId,
+    memberTeams: input.memberTeams,
+  })
 
   const accessibleProviderIds = [...new Set(accessibleAccess.map((entry) => entry.llmProviderId))]
-  if (!input.isAdmin && accessibleProviderIds.length === 0) {
+  if (input.scope === "usable" && accessibleProviderIds.length === 0) {
     return []
   }
+
+  const providerWhere = input.scope === "manageable"
+    ? input.isAdmin
+      ? eq(LlmProviderTable.organizationId, input.organizationId)
+      : and(
+          eq(LlmProviderTable.organizationId, input.organizationId),
+          eq(LlmProviderTable.createdByOrgMembershipId, input.currentMemberId),
+        )
+    : and(
+        eq(LlmProviderTable.organizationId, input.organizationId),
+        inArray(LlmProviderTable.id, accessibleProviderIds),
+      )
 
   const providers = await db
     .select()
     .from(LlmProviderTable)
-    .where(
-      input.isAdmin
-        ? eq(LlmProviderTable.organizationId, input.organizationId)
-        : and(
-            eq(LlmProviderTable.organizationId, input.organizationId),
-            inArray(LlmProviderTable.id, accessibleProviderIds),
-          ),
-    )
+    .where(providerWhere)
     .orderBy(desc(LlmProviderTable.updatedAt))
 
   if (providers.length === 0) {
@@ -560,7 +564,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List organization LLM providers",
-      description: "Lists the LLM providers that the current organization member is allowed to see and potentially manage.",
+      description: "Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den.",
       responses: {
         200: jsonResponse("Accessible organization LLM providers returned successfully.", llmProviderListResponseSchema),
         400: jsonResponse("The provider list path parameters were invalid.", invalidRequestSchema),
@@ -568,9 +572,11 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     requireUserMiddleware,
+    queryValidator(llmProviderListQuerySchema),
     resolveOrganizationContextMiddleware,
     resolveMemberTeamsMiddleware,
     async (c) => {
+      const query = c.req.valid("query")
       const payload = c.get("organizationContext")
       const memberTeams = c.get("memberTeams") ?? []
       const providers = await loadLlmProviders({
@@ -578,6 +584,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         currentMemberId: payload.currentMember.id,
         memberTeams,
         isAdmin: isOrganizationAdmin(payload),
+        scope: query.scope,
       })
 
       return c.json({
@@ -600,7 +607,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         200: jsonResponse("Provider connection payload returned successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider connect path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to connect to an organization LLM provider.", unauthorizedSchema),
-        403: jsonResponse("Only members with access grants, the provider creator, or workspace admins can connect to this provider.", forbiddenSchema),
+        403: jsonResponse("Only members with explicit member or team access grants can connect to this provider.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
@@ -636,7 +643,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         llmProviderId,
         currentMemberId: payload.currentMember.id,
         memberTeams,
-        isAdmin: isOrganizationAdmin(payload),
       })
 
       if (!accessible) {

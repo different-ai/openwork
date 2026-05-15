@@ -1,11 +1,13 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowUp, Check, ChevronDown, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { ArrowUp, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, SkillCard, SlashCommandOption } from "../../../../../app/types";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "../../../../../app/types";
 import { t } from "../../../../../i18n";
+import { ModelBehaviorSelect } from "../../../../../components/model-behavior-select";
+import { ModelSelect } from "../../../../../components/model-select";
 import { LexicalPromptEditor } from "./editor";
 import {
   ReactComposerNotice,
@@ -37,9 +39,12 @@ type ComposerProps = {
   onStop: () => void | Promise<void>;
   busy: boolean;
   disabled: boolean;
+  modelUnavailable?: boolean;
   statusLabel: string;
-  modelLabel: string;
-  onModelClick: () => void;
+  modelPickerOpen: boolean;
+  selectedModel: ModelRef;
+  onModelPickerOpenChange: (open: boolean) => void;
+  onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
   onAttachFiles: (files: File[]) => void;
   onRemoveAttachment: (id: string) => void;
@@ -243,7 +248,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
-  const [variantMenuOpen, setVariantMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -283,7 +287,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const toolMenuRef = useRef<HTMLDivElement | null>(null);
-  const variantMenuRef = useRef<HTMLDivElement | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
@@ -470,20 +473,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       window.removeEventListener("mousedown", handlePointerDown);
     };
   }, [toolMenuOpen]);
-
-  useEffect(() => {
-    if (!variantMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (variantMenuRef.current?.contains(target)) return;
-      setVariantMenuOpen(false);
-    };
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [variantMenuOpen]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -741,7 +730,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       if (event.key === "Escape") {
         event.preventDefault();
         setAgentMenuOpen(false);
-        setVariantMenuOpen(false);
         return;
       }
     }
@@ -835,10 +823,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!slashOpen) return null;
     return (
       <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
-        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-          <div
-            className="max-h-64 overflow-y-auto p-2"
-            onMouseDown={(event) => event.preventDefault()}
+          <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+            <div
+              role="presentation"
+              className="max-h-64 overflow-y-auto p-2"
+              onMouseDown={(event) => event.preventDefault()}
           >
             {slashFiltered.length > 0 ? (
               <div className="grid gap-1">
@@ -890,10 +879,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!mentionOpen || mentionFiltered.length === 0) return null;
     return (
       <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
-        <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-          <div
-            className="max-h-64 overflow-y-auto p-2"
-            onMouseDown={(event) => event.preventDefault()}
+          <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+            <div
+              role="presentation"
+              className="max-h-64 overflow-y-auto p-2"
+              onMouseDown={(event) => event.preventDefault()}
           >
             <div className="grid gap-1">
               {mentionFiltered.map((item, index) => (
@@ -1321,7 +1311,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
                       !canSend || props.disabled
                         ? "bg-gray-4 text-gray-10"
-                        : "bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]"
+                        : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}
                     title={t("composer.run_task")}
                   >
@@ -1337,6 +1327,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         {/* Below-panel control strip: agent + model + behavior variant */}
         <div className="mt-1 flex items-center justify-between px-1">
           <div className="flex flex-wrap items-center gap-1.5 text-gray-10 sm:gap-2.5">
+            {/* TODO: Decide what to do with agent selection before showing this control again.
             <div ref={agentMenuRef} className="relative">
               <button
                 type="button"
@@ -1355,6 +1346,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     {t("composer.agent_label")}
                   </div>
                   <div
+                    role="presentation"
                     className="space-y-1 p-2 max-h-64 overflow-y-auto"
                     onMouseDown={(event) => event.preventDefault()}
                   >
@@ -1400,78 +1392,26 @@ export function ReactSessionComposer(props: ComposerProps) {
                 </div>
               ) : null}
             </div>
+            */}
 
-            <button
-              type="button"
-              className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-              onClick={props.onModelClick}
+            <ModelSelect
+              open={props.modelPickerOpen}
+              value={props.selectedModel}
+              onOpenChange={props.onModelPickerOpenChange}
+              onChange={props.onModelChange}
               disabled={props.busy}
-            >
-              <span className="truncate leading-tight">{props.modelLabel}</span>
-              <ChevronDown size={13} className="shrink-0 ml-0.5" />
-            </button>
-
-            {props.modelBehaviorOptions?.length ? (
-              <div ref={variantMenuRef} className="relative">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setVariantMenuOpen((value) => !value);
-                  }}
-                  disabled={props.busy}
-                  aria-expanded={variantMenuOpen}
-                >
-                  <span className="truncate leading-tight">
-                    {/* Pill label is the summary resolved by session-route:
-                        if modelVariant is null it already carries the
-                        provider-default preset's label (e.g. "Balanced"). */}
-                    {props.modelVariantLabel ||
-                      (props.modelBehaviorOptions.find((option) => option.value === props.modelVariant)?.label ?? "") ||
-                      t("settings.default_label")}
-                  </span>
-                  <ChevronDown size={13} className="shrink-0 ml-0.5" />
-                </button>
-                {variantMenuOpen ? (
-                  <div className="absolute left-0 bottom-full z-40 mb-2 w-48 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                    <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                      {t("composer.behavior_label")}
-                    </div>
-                    <div className="space-y-1 p-2">
-                      {props.modelBehaviorOptions.map((option) => {
-                        // Highlight the row whose label matches the pill. When
-                        // modelVariant is null but the provider-default is
-                        // e.g. "medium", the "medium" row should render as
-                        // selected — user sees the actual active mode.
-                        const isActive =
-                          props.modelVariant === option.value ||
-                          (props.modelVariant == null && option.label === props.modelVariantLabel);
-                        return (
-                          <button
-                            key={option.value ?? "default"}
-                            type="button"
-                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                              isActive ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"
-                            }`}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              props.onModelVariantChange(option.value);
-                              setVariantMenuOpen(false);
-                            }}
-                          >
-                            <span>{option.label}</span>
-                            {isActive ? <Check size={14} className="text-gray-10" /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+            />
+            {props.modelUnavailable ? (
+              <span className="text-xs font-medium text-red-10">Model no longer available</span>
             ) : null}
+
+            <ModelBehaviorSelect
+              value={props.modelVariant}
+              label={props.modelVariantLabel}
+              options={props.modelBehaviorOptions}
+              onChange={props.onModelVariantChange}
+              disabled={props.busy}
+            />
           </div>
 
           {/* Status label removed — redundant with the footer bar */}

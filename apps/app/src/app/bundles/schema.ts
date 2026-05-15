@@ -77,7 +77,10 @@ export function parseBundlePayload(value: unknown): BundleV1 {
 
   if (type === "skills-set") {
     const skills = Array.isArray(record.skills)
-      ? record.skills.map(readSkillItem).filter((item): item is SkillBundleItem => Boolean(item))
+      ? record.skills.flatMap((item) => {
+          const skill = readSkillItem(item);
+          return skill ? [skill] : [];
+        })
       : [];
     if (!skills.length) {
       throw new Error("Skills set bundle has no importable skills.");

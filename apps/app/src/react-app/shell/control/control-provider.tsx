@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -388,7 +388,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
 }
 
 export function useOpenworkControl() {
-  return useContext(OpenworkControlContext);
+  return use(OpenworkControlContext);
 }
 
 export function useControlAction(action: OpenworkControlAction | null | false | undefined) {

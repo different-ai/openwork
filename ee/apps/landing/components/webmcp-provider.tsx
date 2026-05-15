@@ -15,7 +15,7 @@ type Tool = {
 
 const destinations: Record<string, string> = {
   home: "/",
-  download: "/download",
+  download: "https://app.openworklabs.com?mode=sign-up",
   pricing: "/pricing",
   enterprise: "/enterprise",
   cloud: "https://app.openworklabs.com",
@@ -36,7 +36,7 @@ const pricingSummary = {
         "macOS, Windows, Linux downloads",
         "Bring your own provider keys",
       ],
-      cta: { label: "Download", href: "/download" },
+      cta: { label: "Get Started for free", href: "https://app.openworklabs.com?mode=sign-up" },
     },
     {
       id: "team-starter",
@@ -68,20 +68,19 @@ const pricingSummary = {
 }
 
 const downloadLinks = {
-  page: "https://openworklabs.com/download",
-  githubReleases: "https://github.com/different-ai/openwork/releases/latest",
+  page: "https://app.openworklabs.com?mode=sign-up",
   platforms: {
     macos: {
-      page: "https://openworklabs.com/download#macos",
-      note: "Electron Apple Silicon (.dmg) and Intel (.dmg) builds resolved from the latest GitHub release.",
+      page: "https://app.openworklabs.com?mode=sign-up",
+      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
     },
     windows: {
-      page: "https://openworklabs.com/download#windows",
-      note: "Electron x64 .exe installer resolved from the latest GitHub release.",
+      page: "https://app.openworklabs.com?mode=sign-up",
+      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
     },
     linux: {
-      page: "https://openworklabs.com/download#linux",
-      note: "Electron AppImage and tar.gz builds for x64 and arm64.",
+      page: "https://app.openworklabs.com?mode=sign-up",
+      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
     },
   },
 }
@@ -145,7 +144,7 @@ const tools: Tool[] = [
   {
     name: "get_download_links",
     description:
-      "Return the canonical download page URLs per platform plus the GitHub releases URL. Use this to tell the user where to get the desktop app. Read-only; does not navigate.",
+      "Return the canonical cloud signup URL users should visit before getting desktop app access. Read-only; does not navigate.",
     inputSchema: {
       type: "object",
       properties: {},

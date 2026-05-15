@@ -99,6 +99,20 @@
       "when": 1777400000000,
       "tag": "0014_drop_temp_template_sharing",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1778613784603,
+      "tag": "0015_inference_proxy",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1778739941884,
+      "tag": "0016_uneven_puppet_master",
+      "breakpoints": true
     }
   ]
 }

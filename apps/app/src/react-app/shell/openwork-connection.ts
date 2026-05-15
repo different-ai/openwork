@@ -33,7 +33,7 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
 
   if (isDesktopRuntime()) {
     try {
-      const info = await openworkServerInfo();
+      const info = await openworkServerInfo() as OpenworkServerInfo;
       const normalizedBaseUrl =
         normalizeOpenworkServerUrl(info.baseUrl ?? info.connectUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
         "";

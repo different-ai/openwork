@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Puzzle,
   SlidersHorizontal,
+  Sparkles,
   Store,
   Users,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   getCustomLlmProvidersRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
+  getInferenceRoute,
   getMembersRoute,
   getOrgDashboardRoute,
   getOrgSettingsRoute,
@@ -107,10 +109,13 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "API Keys";
   }
   if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
-    return "Shared Workspaces";
+    return "Background Tasks";
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "LLM Providers";
+  }
+  if (pathname.startsWith(getInferenceRoute(orgSlug))) {
+    return "OpenWork Models";
   }
   if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
     return "Skill Hubs";
@@ -164,22 +169,30 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       label: "Dashboard",
       icon: Home,
     },
+    // NOTE: Shared Workspace soft-disabled — uncomment to re-enable
+    // {
+    //   href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
+    //   label: "Shared Workspace",
+    //   icon: Bot,
+    //   badge: "Alpha",
+    // },
     {
-      href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
-      label: "Shared Workspace",
-      icon: Bot,
-      badge: "Alpha",
+      href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
+      label: "OpenWork Models",
+      icon: Sparkles,
+      badge: "Beta",
     },
     {
       href: activeOrg ? getCustomLlmProvidersRoute(activeOrg.slug) : "#",
       label: "LLM Providers",
       icon: Cpu,
     },
-    {
-      href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
-      label: "Skill Hubs",
-      icon: BookOpen,
-    },
+    // NOTE: Skill Hubs soft-disabled — uncomment to re-enable
+    // {
+    //   href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
+    //   label: "Skill Hubs",
+    //   icon: BookOpen,
+    // },
     {
       href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
       label: "Integrations",

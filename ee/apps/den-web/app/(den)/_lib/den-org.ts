@@ -281,6 +281,10 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/custom-llm-providers`;
 }
 
+export function getInferenceRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+}
+
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }

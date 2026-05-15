@@ -36,7 +36,7 @@ export function useRemoteAccessRestart(options: UseRemoteAccessRestartOptions) {
       options.onSettingsChanged();
 
       try {
-        const info = await openworkServerRestart({ remoteAccessEnabled: enabled });
+        const info = await openworkServerRestart({ remoteAccessEnabled: enabled }) as OpenworkServerInfo;
         writeOpenworkServerSettings({
           urlOverride: info.baseUrl?.trim() || undefined,
           token:

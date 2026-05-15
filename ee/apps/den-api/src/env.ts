@@ -21,9 +21,14 @@ const EnvSchema = z.object({
   GITHUB_CONNECTOR_APP_WEBHOOK_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.string().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
-  LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL: z.string().optional(),
-  LOOPS_TRANSACTIONAL_ID_DEN_ORG_INVITE_EMAIL: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
@@ -86,6 +91,14 @@ const EnvSchema = z.object({
   DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  INFERENCE_PROXY_BASE_URL: z.string().optional(),
+  OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
+  OPENROUTER_WORKSPACE_ID: z.string().optional(),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
+  STRIPE_BILLING_SUCCESS_URL: z.string().optional(),
+  STRIPE_BILLING_CANCEL_URL: z.string().optional(),
 }).superRefine((value, ctx) => {
   const inferredMode = value.DB_MODE ?? (value.DATABASE_URL ? "mysql" : "planetscale")
 
@@ -183,10 +196,21 @@ export const env = {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),
     clientSecret: optionalString(parsed.GOOGLE_CLIENT_SECRET),
   },
+  email: {
+    from: optionalString(parsed.EMAIL_FROM),
+  },
+  resend: {
+    apiKey: optionalString(parsed.RESEND_API_KEY),
+  },
+  smtp: {
+    host: optionalString(parsed.SMTP_HOST),
+    port: Number(parsed.SMTP_PORT ?? "587"),
+    user: optionalString(parsed.SMTP_USER),
+    pass: optionalString(parsed.SMTP_PASS),
+    secure: (parsed.SMTP_SECURE ?? "false").toLowerCase() === "true",
+  },
   loops: {
     apiKey: optionalString(parsed.LOOPS_API_KEY),
-    transactionalIdDenVerifyEmail: optionalString(parsed.LOOPS_TRANSACTIONAL_ID_DEN_VERIFY_EMAIL),
-    transactionalIdDenOrgInviteEmail: optionalString(parsed.LOOPS_TRANSACTIONAL_ID_DEN_ORG_INVITE_EMAIL),
   },
   port,
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
@@ -196,6 +220,16 @@ export const env = {
   workerActivityBaseUrl:
     optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??
     parsed.BETTER_AUTH_URL.trim().replace(/\/+$/, ""),
+  inferenceProxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
+  openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
+  openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
+  stripe: {
+    secretKey: optionalString(parsed.STRIPE_SECRET_KEY),
+    webhookSecret: optionalString(parsed.STRIPE_WEBHOOK_SECRET),
+    inferencePriceId: optionalString(parsed.STRIPE_INFERENCE_PRICE_ID),
+    billingSuccessUrl: optionalString(parsed.STRIPE_BILLING_SUCCESS_URL),
+    billingCancelUrl: optionalString(parsed.STRIPE_BILLING_CANCEL_URL),
+  },
   render: {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
     apiKey: parsed.RENDER_API_KEY,

@@ -3336,9 +3336,20 @@ async function readOpenworkConfig(workspaceRoot: string): Promise<Record<string,
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
-  if (explicit) return explicit;
-  if (workspace.workspaceType === "local") return workspace.path;
+  if (explicit) return normalizeOpencodeDirectory(explicit);
+  if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+function normalizeOpencodeDirectory(directory: string): string {
+  // OpenCode stores/list-filters Windows sessions by regular drive paths
+  // (`C:\Users\...`). Electron can persist local workspaces as extended-length
+  // paths (`\\?\C:\Users\...`); passing those through as the directory query
+  // makes OpenCode return an empty session list even though the sessions exist.
+  if (process.platform === "win32") {
+    return directory.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+  }
+  return directory;
 }
 
 function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {

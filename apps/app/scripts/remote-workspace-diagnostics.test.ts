@@ -79,7 +79,7 @@ function serverError(status: number, code: string, message: string) {
 }
 
 describe("resolveRemoteWorkspaceConnectionTarget", () => {
-  test("builds a workspace-scoped OpenWork target from saved worker credentials", () => {
+  test("builds a host-scoped OpenWork target from saved worker credentials", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         openworkHostUrl: "https://worker.example.com",
@@ -89,7 +89,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
 
     expect(target.ok).toBe(true);
     if (!target.ok) return;
-    expect(target.target.baseUrl).toBe("https://worker.example.com/w/ws_remote");
+    expect(target.target.baseUrl).toBe("https://worker.example.com");
     expect(target.target.workspaceId).toBe("ws_remote");
     expect(target.target.token).toBe("ow-token");
   });
@@ -100,7 +100,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     expect(target.ok).toBe(true);
     if (!target.ok) return;
     expect(target.target.workspaceId).toBe("ws_remote");
-    expect(target.target.baseUrl).toBe("https://worker.example.com/w/ws_remote");
+    expect(target.target.baseUrl).toBe("https://worker.example.com");
   });
 
   test("fails fast when a remote worker has no endpoint", () => {
@@ -185,6 +185,8 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token is missing");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("reports unhealthy health responses as endpoint failures", async () => {
@@ -198,6 +200,8 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("unhealthy response");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("uses fallback OpenWork tokens saved on older workspace records", async () => {
@@ -230,14 +234,16 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("reports a missing workspace separately from a dead worker", async () => {
     const result = await testRemoteWorkspaceConnection(workspace(), {
       createClient: () =>
         client({
-          status: async () => {
-            throw serverError(404, "workspace_not_found", "Workspace not found");
+          listWorkspaces: async () => {
+            return { items: [], activeId: null };
           },
         }),
     });
@@ -245,6 +251,8 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Workspace ws_remote was not found");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("uses workspace list when the saved remote target is not workspace-scoped", async () => {
@@ -291,13 +299,15 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("reports unauthorized workspace status separately from bad credentials", async () => {
     const result = await testRemoteWorkspaceConnection(workspace(), {
       createClient: () =>
         client({
-          status: async () => {
+          listWorkspaces: async () => {
             throw serverError(403, "forbidden", "Forbidden");
           },
         }),
@@ -306,6 +316,8 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("is not authorized");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("reports endpoint reachability failures from the health probe", async () => {
@@ -321,6 +333,8 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Cannot reach worker.example.com");
+    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("team@openworklabs.com");
   });
 
   test("redacts token-like values from diagnostic error messages", async () => {

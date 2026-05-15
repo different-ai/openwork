@@ -12,6 +12,7 @@ packages/*/dist/
 apps/*/dist/
 ee/apps/*/dist/
 ee/packages/*/dist/
+ee/apps/inference/models-site/models/api.json
 tmp/
 
 # Local git worktrees
@@ -33,8 +34,6 @@ apps/desktop/server/
 # Bun build artifacts
 *.bun-build
 apps/server/cli
-apps/server-v2/openapi/openapi.json
-packages/openwork-server-sdk/generated/
 
 # pnpm store (created by Docker volume mounts)
 .pnpm-store/

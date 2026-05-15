@@ -22,7 +22,7 @@ export type ReloadWorkspaceToastProps = {
 
 const buttonBaseClass =
   "inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = `${buttonBaseClass} bg-[var(--dls-accent)] text-white hover:bg-[var(--dls-accent-hover)]`;
+const primaryButtonClass = `${buttonBaseClass} bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]`;
 const dangerButtonClass = `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`;
 const ghostButtonClass = `${buttonBaseClass} border border-transparent bg-transparent text-dls-text hover:bg-[var(--dls-hover)]`;
 
@@ -86,9 +86,9 @@ export function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
 
   return (
     <div className="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
-      <div className="flex items-start gap-3 px-4 py-4">
+      <div className="flex items-start gap-3 p-4">
         <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${
+          className={`flex size-10 shrink-0 items-center justify-center rounded-2xl border ${
             props.hasActiveRuns
               ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
               : "border-sky-6/40 bg-sky-4/80 text-sky-11"

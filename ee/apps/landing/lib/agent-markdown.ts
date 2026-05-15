@@ -12,7 +12,7 @@ const home = `# OpenWork
 
 ## Primary calls-to-action
 
-- **Try it free** — [Download the desktop app](https://openworklabs.com/download)
+- **Try it free** — [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 - **Hosted cloud workers** — [Pricing](https://openworklabs.com/pricing) (\\$50/mo per worker)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
 - **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
@@ -38,7 +38,7 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 - macOS, Windows, Linux downloads
 - Bring your own provider keys
 - Free forever
-- CTA: [Download](https://openworklabs.com/download)
+- CTA: [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 
 ## Team Starter — \\$50 / month
 
@@ -83,27 +83,23 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 - See [Pricing](https://openworklabs.com/pricing) for tier comparison
 `
 
-const download = `# Download OpenWork
+const download = `# Get Started with OpenWork
 
-> Desktop app for macOS, Windows, and Linux. Latest release published on GitHub.
+> Create a free OpenWork Cloud account first, then use the guided desktop app access flow.
 
-## macOS
+## Start here
 
-- **Apple Silicon (M-series)** — recommended for M1/M2/M3/M4. \`.dmg\`
-- **Intel (x64)** — for Intel-based Macs. \`.dmg\`
+- [Get Started for free](https://app.openworklabs.com?mode=sign-up)
+- Create or select your workspace.
+- Follow the Cloud app's desktop app access flow.
 
-## Windows
+## Supported platforms
 
-- **x64** — Electron ".exe" installer
+- macOS
+- Windows
+- Linux
 
-## Linux
-
-- **AppImage** — Electron build for x64 and arm64
-- **Tarball** — Electron \`.tar.gz\` build for x64 and arm64
-
-Direct download URLs resolve from the latest GitHub release. Browse all assets at [github.com/openworklabs/openwork/releases/latest](https://github.com/openworklabs/openwork/releases/latest).
-
-## After installing
+## After signing up
 
 Once the desktop app is running, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation.
 `

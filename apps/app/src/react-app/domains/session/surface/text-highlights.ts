@@ -1,4 +1,5 @@
 const SEARCH_HIGHLIGHT_MARK_ATTR = "data-search-highlight";
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function clearTextHighlights(root: HTMLElement) {
   const marks = root.querySelectorAll(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`);
@@ -23,6 +24,7 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
   }
 
   clearTextHighlights(root);
+  const needlePattern = new RegExp(escapeRegExp(needle), "g");
 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -51,12 +53,8 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
     let searchIndex = 0;
     const fragment = document.createDocumentFragment();
 
-    while (searchIndex < text.length) {
-      const matchIndex = lower.indexOf(needle, searchIndex);
-      if (matchIndex === -1) {
-        fragment.appendChild(document.createTextNode(text.slice(searchIndex)));
-        break;
-      }
+    for (const match of lower.matchAll(needlePattern)) {
+      const matchIndex = match.index;
 
       if (matchIndex > searchIndex) {
         fragment.appendChild(document.createTextNode(text.slice(searchIndex, matchIndex)));
@@ -68,6 +66,9 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
       mark.textContent = text.slice(matchIndex, matchIndex + needle.length);
       fragment.appendChild(mark);
       searchIndex = matchIndex + needle.length;
+    }
+    if (searchIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(searchIndex)));
     }
 
     node.parentNode?.replaceChild(fragment, node);

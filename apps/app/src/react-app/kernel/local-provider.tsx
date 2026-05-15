@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -60,7 +60,7 @@ const INITIAL_PREFS: LocalPreferences = {
   modelVariant: null,
   defaultModel: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: false },
+  featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,
 };
 
@@ -106,7 +106,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
       defaultModel: readStoredDefaultModel(),
     };
   });
-  const [ready, setReady] = useState(false);
+  const ready = true;
   const migratedThinkingRef = useRef(false);
 
   useEffect(() => {
@@ -118,11 +118,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
   }, [prefs]);
 
   useEffect(() => {
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
     if (typeof window === "undefined") return;
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
@@ -144,7 +139,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     } catch {
       // ignore
     }
-  }, [ready]);
+  }, []);
 
   const setUi = useCallback(
     (updater: (previous: LocalUIState) => LocalUIState) => {
@@ -169,7 +164,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
 }
 
 export function useLocal(): LocalContextValue {
-  const context = useContext(LocalContext);
+  const context = use(LocalContext);
   if (!context) {
     throw new Error("Local context is missing");
   }

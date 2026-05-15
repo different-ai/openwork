@@ -26,8 +26,10 @@ function parseComparableVersion(value: string): ParsedVersion | null {
 
   const prerelease = prereleasePart
     .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
+    .flatMap((segment) => {
+      const trimmed = segment.trim();
+      return trimmed ? [trimmed] : [];
+    });
 
   return { release, prerelease };
 }

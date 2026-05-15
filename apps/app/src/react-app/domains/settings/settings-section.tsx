@@ -64,7 +64,12 @@ export function SettingsStack({ children, className }: SettingsLayoutProps) {
   return <div className={cn("@container/settings flex w-full max-w-3xl flex-col gap-y-6", className)}>{children}</div>;
 }
 
-export function SettingsSection({ children, className }: SettingsLayoutProps) {
+interface SettingsSectionProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSection({ children, className }: SettingsSectionProps) {
   return (
     <div className={cn("flex flex-col gap-6", className)}>
       {children}
@@ -72,7 +77,12 @@ export function SettingsSection({ children, className }: SettingsLayoutProps) {
   );
 }
 
-export function SettingsInset({ children, className }: SettingsLayoutProps) {
+interface SettingsInsetProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsInset({ children, className }: SettingsInsetProps) {
   return (
     <div className={cn("border border-dls-border rounded-2xl p-4", className)}>
       {children}
@@ -80,8 +90,12 @@ export function SettingsInset({ children, className }: SettingsLayoutProps) {
   );
 }
 
+interface SettingsPillProps {
+  children: React.ReactNode;
+  className?: string;
+}
 
-export function SettingsPill({ children, className }: SettingsLayoutProps) {
+export function SettingsPill({ children, className }: SettingsPillProps) {
   return (
     <span
       className={cn(
@@ -147,9 +161,9 @@ export function SettingsNotice({
   );
 }
 
-export type SettingsSectionHeaderProps = SettingsLayoutProps;
+export type SectionItemHeaderProps = SettingsLayoutProps;
 
-export function SettingsSectionHeader({ children, className }: SettingsSectionHeaderProps) {
+export function SettingsSectionHeader({ children, className }: SectionItemHeaderProps) {
   return (
     <div className={cn("flex flex-col gap-3 md:flex-row md:items-start justify-between", className)}>
       {children}
@@ -157,11 +171,21 @@ export function SettingsSectionHeader({ children, className }: SettingsSectionHe
   );
 }
 
-export function SettingsSectionHeaderContent({ children, className }: SettingsLayoutProps) {
+interface SectionItemHeaderContentProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSectionHeaderContent({ children, className }: SectionItemHeaderContentProps) {
   return <div className={cn("flex flex-col gap-1", className)}>{children}</div>;
 }
 
-export function SettingsSectionHeaderTitle({ children, className }: SettingsLayoutProps) {
+interface SettingsItemHeaderTitleProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSectionHeaderTitle({ children, className }: SettingsItemHeaderTitleProps) {
   return (
     <div className={cn("flex items-center gap-2 text-base font-medium text-dls-text", className)}>
       {children}
@@ -169,10 +193,30 @@ export function SettingsSectionHeaderTitle({ children, className }: SettingsLayo
   );
 }
 
-export function SettingsSectionHeaderDescription({ children, className }: SettingsLayoutProps) {
+interface SectionItemHeaderDescriptionProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSectionHeaderDescription({ children, className }: SectionItemHeaderDescriptionProps) {
   return <div className={cn("text-sm text-muted-foreground", className)}>{children}</div>;
 }
 
-export function SettingsSectionHeaderActions({ children, className }: SettingsLayoutProps) {
+
+interface SectionItemHintProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSectionHint({ children, className }: SectionItemHintProps) {
+  return <div className={cn("text-xs text-muted-foreground", className)}>{children}</div>;
+}
+
+interface SectionItemHeaderActionsProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SettingsSectionHeaderActions({ children, className }: SectionItemHeaderActionsProps) {
   return <div className={cn("flex flex-wrap items-center gap-2", className)}>{children}</div>;
 }

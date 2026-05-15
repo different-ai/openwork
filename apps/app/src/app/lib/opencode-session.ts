@@ -45,6 +45,17 @@ export async function revertSession(
 }
 
 /**
+ * Fork a session at a specific message, creating a new session branch.
+ */
+export async function forkSession(
+  client: Client,
+  sessionID: string,
+  messageID?: string,
+): Promise<Session> {
+  return unwrap(await client.session.fork({ sessionID, messageID })) as Session;
+}
+
+/**
  * Restore all previously reverted messages in a session.
  */
 export async function unrevertSession(

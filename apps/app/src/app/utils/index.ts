@@ -29,13 +29,106 @@ export function modelEquals(a: ModelRef, b: ModelRef) {
   return a.providerID === b.providerID && a.modelID === b.modelID;
 }
 
-const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
+/**
+ * Provider ID → friendly display name.
+ * Used when the backend doesn't return a provider name.
+ */
+export const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   opencode: "OpenCode",
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  groq: "Groq",
   openrouter: "OpenRouter",
+  together: "Together AI",
+  fireworks: "Fireworks",
+  perplexity: "Perplexity",
+  xai: "xAI",
+  cohere: "Cohere",
 };
+
+/**
+ * Model ID → friendly display name.
+ * Matches by substring so "gpt-4.1-2025-04-14" still hits "gpt-4.1".
+ * Order matters: more specific patterns first.
+ */
+export const FRIENDLY_MODEL_LABELS: [pattern: string, label: string][] = [
+  // OpenAI
+  ["gpt-5.5", "GPT-5.5"],
+  ["gpt-5", "GPT-5"],
+  ["gpt-4.1-mini", "GPT-4.1 Mini"],
+  ["gpt-4.1-nano", "GPT-4.1 Nano"],
+  ["gpt-4.1", "GPT-4.1"],
+  ["gpt-4o-mini", "GPT-4o Mini"],
+  ["gpt-4o", "GPT-4o"],
+  ["gpt-4-turbo", "GPT-4 Turbo"],
+  ["gpt-4", "GPT-4"],
+  ["o4-mini", "o4 Mini"],
+  ["o3-pro", "o3 Pro"],
+  ["o3-mini", "o3 Mini"],
+  ["o3", "o3"],
+  ["o1-pro", "o1 Pro"],
+  ["o1-mini", "o1 Mini"],
+  ["o1", "o1"],
+  ["codex-mini", "Codex Mini"],
+
+  // Anthropic
+  ["claude-sonnet-4", "Claude Sonnet 4"],
+  ["claude-opus-4", "Claude Opus 4"],
+  ["claude-3.7-sonnet", "Claude 3.7 Sonnet"],
+  ["claude-3.5-sonnet", "Claude 3.5 Sonnet"],
+  ["claude-3.5-haiku", "Claude 3.5 Haiku"],
+  ["claude-3-opus", "Claude 3 Opus"],
+  ["claude-3-sonnet", "Claude 3 Sonnet"],
+  ["claude-3-haiku", "Claude 3 Haiku"],
+
+  // Google
+  ["gemini-2.5-pro", "Gemini 2.5 Pro"],
+  ["gemini-2.5-flash", "Gemini 2.5 Flash"],
+  ["gemini-2.0-flash", "Gemini 2.0 Flash"],
+  ["gemini-1.5-pro", "Gemini 1.5 Pro"],
+  ["gemini-1.5-flash", "Gemini 1.5 Flash"],
+
+  // DeepSeek
+  ["deepseek-r1", "DeepSeek R1"],
+  ["deepseek-v3", "DeepSeek V3"],
+  ["deepseek-chat", "DeepSeek Chat"],
+
+  // Mistral
+  ["mistral-large", "Mistral Large"],
+  ["mistral-medium", "Mistral Medium"],
+  ["mistral-small", "Mistral Small"],
+  ["codestral", "Codestral"],
+
+  // xAI
+  ["grok-3", "Grok 3"],
+  ["grok-2", "Grok 2"],
+
+  // OpenCode
+  ["big-pickle", "Big Pickle"],
+];
+
+/**
+ * Resolve a friendly display name for a model ID.
+ * Checks FRIENDLY_MODEL_LABELS first (substring match), then falls back
+ * to humanizeModelLabel which title-cases the raw ID.
+ */
+export function resolveModelDisplayName(modelID: string): string {
+  const normalized = modelID.trim().toLowerCase();
+  for (const [pattern, label] of FRIENDLY_MODEL_LABELS) {
+    if (normalized.includes(pattern)) return label;
+  }
+  return humanizeModelLabel(modelID);
+}
+
+/**
+ * Resolve a friendly display name for a provider ID.
+ */
+export function resolveProviderDisplayName(providerID: string): string {
+  return FRIENDLY_PROVIDER_LABELS[providerID.trim().toLowerCase()] ?? humanizeModelLabel(providerID);
+}
 
 const humanizeModelLabel = (value: string) => {
   const normalized = value.trim().toLowerCase();
@@ -48,13 +141,13 @@ const humanizeModelLabel = (value: string) => {
 
   return cleaned
     .split(" ")
-    .filter(Boolean)
-    .map((word) => {
+    .flatMap((word) => {
+      if (!word) return [];
       if (/\d/.test(word) || word.length <= 3) {
-        return word.toUpperCase();
+        return [word.toUpperCase()];
       }
       const lower = word.toLowerCase();
-      return lower.charAt(0).toUpperCase() + lower.slice(1);
+      return [lower.charAt(0).toUpperCase() + lower.slice(1)];
     })
     .join(" ");
 };
@@ -63,8 +156,8 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   const provider = providers.find((p) => p.id === model.providerID);
   const modelInfo = provider?.models?.[model.modelID];
 
-  const providerLabel = provider?.name ?? humanizeModelLabel(model.providerID);
-  const modelLabel = modelInfo?.name ?? humanizeModelLabel(model.modelID);
+  const providerLabel = provider?.name ?? resolveProviderDisplayName(model.providerID);
+  const modelLabel = modelInfo?.name ?? resolveModelDisplayName(model.modelID);
 
   return `${providerLabel} · ${modelLabel}`;
 }
@@ -333,6 +426,20 @@ export function isSandboxWorkspace(workspace: WorkspaceInfo) {
   );
 }
 
+export function isRemoteConnectionWorkspace(workspace: WorkspaceInfo) {
+  return workspace.id.trim().startsWith("rem_");
+}
+
+export function isRemoteConnectionErrorMessage(message?: string | null) {
+  const value = message?.trim().toLowerCase() ?? "";
+  return (
+    value.includes("remote worker") ||
+    value.includes("cannot reach ") ||
+    value.includes("health check failed") ||
+    value.includes("worker connection failed")
+  );
+}
+
 export function redactTokenLikeText(value: string): string {
   return value
     .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
@@ -417,7 +524,7 @@ export function parseTemplateFrontmatter(raw: string) {
   for (const line of header.split(/\r?\n/)) {
     const entry = line.trim();
     if (!entry) continue;
-    const colonIndex = entry.indexOf(":");
+    const colonIndex = entry.search(":");
     if (colonIndex === -1) continue;
     const key = entry.slice(0, colonIndex).trim();
     let value = entry.slice(colonIndex + 1).trim();
@@ -631,8 +738,7 @@ function formatAgentLabel(value: string): string {
   if (!clean) return "";
   return clean
     .split(/\s+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .flatMap((segment) => segment ? [segment.charAt(0).toUpperCase() + segment.slice(1)] : [])
     .join(" ");
 }
 
@@ -789,7 +895,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   // For edits that report updated files, show filename(s)
   const files = state?.files;
   if (Array.isArray(files) && files.length > 0) {
-    const names = files.filter((f: any) => typeof f === "string").map(extractFilename);
+    const names = files.flatMap((f: any) => typeof f === "string" ? [extractFilename(f)] : []);
     if (names.length === 1) return names[0];
     if (names.length > 1) return `${names[0]} +${names.length - 1} more`;
   }
@@ -925,8 +1031,10 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
 
     const lines = text
       .split(/\r?\n/)
-      .map((line: string) => line.trim())
-      .filter(Boolean);
+      .flatMap((line: string) => {
+        const trimmed = line.trim();
+        return trimmed ? [trimmed] : [];
+      });
     const compact = lines.join(" ");
 
     let headline = "";
@@ -1009,16 +1117,14 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
           ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
           : "";
 
-      const text = [titleText, outputText]
-        .filter((v): v is string => Boolean(v))
-        .join(" ");
+      const text = [titleText, outputText].flatMap((value) => value ? [value] : []).join(" ");
 
       if (text) {
         ARTIFACT_PATH_PATTERN.lastIndex = 0;
-        Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
+        for (const match of text.matchAll(ARTIFACT_PATH_PATTERN)) {
+          const file = match[1];
+          if (file && file.length <= 500) matches.add(file);
+        }
       }
 
       if (matches.size === 0) return;

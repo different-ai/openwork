@@ -1,11 +1,11 @@
 /** @jsxImportSource react */
-import { isDesktopRuntime } from "../../../../app/utils";
-import type { Language } from "../../../../i18n";
+import { isDesktopRuntime } from "@/app/utils";
+import type { Language } from "@/i18n";
 import { Separator } from "@/components/ui/separator";
 import { LanguageSection } from "../appearance/language-section";
 import { ThemeSection } from "../appearance/theme-section";
 import { WindowSection } from "../appearance/window-section";
-import { SettingsStack } from "../settings-section";
+import { LayoutStack } from "../settings-layout";
 
 export type AppearanceViewProps = {
   busy: boolean;
@@ -19,7 +19,7 @@ export type AppearanceViewProps = {
 
 export function AppearanceView(props: AppearanceViewProps) {
   return (
-    <SettingsStack>
+    <LayoutStack>
       <ThemeSection {...props} />
       <Separator />
       <LanguageSection {...props} />
@@ -29,6 +29,6 @@ export function AppearanceView(props: AppearanceViewProps) {
           <WindowSection {...props} />
         </>
       ) : null}
-    </SettingsStack>
+    </LayoutStack>
   );
 }

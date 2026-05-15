@@ -12,6 +12,11 @@
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
       "default": "./src/den/desktop-app-restrictions.ts"
+    },
+    "./den/inference": {
+      "types": "./src/den/inference.ts",
+      "development": "./src/den/inference.ts",
+      "default": "./src/den/inference.ts"
     }
   },
   "files": [

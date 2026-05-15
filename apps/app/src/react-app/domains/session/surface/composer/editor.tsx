@@ -357,11 +357,12 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
   }
 
   const segments = value.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/);
+  const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   for (const segment of segments) {
     if (!segment) continue;
     const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
     if (pasteMatch?.[1]) {
-      const target = pastedText?.find((item) => item.label === pasteMatch[1]);
+      const target = pastedTextByLabel.get(pasteMatch[1]);
       if (target) {
         paragraph.append($createComposerPastedTextNode(target.label, target.lines));
         continue;
@@ -660,7 +661,7 @@ export function LexicalPromptEditor(props: EditorProps) {
     [],
   );
 
-  const handleChange = useCallback(
+  const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
         const next = serializePromptFromRoot();
@@ -700,7 +701,7 @@ export function LexicalPromptEditor(props: EditorProps) {
           }
           ErrorBoundary={LexicalErrorBoundary}
         />
-        <OnChangePlugin onChange={handleChange} />
+        <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />

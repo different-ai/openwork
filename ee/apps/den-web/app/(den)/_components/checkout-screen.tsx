@@ -20,12 +20,32 @@ function formatSubscriptionStatus(value: string | null | undefined) {
     .join(" ");
 }
 
-function LoadingPanel({ title, body }: { title: string; body: string }) {
+function CheckoutStatusPanel({ body }: { body: string }) {
   return (
-    <section className="den-page py-4">
-      <div className="den-frame-soft grid max-w-[44rem] gap-4 p-6">
-        <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{title}</h1>
-        <p className="text-sm text-[var(--dls-text-secondary)]">{body}</p>
+    <section className="den-page grid gap-6 py-4 lg:py-6">
+      <div className="den-frame grid gap-6 p-6 md:p-8 lg:p-10">
+        <div className="flex flex-col gap-4 lg:max-w-3xl">
+          <div className="grid gap-3">
+            <p className="den-eyebrow">OpenWork Cloud</p>
+            <h1 className="den-title-xl max-w-[14ch]">Workspace billing.</h1>
+            <p className="den-copy max-w-2xl">
+              Den is free for solo setup. Billing appears when you need team features or cloud hosting.
+            </p>
+          </div>
+
+          <div className="rounded-[1.5rem] border border-[var(--dls-border)] bg-[var(--dls-hover)]/60 p-4" role="status" aria-live="polite">
+            <div className="flex items-start gap-3">
+              <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--dls-accent)] opacity-30" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--dls-accent)]" />
+              </span>
+              <div className="min-w-0">
+                <p className="m-0 text-[14px] font-medium text-[var(--dls-text-primary)]">Checking access</p>
+                <p className="mt-1 text-[13px] leading-6 text-[var(--dls-text-secondary)]">{body}</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -170,15 +190,12 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
   if (!sessionHydrated || (!user && !mockMode)) {
     return (
-      <LoadingPanel
-        title="Checking your billing session..."
-        body="Loading your account and billing state before continuing."
-      />
+      <CheckoutStatusPanel body="Checking whether you are signed in before showing workspace billing." />
     );
   }
 
   if (redirectMessage) {
-    return <LoadingPanel title="One moment." body={redirectMessage} />;
+    return <CheckoutStatusPanel body={redirectMessage} />;
   }
 
   const billingPrice = billingSummary?.price ?? null;
@@ -197,9 +214,9 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
         <div className="flex flex-col gap-4 lg:max-w-3xl">
           <div className="grid gap-3">
             <p className="den-eyebrow">OpenWork Cloud</p>
-            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan before creating your workspace.</h1>
+            <h1 className="den-title-xl max-w-[14ch]">Purchase a plan to unlock team features.</h1>
             <p className="den-copy max-w-2xl">
-              Start with one workspace plan for $50/month. Each plan includes up to 5 members and 1 hosted worker.
+              Den is free for solo setup. A workspace plan gives you up to 5 members, custom LLM providers, and team management.
             </p>
           </div>
 
@@ -218,8 +235,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
                 Refresh purchase link
               </button>
             )}
-            <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
-              Use desktop only
+            <a href="https://github.com/different-ai/openwork/releases/latest" target="_blank" rel="noreferrer" className="den-button-secondary w-full sm:w-auto">
+              Download desktop app
             </a>
           </div>
 
@@ -254,21 +271,21 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
 
               <div className="grid gap-3 text-sm text-[var(--dls-text-secondary)]">
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Share setup across your team and org</div>
-                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background agents in alpha for selected workflows</div>
                 <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Custom LLM providers with team access controls</div>
+                <div className="flex gap-3"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-slate-300" />Background tasks — coming soon</div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="den-frame-inset rounded-[1.5rem] p-4">
-                  <p className="den-stat-label">Background agents</p>
-                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
-                    Keep selected workflows running in the background. Alpha.
-                  </p>
-                </div>
-                <div className="den-frame-inset rounded-[1.5rem] p-4">
                   <p className="den-stat-label">LLM providers</p>
                   <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
                     Standardize provider access, model selection, and team rollout.
+                  </p>
+                </div>
+                <div className="den-frame-inset rounded-[1.5rem] p-4">
+                  <p className="den-stat-label">Background tasks</p>
+                  <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">
+                    Run selected workflows in the background. Coming soon.
                   </p>
                 </div>
               </div>
@@ -290,8 +307,8 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               </div>
 
               <div className="mt-auto pt-2">
-                <a href="https://openworklabs.com/download" className="den-button-secondary w-full sm:w-auto">
-                  Use desktop only
+                <a href="https://github.com/different-ai/openwork/releases/latest" target="_blank" rel="noreferrer" className="den-button-secondary w-full sm:w-auto">
+                  Download desktop app
                 </a>
               </div>
             </article>
@@ -302,7 +319,7 @@ export function CheckoutScreen({ customerSessionToken }: { customerSessionToken:
               <p className="den-eyebrow">Billing status</p>
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">{subscriptionStatus}</h2>
               <p className="den-copy text-sm">
-                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to create your first workspace."}
+                {billingSummary.hasActivePlan ? "Your workspace plan is active." : "Purchase a plan to unlock team features."}
               </p>
             </div>
 

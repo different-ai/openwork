@@ -70,8 +70,15 @@ const fetchJson = async <T,>(url: string): Promise<T | null> => {
 };
 
 export const getGithubData = async () => {
-  const [repo, releases] = await Promise.all([
+  // /releases/latest always returns the most recent non-draft, non-prerelease
+  // release regardless of how many alpha/prerelease builds exist.  This avoids
+  // the paginated list being flooded by alpha tags pushing stable releases out
+  // of the per_page window.
+  const [repo, latestRelease, releases] = await Promise.all([
     fetchJson<Repo>("https://api.github.com/repos/different-ai/openwork"),
+    fetchJson<Release>(
+      "https://api.github.com/repos/different-ai/openwork/releases/latest"
+    ),
     fetchJson<Release[]>(
       "https://api.github.com/repos/different-ai/openwork/releases?per_page=50"
     )
@@ -83,14 +90,18 @@ export const getGithubData = async () => {
       : "—";
 
   const releaseList = Array.isArray(releases) ? releases : [];
-  const hasDownloadAsset = (release: Release) => {
-    const assets = Array.isArray(release?.assets) ? release.assets : [];
-    return assets.some((asset) => asset?.browser_download_url);
-  };
   const isElectronDesktopAsset = (name: string) =>
     name.startsWith("openwork-mac-") ||
     name.startsWith("openwork-win-") ||
     name.startsWith("openwork-linux-");
+
+  const hasElectronDesktopAsset = (release: Release) => {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.some((asset) => {
+      const name = String(asset?.name || "").toLowerCase();
+      return isElectronDesktopAsset(name);
+    });
+  };
 
   const hasWindowsDesktopAsset = (release: Release) => {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
@@ -103,21 +114,20 @@ export const getGithubData = async () => {
   const isStableDesktopRelease = (release: Release) => {
     if (!release || release.draft || release.prerelease) return false;
     const tag = String(release.tag_name || "").trim();
-    if (!/^v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$/.test(tag)) return false;
-    const assets = Array.isArray(release.assets) ? release.assets : [];
-    return assets.some((asset) => {
-      const name = String(asset?.name || "").toLowerCase();
-      return isElectronDesktopAsset(name);
-    });
+    if (!/^v\d+\.\d+\.\d+$/.test(tag)) return false;
+    return hasElectronDesktopAsset(release);
   };
 
+  // Prefer the /releases/latest result (immune to alpha flood), then fall back
+  // to scanning the paginated list for a stable release with desktop assets.
   const pick =
+    (latestRelease && hasElectronDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release)) ||
-    releaseList.find((release) => !release?.draft && hasDownloadAsset(release));
+    (latestRelease ?? null);
 
   const windowsPick =
-    releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release)) ||
-    releaseList.find((release) => !release?.draft && hasWindowsDesktopAsset(release));
+    (latestRelease && hasWindowsDesktopAsset(latestRelease) ? latestRelease : null) ||
+    releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release));
 
   const assets = Array.isArray(pick?.assets) ? pick.assets : [];
   const releaseUrl = pick?.html_url || FALLBACK_RELEASE;

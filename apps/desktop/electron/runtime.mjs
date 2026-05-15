@@ -1128,7 +1128,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
       OPENWORK_OPENCODE_USERNAME: username,
       OPENWORK_OPENCODE_PASSWORD: password,
-      ...(options.opencodeEnableExa === true ? { OPENCODE_ENABLE_EXA: "1" } : {}),
+      ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
     });
 
     const args = [

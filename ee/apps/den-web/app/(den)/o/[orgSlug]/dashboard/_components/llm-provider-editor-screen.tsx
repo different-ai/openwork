@@ -36,13 +36,14 @@ import {
     type DenLlmProvider,
     type DenModelsDevProviderDetail,
     type DenModelsDevProviderSummary,
-    type DenLlmProviderSource,
 } from "./llm-provider-data";
 
 const SOURCE_TABS = [
     { value: "models_dev" as const, label: "Catalog provider", icon: Cpu },
     { value: "custom" as const, label: "Custom provider", icon: CodeXml },
 ];
+
+type EditableLlmProviderSource = (typeof SOURCE_TABS)[number]["value"];
 
 function getLockMemberId(
     provider: DenLlmProvider | null,
@@ -68,7 +69,7 @@ export function LlmProviderEditorScreen({
                 : null,
         [llmProviderId, llmProviders],
     );
-    const [source, setSource] = useState<DenLlmProviderSource>("models_dev");
+    const [source, setSource] = useState<EditableLlmProviderSource>("models_dev");
     const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
     const [accessQuery, setAccessQuery] = useState("");
     const [catalogProviders, setCatalogProviders] = useState<
@@ -130,7 +131,7 @@ export function LlmProviderEditorScreen({
 
     useEffect(() => {
         if (provider) {
-            setSource(provider.source);
+            setSource(provider.source === "custom" ? "custom" : "models_dev");
             setSelectedProviderId(provider.providerId);
             setProviderName(provider.name);
             setSelectedModelIds(provider.models.map((entry) => entry.id));
@@ -261,6 +262,11 @@ export function LlmProviderEditorScreen({
     async function saveProvider() {
         if (!orgId) {
             setSaveError("Organization not found.");
+            return;
+        }
+
+        if (provider?.source === "openwork") {
+            setSaveError("OpenWork-managed providers are controlled from Inference settings.");
             return;
         }
 

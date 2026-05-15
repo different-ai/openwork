@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -116,7 +116,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
 }
 
 export function useBootState(): BootStateContextValue {
-  const value = useContext(BootStateContext);
+  const value = use(BootStateContext);
   if (!value) {
     throw new Error("useBootState must be used inside <BootStateProvider>");
   }

@@ -18,17 +18,37 @@ function FeatureCard({ title, body }: { title: string; body: string }) {
   );
 }
 
-function LoadingPanel({ title, body }: { title: string; body: string }) {
+function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
+  const status = mode === "checking"
+    ? {
+        title: "Checking account",
+        body: "If you are already signed in, we will open your workspace. Otherwise you can continue here.",
+      }
+    : {
+        title: "Opening workspace",
+        body: "You are signed in. We are taking you to the right Cloud destination.",
+      };
+
   return (
-    <div className="den-frame grid gap-3 p-6 md:p-7">
+    <div className="den-frame flex min-h-[420px] flex-col justify-between gap-8 p-6 md:p-7" role="status" aria-live="polite">
       <div className="grid gap-3">
-        <p className="den-eyebrow">OpenWork Cloud</p>
-        <h2 className="den-title-lg">{title}</h2>
-        <p className="den-copy">{body}</p>
+        <p className="den-eyebrow">Account</p>
+        <div className="rounded-[1.5rem] border border-[var(--dls-border)] bg-[var(--dls-hover)]/60 p-4">
+          <div className="flex items-start gap-3">
+            <span className="relative mt-1 flex h-2.5 w-2.5 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--dls-accent)] opacity-30" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--dls-accent)]" />
+            </span>
+            <div className="min-w-0">
+              <p className="m-0 text-[14px] font-medium text-[var(--dls-text-primary)]">{status.title}</p>
+              <p className="mt-1 text-[13px] leading-6 text-[var(--dls-text-secondary)]">{status.body}</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-[var(--dls-hover)]">
-        <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--dls-accent)]" />
-      </div>
+      <p className="m-0 text-xs leading-5 text-[var(--dls-text-secondary)]">
+        No action needed.
+      </p>
     </div>
   );
 }
@@ -62,14 +82,6 @@ export function AuthScreen() {
         routingRef.current = false;
       });
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
-
-  if (!sessionHydrated) {
-    return (
-      <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
-        <LoadingPanel title="Checking your session." body="Loading your Cloud account state..." />
-      </section>
-    );
-  }
 
   return (
     <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
@@ -138,11 +150,10 @@ export function AuthScreen() {
         </div>
 
         <div className="order-1 lg:order-2">
-          {hasResolvedSession ? (
-            <LoadingPanel
-              title="Redirecting to your workspace."
-              body="We found your account and are sending you to the right Cloud destination now."
-            />
+          {!sessionHydrated ? (
+            <SessionStatusPanel mode="checking" />
+          ) : hasResolvedSession ? (
+            <SessionStatusPanel mode="redirecting" />
           ) : (
             <AuthPanel />
           )}

@@ -1,10 +1,13 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, MessageCircle, Settings } from "lucide-react";
+import { BookOpen, Cloud, MessageCircle, Settings } from "lucide-react";
 
 import { t } from "../../../../i18n";
+import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
 import { usePlatform } from "../../../kernel/platform";
+import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 
 const DOCS_URL = "https://openworklabs.com/docs";
@@ -104,6 +107,8 @@ function deriveStatusCopy(props: StatusBarProps): StatusCopy {
 
 export function StatusBar(props: StatusBarProps) {
   const platform = usePlatform();
+  const denAuth = useDenAuth();
+  const { config: shellConfig } = useShellConfig();
   const docsButtonRef = useRef<HTMLButtonElement>(null);
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -157,14 +162,14 @@ export function StatusBar(props: StatusBarProps) {
     <div className="border-t border-dls-border bg-dls-surface">
       <div className="flex h-12 items-center justify-between gap-3 px-4 md:px-6 text-[12px] text-dls-secondary">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+          <span className="relative flex size-2.5 shrink-0 items-center justify-center">
             {statusCopy.pulse ? (
               <span
-                className={`absolute inline-flex h-full w-full rounded-full ${statusCopy.pingClass}`}
+                className={`absolute inline-flex size-full rounded-full ${statusCopy.pingClass}`}
               />
             ) : null}
             <span
-              className={`relative inline-flex h-2.5 w-2.5 rounded-full ${statusCopy.dotClass}`}
+              className={`relative inline-flex size-2.5 rounded-full ${statusCopy.dotClass}`}
             />
           </span>
           <span className="shrink-0 font-medium text-dls-text">
@@ -176,35 +181,52 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            ref={docsButtonRef}
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={() => platform.openLink(DOCS_URL)}
-            title={t("status.open_docs")}
-            aria-label={t("status.open_docs")}
-          >
-            <BookOpen className="h-4 w-4" />
-            <span className="text-[11px] font-medium">{t("status.docs")}</span>
-          </button>
-          <button
-            ref={feedbackButtonRef}
-            type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-            onClick={props.onSendFeedback}
-            title={t("status.send_feedback")}
-            aria-label={t("status.send_feedback")}
-          >
-            <MessageCircle className="h-4 w-4" />
-            <span className="text-[11px] font-medium">
-              {t("status.feedback")}
-            </span>
-          </button>
+          {shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking" ? (
+            <button
+              type="button"
+              className="inline-flex h-7 items-center gap-1.5 rounded-full bg-dls-accent px-2.5 text-[11px] font-medium text-[var(--dls-accent-fg)] transition-colors hover:bg-[var(--dls-accent-hover)]"
+              onClick={() => {
+                const baseUrl = readDenBootstrapConfig().baseUrl;
+                platform.openLink(buildDenAuthUrl(baseUrl, "sign-in"));
+              }}
+            >
+              <Cloud className="size-3" />
+              <span>Sign in</span>
+            </button>
+          ) : null}
+          {shellConfig.docsButton ? (
+            <button
+              ref={docsButtonRef}
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={() => platform.openLink(DOCS_URL)}
+              title={t("status.open_docs")}
+              aria-label={t("status.open_docs")}
+            >
+              <BookOpen className="size-4" />
+              <span className="text-[11px] font-medium">{t("status.docs")}</span>
+            </button>
+          ) : null}
+          {shellConfig.feedbackButton ? (
+            <button
+              ref={feedbackButtonRef}
+              type="button"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              onClick={props.onSendFeedback}
+              title={t("status.send_feedback")}
+              aria-label={t("status.send_feedback")}
+            >
+              <MessageCircle className="size-4" />
+              <span className="text-[11px] font-medium">
+                {t("status.feedback")}
+              </span>
+            </button>
+          ) : null}
           {props.showSettingsButton !== false ? (
             <button
               ref={settingsButtonRef}
               type="button"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               onClick={props.onOpenSettings}
               title={
                 props.settingsOpen ? t("status.back") : t("status.settings")
@@ -213,7 +235,7 @@ export function StatusBar(props: StatusBarProps) {
                 props.settingsOpen ? t("status.back") : t("status.settings")
               }
             >
-              <Settings className="h-4 w-4" />
+              <Settings className="size-4" />
             </button>
           ) : null}
         </div>

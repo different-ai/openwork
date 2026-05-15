@@ -4,6 +4,7 @@ import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 
 import { t } from "../../../i18n";
 import {
+  getMcpServerName,
   MCP_QUICK_CONNECT,
   type McpDirectoryInfo,
 } from "../../../app/constants";
@@ -152,7 +153,7 @@ export function createConnectionsStore(options: {
       return null;
     }
 
-    return readOpencodeConfig(scope, projectDir);
+    return readOpencodeConfig(scope, projectDir) as Promise<OpencodeConfigFile>;
   };
 
   const ensureActiveClient = async () => {
@@ -271,6 +272,38 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses };
   };
 
+  const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") {
+      return entry.command;
+    }
+    try {
+      const command = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+      if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
+        return command;
+      }
+    } catch {
+      // Fall through to the published package command.
+    }
+    return entry.command;
+  };
+
+  const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
+    if (entry.serverName !== "openwork-ui") return undefined;
+    try {
+      const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+        return Object.fromEntries(
+          Object.entries(environment).filter((entry): entry is [string, string] =>
+            typeof entry[0] === "string" && typeof entry[1] === "string"
+          ),
+        );
+      }
+    } catch {
+      // Discovery fallback in openwork-ui-mcp still handles normal launches.
+    }
+    return undefined;
+  };
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -341,8 +374,8 @@ export function createConnectionsStore(options: {
         projectDir,
       });
       const [globalConfig, projectConfig] = await Promise.all([
-        readOpencodeConfig("global", projectDir),
-        readOpencodeConfig("project", projectDir),
+        readOpencodeConfig("global", projectDir) as Promise<OpencodeConfigFile>,
+        readOpencodeConfig("project", projectDir) as Promise<OpencodeConfigFile>,
       ]);
       const globalServers = globalConfig.exists && globalConfig.content
         ? parseMcpServersFromContent(globalConfig.content).map((entry) => ({
@@ -466,11 +499,28 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = entry.id ?? getMcpServerName(entry);
     const action = snapshot.mcpServers.some((server) => server.name === slug) ? "updated" : "added";
 
     try {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
+
+      // Resolve dynamic URLs for built-in MCPs
+      let resolvedUrl = entry.url;
+      let resolvedHeaders: Record<string, string> | undefined;
+      if (!resolvedUrl && entry.serverName === "openwork-ui") {
+        try {
+          const bridgeInfo = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          if (bridgeInfo?.baseUrl) {
+            resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
+            if (bridgeInfo.token) {
+              resolvedHeaders = { Authorization: `Bearer ${bridgeInfo.token}` };
+            }
+          }
+        } catch {
+          // Bridge not available
+        }
+      }
 
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
@@ -478,11 +528,14 @@ export function createConnectionsStore(options: {
       };
 
       if (entryType === "remote") {
-        if (!entry.url) {
-          throw new Error("Missing MCP URL.");
+        if (!resolvedUrl) {
+          throw new Error("Missing MCP URL. Is the OpenWork desktop app running?");
         }
-        mcpEntryConfig["url"] = entry.url;
-        if (entry.oauth) {
+        mcpEntryConfig["url"] = resolvedUrl;
+        if (resolvedHeaders) {
+          mcpEntryConfig["headers"] = resolvedHeaders;
+        }
+        if (entry.oauth && !resolvedHeaders) {
           mcpEntryConfig["oauth"] = {};
         }
       }
@@ -491,7 +544,11 @@ export function createConnectionsStore(options: {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = entry.command;
+        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        const environment = await resolveLocalMcpEnvironment(entry);
+        if (environment) {
+          mcpEntryConfig["environment"] = environment;
+        }
       }
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
@@ -500,7 +557,7 @@ export function createConnectionsStore(options: {
           config: mcpEntryConfig,
         });
       } else {
-        const configFile = await readOpencodeConfig("project", resolvedProjectDir);
+        const configFile = await readOpencodeConfig("project", resolvedProjectDir) as OpencodeConfigFile;
 
         const raw = configFile.exists && configFile.content?.trim()
           ? configFile.content
@@ -530,7 +587,7 @@ export function createConnectionsStore(options: {
           "project",
           resolvedProjectDir,
           updated.endsWith("\n") ? updated : `${updated}\n`,
-        );
+        ) as { ok: boolean; stderr?: string; stdout?: string };
         if (!writeResult.ok) {
           throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
         }

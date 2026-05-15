@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -196,7 +196,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 }
 
 export function useDenAuth(): DenAuthStore {
-  const context = useContext(DenAuthContext);
+  const context = use(DenAuthContext);
   if (!context) {
     throw new Error("useDenAuth must be used within a DenAuthProvider");
   }

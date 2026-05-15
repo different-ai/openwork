@@ -106,7 +106,7 @@ function readEngineSource(): "path" | "sidecar" | "custom" {
 }
 
 function readOpencodeEnableExa(): boolean {
-  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "0") === "1";
+  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "1") === "1";
 }
 
 function statusPill(
@@ -272,7 +272,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const refreshEngineInfo = useCallback(async () => {
     if (!isDesktopRuntime()) return;
     try {
-      const info = await engineInfoCmd();
+      const info = await engineInfoCmd() as EngineInfo | null;
       setEngineInfoState(info);
     } catch {
       setEngineInfoState(null);
@@ -284,7 +284,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     void (async () => {
       if (!isDesktopRuntime()) return;
       try {
-        const build = await appBuildInfoCmd();
+        const build = await appBuildInfoCmd() as AppBuildInfo | null;
         setAppBuild(build);
       } catch {
         setAppBuild(null);
@@ -451,7 +451,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       return;
     }
     try {
-      const env = await updaterEnvironmentCmd();
+      const env = await updaterEnvironmentCmd() as { appBundlePath?: string };
       const appBundlePath = env.appBundlePath?.trim();
       if (!appBundlePath) {
         setElectronMigrationStatus("Could not resolve the current OpenWork.app bundle path.");
@@ -558,14 +558,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setSandboxProbeBusy(true);
     setSandboxProbeStatus(null);
     try {
-      const result = await sandboxDebugProbeCmd();
+      const result = (await sandboxDebugProbeCmd()) as SandboxDebugProbeResult | null;
       setSandboxProbeResult(result);
       setSandboxProbeStatus(
-        result.ready
+        result!.ready
           ? t("settings.sandbox_probe_success")
-          : (result.error ?? t("settings.sandbox_error")),
+          : (result!.error ?? t("settings.sandbox_error")),
       );
-      pushDeveloperLog(`sandbox probe ready=${String(result.ready)}`);
+      pushDeveloperLog(`sandbox probe ready=${String(result!.ready)}`);
     } catch (error) {
       setSandboxProbeStatus(error instanceof Error ? error.message : safeStringify(error));
     } finally {
@@ -625,12 +625,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     // `client.listWorkspaces()` later returns the full set, not just the
     // active one.
     const workspacePaths = [workspacePath];
+    const workspacePathSet = new Set(workspacePaths);
     try {
-      const list = await workspaceBootstrapCmd();
+      const list = (await workspaceBootstrapCmd()) as { workspaces?: Array<{ workspaceType?: string; path?: string }> } | null;
       for (const entry of list?.workspaces ?? []) {
         if (entry.workspaceType === "remote") continue;
         const path = entry.path?.trim() ?? "";
-        if (path && !workspacePaths.includes(path)) workspacePaths.push(path);
+        if (path && !workspacePathSet.has(path)) {
+          workspacePaths.push(path);
+          workspacePathSet.add(path);
+        }
       }
     } catch {
       // best-effort: fall back to just the active workspace path
@@ -648,7 +652,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     // engine_start restarts openwork-server on a NEW port and lets that server
     // manage OpenCode. Re-read host info and persist the fresh URL/token.
     try {
-      const hostInfo = await openworkServerInfoCmd();
+      const hostInfo = (await openworkServerInfoCmd()) as {
+        baseUrl?: string;
+        ownerToken?: string;
+        clientToken?: string;
+        hostToken?: string;
+        port?: number;
+        remoteAccessEnabled?: boolean;
+      } | null;
       if (hostInfo?.baseUrl) {
         writeOpenworkServerSettings({
           urlOverride: hostInfo.baseUrl,

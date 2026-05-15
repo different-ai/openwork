@@ -12,17 +12,19 @@ import {
 } from "../../../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
+  type DenLlmProviderSource,
   formatProviderTimestamp,
   getProviderDocUrl,
   getProviderEnvNames,
   useOrgLlmProviders,
 } from "./llm-provider-data";
 
-function getProviderSourceLabel(source: "models_dev" | "custom") {
+function getProviderSourceLabel(source: DenLlmProviderSource) {
+  if (source === "openwork") return "OpenWork";
   return source === "custom" ? "Custom" : "Catalog";
 }
 
-function getProviderSourceIcon(source: "models_dev" | "custom") {
+function getProviderSourceIcon(source: DenLlmProviderSource) {
   return source === "custom" ? CodeXml : Cpu;
 }
 
@@ -31,13 +33,23 @@ export function LlmProvidersScreen() {
   const { llmProviders, busy, error } = useOrgLlmProviders(orgId);
   const [query, setQuery] = useState("");
 
+  const openWorkProviders = useMemo(
+    () => llmProviders.filter((provider) => provider.source === "openwork"),
+    [llmProviders],
+  );
+
+  const customProviders = useMemo(
+    () => llmProviders.filter((provider) => provider.source !== "openwork"),
+    [llmProviders],
+  );
+
   const filteredProviders = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) {
-      return llmProviders;
+      return customProviders;
     }
 
-    return llmProviders.filter((provider) => {
+    return customProviders.filter((provider) => {
       const env = getProviderEnvNames(provider.providerConfig).join(" ").toLowerCase();
       const doc = (getProviderDocUrl(provider.providerConfig) ?? "").toLowerCase();
       return (
@@ -48,7 +60,20 @@ export function LlmProvidersScreen() {
         doc.includes(normalizedQuery)
       );
     });
-  }, [llmProviders, query]);
+  }, [customProviders, query]);
+
+  const openWorkKeyRows = useMemo(() => {
+    const rows = openWorkProviders.flatMap((provider) =>
+      provider.access.members.map((member) => ({
+        id: `${provider.id}:${member.id}`,
+        name: member.user.name || member.user.email,
+        email: member.user.email,
+        createdAt: member.createdAt ?? provider.createdAt,
+      })),
+    );
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
+  }, [openWorkProviders]);
 
   return (
     <DashboardPageTemplate
@@ -83,20 +108,54 @@ export function LlmProvidersScreen() {
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading your provider library...
         </div>
-      ) : filteredProviders.length === 0 ? (
-        <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-          <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
-            {llmProviders.length === 0 ? "No providers configured yet." : "No providers match that search yet."}
-          </p>
-          <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
-            {llmProviders.length === 0
-              ? "Start with a models.dev provider, select the models you want to expose, add the credential, and then grant access to the right people or teams."
-              : "Try a broader search term, or create a new provider if this org needs a different stack."}
-          </p>
-        </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-          {filteredProviders.map((provider) => {
+      <div className="grid gap-8">
+        {openWorkKeyRows.length > 0 ? (
+          <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 px-6 py-4">
+              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">OpenWork Model Keys</h2>
+              <p className="mt-1 text-[13px] text-gray-500">Members in this organization with an OpenWork Models key.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-[14px]">
+                <thead className="bg-gray-50 text-[12px] uppercase tracking-[0.08em] text-gray-500">
+                  <tr>
+                    <th className="px-6 py-3 font-medium">Member</th>
+                    <th className="px-6 py-3 font-medium">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {openWorkKeyRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="px-6 py-3">
+                        <p className="text-[14px] font-medium text-gray-950">{row.name}</p>
+                        <p className="text-[12px] text-gray-500">{row.email}</p>
+                      </td>
+                      <td className="px-6 py-3 text-[13px] text-gray-600">{formatProviderTimestamp(row.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="grid gap-4">
+          <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">Custom</h2>
+          {filteredProviders.length === 0 ? (
+            <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
+              <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+                {customProviders.length === 0 ? "No custom providers configured yet." : "No providers match that search yet."}
+              </p>
+              <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
+                {customProviders.length === 0
+                  ? "Start with a models.dev provider, select the models you want to expose, add the credential, and then grant access to the right people or teams."
+                  : "Try a broader search term, or create a new provider if this org needs a different stack."}
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+              {filteredProviders.map((provider) => {
             const SourceIcon = getProviderSourceIcon(provider.source);
             const envNames = getProviderEnvNames(provider.providerConfig);
             const memberAccessCount = provider.access.members.length;
@@ -152,7 +211,10 @@ export function LlmProvidersScreen() {
               </Link>
             );
           })}
-        </div>
+            </div>
+          )}
+        </section>
+      </div>
       )}
     </DashboardPageTemplate>
   );

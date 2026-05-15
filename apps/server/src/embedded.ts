@@ -34,6 +34,9 @@ export type EmbeddedServerHandle = {
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
+  const opencodeModelsUrl = process.env.OPENWORK_DEV_MODE === "1"
+    ? "http://localhost:8791/models"
+    : "https://models.openworklabs.com/";
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
@@ -51,6 +54,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         env: {
           ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+          OPENCODE_MODELS_URL: opencodeModelsUrl,
         },
       });
 

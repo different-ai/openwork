@@ -12,6 +12,7 @@ import {
 import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 
@@ -458,6 +459,7 @@ export async function acceptInvitationForUser(input: {
   }
 
   const member = await acceptInvitation(invitation, input.userId)
+  await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: member.id, change: "added" })
   return {
     invitation,
     member,
@@ -954,6 +956,8 @@ export async function removeOrganizationMember(input: {
 
     await tx.delete(MemberTable).where(eq(MemberTable.id, member.id))
   })
+
+  await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: member.id, change: "removed" })
 
   return member
 }
