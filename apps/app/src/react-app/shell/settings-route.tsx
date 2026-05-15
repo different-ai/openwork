@@ -81,7 +81,15 @@ import {
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
-import { isDesktopRuntime, isElectronRuntime, isMacPlatform, normalizeDirectoryPath, safeStringify } from "../../app/utils";
+import {
+  isDesktopRuntime,
+  isElectronRuntime,
+  isMacPlatform,
+  normalizeDirectoryPath,
+  resolveModelDisplayName,
+  resolveProviderDisplayName,
+  safeStringify,
+} from "../../app/utils";
 import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
@@ -104,6 +112,9 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { getReactQueryClient } from "../infra/query-client";
+import { ensureProviderListQuery, getConnectedProviderItems, refreshProviderListQueries } from "../domains/connections/provider-list-query";
+import { openModelPickerEvent, pendingModelPickerProviderIdsKey } from "./new-providers-toast";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -448,6 +459,7 @@ function SettingsRouteContent() {
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [modelPickerInitialTab, setModelPickerInitialTab] = useState<"default" | "available">("default");
   const [modelPickerQuery, setModelPickerQuery] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const emptyWorkspaceDisplay = useMemo<WorkspaceDisplay>(
@@ -556,6 +568,7 @@ function SettingsRouteContent() {
     }
 
     await openworkClient.reloadEngine(workspaceId);
+    await refreshProviderListQueries(getReactQueryClient());
 
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
@@ -763,16 +776,49 @@ function SettingsRouteContent() {
   }, [opencodeClient]);
 
   useEffect(() => {
+    const openFromPending = (raw: string | null) => {
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      setModelPickerInitialTab(parsed?.initialTab === "available" ? "available" : "default");
+      setModelPickerQuery("");
+      setModelPickerOpen(true);
+      return true;
+    };
+
+    try {
+      const raw = window.localStorage.getItem(pendingModelPickerProviderIdsKey);
+      if (openFromPending(raw)) {
+        window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+      }
+    } catch {
+      window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ initialTab?: "default" | "available" }>).detail;
+      setModelPickerInitialTab(detail?.initialTab ?? "default");
+      setModelPickerQuery("");
+      setModelPickerOpen(true);
+      try {
+        window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
+      } catch {}
+    };
+    window.addEventListener(openModelPickerEvent, handler);
+    return () => window.removeEventListener(openModelPickerEvent, handler);
+  }, []);
+
+  useEffect(() => {
     if (!modelPickerOpen || !opencodeClient) return;
     let cancelled = false;
     void providerAuthStore.refreshProviders();
     void (async () => {
       try {
-        const res = await opencodeClient.config.providers({
+        const data = await ensureProviderListQuery(getReactQueryClient(), {
+          client: opencodeClient,
+          baseUrl: opencodeBaseUrl,
           directory: selectedWorkspaceRoot || undefined,
         });
-        const data = (res as { data?: { providers?: Array<{ id: string; name: string; source?: string; models: Record<string, { id: string; name: string }> }> } }).data;
-        if (cancelled || !data?.providers) return;
+        if (cancelled || !data?.all) return;
         let seenIds: Set<string>;
         try {
           const raw = window.localStorage.getItem("openwork.seenProviderIds");
@@ -781,9 +827,8 @@ function SettingsRouteContent() {
           seenIds = new Set();
         }
         const options: ModelOption[] = [];
-        for (const provider of data.providers) {
+        for (const provider of getConnectedProviderItems(data)) {
           const modelIds = Object.keys(provider.models);
-          const hasModels = modelIds.length > 0;
           const isNew = !seenIds.has(provider.id);
           for (const id of modelIds) {
             const model = provider.models[id];
@@ -797,7 +842,7 @@ function SettingsRouteContent() {
               behaviorDescription: "",
               behaviorValue: null,
               isFree: false,
-              isConnected: hasModels,
+              isConnected: true,
               isRecommended: isNew,
               source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
             });
@@ -815,7 +860,7 @@ function SettingsRouteContent() {
     return () => {
       cancelled = true;
     };
-  }, [modelPickerOpen, opencodeClient, selectedWorkspaceRoot]);
+  }, [modelPickerOpen, opencodeBaseUrl, opencodeClient, selectedWorkspaceRoot]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -1227,7 +1272,13 @@ function SettingsRouteContent() {
   const pluginsAccessHint =
     isRemoteWorkspace && !canWriteWorkspacePlugins ? t("app.plugins_hint_readonly") : null;
   const defaultModelLabel = local.prefs.defaultModel
-    ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
+    ? (() => {
+        const provider = providers.find((item) => item.id === local.prefs.defaultModel?.providerID);
+        const model = provider?.models?.[local.prefs.defaultModel.modelID];
+        const providerLabel = provider?.name ?? resolveProviderDisplayName(local.prefs.defaultModel.providerID);
+        const modelLabel = model?.name ?? resolveModelDisplayName(local.prefs.defaultModel.modelID);
+        return `${providerLabel} - ${modelLabel}`;
+      })()
     : t("session.default_model");
   const defaultModelRef = local.prefs.defaultModel
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
@@ -1578,6 +1629,7 @@ function SettingsRouteContent() {
             defaultModelLabel={defaultModelLabel}
             defaultModelRef={defaultModelRef}
             onChangeDefaultModel={() => {
+              setModelPickerInitialTab("default");
               setModelPickerQuery("");
               setModelPickerOpen(true);
             }}
@@ -1964,6 +2016,7 @@ function SettingsRouteContent() {
       <ModelPickerModal
         open={modelPickerOpen}
         options={modelOptions}
+        initialTab={modelPickerInitialTab}
         query={modelPickerQuery}
         setQuery={setModelPickerQuery}
         target="default"

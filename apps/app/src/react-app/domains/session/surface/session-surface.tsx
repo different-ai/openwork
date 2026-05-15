@@ -69,6 +69,7 @@ export type SessionSurfaceProps = {
   modelLabel: string;
   onModelClick: () => void;
   modelPickerOpen: boolean;
+  modelUnavailable?: boolean;
   selectedModel: ModelRef;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -671,13 +672,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    disabled: props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState]);
+  }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable]);
   useControlAction(composerSendControlAction);
 
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -1015,7 +1016,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onSend={handleSend}
         onStop={handleAbort}
         busy={chatStreaming}
-        disabled={model.transitionState !== "idle"}
+        disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
+        modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}

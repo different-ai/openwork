@@ -37,6 +37,8 @@ function markProvidersSeen(ids: string[]): void {
 type ToastState = {
   show: boolean;
   providers: NewProviderInfo[];
+  newProviderCount: number;
+  newModelCount: number;
 };
 
 /**
@@ -44,27 +46,40 @@ type ToastState = {
  * picker so the user can change their default if they want.
  */
 export function NewProvidersToast() {
-  const [state, setState] = useState<ToastState>({ show: false, providers: [] });
+  const [state, setState] = useState<ToastState>({
+    show: false,
+    providers: [],
+    newProviderCount: 0,
+    newModelCount: 0,
+  });
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<NewProviderInfo[]>([]);
 
-  const showProviders = useCallback((providers: NewProviderInfo[]) => {
+  const showProviders = useCallback((detail: NewProvidersEventDetail) => {
     const seen = readSeenProviderIds();
-    const genuinelyNew = providers.filter((p) => !seen.has(p.id));
-    if (genuinelyNew.length === 0) return;
+    const genuinelyNew = detail.providers.filter((p) => !seen.has(p.id));
+    const newProviderCount = detail.newProviderCount ?? genuinelyNew.length;
+    const newModelCount = detail.newModelCount ?? 0;
+    if (genuinelyNew.length === 0 && newModelCount === 0) return;
 
     setState((prev) => ({
       show: true,
       providers: prev.show
-        ? [...prev.providers, ...genuinelyNew.filter((p) => !prev.providers.some((e) => e.id === p.id))]
-        : genuinelyNew,
+        ? [...prev.providers, ...detail.providers.filter((p) => !prev.providers.some((e) => e.id === p.id))]
+        : detail.providers,
+      newProviderCount: prev.show
+        ? prev.newProviderCount + newProviderCount
+        : newProviderCount,
+      newModelCount: prev.show
+        ? prev.newModelCount + newModelCount
+        : newModelCount,
     }));
   }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<NewProvidersEventDetail>).detail;
-      if (detail.providers.length === 0) return;
+      if (detail.providers.length === 0 && !detail.newModelCount) return;
       if (orgOnboardingVisible) {
         setPendingProviders((current) => [
           ...current,
@@ -72,7 +87,7 @@ export function NewProvidersToast() {
         ]);
         return;
       }
-      showProviders(detail.providers);
+      showProviders(detail);
     };
     window.addEventListener(newProvidersEvent, handler);
     return () => window.removeEventListener(newProvidersEvent, handler);
@@ -88,52 +103,64 @@ export function NewProvidersToast() {
 
   useEffect(() => {
     if (orgOnboardingVisible || pendingProviders.length === 0) return;
-    showProviders(pendingProviders);
+    showProviders({ providers: pendingProviders, source: "cloud_sync" });
     setPendingProviders([]);
   }, [orgOnboardingVisible, pendingProviders, showProviders]);
 
   const dismiss = useCallback(() => {
     markProvidersSeen(state.providers.map((p) => p.id));
-    setState({ show: false, providers: [] });
+    setState({ show: false, providers: [], newProviderCount: 0, newModelCount: 0 });
   }, [state.providers]);
 
   const pickDefault = useCallback(() => {
     const ids = state.providers.map((p) => p.id);
     markProvidersSeen(ids);
-    setState({ show: false, providers: [] });
+    setState({ show: false, providers: [], newProviderCount: 0, newModelCount: 0 });
     try {
-      window.localStorage.setItem(PENDING_MODEL_PICKER_KEY, JSON.stringify(ids));
+      window.localStorage.setItem(
+        PENDING_MODEL_PICKER_KEY,
+        JSON.stringify({ newProviderIds: ids, initialTab: "available" }),
+      );
     } catch {}
-    // Pass the new provider IDs so the picker can highlight them as
-    // "Recently added" even though they were just marked as seen.
-    window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { newProviderIds: ids } }));
+    window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { newProviderIds: ids, initialTab: "available" } }));
     window.setTimeout(() => {
       try {
         if (window.localStorage.getItem(PENDING_MODEL_PICKER_KEY)) {
-          window.location.hash = "/session";
+          const path = window.location.hash.replace(/^#/, "") || "/settings/preferences";
+          const match = path.match(/^\/workspace\/([^/]+)/);
+          window.location.hash = match?.[1]
+            ? `/workspace/${match[1]}/settings/preferences`
+            : "/settings/preferences";
         }
       } catch {}
     }, 0);
   }, [state.providers]);
 
-  if (!state.show || state.providers.length === 0) return null;
+  if (!state.show || (state.providers.length === 0 && state.newModelCount === 0)) return null;
+
+  const message = (() => {
+    const parts: string[] = [];
+    if (state.newProviderCount > 0) {
+      parts.push(`${state.newProviderCount} new ${state.newProviderCount === 1 ? "provider" : "providers"}`);
+    }
+    if (state.newModelCount > 0) {
+      parts.push(`${state.newModelCount} new ${state.newModelCount === 1 ? "model" : "models"}`);
+    }
+    return parts.join(" & ");
+  })();
 
   return (
     <div className="fixed bottom-6 left-1/2 z-[9999] -translate-x-1/2 animate-in slide-in-from-bottom-4 fade-in duration-300">
       <div className="flex items-center gap-4 rounded-2xl border border-dls-border bg-dls-surface px-5 py-3.5 shadow-lg">
         <div className="flex items-center gap-2">
-          {state.providers.map((p) => (
+          {state.providers.slice(0, 6).map((p) => (
             <ProviderIcon key={p.id} providerId={p.providerId} providerName={p.name} size={16} className="text-dls-text" />
           ))}
         </div>
 
         <div className="min-w-0 text-[13px] text-dls-text">
-          <span className="font-medium">
-            {state.providers.length === 1
-              ? resolveProviderDisplayName(state.providers[0].name || state.providers[0].providerId)
-              : `${state.providers.length} new providers`}
-          </span>
-          {" "}added.{" "}
+          <span className="font-medium">{message || resolveProviderDisplayName(state.providers[0]?.name || state.providers[0]?.providerId || "Models")}</span>
+          {" "}available.{" "}
           <button
             type="button"
             className="font-medium underline underline-offset-2 transition-colors hover:text-dls-text/80"

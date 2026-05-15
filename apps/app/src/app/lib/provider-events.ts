@@ -18,9 +18,11 @@ export type NewProviderInfo = {
 
 export type NewProvidersEventDetail = {
   providers: NewProviderInfo[];
+  newProviderCount?: number;
+  newModelCount?: number;
   /** Where the change originated. "sign_in" is suppressed by the toast
    *  because the onboarding page handles first-time notification. */
-  source: "cloud_sync" | "local_config" | "sign_in";
+  source: "cloud_sync" | "local_config" | "models_refresh" | "sign_in";
 };
 
 export function dispatchNewProviders(detail: NewProvidersEventDetail): void {

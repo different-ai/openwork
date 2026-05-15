@@ -39,6 +39,7 @@ type ComposerProps = {
   onStop: () => void | Promise<void>;
   busy: boolean;
   disabled: boolean;
+  modelUnavailable?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
@@ -1400,6 +1401,9 @@ export function ReactSessionComposer(props: ComposerProps) {
               onChange={props.onModelChange}
               disabled={props.busy}
             />
+            {props.modelUnavailable ? (
+              <span className="text-xs font-medium text-red-10">Model no longer available</span>
+            ) : null}
 
             <ModelBehaviorSelect
               value={props.modelVariant}

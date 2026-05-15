@@ -65,6 +65,7 @@ export type ModelPickerModalProps = {
   open: boolean;
   options: ModelOption[];
   disabledProviders?: string[];
+  initialTab?: Tab;
   query: string;
   setQuery: (value: string) => void;
   target: "default" | "session";
@@ -103,7 +104,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   // Reset on open + seed defaults on first run
   useEffect(() => {
     if (props.open) {
-      setTab("default");
+      setTab(props.initialTab ?? "default");
       props.setQuery("");
       if (!hasSeededHiddenModels() && props.options.length > 0) {
         const seeded = seedHiddenModels(props.options);
@@ -114,7 +115,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         setHiddenModels(readHiddenModels());
       }
     }
-  }, [props.open, props.options]);
+  }, [props.initialTab, props.open, props.options]);
 
   // Focus search
   useEffect(() => {

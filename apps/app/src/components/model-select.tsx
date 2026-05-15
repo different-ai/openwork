@@ -15,10 +15,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { unwrap } from "@/app/lib/opencode";
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
-import { useQuery } from "@tanstack/react-query";
+import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/domains/connections/provider-list-query";
 import {
   Command,
   CommandEmpty,
@@ -42,42 +41,14 @@ function getProviderDisplayName(providerId: string) {
 }
 
 function useModelOptions(open: boolean) {
-  const { client, selectedWorkspaceRoot } = useWorkspace();
+  const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
-  const { data, refetch } = useQuery({
-    queryKey: ["model-options", selectedWorkspaceRoot],
+  const { data, refetch } = useProviderListQuery({
+    client,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot,
     enabled: Boolean(client),
-    queryFn: async () => {
-      if (!client) {
-        return [];
-      }
-
-      const data = unwrap(
-        await client.config.providers({
-          directory: selectedWorkspaceRoot,
-        }),
-      );
-
-      if (!data.providers) {
-        return [];
-      }
-
-      return data.providers.flatMap((provider) =>
-        Object.entries(provider.models).map(([id, model]) => ({
-          providerID: provider.id,
-          modelID: id,
-          title: model.name,
-          description: provider.name,
-          behaviorTitle: "Reasoning",
-          behaviorLabel: "Default",
-          behaviorDescription: "",
-          behaviorValue: null,
-          isFree: false,
-          isConnected: true,
-        })),
-      );
-    },
   });
 
   React.useEffect(() => {
@@ -97,15 +68,30 @@ function useModelOptions(open: boolean) {
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
   //   - `blockZenModel` hides the built-in OpenCode provider entries
-  //   - `disallowNonCloudModels` hides providers that aren't currently
-  //     connected via cloud (a provider with models[] filled counts as
-  //     connected in this list — see the loader above)
+  //   - `disallowNonCloudModels` hides providers that OpenCode does not report
+  //     as connected through the provider list endpoint.
   return React.useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "disallowNonCloudModels",
     });
 
-    return (data ?? []).filter((option) => {
+    const options = getConnectedProviderItems(data)
+      .flatMap((provider) =>
+        Object.entries(provider.models).map(([id, model]) => ({
+          providerID: provider.id,
+          modelID: id,
+          title: model.name,
+          description: provider.name,
+          behaviorTitle: "Reasoning",
+          behaviorLabel: "Default",
+          behaviorDescription: "",
+          behaviorValue: null,
+          isFree: false,
+          isConnected: true,
+        })),
+      );
+
+    return options.filter((option) => {
       if (
         isDesktopProviderBlocked({
           providerId: option.providerID,

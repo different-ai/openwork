@@ -30,8 +30,9 @@ import { isDesktopRuntime, safeStringify } from "../../../../app/utils";
 import {
   compareProviders,
   filterProviderList,
-  mapConfigProvidersToList,
 } from "../../../../app/utils/providers";
+import { getReactQueryClient } from "../../../infra/query-client";
+import { ensureProviderListQuery } from "../provider-list-query";
 import type { OpenworkServerStore } from "../openwork-server-store";
 import {
   denSessionUpdatedEvent,
@@ -1072,30 +1073,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     try {
       const updated = filterProviderList(
-        unwrap(await activeClient.provider.list()),
+        await ensureProviderListQuery(getReactQueryClient(), {
+          client: activeClient,
+          directory: options.selectedWorkspaceRoot(),
+          force: Boolean(optionsArg?.dispose),
+        }),
         disabledProviders,
       );
       applyProviderListState(updated);
       return updated;
     } catch {
-      try {
-        const fallback = unwrap(await activeClient.config.providers());
-        const mapped = mapConfigProvidersToList(fallback.providers);
-        const next = filterProviderList(
-          {
-            all: mapped,
-            connected: options
-              .providerConnectedIds()
-              .filter((id) => mapped.some((provider) => provider.id === id)),
-            default: fallback.default,
-          },
-          disabledProviders,
-        );
-        applyProviderListState(next);
-        return next;
-      } catch {
-        return null;
-      }
+      return null;
     }
   }
 
