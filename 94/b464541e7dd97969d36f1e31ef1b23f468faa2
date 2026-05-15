@@ -1,0 +1,40 @@
+apps/app/src/react-app/domains/connections/modals/add-mcp-modal.tsx
+  s_2a4abde97db110::t_8317c077aa686d 5
+apps/app/src/react-app/domains/session/modals/question-modal.tsx
+  s_2a4abde97db110::t_10365e8909b78a 7
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  s_2a4abde97db110::t_0fd68235628172 33
+  s_af5fc1844feb34::t_5c2ce4b34eef52 1397
+apps/app/src/react-app/design-system/extension-detail-modal.tsx
+  s_2a4abde97db110::t_ce25db563aba2d 335
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  s_2a4abde97db110::t_d65d5fccf6b3d0 14
+apps/app/src/react-app/domains/settings/modals/reset-modal.tsx
+  s_2a4abde97db110::t_3d248a7f4a1908 103
+apps/app/src/react-app/domains/session/chat/permission-approval-modal.tsx
+  s_2a4abde97db110::t_46f09604d4ae4a 336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "94b464541e7dd97969d36f1e31ef1b23f468faa2",
+  "prompts": {},
+  "sessions": {
+    "s_2a4abde97db110": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e267b-2b4a-7033-aa0e-ed8fb226d61e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_af5fc1844feb34": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1cb072f9-aa6f-457b-b8bd-c7bbf6b01bf3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
