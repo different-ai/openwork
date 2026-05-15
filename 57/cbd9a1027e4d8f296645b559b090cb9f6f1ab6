@@ -1,0 +1,28 @@
+apps/app/src/react-app/domains/session/browser/browser-panel.tsx
+  s_191118879cde04::t_10ddbd832e2e23 134
+  s_6bf95588658c4f::t_287fff11375f0d 333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "57cbd9a1027e4d8f296645b559b090cb9f6f1ab6",
+  "prompts": {},
+  "sessions": {
+    "s_191118879cde04": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "00303467-cc28-4af3-b7f7-b497a7e167e6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_6bf95588658c4f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "329ca0e6-fabf-436f-a19e-d720c304f59c",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}
