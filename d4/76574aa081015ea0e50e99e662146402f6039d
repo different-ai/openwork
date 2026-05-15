@@ -1,0 +1,18 @@
+apps/app/src/components/ui/button.tsx
+  h_2169b0bd9b5c87 11,27
+apps/app/src/react-app/domains/cloud/org-onboarding-page.tsx
+  h_2169b0bd9b5c87 9-14,33-35,81,87,270,282,284,404,446,452,456-457,471,491-501,505-509,517,544-547,571,576
+apps/app/package.json
+  h_2169b0bd9b5c87 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "d476574aa081015ea0e50e99e662146402f6039d",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
