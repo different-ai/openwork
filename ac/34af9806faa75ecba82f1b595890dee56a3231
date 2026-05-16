@@ -1,0 +1,43 @@
+apps/app/src/react-app/domains/cloud/den-settings-store.ts
+  s_d40e5b755fee73::t_ba7e8fdb6be7b6 340
+  s_0b44baabdfb4e6::t_e64ab72e637404 72-75
+  s_d40e5b755fee73::t_a33c7af0f3eaa3 244-247
+  s_0b44baabdfb4e6::t_4a36d933bd24e7 34,193,195-199,204,214-215,218
+  s_0b44baabdfb4e6::t_6c27f212cc664f 2,15-16,35-62,68,78,82-83,87
+  s_d40e5b755fee73::t_9b0a980e19de78 5-7,9-14,220,225-226,228-232,234-241,243,249-261,269,295-297,302-325,341
+  s_0b44baabdfb4e6::t_afa416a7ef6da9 69-71,76-77,79
+  s_d40e5b755fee73::t_14f3478391c688 263-267,270-273,278-279,284-285,290-291,298-301
+  s_0b44baabdfb4e6::t_5e5d28562d69b5 17-33,63-67
+  s_d40e5b755fee73::t_f2f5d58e8ba63f 221,223-224
+  s_0b44baabdfb4e6::t_a3a84af3737dba 194,200,208,211,227,233,242,248,262,268
+  s_d40e5b755fee73::t_a9c0347eb11f7d 1,3-4,8,326-334,337-339,342
+  s_d40e5b755fee73::t_ca3fc2fff373ae 274-277,280-283,286-289,292-294
+  s_d40e5b755fee73::t_f610c319fe4179 335-336
+  s_0b44baabdfb4e6::t_a8cd0fb0187803 80-81,84-86,88-192,201-203,205-207,209-210,212-213,216-217,219,222
+apps/app/package.json
+  s_0b44baabdfb4e6::t_cc9a4cfbdac653 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ac34af9806faa75ecba82f1b595890dee56a3231",
+  "prompts": {},
+  "sessions": {
+    "s_0b44baabdfb4e6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2c74-830c-7dc2-9629-7ee942ea3a8b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_d40e5b755fee73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e2c68-22ea-7e80-b486-8fdf43921e87",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
