@@ -92,7 +92,7 @@ test("checkHyperV: Disabled → missing with remediation", async () => {
   const c = await __testing.checkHyperV();
   assert.equal(c.state, "missing");
   assert.match(c.detail, /Disabled/);
-  assert.match(c.actionable, /dism|Hyper-V/);
+  assert.match(c.actionable, /dism|VirtualMachinePlatform|Virtual Machine Platform/);
 });
 
 test("checkHyperV: missing feature (empty stdout) → missing", async () => {
@@ -107,7 +107,7 @@ test("checkHyperV: invokes powershell with Get-WindowsOptionalFeature query", as
   const lines = readLog(pwshLog);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /-NoProfile -NonInteractive -Command/);
-  assert.match(lines[0], /Get-WindowsOptionalFeature.*Microsoft-Hyper-V/);
+  assert.match(lines[0], /Get-WindowsOptionalFeature.*VirtualMachinePlatform/);
 });
 
 // ── checkWsl ───────────────────────────────────────────────────────────

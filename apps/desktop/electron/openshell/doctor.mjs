@@ -116,20 +116,22 @@ async function checkWindows() {
   };
 }
 
-// 2. Hyper-V. Requires PowerShell; the optional-feature query is the
-// canonical way to detect it on Windows 11 desktop SKUs.
+// 2. Virtualization platform — the actual WSL2 prerequisite. The full
+// Microsoft-Hyper-V role is Pro/Enterprise only; VirtualMachinePlatform
+// is what WSL2 needs and is available on Home too. Keeping the internal
+// id "hyperv" so the UI's component-state contract doesn't shift.
 /** @returns {Promise<OpenShellComponent>} */
 async function checkHyperV() {
   try {
     const r = await runPowerShell(
-      "Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V " +
+      "Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform " +
         "| Select-Object -ExpandProperty State",
     );
     const state = r.stdout.trim();
     if (state === "Enabled") {
       return {
         id: "hyperv",
-        label: "Hyper-V",
+        label: "Virtualization (WSL2)",
         state: "ok",
         version: null,
         detail: null,
@@ -138,21 +140,23 @@ async function checkHyperV() {
     }
     return {
       id: "hyperv",
-      label: "Hyper-V",
+      label: "Virtualization (WSL2)",
       state: "missing",
       version: null,
-      detail: state ? `Hyper-V state: ${state}` : "Hyper-V feature not present.",
+      detail: state
+        ? `VirtualMachinePlatform state: ${state}`
+        : "VirtualMachinePlatform feature not present.",
       actionable:
-        "Enable Hyper-V from Windows Features, or run " +
-        "`dism /online /enable-feature /featurename:Microsoft-Hyper-V /all /norestart` as admin.",
+        "Enable it from Windows Features (\"Virtual Machine Platform\"), or run " +
+        "`dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart` as admin.",
     };
   } catch (err) {
     return {
       id: "hyperv",
-      label: "Hyper-V",
+      label: "Virtualization (WSL2)",
       state: "unknown",
       version: null,
-      detail: `Could not query Hyper-V: ${err.message || err}`,
+      detail: `Could not query VirtualMachinePlatform: ${err.message || err}`,
       actionable: null,
     };
   }

@@ -98,7 +98,8 @@ Send IT a ticket with this text:
 
 > Hi — I need virtualization (Intel VT-x or AMD-V) enabled in the BIOS
 > on my laptop so I can run OpenWork's OpenShell sandbox. The
-> "Microsoft-Hyper-V" optional feature shows as Disabled. Could we
+> "Virtual Machine Platform" Windows optional feature shows as Disabled
+> (this is the WSL2 prerequisite, not the full Hyper-V role). Could we
 > schedule a 10-minute maintenance window to enable it?
 
 ### "wsl --install fails with a policy error"
