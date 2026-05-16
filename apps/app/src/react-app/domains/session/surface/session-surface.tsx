@@ -204,11 +204,10 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   if (todos.length === 0) return null;
 
   return (
-    <div className="mx-auto w-full max-w-[800px] px-4">
-      <div className="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+    <div className="overflow-hidden rounded-t-[24px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
         <button
           type="button"
-          className="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
+          className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
           onClick={() => setExpanded((current) => !current)}
         >
           <div className="flex items-center gap-2">
@@ -248,7 +247,6 @@ function TodoPanel(props: { todos: TodoItem[] }) {
             })}
           </div>
         ) : null}
-      </div>
     </div>
   );
 }
@@ -1077,17 +1075,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ) : null}
       </div>
 
-      <TodoPanel todos={props.todos ?? []} />
-
-      {props.activePermission ? (
-        <PermissionApprovalPanel
-          permission={props.activePermission}
-          busy={props.permissionReplyBusy}
-          respondPermission={props.respondPermission}
-          safeStringify={props.safeStringify}
-        />
-      ) : null}
-
       <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <DevProfiler id="SessionComposer">
         <ReactSessionComposer
@@ -1140,6 +1127,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
+          compactTopSpacing={Boolean((props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission)}
+          topAccessory={
+            (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission ? (
+              <div className="-mb-px">
+                <TodoPanel todos={props.todos ?? []} />
+                {props.activePermission ? (
+                  <PermissionApprovalPanel
+                    permission={props.activePermission}
+                    busy={props.permissionReplyBusy}
+                    respondPermission={props.respondPermission}
+                    safeStringify={props.safeStringify}
+                  />
+                ) : null}
+              </div>
+            ) : null
+          }
         />
         </DevProfiler>
       </div>

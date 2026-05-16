@@ -85,6 +85,7 @@ import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-conte
 import {
   permissionKey as reactPermissionKey,
   seedPermissionState,
+  todoKey as reactTodoKey,
 } from "../domains/session/sync/session-sync";
 import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
@@ -241,6 +242,7 @@ function focusPromptSoon() {
 }
 
 const emptyPendingPermissions: PendingPermission[] = [];
+const emptyTodos: TodoItem[] = [];
 const emptyModelBehaviorOptions: { value: string | null; label: string }[] = [];
 
 function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
@@ -1487,6 +1489,14 @@ export function SessionRoute() {
     permissionQueryKey,
     emptyPendingPermissions,
   );
+  const todoQueryKey = useMemo(
+    () =>
+      selectedWorkspaceId && selectedSessionId
+        ? reactTodoKey(selectedWorkspaceId, selectedSessionId)
+        : null,
+    [selectedSessionId, selectedWorkspaceId],
+  );
+  const todos = useQueryCacheState<TodoItem[]>(todoQueryKey, emptyTodos);
   useEffect(() => {
     if (!opencodeClient || !selectedWorkspaceId || !selectedSessionId) return;
     let cancelled = false;
@@ -2609,7 +2619,7 @@ export function SessionRoute() {
         onUndo: () => {},
         onRedo: () => {},
       }}
-      todos={[] satisfies TodoItem[]}
+      todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
       shareWorkspaceModal={
         shareWorkspaceState.shareWorkspaceOpen
