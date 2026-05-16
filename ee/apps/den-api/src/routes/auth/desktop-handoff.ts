@@ -7,8 +7,10 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
+import { resolveDesktopDenBaseUrl } from "./desktop-handoff-url.js"
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional(),
@@ -38,92 +40,6 @@ const grantNotFoundSchema = z.object({
   error: z.literal("grant_not_found"),
   message: z.string(),
 }).meta({ ref: "DesktopHandoffGrantNotFoundError" })
-
-function readSingleHeader(value: string | null) {
-  const first = value?.split(",")[0]?.trim() ?? ""
-  return first || null
-}
-
-function isWebAppHost(hostname: string) {
-  const normalized = hostname.trim().toLowerCase()
-
-  if (
-    normalized === "localhost"
-    || normalized === "0.0.0.0"
-    || normalized === "::1"
-    || normalized === "[::1]"
-    || /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  ) {
-    return true
-  }
-
-  const ipv4Match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-  if (ipv4Match) {
-    const [first, second, third, fourth] = ipv4Match.slice(1).map(Number)
-    const octets = [first, second, third, fourth]
-    if (octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
-      if (
-        first === 10
-        || first === 127
-        || (first === 172 && second >= 16 && second <= 31)
-        || (first === 192 && second === 168)
-        || (first === 169 && second === 254)
-        || (first === 100 && second >= 64 && second <= 127)
-      ) {
-        return true
-      }
-    }
-  }
-
-  return normalized === "app.openworklabs.com"
-    || normalized === "app.openwork.software"
-    || normalized.startsWith("app.")
-}
-
-function withDenProxyPath(origin: string) {
-  const url = new URL(origin)
-  const pathname = url.pathname.replace(/\/+$/, "")
-  if (pathname.toLowerCase().endsWith("/api/den")) {
-    return url.toString().replace(/\/+$/, "")
-  }
-  url.pathname = `${pathname}/api/den`.replace(/\/+/g, "/")
-  return url.toString().replace(/\/+$/, "")
-}
-
-function resolveDesktopDenBaseUrl(request: Request) {
-  const originHeader = readSingleHeader(request.headers.get("origin"))
-  if (originHeader) {
-    try {
-      const originUrl = new URL(originHeader)
-      if ((originUrl.protocol === "https:" || originUrl.protocol === "http:") && isWebAppHost(originUrl.hostname)) {
-        return withDenProxyPath(originUrl.origin)
-      }
-    } catch {
-      // Ignore invalid origins.
-    }
-  }
-
-  const forwardedProto = readSingleHeader(request.headers.get("x-forwarded-proto"))
-  const forwardedHost = readSingleHeader(request.headers.get("x-forwarded-host"))
-  const host = readSingleHeader(request.headers.get("host"))
-  const protocol = forwardedProto ?? new URL(request.url).protocol.replace(/:$/, "")
-  const targetHost = forwardedHost ?? host
-  if (!targetHost) {
-    return "https://app.openworklabs.com/api/den"
-  }
-
-  const origin = `${protocol}://${targetHost}`
-  try {
-    const url = new URL(origin)
-    if (isWebAppHost(url.hostname)) {
-      return withDenProxyPath(url.origin)
-    }
-  } catch {
-    // Ignore invalid forwarded origins.
-  }
-
-  return origin
-}
 
 function buildOpenworkDeepLink(input: {
   scheme?: string | null
@@ -175,7 +91,9 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       consumed_at: null,
     })
 
-    const denBaseUrl = resolveDesktopDenBaseUrl(c.req.raw)
+    const denBaseUrl = resolveDesktopDenBaseUrl(c.req.raw, {
+      webAppHosts: env.desktopHandoffWebHosts,
+    })
 
     return c.json({
       grant,

@@ -12,6 +12,7 @@ const EnvSchema = z.object({
   BETTER_AUTH_URL: z.string().min(1),
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
+  DEN_DESKTOP_HANDOFF_WEB_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_CONNECTOR_APP_ID: z.string().optional(),
@@ -148,6 +149,7 @@ function normalizeOrigin(origin: string) {
 const corsOrigins = splitCsv(parsed.CORS_ORIGINS).map((origin) => normalizeOrigin(origin))
 const betterAuthTrustedOrigins = splitCsv(parsed.DEN_BETTER_AUTH_TRUSTED_ORIGINS)
   .map((origin) => normalizeOrigin(origin))
+const desktopHandoffWebHosts = splitCsv(parsed.DEN_DESKTOP_HANDOFF_WEB_HOSTS)
 
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
@@ -180,6 +182,7 @@ export const env = {
       ? `http://127.0.0.1:${port}/mcp`
       : undefined,
   betterAuthTrustedOrigins: betterAuthTrustedOrigins.length > 0 ? betterAuthTrustedOrigins : corsOrigins,
+  desktopHandoffWebHosts,
   devMode,
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
