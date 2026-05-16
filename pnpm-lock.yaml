@@ -13,9 +13,12 @@ importers:
 
   .:
     devDependencies:
+      cross-env:
+        specifier: ^7.0.3
+        version: 7.0.3
       turbo:
         specifier: ^2.5.5
-        version: 2.8.20
+        version: 2.9.12
 
   apps/app:
     dependencies:

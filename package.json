@@ -3,20 +3,20 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
-    "dev:electron": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev:electron",
+    "dev": "cross-env OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev",
+    "dev:electron": "cross-env OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev:electron",
     "dev:server-v2": "node scripts/dev-server-v2.mjs",
     "dev:server-v2:server": "node scripts/dev-server-v2.mjs --no-app",
     "dev:windows": ".\\scripts\\dev-windows.cmd",
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
-    "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
+    "dev:ui": "cross-env OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
     "dev:ui-demo": "pnpm --filter @openwork/ui-demo dev",
-    "dev:story": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
-    "dev:web": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork-ee/den-web dev",
+    "dev:story": "cross-env OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
+    "dev:web": "cross-env OPENWORK_DEV_MODE=1 pnpm --filter @openwork-ee/den-web dev",
     "dev:web-local": "pnpm dev:den-local",
     "dev:den-local": "node scripts/dev-local.mjs",
     "dev:den-docker": "bash packaging/docker/den-dev-up.sh",
-    "dev:headless-web": "OPENWORK_DEV_MODE=1 bun scripts/dev-headless-web.ts",
+    "dev:headless-web": "cross-env OPENWORK_DEV_MODE=1 bun scripts/dev-headless-web.ts",
     "build": "node scripts/build.mjs",
     "build:ui": "pnpm --filter @openwork/app build",
     "build:web": "pnpm --filter @openwork-ee/den-web build",
@@ -49,6 +49,7 @@
     "tauri": "pnpm --filter @openwork/desktop exec tauri"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "turbo": "^2.5.5"
   },
   "pnpm": {
