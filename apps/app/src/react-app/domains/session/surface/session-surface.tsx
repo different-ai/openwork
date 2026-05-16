@@ -204,7 +204,7 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   if (todos.length === 0) return null;
 
   return (
-    <div className="overflow-hidden rounded-t-[24px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+    <div className="overflow-hidden border-b border-dls-border bg-transparent">
         <button
           type="button"
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
@@ -1130,7 +1130,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           compactTopSpacing={Boolean((props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission)}
           topAccessory={
             (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission ? (
-              <div className="-mb-px">
+              <div>
                 <TodoPanel todos={props.todos ?? []} />
                 {props.activePermission ? (
                   <PermissionApprovalPanel

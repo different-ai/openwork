@@ -818,8 +818,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   const panelRoundedClass =
     mentionOpen || slashOpen
       ? "rounded-t-[18px] border-t-transparent"
-      : props.topAccessory
-        ? "rounded-t-none"
       : "";
 
   const renderSlashMenu = () => {
@@ -939,11 +937,11 @@ export function ReactSessionComposer(props: ComposerProps) {
       }}
     >
       <div className="max-w-[800px] mx-auto">
-        {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
         {/* Main composer panel */}
         <div
           className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
+          {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
           <ReactComposerNotice notice={props.notice} />
 
           {renderMentionMenu()}
