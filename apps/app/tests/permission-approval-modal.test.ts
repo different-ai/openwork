@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PendingPermission } from "../src/app/types";
 
 import {
-  PermissionApprovalModal,
+  PermissionApprovalPanel,
   permissionDetailRows,
 } from "../src/react-app/domains/session/chat/permission-approval-modal";
 
@@ -69,7 +69,7 @@ describe("permission approval modal helpers", () => {
 
   test("keeps keyboard order on the safer one-shot approval before session approval", () => {
     const html = renderToStaticMarkup(
-      React.createElement(PermissionApprovalModal, {
+      React.createElement(PermissionApprovalPanel, {
         permission: pendingPermission(),
         respondPermission: () => {},
       }),
@@ -84,7 +84,7 @@ describe("permission approval modal helpers", () => {
 
   test("uses readable labels for generic permission titles", () => {
     const html = renderToStaticMarkup(
-      React.createElement(PermissionApprovalModal, {
+      React.createElement(PermissionApprovalPanel, {
         permission: pendingPermission({ permission: "todowrite" }),
         respondPermission: () => {},
       }),

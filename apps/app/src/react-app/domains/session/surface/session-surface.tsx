@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
+import { Check, Minimize2 } from "lucide-react";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
+import { t } from "../../../../i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import type {
   OpenworkServerClient,
@@ -18,7 +20,9 @@ import type {
   McpServerEntry,
   McpStatusMap,
   ModelRef,
+  PendingPermission,
   SkillCard,
+  TodoItem,
 } from "../../../../app/types";
 import {
   publishInspectorSlice,
@@ -39,6 +43,7 @@ import { SessionTranscript } from "./message-list";
 import { useLocal } from "../../../kernel/local-provider";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
+import { PermissionApprovalPanel } from "../chat/permission-approval-modal";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
@@ -90,6 +95,11 @@ export type SessionSurfaceProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
+  todos?: TodoItem[];
+  activePermission?: PendingPermission | null;
+  permissionReplyBusy?: boolean;
+  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  safeStringify?: (value: unknown) => string;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
@@ -178,6 +188,66 @@ function AssistantWaitingCard() {
           />
         </div>
         <span>Thinking</span>
+      </div>
+    </div>
+  );
+}
+
+function TodoPanel(props: { todos: TodoItem[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const todos = props.todos.filter((todo) => todo.content.trim());
+  const completedTodos = todos.filter((todo) => todo.status === "completed").length;
+  const label = completedTodos > 0
+    ? t("session.todo_progress_label", { completed: completedTodos, total: todos.length })
+    : t("session.todo_label", { count: todos.length });
+
+  if (todos.length === 0) return null;
+
+  return (
+    <div className="mx-auto w-full max-w-[800px] px-4">
+      <div className="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-11">{label}</span>
+          </div>
+          <Minimize2 size={12} className={`text-gray-8 transition-transform ${expanded ? "" : "rotate-180"}`} />
+        </button>
+        {expanded ? (
+          <div className="max-h-60 space-y-2.5 overflow-auto border-t border-dls-border px-4 pb-3">
+            {todos.map((todo, index) => {
+              const done = todo.status === "completed";
+              const cancelled = todo.status === "cancelled";
+              const active = todo.status === "in_progress";
+              return (
+                <div key={todo.id} className="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <div
+                      className={`flex size-4.5 items-center justify-center rounded-full border ${
+                        done
+                          ? "border-green-6 bg-green-2 text-green-11"
+                          : active
+                            ? "border-amber-6 bg-amber-2 text-amber-11"
+                            : cancelled
+                              ? "border-gray-6 bg-gray-2 text-gray-8"
+                              : "border-gray-6 bg-gray-1 text-gray-8"
+                      }`}
+                    >
+                      {done ? <Check size={10} /> : active ? <span className="size-1.5 rounded-full bg-amber-9" /> : null}
+                    </div>
+                  </div>
+                  <div className={`flex-1 text-sm leading-relaxed ${cancelled ? "text-gray-9 line-through" : "text-gray-12"}`}>
+                    <span className="mr-1.5 text-gray-9">{index + 1}.</span>
+                    {todo.content}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1006,6 +1076,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         ) : null}
       </div>
+
+      <TodoPanel todos={props.todos ?? []} />
+
+      {props.activePermission ? (
+        <PermissionApprovalPanel
+          permission={props.activePermission}
+          busy={props.permissionReplyBusy}
+          respondPermission={props.respondPermission}
+          safeStringify={props.safeStringify}
+        />
+      ) : null}
 
       <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
         <DevProfiler id="SessionComposer">

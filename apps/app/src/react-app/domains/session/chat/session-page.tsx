@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { Check, Globe, Loader2, Minimize2, Redo2, Undo2, Zap } from "lucide-react";
+import { Globe, Loader2, Redo2, Undo2, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -21,7 +21,6 @@ import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
-import { PermissionApprovalModal } from "./permission-approval-modal";
 import { QuestionModal } from "../modals/question-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
@@ -205,7 +204,6 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
-  const [todoExpanded, setTodoExpanded] = useState(true);
   const browserPanelRef = usePanelRef();
 
   // Sync browser panel state with Electron main process IPC events.
@@ -268,11 +266,6 @@ export function SessionPage(props: SessionPageProps) {
     props.startupPhase !== "ready";
   const showSessionLoadingState =
     Boolean(props.selectedSessionId) && props.sessionLoadingById(props.selectedSessionId) && !showWorkspaceSetupEmptyState;
-  const todos = useMemo(() => props.todos.filter((todo) => todo.content.trim()), [props.todos]);
-  const completedTodos = useMemo(
-    () => todos.filter((todo) => todo.status === "completed").length,
-    [todos],
-  );
   const sidebarInitialLoading = useMemo(() => getSidebarInitialLoading(props.sidebar), [props.sidebar]);
   // Derive the main-pane error from the same data the sidebar uses so the two
   // panes can never disagree. We check (in priority order):
@@ -361,11 +354,6 @@ export function SessionPage(props: SessionPageProps) {
       setDeleteBusy(false);
     }
   };
-
-  const todoLabel =
-    completedTodos > 0
-      ? t("session.todo_progress_label", { completed: completedTodos, total: todos.length })
-      : t("session.todo_label", { count: todos.length });
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text mac:bg-transparent">
@@ -534,6 +522,11 @@ export function SessionPage(props: SessionPageProps) {
                   sessionId={props.selectedSessionId!}
                   opencodeBaseUrl={reactSessionBaseUrl}
                   openworkToken={reactSessionToken}
+                  todos={props.todos}
+                  activePermission={props.activePermission}
+                  permissionReplyBusy={props.permissionReplyBusy}
+                  respondPermission={props.respondPermission}
+                  safeStringify={props.safeStringify}
                 />
               ) : null}
 
@@ -663,55 +656,6 @@ export function SessionPage(props: SessionPageProps) {
             </div>
           </div>
 
-          {todos.length > 0 ? (
-            <div className="mx-auto w-full max-w-[800px] px-4">
-              <div className="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
-                  onClick={() => setTodoExpanded((current) => !current)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-11 font-medium">{todoLabel}</span>
-                  </div>
-                  <Minimize2 size={12} className={`text-gray-8 transition-transform ${todoExpanded ? "" : "rotate-180"}`} />
-                </button>
-                {todoExpanded ? (
-                  <div className="max-h-60 space-y-2.5 overflow-auto border-t border-dls-border px-4 pb-3">
-                    {todos.map((todo, index) => {
-                      const done = todo.status === "completed";
-                      const cancelled = todo.status === "cancelled";
-                      const active = todo.status === "in_progress";
-                      return (
-                        <div key={todo.id} className="flex items-start gap-2.5 pt-2.5 first:pt-2.5">
-                          <div className="flex items-center gap-1.5 pt-0.5">
-                            <div
-                              className={`flex size-4.5 items-center justify-center rounded-full border ${
-                                done
-                                  ? "border-green-6 bg-green-2 text-green-11"
-                                  : active
-                                    ? "border-amber-6 bg-amber-2 text-amber-11"
-                                    : cancelled
-                                      ? "border-gray-6 bg-gray-2 text-gray-8"
-                                      : "border-gray-6 bg-gray-1 text-gray-8"
-                              }`}
-                            >
-                              {done ? <Check size={10} /> : active ? <span className="size-1.5 rounded-full bg-amber-9" /> : null}
-                            </div>
-                          </div>
-                          <div className={`flex-1 text-sm leading-relaxed ${cancelled ? "text-gray-9 line-through" : "text-gray-12"}`}>
-                            <span className="mr-1.5 text-gray-9">{index + 1}.</span>
-                            {todo.content}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
           {shellConfig.statusBar ? (
             <StatusBar
               clientConnected={props.clientConnected}
@@ -787,15 +731,6 @@ export function SessionPage(props: SessionPageProps) {
       ) : null}
 
       {props.shareWorkspaceModal ? <ShareWorkspaceModal {...props.shareWorkspaceModal} /> : null}
-
-      {props.activePermission ? (
-        <PermissionApprovalModal
-          permission={props.activePermission}
-          busy={props.permissionReplyBusy}
-          respondPermission={props.respondPermission}
-          safeStringify={props.safeStringify}
-        />
-      ) : null}
 
       <QuestionModal
         open={Boolean(props.activeQuestion)}
