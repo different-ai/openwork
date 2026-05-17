@@ -65,14 +65,18 @@ function describeError(error: unknown) {
   return serialized && serialized !== "{}" ? serialized : String(error);
 }
 
+function normalizeReleaseNotes(value: string): string {
+  return value.replace(/\\r\\n|\\n/g, "\n");
+}
+
 function releaseNotesToText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return normalizeReleaseNotes(value);
   if (Array.isArray(value)) {
     return value
       .flatMap((entry) => {
-        if (typeof entry === "string") return entry;
+        if (typeof entry === "string") return normalizeReleaseNotes(entry);
         if (entry && typeof entry === "object" && "note" in entry) {
-          const note = String((entry as { note?: unknown }).note ?? "");
+          const note = normalizeReleaseNotes(String((entry as { note?: unknown }).note ?? ""));
           return note ? [note] : [];
         }
         return [];
