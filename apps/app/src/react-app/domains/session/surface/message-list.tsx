@@ -376,29 +376,9 @@ function hasStructuredValue(value: unknown) {
   return true;
 }
 
-function formatElapsed(ms: number) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes <= 0) return `${seconds}s`;
-  return `${minutes}m ${seconds}s`;
-}
-
-function ActivityHeader(props: { active: boolean }) {
-  const startedAtRef = useRef(Date.now());
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!props.active) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [props.active]);
-
+function ActivityHeader() {
   return (
     <div className="mb-7 font-sans">
-      <div className="mb-4 text-[17px] leading-none text-[#7b7f83] antialiased">
-        Working for {formatElapsed(now - startedAtRef.current)}
-      </div>
       <div className="h-px w-full bg-[#dddddd]" />
     </div>
   );
@@ -764,7 +744,7 @@ function StepsContainer(props: {
 
   return (
     <div className={props.isInline ? (props.isUser ? "mt-3" : "mt-7") : ""}>
-      {!props.isUser && !props.isNestedVariant && props.isActive ? <ActivityHeader active={props.isActive} /> : null}
+      {!props.isUser && !props.isNestedVariant && props.isActive ? <ActivityHeader /> : null}
       <div
         data-scrollable={!props.isNestedVariant ? "true" : undefined}
         className={

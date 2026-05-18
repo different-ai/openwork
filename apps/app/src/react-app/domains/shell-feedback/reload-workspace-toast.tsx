@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { AlertTriangle, RefreshCcw, X } from "lucide-react";
+import { RefreshCcw, X } from "lucide-react";
 
 import type { ReloadTrigger } from "../../../app/types";
 
@@ -19,12 +19,6 @@ export type ReloadWorkspaceToastProps = {
   onReload: () => void;
   onDismiss: () => void;
 };
-
-const buttonBaseClass =
-  "inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
-const primaryButtonClass = `${buttonBaseClass} bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]`;
-const dangerButtonClass = `${buttonBaseClass} bg-red-9 text-white hover:bg-red-10`;
-const ghostButtonClass = `${buttonBaseClass} border border-transparent bg-transparent text-dls-text hover:bg-[var(--dls-hover)]`;
 
 function describeTrigger(
   description: string,
@@ -78,100 +72,45 @@ function describeTrigger(
 export function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
   if (!props.open) return null;
 
-  const bodyHasContent =
-    Boolean(props.description) ||
-    Boolean(props.error) ||
-    Boolean(props.warning) ||
-    Boolean(props.blockedReason);
+  const message = props.hasActiveRuns
+    ? "Reloading will stop active tasks."
+    : props.error
+      ? props.error
+      : describeTrigger(props.description, props.trigger);
 
   return (
-    <div className="w-full max-w-[24rem] overflow-hidden rounded-[1.4rem] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] backdrop-blur-xl animate-in fade-in slide-in-from-top-4 duration-300">
-      <div className="flex items-start gap-3 p-4">
-        <div
-          className={`flex size-10 shrink-0 items-center justify-center rounded-2xl border ${
-            props.hasActiveRuns
-              ? "border-amber-6/40 bg-amber-4/80 text-amber-11"
-              : "border-sky-6/40 bg-sky-4/80 text-sky-11"
-          }`.trim()}
-        >
+    <div className="fixed bottom-6 left-1/2 z-[9999] -translate-x-1/2 animate-in slide-in-from-bottom-4 fade-in duration-300">
+      <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-4 rounded-2xl border border-dls-border bg-dls-surface px-5 py-3.5 shadow-lg">
+        <div className={props.hasActiveRuns ? "text-amber-11" : "text-dls-text"}>
           <RefreshCcw
-            size={18}
+            size={16}
             className={props.busy ? "animate-spin" : undefined}
           />
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-12 truncate">
-                  {props.title}
-                </span>
-                {props.hasActiveRuns ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-4 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-11">
-                    Active tasks
-                  </span>
-                ) : null}
-              </div>
-
-              {bodyHasContent ? (
-                <div className="mt-1 space-y-1 text-sm leading-relaxed text-gray-10">
-                  <div>
-                    {props.hasActiveRuns ? (
-                      <span className="font-medium text-amber-11">
-                        Reloading will stop active tasks.
-                      </span>
-                    ) : props.error ? (
-                      <span className="font-medium text-red-11">
-                        {props.error}
-                      </span>
-                    ) : (
-                      describeTrigger(props.description, props.trigger)
-                    )}
-                  </div>
-                  {props.warning ? (
-                    <div className="flex items-start gap-2 rounded-2xl border border-amber-6/40 bg-amber-3/70 px-3 py-2 text-xs text-amber-11">
-                      <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                      <span>{props.warning}</span>
-                    </div>
-                  ) : null}
-                  {props.blockedReason ? (
-                    <div className="text-xs text-gray-9">
-                      Blocked: {props.blockedReason}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => props.onDismiss()}
-              className="rounded-full p-1 text-gray-9 transition hover:bg-gray-3 hover:text-gray-12"
-              aria-label={props.dismissLabel}
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className={props.hasActiveRuns ? dangerButtonClass : primaryButtonClass}
-              onClick={() => props.onReload()}
-              disabled={props.busy || !props.canReload}
-            >
-              {props.reloadLabel}
-            </button>
-            <button
-              type="button"
-              className={ghostButtonClass}
-              onClick={() => props.onDismiss()}
-            >
-              {props.dismissLabel}
-            </button>
-          </div>
+        <div className="min-w-0 text-[13px] text-dls-text">
+          <span className="font-medium">{props.title}</span>{" "}
+          <span className={props.error ? "text-red-11" : props.hasActiveRuns ? "text-amber-11" : undefined}>
+            {message}
+          </span>{" "}
+          <button
+            type="button"
+            className="font-medium underline underline-offset-2 transition-colors hover:text-dls-text/80 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => props.onReload()}
+            disabled={props.busy || !props.canReload}
+          >
+            {props.reloadLabel}
+          </button>
         </div>
+
+        <button
+          type="button"
+          className="flex size-6 shrink-0 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+          onClick={() => props.onDismiss()}
+          aria-label={props.dismissLabel}
+        >
+          <X size={14} />
+        </button>
       </div>
     </div>
   );

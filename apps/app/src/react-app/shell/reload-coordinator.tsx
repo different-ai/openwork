@@ -128,29 +128,27 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   return (
     <ReloadCoordinatorContext.Provider value={value}>
       {children}
+      <ReloadWorkspaceToast
+        open={systemState.reload.reloadPending && activeSessions.length === 0 && !orgOnboardingVisible}
+        title={systemState.reloadCopy.title}
+        description={systemState.reloadCopy.body}
+        trigger={systemState.reload.reloadTrigger}
+        error={systemState.reload.reloadError}
+        reloadLabel={
+          activeSessions.length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")
+        }
+        dismissLabel={t("app.reload_later")}
+        busy={systemState.reload.reloadBusy}
+        canReload={systemState.canReloadWorkspaceEngine}
+        hasActiveRuns={activeSessions.length > 0}
+        onReload={() => {
+          void (activeSessions.length > 0
+            ? forceStopActiveSessionsAndReload()
+            : systemState.reloadWorkspaceEngine());
+        }}
+        onDismiss={systemState.clearReloadRequired}
+      />
       <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
-        <div className="pointer-events-auto">
-          <ReloadWorkspaceToast
-            open={systemState.reload.reloadPending && activeSessions.length === 0 && !orgOnboardingVisible}
-            title={systemState.reloadCopy.title}
-            description={systemState.reloadCopy.body}
-            trigger={systemState.reload.reloadTrigger}
-            error={systemState.reload.reloadError}
-            reloadLabel={
-              activeSessions.length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")
-            }
-            dismissLabel={t("app.reload_later")}
-            busy={systemState.reload.reloadBusy}
-            canReload={systemState.canReloadWorkspaceEngine}
-            hasActiveRuns={activeSessions.length > 0}
-            onReload={() => {
-              void (activeSessions.length > 0
-                ? forceStopActiveSessionsAndReload()
-                : systemState.reloadWorkspaceEngine());
-            }}
-            onDismiss={systemState.clearReloadRequired}
-          />
-        </div>
         <StatusToastsViewport />
       </div>
     </ReloadCoordinatorContext.Provider>
