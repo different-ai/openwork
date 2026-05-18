@@ -99,3 +99,50 @@ export function shouldRedirectMissingSessionAfterScopedLoad(input: {
 
   return scopedRootsMatch(input.loadedScopeRoot, workspaceRoot);
 }
+
+export type SessionLike = { directory?: string | null };
+
+export type SessionScopeFilterMismatch = {
+  workspaceRoot: string;
+  sampleSessionDirectory: string;
+  totalServerSessions: number;
+};
+
+/**
+ * Filter a server-returned session list down to those whose `directory` matches
+ * the active workspace root.
+ *
+ * **Fails open.** If the strict path comparison would drop every session even
+ * though the server returned a non-empty list, the unfiltered list is returned
+ * and `onMismatch` is invoked. The openwork server already routes the request
+ * to the workspace's own OpenCode instance, so an empty filtered result almost
+ * always means the two paths differ in form (resolved vs unresolved symlinks,
+ * NFC vs NFD unicode, case, trailing separators) rather than the sessions
+ * legitimately belonging to a different workspace. Hiding the user's sessions
+ * in that situation is worse than rendering them.
+ *
+ * See: GitHub issue #1140.
+ */
+export function filterSessionsToWorkspace<S extends SessionLike>(
+  sessions: ReadonlyArray<S>,
+  workspaceRoot: string | null | undefined,
+  options?: { onMismatch?: (info: SessionScopeFilterMismatch) => void },
+): S[] {
+  const root = normalizeDirectoryPath(workspaceRoot ?? "");
+  if (!root) return sessions.slice();
+
+  const filtered = sessions.filter(
+    (session) => normalizeDirectoryPath(session?.directory ?? "") === root,
+  );
+
+  if (filtered.length === 0 && sessions.length > 0) {
+    options?.onMismatch?.({
+      workspaceRoot: root,
+      sampleSessionDirectory: normalizeDirectoryPath(sessions[0]?.directory ?? ""),
+      totalServerSessions: sessions.length,
+    });
+    return sessions.slice();
+  }
+
+  return filtered;
+}

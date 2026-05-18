@@ -65,6 +65,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../app/types";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
+import { filterSessionsToWorkspace } from "../../app/lib/session-scope";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isDesktopRuntime,
@@ -690,12 +691,14 @@ export function SessionRoute() {
         backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
         try {
           const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-          const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-          const items = workspaceRoot
-            ? (response.items ?? []).filter((session: any) =>
-                normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-              )
-            : (response.items ?? []);
+          const items = filterSessionsToWorkspace(response.items ?? [], workspace.path, {
+            onMismatch: (info) => {
+              console.warn(
+                "[openwork] sidebar session list did not match workspace path; falling back to server-scoped list",
+                { workspaceId: workspace.id, ...info },
+              );
+            },
+          });
           setSessionsByWorkspaceId((current) => {
             const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
             const next = { ...current, [workspace.id]: nextItems };

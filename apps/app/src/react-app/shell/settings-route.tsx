@@ -86,6 +86,7 @@ import {
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
+import { filterSessionsToWorkspace } from "../../app/lib/session-scope";
 import {
   isDesktopRuntime,
   isElectronRuntime,
@@ -955,12 +956,14 @@ function SettingsRouteContent() {
           }
           try {
             const response = await client.listSessions(workspace.id, { limit: 200 });
-            const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-            const items = workspaceRoot
-              ? (response.items ?? []).filter((session: any) =>
-                  normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-                )
-              : (response.items ?? []);
+            const items = filterSessionsToWorkspace(response.items ?? [], workspace.path, {
+              onMismatch: (info) => {
+                console.warn(
+                  "[openwork] settings session list did not match workspace path; falling back to server-scoped list",
+                  { workspaceId: workspace.id, ...info },
+                );
+              },
+            });
             return {
               workspaceId: workspace.id,
               sessions: items,
