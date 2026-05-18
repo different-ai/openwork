@@ -13,22 +13,17 @@ type ReactSessionRuntimeProps = {
 
 export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
   useEffect(() => {
-    return ensureWorkspaceSessionSync({
+    const input = {
       workspaceId: props.workspaceId,
       baseUrl: props.opencodeBaseUrl,
       openworkToken: props.openworkToken,
-    });
-  }, [props.workspaceId, props.opencodeBaseUrl, props.openworkToken]);
-
-  useEffect(() => {
-    return trackWorkspaceSessionsSync(
-      {
-        workspaceId: props.workspaceId,
-        baseUrl: props.opencodeBaseUrl,
-        openworkToken: props.openworkToken,
-      },
-      [props.sessionId, ...(props.activeSessionIds ?? [])],
-    );
+    };
+    const releaseWorkspace = ensureWorkspaceSessionSync(input);
+    const releaseSessions = trackWorkspaceSessionsSync(input, [props.sessionId, ...(props.activeSessionIds ?? [])]);
+    return () => {
+      releaseSessions();
+      releaseWorkspace();
+    };
   }, [props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.openworkToken]);
 
   return null;

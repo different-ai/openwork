@@ -27,6 +27,7 @@ type SyncEntry = {
   input: SyncOptions;
   refs: number;
   dispose: () => void;
+  disposeTimer: ReturnType<typeof setTimeout> | null;
   trackedSessionRefs: Map<string, number>;
   retainedSessionTimers: Map<string, ReturnType<typeof setTimeout>>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
@@ -99,6 +100,18 @@ function retainSession(input: SyncOptions, entry: SyncEntry, sessionId: string, 
   entry.retainedSessionTimers.set(sessionId, setTimeout(() => {
     clearTrackedSession(input, entry, sessionId);
   }, ttlMs));
+}
+
+function disposeWorkspaceSync(key: string, entry: SyncEntry) {
+  if (entry.refs > 0) return;
+  if (entry.disposeTimer) {
+    clearTimeout(entry.disposeTimer);
+    entry.disposeTimer = null;
+  }
+  for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
+  entry.retainedSessionTimers.clear();
+  entry.dispose();
+  if (syncs.get(key) === entry) syncs.delete(key);
 }
 
 function releaseRetainedSessionSoon(input: SyncOptions, entry: SyncEntry, sessionId: string) {
@@ -672,6 +685,10 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
+    if (existing.disposeTimer) {
+      clearTimeout(existing.disposeTimer);
+      existing.disposeTimer = null;
+    }
     existing.refs += 1;
     return () => releaseWorkspaceSessionSync(input);
   }
@@ -680,6 +697,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     input,
     refs: 1,
     dispose: () => {},
+    disposeTimer: null,
     trackedSessionRefs: new Map(),
     retainedSessionTimers: new Map(),
     pendingDeltas: new Map(),
@@ -699,14 +717,14 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   if (!existing) return;
   existing.refs -= 1;
   if (existing.refs > 0) return;
-  // Immediate disposal is important here: a single OpenCode runtime is shared
-  // across local workspaces, and keeping old workspace subscriptions alive for
-  // 10s means rapid workspace switches accumulate multiple parallel event
-  // streams. Under larger transcripts that duplicates cache writes and can make
-  // the UI feel frozen after a handful of switches.
-  for (const timer of existing.retainedSessionTimers.values()) clearTimeout(timer);
-  existing.dispose();
-  syncs.delete(key);
+  if (existing.retainedSessionTimers.size === 0) {
+    disposeWorkspaceSync(key, existing);
+    return;
+  }
+  if (existing.disposeTimer) return;
+  existing.disposeTimer = setTimeout(() => {
+    disposeWorkspaceSync(key, existing);
+  }, retainedSessionTtlMs);
 }
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
@@ -773,6 +791,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     input,
     refs: 1,
     dispose: () => {},
+    disposeTimer: null,
     trackedSessionRefs: new Map(),
     retainedSessionTimers: new Map(),
     pendingDeltas: new Map(),
@@ -786,6 +805,18 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     }
     syncs.delete(key);
   };
+}
+
+export function __hasWorkspaceSessionSyncForTest(input: SyncOptions) {
+  return syncs.has(syncKey(input));
+}
+
+export function __disposeWorkspaceSessionSyncForTest(input: SyncOptions) {
+  const key = syncKey(input);
+  const entry = syncs.get(key);
+  if (!entry) return;
+  entry.refs = 0;
+  disposeWorkspaceSync(key, entry);
 }
 
 export function __applySessionSyncEventForTest(input: SyncOptions, event: OpencodeEvent) {

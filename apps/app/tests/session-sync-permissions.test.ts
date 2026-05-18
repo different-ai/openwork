@@ -7,7 +7,10 @@ import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
+  __disposeWorkspaceSessionSyncForTest,
+  __hasWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
+  ensureWorkspaceSessionSync,
   permissionKey,
   seedPermissionState,
   seedSessionState,
@@ -219,6 +222,52 @@ describe("session transcript sync", () => {
       releaseSessionB();
     } finally {
       cleanup();
+    }
+  });
+
+  test("keeps workspace stream alive briefly when the session route unmounts", async () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const releaseWorkspace = ensureWorkspaceSessionSync(syncInput);
+    const releaseSessionA = trackWorkspaceSessionSync(syncInput, "session-a");
+
+    releaseSessionA();
+    releaseWorkspace();
+
+    try {
+      expect(__hasWorkspaceSessionSyncForTest(syncInput)).toBe(true);
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "msg-route-leave", role: "assistant", sessionID: "session-a" } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-route-leave",
+            type: "text",
+            text: "",
+            sessionID: "session-a",
+            messageID: "msg-route-leave",
+          },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-a",
+          messageID: "msg-route-leave",
+          partID: "part-route-leave",
+          delta: "stream survived settings route",
+        },
+      } as any);
+
+      await Promise.resolve();
+
+      const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.[0]?.parts[0]).toMatchObject({ text: "stream survived settings route" });
+    } finally {
+      __disposeWorkspaceSessionSyncForTest(syncInput);
     }
   });
 });
