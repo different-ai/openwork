@@ -42,7 +42,7 @@ type SyncEntry = {
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
-const retainedSessionTtlMs = 120_000;
+const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
 
 export const transcriptKey = (workspaceId: string, sessionId: string) =>
@@ -92,6 +92,9 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   );
   const queryClient = getReactQueryClient();
   queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+  if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
+    disposeWorkspaceSync(syncKey(input), entry);
+  }
 }
 
 function retainSession(input: SyncOptions, entry: SyncEntry, sessionId: string, ttlMs = retainedSessionTtlMs) {
@@ -719,12 +722,7 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   if (existing.refs > 0) return;
   if (existing.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(key, existing);
-    return;
   }
-  if (existing.disposeTimer) return;
-  existing.disposeTimer = setTimeout(() => {
-    disposeWorkspaceSync(key, existing);
-  }, retainedSessionTtlMs);
 }
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {

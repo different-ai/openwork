@@ -225,7 +225,7 @@ describe("session transcript sync", () => {
     }
   });
 
-  test("keeps workspace stream alive briefly when the session route unmounts", async () => {
+  test("keeps workspace stream alive while retained sessions remain after route unmount", async () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
     const releaseWorkspace = ensureWorkspaceSessionSync(syncInput);
     const releaseSessionA = trackWorkspaceSessionSync(syncInput, "session-a");
