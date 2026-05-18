@@ -24,9 +24,11 @@ export type PendingDelta = {
 };
 
 type SyncEntry = {
+  input: SyncOptions;
   refs: number;
   dispose: () => void;
   trackedSessionRefs: Map<string, number>;
+  retainedSessionTimers: Map<string, ReturnType<typeof setTimeout>>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
   // Coalesce rapid-fire delta events from the SSE stream into one cache
   // commit per animation frame. Without this, a long response produces a
@@ -39,6 +41,8 @@ type SyncEntry = {
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
+const retainedSessionTtlMs = 120_000;
+const idleRetainedSessionTtlMs = 10_000;
 
 export const transcriptKey = (workspaceId: string, sessionId: string) =>
   ["react-session-transcript", workspaceId, sessionId] as const;
@@ -70,7 +74,36 @@ function shouldRetrySyncSubscribe(error: unknown) {
 }
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
-  return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
+  return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
+}
+
+function isLiveStatus(status: SessionStatus | null | undefined) {
+  return status?.type === "busy" || status?.type === "retry";
+}
+
+function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  entry.trackedSessionRefs.delete(sessionId);
+  const retainedTimer = entry.retainedSessionTimers.get(sessionId);
+  if (retainedTimer) clearTimeout(retainedTimer);
+  entry.retainedSessionTimers.delete(sessionId);
+  entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+    (item) => item.sessionId !== sessionId,
+  );
+  const queryClient = getReactQueryClient();
+  queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+}
+
+function retainSession(input: SyncOptions, entry: SyncEntry, sessionId: string, ttlMs = retainedSessionTtlMs) {
+  const existing = entry.retainedSessionTimers.get(sessionId);
+  if (existing) clearTimeout(existing);
+  entry.retainedSessionTimers.set(sessionId, setTimeout(() => {
+    clearTrackedSession(input, entry, sessionId);
+  }, ttlMs));
+}
+
+function releaseRetainedSessionSoon(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  if (!entry.retainedSessionTimers.has(sessionId)) return;
+  retainSession(input, entry, sessionId, idleRetainedSessionTtlMs);
 }
 
 function withReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
@@ -325,12 +358,14 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
+  const input = entry.input;
 
   if (event.type === "session.status") {
     const props = (event.properties ?? {}) as { sessionID?: string; status?: SessionStatus };
     if (!props.sessionID || !props.status) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+    if (input && !isLiveStatus(props.status)) releaseRetainedSessionSoon(input, entry, props.sessionID);
     return;
   }
 
@@ -465,6 +500,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    if (input) releaseRetainedSessionSoon(input, entry, props.sessionID);
   }
 }
 
@@ -641,9 +677,11 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   }
 
   syncs.set(key, {
+    input,
     refs: 1,
     dispose: () => {},
     trackedSessionRefs: new Map(),
+    retainedSessionTimers: new Map(),
     pendingDeltas: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
@@ -666,6 +704,7 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   // 10s means rapid workspace switches accumulate multiple parallel event
   // streams. Under larger transcripts that duplicates cache writes and can make
   // the UI feel frozen after a handful of switches.
+  for (const timer of existing.retainedSessionTimers.values()) clearTimeout(timer);
   existing.dispose();
   syncs.delete(key);
 }
@@ -693,6 +732,12 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
   const entry = syncs.get(syncKey(input));
   if (!entry) return () => {};
 
+  const retainedTimer = entry.retainedSessionTimers.get(normalizedSessionId);
+  if (retainedTimer) {
+    clearTimeout(retainedTimer);
+    entry.retainedSessionTimers.delete(normalizedSessionId);
+  }
+
   entry.trackedSessionRefs.set(
     normalizedSessionId,
     (entry.trackedSessionRefs.get(normalizedSessionId) ?? 0) + 1,
@@ -702,13 +747,49 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
     if (current <= 1) {
       entry.trackedSessionRefs.delete(normalizedSessionId);
-      entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
-        (item) => item.sessionId !== normalizedSessionId,
-      );
-      const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, normalizedSessionId), exact: true });
+      retainSession(input, entry, normalizedSessionId);
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);
   };
+}
+
+export function trackWorkspaceSessionsSync(input: SyncOptions, sessionIds: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const releases = sessionIds.flatMap((sessionId) => {
+    const id = sessionId?.trim() ?? "";
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    return [trackWorkspaceSessionSync(input, id)];
+  });
+  return () => {
+    for (const release of releases) release();
+  };
+}
+
+export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
+  const key = syncKey(input);
+  syncs.set(key, {
+    input,
+    refs: 1,
+    dispose: () => {},
+    trackedSessionRefs: new Map(),
+    retainedSessionTimers: new Map(),
+    pendingDeltas: new Map(),
+    deltaFlushBuffer: [],
+    deltaFlushScheduled: false,
+  });
+  return () => {
+    const entry = syncs.get(key);
+    if (entry) {
+      for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
+    }
+    syncs.delete(key);
+  };
+}
+
+export function __applySessionSyncEventForTest(input: SyncOptions, event: OpencodeEvent) {
+  const entry = syncs.get(syncKey(input));
+  if (!entry) return;
+  applyEvent(entry, input.workspaceId, event);
 }

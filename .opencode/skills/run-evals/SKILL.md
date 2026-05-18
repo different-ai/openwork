@@ -25,6 +25,12 @@ Run the OpenWork UI evaluation flows against a real Electron app. Prefer a fresh
 
 Create a new Daytona sandbox for each eval run. Avoid reusing old sandboxes unless the user explicitly asks to debug existing state.
 
+Before creating the sandbox, explicitly point Daytona at the Different AI org:
+
+```bash
+daytona organization use "Different AI"
+```
+
 Pick a unique name:
 
 ```bash

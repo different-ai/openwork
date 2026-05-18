@@ -5,10 +5,13 @@ import type { PermissionRequest } from "@opencode-ai/sdk/v2/client";
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
+  __applySessionSyncEventForTest,
+  __createWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
   permissionKey,
   seedPermissionState,
   seedSessionState,
+  trackWorkspaceSessionSync,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 
@@ -171,5 +174,51 @@ describe("session transcript sync", () => {
 
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
     expect(transcript?.[1]?.parts[0]).toMatchObject({ text: "finished answer" });
+  });
+
+  test("continues accepting stream deltas for a recently unselected session", async () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+
+    try {
+      const releaseSessionA = trackWorkspaceSessionSync(syncInput, "session-a");
+      releaseSessionA();
+      const releaseSessionB = trackWorkspaceSessionSync(syncInput, "session-b");
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "msg-assistant", role: "assistant", sessionID: "session-a" } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-assistant",
+            type: "text",
+            text: "",
+            sessionID: "session-a",
+            messageID: "msg-assistant",
+          },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-a",
+          messageID: "msg-assistant",
+          partID: "part-assistant",
+          delta: "still streaming after switch",
+        },
+      } as any);
+
+      await Promise.resolve();
+
+      const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.[0]?.parts[0]).toMatchObject({ text: "still streaming after switch" });
+
+      releaseSessionB();
+    } finally {
+      cleanup();
+    }
   });
 });

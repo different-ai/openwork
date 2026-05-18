@@ -625,6 +625,15 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
+  const activeSelectedWorkspaceSessionIds = useMemo(
+    () =>
+      (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session: any) => {
+        if (!isActiveSessionStatus(getSessionStatus(session))) return [];
+        const id = String(session?.id ?? "").trim();
+        return id ? [id] : [];
+      }),
+    [selectedWorkspaceId, sessionsByWorkspaceId],
+  );
 
   const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
   const rememberPendingCreatedSession = useCallback((workspaceId: string, sessionId: string) => {
@@ -2469,6 +2478,7 @@ export function SessionRoute() {
         // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
+        activeSessionIds={activeSelectedWorkspaceSessionIds}
         opencodeBaseUrl={opencodeBaseUrl}
         openworkToken={selectedWorkspaceServerToken}
       />

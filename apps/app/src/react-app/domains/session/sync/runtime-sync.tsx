@@ -1,11 +1,12 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
 
-import { ensureWorkspaceSessionSync, trackWorkspaceSessionSync } from "./session-sync";
+import { ensureWorkspaceSessionSync, trackWorkspaceSessionsSync } from "./session-sync";
 
 type ReactSessionRuntimeProps = {
   workspaceId: string;
   sessionId: string | null;
+  activeSessionIds?: string[];
   opencodeBaseUrl: string;
   openworkToken: string;
 };
@@ -20,15 +21,15 @@ export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
   }, [props.workspaceId, props.opencodeBaseUrl, props.openworkToken]);
 
   useEffect(() => {
-    return trackWorkspaceSessionSync(
+    return trackWorkspaceSessionsSync(
       {
         workspaceId: props.workspaceId,
         baseUrl: props.opencodeBaseUrl,
         openworkToken: props.openworkToken,
       },
-      props.sessionId,
+      [props.sessionId, ...(props.activeSessionIds ?? [])],
     );
-  }, [props.workspaceId, props.sessionId, props.opencodeBaseUrl, props.openworkToken]);
+  }, [props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.openworkToken]);
 
   return null;
 }
