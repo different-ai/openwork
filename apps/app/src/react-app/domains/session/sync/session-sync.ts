@@ -476,8 +476,14 @@ function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
     if (entry.deltaFlushBuffer.length === 0) return;
     flushDeltas(entry, workspaceId);
   };
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.requestAnimationFrame === "function" &&
+    (typeof document === "undefined" || document.visibilityState === "visible")
+  ) {
     window.requestAnimationFrame(run);
+  } else if (typeof window !== "undefined") {
+    window.setTimeout(run, 50);
   } else {
     queueMicrotask(run);
   }
@@ -563,10 +569,15 @@ function startSync(input: SyncOptions) {
   const entry = syncs.get(syncKey(input));
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let activeConnectionController: AbortController | null = null;
+  let lastEventAt = Date.now();
   let retryDelayMs = 1_000;
+  const staleStreamMs = 30_000;
 
   const scheduleRetry = () => {
     if (disposed || controller.signal.aborted || retryTimer) return;
+    activeConnectionController = null;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       void connect();
@@ -575,27 +586,48 @@ function startSync(input: SyncOptions) {
   };
 
   const connect = async () => {
+    const connectionController = new AbortController();
+    activeConnectionController = connectionController;
     try {
-      const sub = await client.event.subscribe(undefined, { signal: controller.signal });
+      const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
       retryDelayMs = 1_000;
+      lastEventAt = Date.now();
       for await (const raw of sub.stream) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || connectionController.signal.aborted) return;
+        lastEventAt = Date.now();
         const event = normalizeEvent(raw);
         if (!event) continue;
         if (!entry) continue;
         applyEvent(entry, input.workspaceId, event);
       }
-      if (!controller.signal.aborted) scheduleRetry();
+      if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
-      if (!controller.signal.aborted && shouldRetrySyncSubscribe(error)) scheduleRetry();
+      if (
+        !controller.signal.aborted &&
+        (connectionController.signal.aborted || shouldRetrySyncSubscribe(error))
+      ) {
+        scheduleRetry();
+      }
+    } finally {
+      if (activeConnectionController === connectionController) activeConnectionController = null;
     }
   };
 
   void connect();
+  watchdogTimer = setInterval(() => {
+    if (disposed || controller.signal.aborted || retryTimer) return;
+    const active = activeConnectionController;
+    if (!active || active.signal.aborted) return;
+    if (Date.now() - lastEventAt < staleStreamMs) return;
+    active.abort();
+    scheduleRetry();
+  }, 10_000);
 
   return () => {
     disposed = true;
     if (retryTimer) clearTimeout(retryTimer);
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    activeConnectionController?.abort();
     controller.abort();
   };
 }

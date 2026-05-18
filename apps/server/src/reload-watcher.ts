@@ -262,7 +262,17 @@ function createDirectoryTreeWatcher(input: {
     const base = basename(absPath);
     if (!base) return true;
     if (base === ".DS_Store" || base === "Thumbs.db") return true;
+    if (base.startsWith(".") || base.endsWith("~") || base.endsWith(".tmp") || base.endsWith(".swp")) return true;
     return false;
+  };
+
+  const shouldRecordEntry = (absPath: string) => {
+    if (shouldIgnoreEntry(absPath)) return false;
+    const base = basename(absPath);
+    if (triggerType === "skill") return /^SKILL\.md$/i.test(base);
+    if (triggerType === "command") return /\.md$/i.test(base);
+    if (triggerType === "agent") return /\.(md|json|jsonc)$/i.test(base);
+    return true;
   };
 
   const shouldSkipDir = (name: string) => {
@@ -283,7 +293,7 @@ function createDirectoryTreeWatcher(input: {
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           const absPath = name ? join(dir, name) : dir;
-          if (!shouldIgnoreEntry(absPath)) {
+          if (shouldRecordEntry(absPath)) {
             record(absPath);
           }
           scheduleRescan();
