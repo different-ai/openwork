@@ -575,6 +575,148 @@ Known regressions this catches:
 
 ---
 
+## Flow 21 — Streaming survives session and route interruptions
+
+**Why**: Long-running assistant streams must continue when users click away.
+The session runtime filters OpenCode events by tracked session id, and route
+changes can unmount the session surface. This flow catches regressions where
+streaming stops, aborts, or only resumes after a full reload.
+
+Run both subflows against a model/provider that can complete long text output.
+If the model returns an error (for example missing API key), the eval is blocked
+and should be rerun with an authenticated provider.
+
+### Subflow A — Switch to a different session while streaming
+
+Steps:
+1. Create Session A with **New task**.
+2. Send this prompt:
+   ```text
+   Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SESSION_SWITCH_500_DONE. Do not use tools.
+   ```
+3. As soon as **Run task** is clicked, create or open Session B within 1 second.
+4. Wait 2–5 seconds on Session B.
+5. Return to Session A.
+6. Poll the transcript until status is ready/idle or 90 seconds elapse.
+
+Pass criteria:
+- Session A does not show `MessageAbortedError` or an aborted assistant turn.
+- Session A eventually contains `SESSION_SWITCH_500_DONE` in assistant text.
+- The highest numbered line in Session A is `500.`.
+- Returning to Session A does not require a full app reload to show the final
+  text.
+
+Known regressions this catches:
+- Releasing `trackWorkspaceSessionSync()` immediately when a session is no
+  longer selected, causing off-screen deltas to be ignored.
+- Dropping the workspace event subscription during fast session switches.
+
+### Subflow B — Navigate to Settings while streaming
+
+Steps:
+1. Create Session C with **New task**.
+2. Send this prompt:
+   ```text
+   Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SETTINGS_ROUTE_500_DONE. Do not use tools.
+   ```
+3. Within 1 second of clicking **Run task**, click the footer **Settings** gear.
+4. Wait 2–5 seconds on Settings.
+5. Click **Back to app**.
+6. Poll the transcript until status is ready/idle or 90 seconds elapse.
+
+Pass criteria:
+- Session C does not show `MessageAbortedError` or an aborted assistant turn.
+- Session C eventually contains `SETTINGS_ROUTE_500_DONE` in assistant text.
+- The highest numbered line in Session C is `500.`.
+- Returning from Settings must not reload the OpenCode engine for the same
+  already-active workspace.
+
+Known regressions this catches:
+- Disposing the workspace SSE subscription when `SessionRoute` unmounts.
+- Re-activating the already-active workspace when returning from Settings,
+  which reloads the OpenCode engine and aborts the run.
+
+### Browser tool recipe
+
+Use `browser_evaluate` against the Electron CDP target. The snippets below use
+the OpenWork inspector and React Query cache so the eval can assert transcript
+state directly instead of relying on a visual snapshot cadence.
+
+Create a new session:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'New task');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no new task' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Fill and run a prompt:
+```js
+(function() {
+  var editor = document.querySelector('[contenteditable=true]');
+  var text = 'Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SETTINGS_ROUTE_500_DONE. Do not use tools.';
+  if (!editor) return JSON.stringify({ ok: false, error: 'no editor' });
+  editor.focus();
+  var p = editor.querySelector('p') || editor;
+  p.textContent = text;
+  p.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Run task' && !b.disabled);
+  if (!btn) return JSON.stringify({ ok: false, error: 'run disabled', editorText: editor.textContent });
+  btn.click();
+  return JSON.stringify({ ok: true, sessionId: window.__openwork.snapshot().route.selectedSessionId });
+})()
+```
+
+Open Settings quickly:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Settings');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no settings button' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Return from Settings:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Back to app');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no back button' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Assert transcript completion for a marker:
+```js
+(async function() {
+  const { getReactQueryClient } = await import('/src/react-app/infra/query-client.ts');
+  const { transcriptKey, statusKey } = await import('/src/react-app/domains/session/sync/session-sync.ts');
+  const route = window.__openwork.snapshot().route;
+  const messages = getReactQueryClient().getQueryData(transcriptKey(route.selectedWorkspaceId, route.selectedSessionId)) || [];
+  const status = getReactQueryClient().getQueryData(statusKey(route.selectedWorkspaceId, route.selectedSessionId));
+  const assistant = [...messages].reverse().find((message) => message.role === 'assistant');
+  const text = (assistant?.parts || []).map((part) => part.text || '').join('\n');
+  const numbers = [...text.matchAll(/(?:^|\n)(\d+)\./g)].map((match) => Number(match[1]));
+  return JSON.stringify({
+    status,
+    hasMarker: text.includes('SETTINGS_ROUTE_500_DONE'),
+    lastNumber: numbers.length ? Math.max(...numbers) : null,
+    hasAbort: /MessageAbortedError|Aborted/.test(document.body.innerText),
+    tail: text.slice(-1000),
+  });
+})()
+```
+
+---
+
 ## Change log
 
 - 2026-04-16 — initial doc after the React port cutover fixed streaming,
@@ -588,3 +730,5 @@ Known regressions this catches:
   button, skill lifecycle, and workspace button placement.
 - 2026-05-06 — added Flow 20 to ensure local workspace creation opens the
   new workspace session surface instead of settings.
+- 2026-05-18 — added Flow 21 to verify long streams survive switching to
+  another session and navigating to Settings/back.

@@ -82,8 +82,9 @@ Chrome DevTools MCP. Every tool takes `browser_url` as the first argument.
 
 - [`daytona-flows.md`](./daytona-flows.md) — Daytona sandbox flows (workspace
   creation, session messaging, screenshot verification).
-- [`react-session-flows.md`](./react-session-flows.md) — the 9 core
-  session/settings flows verified during the React port cutover.
+- [`react-session-flows.md`](./react-session-flows.md) — core
+  session/settings flows verified during the React port cutover, including
+  long streaming interruption coverage.
 - [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the 7
   onboarding/welcome flows covering first-run experience and folder
   explanation.
