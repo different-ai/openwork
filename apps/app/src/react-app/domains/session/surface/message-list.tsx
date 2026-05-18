@@ -376,14 +376,6 @@ function hasStructuredValue(value: unknown) {
   return true;
 }
 
-function ActivityHeader() {
-  return (
-    <div className="mb-7 font-sans">
-      <div className="h-px w-full bg-[#dddddd]" />
-    </div>
-  );
-}
-
 function ToolActivityIcon(props: { category?: string }) {
   const className = "mt-[6px] size-[17px] shrink-0 text-[#9a9da0]";
   switch (props.category) {
@@ -744,7 +736,6 @@ function StepsContainer(props: {
 
   return (
     <div className={props.isInline ? (props.isUser ? "mt-3" : "mt-7") : ""}>
-      {!props.isUser && !props.isNestedVariant && props.isActive ? <ActivityHeader /> : null}
       <div
         data-scrollable={!props.isNestedVariant ? "true" : undefined}
         className={
