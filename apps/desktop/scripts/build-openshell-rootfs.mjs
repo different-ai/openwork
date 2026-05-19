@@ -44,15 +44,33 @@ function dockerSync(args, opts = {}) {
   });
 }
 
-// Verify docker is callable. spawnSync with stdio:"ignore" avoids leaking
-// "docker: 'foo' is not a docker command" lines on PATH-but-broken setups.
-const dockerCheck = dockerSync(["--version"], { stdio: "ignore" });
-if (dockerCheck.status !== 0) {
+// Two-stage check: first the CLI exists, then the daemon is reachable.
+// `docker --version` only validates the CLI binary; `docker info` is
+// what actually pings the engine — on Windows that's Docker Desktop's
+// named pipe (//./pipe/dockerDesktopLinuxEngine), which won't exist
+// until Docker Desktop's whale icon goes steady.
+const cliCheck = dockerSync(["--version"], { stdio: "ignore" });
+if (cliCheck.status !== 0) {
   fail(
-    "docker is required but not callable. Install Docker Desktop " +
-      "(Windows/Mac) or Docker Engine (Linux) and ensure it's running.",
+    "docker CLI not found on PATH. Install Docker Desktop " +
+      "(Windows/Mac) or Docker Engine (Linux) and retry.",
   );
 }
+const daemonCheck = dockerSync(["info", "--format", "{{.ServerVersion}}"], {
+  stdio: "pipe",
+});
+if (daemonCheck.status !== 0) {
+  const stderr = (daemonCheck.stderr || "").trim();
+  fail(
+    "docker daemon is not reachable. " +
+      (isWindows
+        ? "Open Docker Desktop and wait for the whale icon to be steady, " +
+          "then retry."
+        : "Start the Docker daemon (`sudo systemctl start docker`) and retry.") +
+      (stderr ? `\n  underlying error: ${stderr}` : ""),
+  );
+}
+console.log(`[rootfs] docker daemon ok (server ${daemonCheck.stdout.trim()}).`);
 
 mkdirSync(outDir, { recursive: true });
 
