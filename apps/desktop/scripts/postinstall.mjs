@@ -19,8 +19,8 @@
 // banker machines where electron-rebuild can't run).
 
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 if (process.env.OPENWORK_SKIP_NATIVE_REBUILD === "1") {
   console.log(
@@ -30,30 +30,33 @@ if (process.env.OPENWORK_SKIP_NATIVE_REBUILD === "1") {
   process.exit(0);
 }
 
-const require = createRequire(import.meta.url);
-
-let modulePath;
-try {
-  modulePath = dirname(require.resolve("node-pty/package.json"));
-} catch (err) {
-  console.warn(
-    "[postinstall] node-pty not resolvable; skipping rebuild. " +
-      "OpenEral PTY support will be broken until it is rebuilt manually.",
-  );
-  console.warn(`  reason: ${err.message}`);
-  process.exit(0);
-}
+// electron-rebuild's --module-dir wants the directory that *contains*
+// node_modules/, not the package dir itself. From the desktop package
+// root, that's just "." — but we resolve absolutely so the script
+// works regardless of CWD (e.g. when invoked from the repo root).
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const desktopRoot = resolve(scriptDir, "..");
 
 const cmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const env = {
   ...process.env,
-  // Stops electron-rebuild's directory walk from following pnpm's
-  // workspace symlinks into .pnpm/.ignored_* junctions. Without this
-  // flag the rebuild crashes on Windows pnpm workspaces.
-  NODE_OPTIONS: [process.env.NODE_OPTIONS, "--preserve-symlinks"]
+  // Stops the directory walk from following pnpm's workspace symlinks
+  // into .pnpm/.ignored_* sibling junctions. Without this the rebuild
+  // crashes on Windows pnpm workspaces. --preserve-symlinks-main is the
+  // companion flag for ESM entry points.
+  NODE_OPTIONS: [
+    process.env.NODE_OPTIONS,
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
+  ]
     .filter(Boolean)
     .join(" "),
 };
+
+console.log(
+  "[postinstall] rebuilding node-pty against Electron ABI " +
+    `(module-dir: ${desktopRoot})`,
+);
 
 const result = spawnSync(
   cmd,
@@ -64,11 +67,12 @@ const result = spawnSync(
     "-w",
     "node-pty",
     "--module-dir",
-    modulePath,
+    desktopRoot,
   ],
   {
     stdio: "inherit",
     shell: process.platform === "win32",
+    cwd: desktopRoot,
     env,
   },
 );
