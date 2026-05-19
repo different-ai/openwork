@@ -25,7 +25,8 @@
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
     "test:openshell": "node --test __tests__/openshell/*.test.mjs",
     "test:openshell:e2e": "node --test __tests__/openshell.spec.mjs",
-    "postinstall": "electron-rebuild -w node-pty -f"
+    "rebuild:native": "node ./scripts/postinstall.mjs",
+    "postinstall": "node ./scripts/postinstall.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.3.9",
