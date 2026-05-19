@@ -911,6 +911,16 @@ function MessageBlockRow(props: {
   const inlineOpenTargets = block.kind === "message" && !block.isUser && props.onOpenTarget
     ? inlineOpenTargetsForMessage(block.message, props.openTargets)
     : [];
+  // The hover action bar is absolutely positioned at the bottom-right of the
+  // frame. Non-nested messages need bottom padding so those controls never sit
+  // on top of the final line of message text.
+  const messageFrameClass = block.isUser
+    ? props.isNestedVariant
+      ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
+      : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 pt-4 pb-12 text-[15px] leading-relaxed text-dls-text"
+    : props.isNestedVariant
+      ? "w-full relative text-[14px] leading-[1.65] text-dls-text antialiased group"
+      : "w-full relative max-w-[760px] pb-12 text-[15px] leading-[1.72] text-dls-text antialiased group";
 
   if (isSyntheticSessionError) {
     const messageText = block.renderableParts
@@ -947,17 +957,7 @@ function MessageBlockRow(props: {
       data-message-id={block.messageId}
       style={{ contain: "layout style paint", ...perfStyle }}
     >
-      <div
-        className={`${
-          block.isUser
-            ? props.isNestedVariant
-              ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
-              : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-            : props.isNestedVariant
-              ? "w-full relative text-[14px] leading-[1.65] text-dls-text antialiased group"
-              : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
-        } ${searchOutlineClass}`}
-      >
+      <div className={`${messageFrameClass} ${searchOutlineClass}`}>
         {block.attachments.length > 0 ? (
           <div className={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
             {block.attachments.map((attachment) => (
