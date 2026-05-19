@@ -31,7 +31,12 @@ const readArg = (name) => {
 const hasFlag = (name) => process.argv.slice(2).includes(name);
 const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
-const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
+// Default to the Electron layout (resources/sidecars). electron-builder.yml's
+// win/mac/linux.extraResources rules read from this path. Pass --outdir or
+// OPENWORK_SIDECAR_DIR for one-off targets.
+const sidecarDir = sidecarOverride
+  ? resolve(sidecarOverride)
+  : join(__dirname, "..", "resources", "sidecars");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
 
 const opencodeGithubRepo = (() => {
