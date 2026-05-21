@@ -131,52 +131,6 @@ export async function sandboxExists(name) {
 }
 
 /**
- * Stage DATABASE_URL into a one-shot file inside the distro at
- * /tmp/openeral-db-url-<uuid>, with mode 0600. The value never touches
- * the Windows filesystem — it flows through wsl.exe stdin and is
- * written by bash inside the distro.
- *
- * The path is generated in JS (random UUID — no shell metachars) and
- * embedded directly in the bash script, so the script has no command
- * substitution, no variable expansion, and no way to "succeed" with an
- * empty path. Previous versions used `f=$(mktemp …)` + `cat > "$f"` but
- * that failed on at least one banker WSL distro with `bash: line 1: :
- * No such file or directory` — the empty-variable trap. This rewrite
- * eliminates the class of bug.
- *
- * Returns the in-distro path and a cleanup() that removes the file.
- */
-async function stageDbUrlFile(databaseUrl) {
-  const wslPath = `/tmp/openeral-db-url-${randomUUID()}`;
-  // No `$(...)`, no `"$var"` — bash only has to splice the literal
-  // path twice. `umask 077` plus the explicit `chmod 600` makes the
-  // file owner-only-readable regardless of the parent shell's umask.
-  const script = `set -e; umask 077; cat > ${wslPath}; chmod 600 ${wslPath}`;
-  const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "bash", "-c", script],
-    { timeout: 10_000, stdin: databaseUrl },
-  );
-  if (r.exitCode !== 0) {
-    throw new Error(
-      `Could not stage DATABASE_URL inside distro: ` +
-        `${(r.stderr || r.stdout).trim() || "no output"}`,
-    );
-  }
-  return {
-    wslPath,
-    cleanup: async () => {
-      await wslRun(
-        ["-d", DISTRO_NAME, "--", "rm", "-f", "--", wslPath],
-        { timeout: 5_000 },
-      ).catch(() => {
-        // Best-effort. A leaked /tmp file is reaped on the next distro
-        // reboot or `wsl --shutdown`.
-      });
-    },
-  };
-}
-
-/**
  * Build the wsl.exe env that forwards ANTHROPIC_API_KEY (and, for the
  * openclaw profile, OPENERAL_AGENT) into the Linux side. WSL only
  * forwards env vars whose names appear in WSLENV.
@@ -189,6 +143,16 @@ function buildWslEnvForwarding(extra) {
     ...extra,
     WSLENV: [...existingWslEnv, ...forwardedNames].join(":"),
   };
+}
+
+/**
+ * Single-quote a string for safe embedding in a bash command.
+ * Replaces any embedded ' with the standard `'\''` escape so the value
+ * always rides as a single bash token even if it contains spaces or
+ * shell metachars.
+ */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -238,53 +202,70 @@ export async function createOpenEralSandbox(opts) {
     });
   }
 
-  // Stage DATABASE_URL → /tmp/openeral-db-url-XXXXXX inside the distro.
-  onProgress?.({ phase: "stage", message: "Staging DATABASE_URL..." });
-  const dbFile = await stageDbUrlFile(databaseUrl);
-
-  try {
-    // Env vars to forward into the distro via WSLENV. ANTHROPIC_API_KEY
-    // is always forwarded; for the openclaw profile we additionally set
-    // OPENERAL_AGENT=openclaw so the openeral wrapper picks the right
-    // agent at runtime.
-    const forwarded = { ANTHROPIC_API_KEY: anthropicApiKey };
-    if (profile === "openeral-openclaw") {
-      forwarded.OPENERAL_AGENT = "openclaw";
-    }
-    const env = buildWslEnvForwarding(forwarded);
-
-    onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
-    const r = await wslRun(
-      [
-        "-d", DISTRO_NAME, "--",
-        "openshell", "sandbox", "create",
-        "--tty",
-        "--name", name,
-        "--from", imageRef,
-        "--upload", `${dbFile.wslPath}:/sandbox/db-url`,
-        "--provider", "claude",
-        "--auto-providers",
-        "--",
-        "openeral",
-      ],
-      {
-        timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
-        env,
-      },
-    );
-    if (r.exitCode !== 0) {
-      const cli = await getCliInfo().catch(() => null);
-      const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
-      throw new Error(
-        `openshell sandbox create failed (exit ${r.exitCode})${versionTag}: ` +
-          `${(r.stderr || r.stdout).trim() || "(no output)"}`,
-      );
-    }
-    onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
-    return { name, profile, imageRef, existed: false };
-  } finally {
-    await dbFile.cleanup();
+  // Forward credentials into the Linux side of WSL via WSLENV.
+  // ANTHROPIC_API_KEY is always forwarded so --auto-providers can
+  // auto-create the `claude` provider. For openclaw, also forward
+  // OPENERAL_AGENT=openclaw so the openeral wrapper picks the right
+  // agent at runtime.
+  const forwarded = { ANTHROPIC_API_KEY: anthropicApiKey };
+  if (profile === "openeral-openclaw") {
+    forwarded.OPENERAL_AGENT = "openclaw";
   }
+  const env = buildWslEnvForwarding(forwarded);
+
+  // Critical: staging the DATABASE_URL file AND running `openshell
+  // sandbox create` happen in ONE bash session. Two separate wsl.exe
+  // calls landed in different /tmp namespaces on at least one banker
+  // distro (per-session PrivateTmp from systemd-logind), so openshell
+  // saw ENOENT trying to upload a file that "existed" from our
+  // staging call's perspective. Doing it in one bash subshell means
+  // /tmp is necessarily the same namespace for the cat write and the
+  // --upload read.
+  //
+  // Shape mirrors the openeral maintainer's canonical bash incantation:
+  //
+  //   printf '%s' "$DATABASE_URL" > /tmp/openeral-db-url
+  //   chmod 600 /tmp/openeral-db-url
+  //   openshell sandbox create --tty --from <img>
+  //     --upload /tmp/openeral-db-url:/sandbox/db-url
+  //     --provider claude --auto-providers -- openeral
+  //   rm -f /tmp/openeral-db-url
+  const dbPath = `/tmp/openeral-db-url-${randomUUID()}`;
+  const script = [
+    "set -e",
+    "umask 077",
+    `cat > ${dbPath}`,
+    `chmod 600 ${dbPath}`,
+    // trap cleans up the staging file whether sandbox create succeeds
+    // or fails. EXIT fires once when the bash subshell exits.
+    `trap 'rm -f ${dbPath}' EXIT`,
+    `exec openshell sandbox create --tty ` +
+      `--name ${shellQuote(name)} ` +
+      `--from ${shellQuote(imageRef)} ` +
+      `--upload ${dbPath}:/sandbox/db-url ` +
+      `--provider claude --auto-providers ` +
+      `-- openeral`,
+  ].join("\n");
+
+  onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
+  const r = await wslRun(
+    ["-d", DISTRO_NAME, "--", "bash", "-c", script],
+    {
+      timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
+      env,
+      stdin: databaseUrl,
+    },
+  );
+  if (r.exitCode !== 0) {
+    const cli = await getCliInfo().catch(() => null);
+    const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
+    throw new Error(
+      `openshell sandbox create failed (exit ${r.exitCode})${versionTag}: ` +
+        `${(r.stderr || r.stdout).trim() || "(no output)"}`,
+    );
+  }
+  onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
+  return { name, profile, imageRef, existed: false };
 }
 
 export async function deleteOpenEralSandbox(name) {
@@ -336,5 +317,5 @@ export async function probeDatabaseUrl({ timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } 
 export const __testing = {
   IMAGE_BY_PROFILE,
   buildWslEnvForwarding,
-  stageDbUrlFile,
+  shellQuote,
 };

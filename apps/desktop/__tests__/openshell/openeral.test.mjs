@@ -188,9 +188,7 @@ test("createOpenEralSandbox: short-circuits when sandbox already exists", async 
 test("createOpenEralSandbox: claude profile builds canonical openeral argv", async () => {
   await credentials.setCredential("databaseUrl", "postgresql://test/db");
   await credentials.setCredential("anthropicApiKey", "sk-ant-test");
-  // Mock always emits "[]" so sandbox list parses to empty and the
-  // stageDbUrlFile mktemp pretends to return "[]" — good enough since
-  // we only assert on argv shape, not the exact /tmp/ path.
+  // Mock always emits "[]" so sandbox list parses to empty.
   process.env.MOCK_WSL_STDOUT = "[]";
   const result = await openeral.createOpenEralSandbox({
     name: "openeral-new",
@@ -210,25 +208,35 @@ test("createOpenEralSandbox: claude profile builds canonical openeral argv", asy
     "canonical openeral flow does not call `provider create` ahead of time",
   );
 
-  // DATABASE_URL gets staged via `bash -c "...cat > /tmp/openeral-db-url-<uuid>..."`.
-  // The path is JS-generated (UUID) so the script has no command substitution.
+  // The whole flow runs inside ONE bash -c invocation. The bash script
+  // is multi-line, so the mock log splits it into separate lines —
+  // assert on each line of the script independently.
   assert.ok(
-    lines.some((l) => /bash -c .*cat > \/tmp\/openeral-db-url-[\w-]+/.test(l)),
-    "expected DATABASE_URL staging via cat > /tmp/openeral-db-url-<uuid>",
+    lines.some((l) => /cat > \/tmp\/openeral-db-url-[\w-]+/.test(l)),
+    "expected DATABASE_URL staging via `cat > /tmp/openeral-db-url-<uuid>`",
   );
-  // Confirm we did NOT regress to the mktemp+command-substitution shape.
   assert.ok(
-    !lines.some((l) => /bash -c .*mktemp .*\$\(/.test(l)),
+    lines.some((l) => /chmod 600 \/tmp\/openeral-db-url-[\w-]+/.test(l)),
+    "expected chmod 600 on the staging file",
+  );
+  assert.ok(
+    lines.some((l) => /trap 'rm -f \/tmp\/openeral-db-url-[\w-]+' EXIT/.test(l)),
+    "expected EXIT trap to clean up staging file",
+  );
+  // Should not regress to the mktemp+command-substitution shape.
+  assert.ok(
+    !lines.some((l) => /mktemp .*\$\(/.test(l)),
     "should not use mktemp command-substitution (empty-variable trap)",
   );
 
-  // Sandbox create matches the openeral README exactly.
+  // Sandbox create matches the openeral README exactly. The args we
+  // splice via shellQuote (name, imageRef) appear single-quoted.
   const createLine = lines.find((l) => /openshell sandbox create/.test(l));
   assert.ok(createLine, `no create line. lines=${JSON.stringify(lines)}`);
   assert.match(createLine, /sandbox create --tty/);
-  assert.match(createLine, /--name openeral-new/);
-  assert.match(createLine, /--from ghcr\.io\/sandys\/openeral\/sandbox:just-bash/);
-  assert.match(createLine, /--upload \S+:\/sandbox\/db-url/);
+  assert.match(createLine, /--name 'openeral-new'/);
+  assert.match(createLine, /--from 'ghcr\.io\/sandys\/openeral\/sandbox:just-bash'/);
+  assert.match(createLine, /--upload \/tmp\/openeral-db-url-[\w-]+:\/sandbox\/db-url/);
   assert.match(createLine, /--provider claude --auto-providers/);
   assert.match(createLine, /-- openeral$/);
   // Things that should NOT be there.
@@ -247,14 +255,13 @@ test("createOpenEralSandbox: openclaw profile sets OPENERAL_AGENT env via WSLENV
     skipImagePull: true,
   });
   // We can't directly observe WSLENV from the mock log (it sets env
-  // for wsl.exe, not in argv). Instead exercise buildWslEnvForwarding
-  // separately in its own test — done above. Here just confirm the
-  // create line is otherwise identical to the claude path (same
-  // --provider claude --auto-providers + trailing openeral).
+  // for wsl.exe, not in argv). buildWslEnvForwarding is exercised in
+  // its own test above. Here just confirm the openclaw create line is
+  // structurally identical to the claude path.
   const lines = readArgsLog();
   const createLine = lines.find((l) => /openshell sandbox create/.test(l));
   assert.ok(createLine);
-  assert.match(createLine, /--name openeral-claws/);
+  assert.match(createLine, /--name 'openeral-claws'/);
   assert.match(createLine, /--provider claude --auto-providers/);
   assert.match(createLine, /-- openeral$/);
 });
