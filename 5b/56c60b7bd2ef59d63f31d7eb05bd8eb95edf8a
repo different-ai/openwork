@@ -1,0 +1,25 @@
+apps/app/src/react-app/domains/settings/pages/general-view.tsx
+  s_3907713b0f5b0d::t_f0554e011cc623 50-51,53-62,64-73,75-84,86-93,101-102,104-113,115-124,126-135,137-146,148-157,159-166
+  s_3907713b0f5b0d::t_daa7c27f95fbf0 48
+  s_3907713b0f5b0d::t_8fb09c860c9e62 99
+  s_3907713b0f5b0d::t_c92940fa702b2e 198,206
+  s_3907713b0f5b0d::t_50188e0d2defdc 188,190
+  s_3907713b0f5b0d::t_704862dcdfac7a 52,63,74,85,103,114,125,136,147,158
+  s_3907713b0f5b0d::t_08b4ecfd2b18b6 172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "5b56c60b7bd2ef59d63f31d7eb05bd8eb95edf8a",
+  "prompts": {},
+  "sessions": {
+    "s_3907713b0f5b0d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "79831932-7633-4739-b93e-b210153f2a84",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
