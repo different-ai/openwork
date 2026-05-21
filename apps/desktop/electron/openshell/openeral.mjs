@@ -17,13 +17,9 @@
 //   4. The literal command `openeral` — a /usr/local/bin shim that
 //      execs setup.sh.
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
-import { DISTRO_NAME, toWslPath, wslRun, wslSpawn } from "./wsl.mjs";
+import { DISTRO_NAME, wslRun, wslSpawn } from "./wsl.mjs";
 
 // Same image for both providers — the openeral README at
 // github.com/stringcost/openeral is the source of truth. Provider
@@ -185,10 +181,24 @@ export async function sandboxExists(name) {
 }
 
 /**
- * Stage a temp directory on the host with the credential files OpenEral's
- * setup.sh reads from /sandbox/openeral-input/. Returns the host path
- * plus a cleanup() that wipes it. The caller is responsible for invoking
- * cleanup AFTER `openshell sandbox create` has copied the files inward.
+ * Stage the credential files OpenEral's setup.sh reads from
+ * /sandbox/openeral-input/. Critically: we stage *inside the WSL distro*,
+ * not on the Windows side.
+ *
+ * Background: we used to write to a tmpdir on the Windows host (via Node
+ * `mkdtemp`) and pass `/mnt/c/.../<dir>` to `openshell sandbox create
+ * --upload`. WSL2 mounts the Windows filesystem via 9P, which mangles
+ * Linux file modes: a file created with `0o600` on the Windows side is
+ * effectively unreadable to the `banker` user inside the distro, so
+ * openshell fails the upload with ENOENT ("No such file or directory")
+ * even though the path exists. Staging inside the distro avoids the 9P
+ * translation entirely and is more secure — secrets never touch the
+ * Windows filesystem.
+ *
+ * The secret bytes flow through `wsl.exe` stdin (memory-only) into a
+ * `cat > <file>` running inside the distro under `umask 077`.
+ *
+ * Returns the in-distro WSL path plus a cleanup() that removes it.
  */
 async function stageCredentialBundle({ profile }) {
   const databaseUrl = await getCredential("databaseUrl");
@@ -205,30 +215,74 @@ async function stageCredentialBundle({ profile }) {
     );
   }
 
-  const hostDir = await mkdtemp(path.join(os.tmpdir(), "openeral-input-"));
+  // mktemp inside the distro. Owned by whoever wsl.exe runs as by
+  // default (`banker` in our rootfs). 0o700 mode set explicitly.
+  const mk = await wslRun(
+    [
+      "-d",
+      DISTRO_NAME,
+      "--",
+      "bash",
+      "-c",
+      "set -e; d=$(mktemp -d -t openeral-input-XXXXXXXX); chmod 700 \"$d\"; printf '%s' \"$d\"",
+    ],
+    { timeout: 10_000 },
+  );
+  if (mk.exitCode !== 0 || !mk.stdout.trim()) {
+    throw new Error(
+      `Could not create in-distro staging dir: ${(mk.stderr || mk.stdout).trim() || "no output"}`,
+    );
+  }
+  const wslDir = mk.stdout.trim();
+
+  const writeSecret = async (filename, value) => {
+    // `cat > $file` consumes stdin and writes to the path; umask 077
+    // makes the file readable only by the owner.
+    const r = await wslRun(
+      [
+        "-d",
+        DISTRO_NAME,
+        "--",
+        "bash",
+        "-c",
+        `set -e; umask 077; cat > "${wslDir}/${filename}"`,
+      ],
+      { timeout: 10_000, stdin: value },
+    );
+    if (r.exitCode !== 0) {
+      throw new Error(
+        `Could not stage ${filename}: ${(r.stderr || r.stdout).trim() || "no output"}`,
+      );
+    }
+  };
+
+  const cleanup = async () => {
+    await wslRun(
+      ["-d", DISTRO_NAME, "--", "rm", "-rf", "--", wslDir],
+      { timeout: 10_000 },
+    ).catch(() => {
+      // Best-effort. A leaked tmp dir under /tmp inside the distro is
+      // recovered on the next reboot.
+    });
+  };
+
   try {
-    await writeFile(path.join(hostDir, "db-url"), databaseUrl, { mode: 0o600 });
+    await writeSecret("db-url", databaseUrl);
     if (anthropicApiKey) {
-      await writeFile(path.join(hostDir, "anthropic-api-key"), anthropicApiKey, {
-        mode: 0o600,
-      });
+      await writeSecret("anthropic-api-key", anthropicApiKey);
     }
     // STRINGCOST presign is intentionally not staged here — the README's
     // flow creates it via a curl call against app.stringcost.com which
     // needs a separate IPC handler we don't have yet. Phase O8 follow-up.
   } catch (err) {
-    await rm(hostDir, { recursive: true, force: true });
+    await cleanup();
     throw err;
   }
+
   return {
-    hostDir,
-    cleanup: async () => {
-      try {
-        await rm(hostDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort.
-      }
-    },
+    /** In-distro WSL path, e.g. /tmp/openeral-input-AbCdEfGh. */
+    wslDir,
+    cleanup,
   };
 }
 
@@ -278,7 +332,7 @@ export async function createOpenEralSandbox(opts) {
   const bundle = await stageCredentialBundle({ profile });
 
   try {
-    const wslUploadDir = toWslPath(bundle.hostDir);
+    const wslUploadDir = bundle.wslDir;
     onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
     // `openshell sandbox create` flag shape (verified against CLI 0.0.45):
     //   --tty --name NAME --from FROM --upload UPLOAD --provider P --auto-providers [-- COMMAND...]
