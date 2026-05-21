@@ -1,0 +1,36 @@
+apps/app/src/react-app/domains/settings/pages/environment-view.tsx
+  8bb2c55856dc9ad5 21,29-47,343,407,433-449,452,455,482,485,487,501-515,517,528,531-533,550-555,559-562,566,579,594-609,613-619,628-629,631-634,640-641,643-644
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7bc70bdc29caab7d7537b7eec40d31634276aed5",
+  "prompts": {
+    "042092ccafbe4923": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2f90414a-6ac6-40eb-a3ac-b21fd767f795",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 8,
+      "accepted_lines": 0,
+      "overriden_lines": 1
+    },
+    "8bb2c55856dc9ad5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "21a545ec-c656-4d36-a01d-8f06aa38c8e6",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer",
+      "messages": [],
+      "total_additions": 175,
+      "total_deletions": 169,
+      "accepted_lines": 121,
+      "overriden_lines": 0
+    }
+  }
+}
