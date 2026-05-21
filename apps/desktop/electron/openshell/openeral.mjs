@@ -35,6 +35,8 @@
 //     installer registers via `gateway add --local --name openshell`
 //     and selects via `gateway select`.
 
+import { randomUUID } from "node:crypto";
+
 import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
 import { DISTRO_NAME, wslRun, wslSpawn } from "./wsl.mjs";
@@ -130,30 +132,36 @@ export async function sandboxExists(name) {
 
 /**
  * Stage DATABASE_URL into a one-shot file inside the distro at
- * /tmp/openeral-db-url-<random>, with mode 0600. The value never
- * touches the Windows filesystem — it flows through wsl.exe stdin and
- * is written by bash inside the distro.
+ * /tmp/openeral-db-url-<uuid>, with mode 0600. The value never touches
+ * the Windows filesystem — it flows through wsl.exe stdin and is
+ * written by bash inside the distro.
+ *
+ * The path is generated in JS (random UUID — no shell metachars) and
+ * embedded directly in the bash script, so the script has no command
+ * substitution, no variable expansion, and no way to "succeed" with an
+ * empty path. Previous versions used `f=$(mktemp …)` + `cat > "$f"` but
+ * that failed on at least one banker WSL distro with `bash: line 1: :
+ * No such file or directory` — the empty-variable trap. This rewrite
+ * eliminates the class of bug.
  *
  * Returns the in-distro path and a cleanup() that removes the file.
  */
 async function stageDbUrlFile(databaseUrl) {
-  const script =
-    `set -e; umask 077; ` +
-    `f=$(mktemp /tmp/openeral-db-url-XXXXXXXX); ` +
-    `cat > "$f"; ` +
-    `chmod 600 "$f"; ` +
-    `printf '%s' "$f"`;
+  const wslPath = `/tmp/openeral-db-url-${randomUUID()}`;
+  // No `$(...)`, no `"$var"` — bash only has to splice the literal
+  // path twice. `umask 077` plus the explicit `chmod 600` makes the
+  // file owner-only-readable regardless of the parent shell's umask.
+  const script = `set -e; umask 077; cat > ${wslPath}; chmod 600 ${wslPath}`;
   const r = await wslRun(
     ["-d", DISTRO_NAME, "--", "bash", "-c", script],
     { timeout: 10_000, stdin: databaseUrl },
   );
-  if (r.exitCode !== 0 || !r.stdout.trim()) {
+  if (r.exitCode !== 0) {
     throw new Error(
       `Could not stage DATABASE_URL inside distro: ` +
         `${(r.stderr || r.stdout).trim() || "no output"}`,
     );
   }
-  const wslPath = r.stdout.trim();
   return {
     wslPath,
     cleanup: async () => {

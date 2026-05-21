@@ -210,10 +210,16 @@ test("createOpenEralSandbox: claude profile builds canonical openeral argv", asy
     "canonical openeral flow does not call `provider create` ahead of time",
   );
 
-  // DATABASE_URL gets staged via a bash heredoc.
+  // DATABASE_URL gets staged via `bash -c "...cat > /tmp/openeral-db-url-<uuid>..."`.
+  // The path is JS-generated (UUID) so the script has no command substitution.
   assert.ok(
-    lines.some((l) => /bash -c .*mktemp \/tmp\/openeral-db-url/.test(l)),
-    "expected DATABASE_URL to be staged via mktemp + cat",
+    lines.some((l) => /bash -c .*cat > \/tmp\/openeral-db-url-[\w-]+/.test(l)),
+    "expected DATABASE_URL staging via cat > /tmp/openeral-db-url-<uuid>",
+  );
+  // Confirm we did NOT regress to the mktemp+command-substitution shape.
+  assert.ok(
+    !lines.some((l) => /bash -c .*mktemp .*\$\(/.test(l)),
+    "should not use mktemp command-substitution (empty-variable trap)",
   );
 
   // Sandbox create matches the openeral README exactly.
