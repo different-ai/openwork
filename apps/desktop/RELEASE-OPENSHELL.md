@@ -78,20 +78,25 @@ step at the bottom of the signing workflow.
 
 ## Bumping the OpenShell CLI version
 
-The CLI is pulled from NVIDIA's `main` branch installer at rootfs build
-time:
+The CLI is pulled from NVIDIA's installer at rootfs build time. The
+upstream lives at `github.com/NVIDIA/OpenShell` — note the bare repo
+name. `NVIDIA/OpenShell-Community` is a separate repo of community
+sandbox recipes; its `main/install.sh` doesn't exist, so any URL
+pointing at the community repo will 404.
 
 ```dockerfile
 # apps/desktop/scripts/openshell-rootfs.Dockerfile
-RUN curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/main/install.sh | bash
+ARG OPENSHELL_VERSION=v0.0.45
+RUN curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh \
+        | OPENSHELL_VERSION="${OPENSHELL_VERSION}" sh
 ```
 
 To pin to a specific OpenShell release:
 
-1. Find the tag on the OpenShell-Community repo (e.g., `v0.42.0`)
-2. Update the curl URL to use that tag:
-   `.../OpenShell-Community/v0.42.0/install.sh`
-3. Cut a v* tag on our repo — the build picks up the new pin
+1. Find the desired version on [PyPI](https://pypi.org/project/openshell/)
+   or [the OpenShell releases page](https://github.com/NVIDIA/OpenShell/releases).
+2. Bump the `OPENSHELL_VERSION` ARG in the Dockerfile.
+3. Cut a v* tag on our repo — CI builds the rootfs with the new pin.
 
 **Decision**: pin per release (predictability > freshness for banking).
 Don't let WSL distros auto-update OpenShell on the banker side. If a

@@ -1427,35 +1427,43 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "openshellGatewayStatus":
       return openshellClient.getGatewayStatus();
     case "openshellGatewayRestart": {
-      // Verb drift is the dominant failure mode here: the documented
-      // `gateway start --recreate` is gone in newer CLIs and bare
-      // `gateway start` was renamed in some releases. We probe what the
-      // installed binary actually exposes and try the recovery verbs in
-      // order, then fall back to docker-direct restart of whichever
-      // openshell-cluster* container is already registered with the
-      // distro. Surface a single user-facing error only if every path
-      // failed, so the renderer's toast tells them what to do next.
+      // The gateway lifecycle has rotated across releases — see
+      // installer.mjs:bringUpGateway for the full story. Order of attempts:
+      //   1. Legacy `openshell gateway start [--recreate|--detach]`.
+      //   2. systemd user service restart (0.0.37+, the current shape).
+      //   3. Direct `docker restart` of an openshell-cluster* container
+      //      (recovery path for hand-rolled deployments).
+      // Each attempt is logged with its exit code so the final error
+      // message tells the user exactly what was tried and what each
+      // path reported.
       const cliInfo = await openshellCli.getCliInfo();
       const attempts = [];
-      const tryWsl = async (args) => {
+      const tryWsl = async (label, args, opts = {}) => {
         const r = await wslRun(
-          ["-d", OPENSHELL_DISTRO_NAME, "--", "openshell", ...args],
-          { timeout: 60_000 },
+          ["-d", OPENSHELL_DISTRO_NAME, ...(opts.user ? ["--user", opts.user] : []), "--", ...args],
+          { timeout: opts.timeout ?? 60_000 },
         );
-        attempts.push({ args: ["openshell", ...args], r });
+        attempts.push({ label, r });
         return r.exitCode === 0;
       };
 
-      const hasStart = await openshellCli.hasSubcommand("gateway", "start");
-      if (hasStart) {
-        if (await tryWsl(["gateway", "start", "--recreate"])) return { ok: true };
-        if (await tryWsl(["gateway", "start", "--detach"])) return { ok: true };
-        if (await tryWsl(["gateway", "start"])) return { ok: true };
+      // Path 1 — legacy gateway start verb (will silently no-op on 0.0.37+).
+      if (await openshellCli.hasSubcommand("gateway", "start")) {
+        if (await tryWsl("openshell gateway start --recreate", ["openshell", "gateway", "start", "--recreate"])) return { ok: true, recoveredVia: "gateway start --recreate" };
+        if (await tryWsl("openshell gateway start --detach", ["openshell", "gateway", "start", "--detach"])) return { ok: true, recoveredVia: "gateway start --detach" };
+        if (await tryWsl("openshell gateway start", ["openshell", "gateway", "start"])) return { ok: true, recoveredVia: "gateway start" };
       }
 
-      // Docker-direct fallback: any container with `openshell` in its
-      // name that already exists in the distro gets a fresh `docker
-      // start`. We don't create one — see installer.tryDockerGatewayFallback.
+      // Path 2 — systemd user service (the current shape per install.sh).
+      if (await tryWsl(
+        "systemctl --user restart openshell-gateway",
+        ["systemctl", "--user", "restart", "openshell-gateway"],
+        { user: "banker", timeout: 60_000 },
+      )) {
+        return { ok: true, recoveredVia: "systemctl --user restart openshell-gateway" };
+      }
+
+      // Path 3 — docker fallback for hand-rolled cluster containers.
       const list = await wslRun(
         [
           "-d",
@@ -1473,22 +1481,18 @@ async function handleDesktopInvoke(event, command, ...args) {
         .map((s) => s.trim())
         .filter(Boolean);
       if (names.length === 1) {
-        const restart = await wslRun(
-          ["-d", OPENSHELL_DISTRO_NAME, "--", "docker", "restart", names[0]],
-          { timeout: 60_000 },
-        );
-        if (restart.exitCode === 0) return { ok: true, recoveredVia: `docker restart ${names[0]}` };
-        attempts.push({ args: ["docker", "restart", names[0]], r: restart });
+        if (await tryWsl(`docker restart ${names[0]}`, ["docker", "restart", names[0]])) {
+          return { ok: true, recoveredVia: `docker restart ${names[0]}` };
+        }
       }
 
       const detail = attempts
-        .map(({ args, r }) => `\`${args.join(" ")}\` → exit ${r.exitCode}: ${(r.stderr || r.stdout || "").trim().slice(0, 200) || "(no output)"}`)
+        .map(({ label, r }) => `${label} → exit ${r.exitCode}: ${(r.stderr || r.stdout || "").trim().slice(0, 200) || "(no output)"}`)
         .join(" | ");
       throw new Error(
-        `Could not restart the OpenShell gateway. CLI ${cliInfo.version ?? "(unknown)"} ` +
-          `does not respond to any documented start verb, and no recoverable container was ` +
-          `found. Tried: ${detail || "(no attempts)"}. ` +
-          `Run Settings → Sandbox → Refresh, or reset the distro if this persists.`,
+        `Could not restart the OpenShell gateway. CLI ${cliInfo.version ?? "(unknown)"}. ` +
+          `Tried: ${detail || "(no attempts)"}. ` +
+          `If this persists, open Settings → Sandbox → Reset distro.`,
       );
     }
     case "openshellListPolicies": {

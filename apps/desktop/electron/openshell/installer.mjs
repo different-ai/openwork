@@ -309,17 +309,34 @@ async function phaseOpenshell({ onProgress, signal }) {
 }
 
 /**
- * Try the documented `openshell gateway start --detach` first, fall
- * back to plain `gateway start`, and as a last resort attempt to (re-)
- * start an existing `openshell-cluster*` container directly through
- * docker. On total failure, the error includes the CLI version and the
- * raw help block so an IT-side reader can see exactly what they're
- * looking at.
+ * Bring the OpenShell gateway to a registered, selected state. The
+ * mechanism has shifted twice across CLI versions:
+ *
+ *   - Pre-0.0.37 era: `openshell gateway start [--detach|--recreate]`
+ *     spawned and managed a Docker container directly.
+ *   - 0.0.37+: the gateway is shipped as a systemd user service
+ *     (`openshell-gateway`) that the install.sh leaves enabled-but-not-
+ *     running. The CLI's `gateway` subcommand was reduced to a
+ *     registration manager (`add / select / list / info`).
+ *
+ * Strategy here, in order:
+ *   1. If `gateway start` is still a documented verb on this CLI, try
+ *      it. Older releases inside the bundled rootfs may still expose it.
+ *   2. Otherwise, start the systemd user service and register the
+ *      well-known endpoint (https://127.0.0.1:17670, hard-coded by
+ *      install.sh as LOCAL_GATEWAY_PORT) via `gateway add` + `select`.
+ *   3. As a last resort, try to restart an `openshell-cluster*` container
+ *      directly through docker — recovery path only.
  */
+const LOCAL_GATEWAY_URL = "https://127.0.0.1:17670";
+const LOCAL_GATEWAY_NAME = "openshell";
+
 async function bringUpGateway({ onProgress, signal }) {
   onProgress?.({ phase: "openshell", message: "Starting OpenShell gateway...", percent: 70 });
   const info = await getCliInfo();
 
+  // Path 1 — legacy `gateway start`. We probe before calling so we
+  // don't waste time invoking a CLI that doesn't have the verb.
   if (await hasSubcommand("gateway", "start")) {
     let r = await wslRun(
       ["-d", DISTRO_NAME, "--", "openshell", "gateway", "start", "--detach"],
@@ -332,27 +349,144 @@ async function bringUpGateway({ onProgress, signal }) {
       );
     }
     if (r.exitCode === 0) return;
-    // Fall through to docker fallback below; preserve the stderr to
-    // include in the eventual failure message.
-    const cliErr = (r.stderr || r.stdout).trim();
+    // Don't return yet — fall through to the systemd path so a partial
+    // legacy match doesn't trap us.
+  }
+
+  // Path 2 — systemd user service + gateway registration (0.0.37+).
+  if (await hasSubcommand("gateway", "add")) {
+    const systemd = await startSystemdGateway({ signal, onProgress });
+    if (systemd.ok) {
+      const registered = await registerLocalGateway({ signal, onProgress });
+      if (registered.ok) return;
+      // Service running, registration failed — that's still
+      // catastrophic for downstream sandbox-create, surface it.
+      throw new Error(
+        `OpenShell gateway service started but registration failed. ` +
+          `CLI ${info.version ?? "(unknown)"}: ${registered.error}`,
+      );
+    }
+    // Try docker fallback before giving up.
     const docker = await tryDockerGatewayFallback({ signal, onProgress });
     if (docker.ok) return;
     throw new Error(
-      `Could not start the OpenShell gateway. CLI ${info.version ?? "(unknown)"} reported: ` +
-        `${cliErr || "no output"}. ` +
-        `Docker fallback also failed: ${docker.error || "no candidate container"}.`,
+      `Could not start the OpenShell gateway. ` +
+        `systemd path: ${systemd.error}. ` +
+        `${docker.error ? `Docker fallback: ${docker.error}.` : "No docker fallback candidate."}`,
     );
   }
 
-  // No `gateway start` verb at all — try the docker fallback directly.
+  // Path 3 — neither `gateway start` nor `gateway add` exists. Either
+  // the CLI is too old, too new, or broken. Docker fallback only.
   const docker = await tryDockerGatewayFallback({ signal, onProgress });
   if (docker.ok) return;
   throw new Error(
-    `OpenShell CLI ${info.version ?? "(unknown)"} does not expose \`gateway start\`, ` +
-      `and no openshell-cluster container is registered with Docker. ` +
-      `Available subcommands: ${[...info.subcommands].join(", ") || "(none parsed)"}. ` +
-      `${docker.error ? `Docker fallback error: ${docker.error}` : ""}`.trim(),
+    `OpenShell CLI ${info.version ?? "(unknown)"} exposes neither \`gateway start\` ` +
+      `nor \`gateway add\`. Available subcommands: ` +
+      `${[...info.subcommands].join(", ") || "(none parsed)"}. ` +
+      `${docker.error ? `Docker fallback error: ${docker.error}.` : ""}`.trim(),
   );
+}
+
+/**
+ * Start the openshell-gateway systemd user service inside the distro.
+ * Requires WSL's systemd integration to be active (we set systemd=true
+ * in /etc/wsl.conf in the rootfs Dockerfile). The `--user` invocation
+ * targets the `banker` account's user manager, which install.sh
+ * configured at package-install time.
+ */
+async function startSystemdGateway({ signal, onProgress }) {
+  onProgress?.({ phase: "openshell", message: "Enabling openshell-gateway service...", percent: 75 });
+  // `systemctl --user` needs a user systemd manager. On a fresh distro
+  // we may need to nudge it; `loginctl enable-linger banker` keeps the
+  // user manager alive without a live session. Best-effort — if it
+  // fails we still try the start command.
+  await wslRun(
+    ["-d", DISTRO_NAME, "--user", "root", "--", "loginctl", "enable-linger", "banker"],
+    { timeout: 15_000, signal },
+  ).catch(() => null);
+
+  const enable = await wslRun(
+    [
+      "-d",
+      DISTRO_NAME,
+      "--user",
+      "banker",
+      "--",
+      "systemctl",
+      "--user",
+      "enable",
+      "--now",
+      "openshell-gateway",
+    ],
+    { timeout: 60_000, signal },
+  );
+  if (enable.exitCode !== 0) {
+    return {
+      ok: false,
+      error: `systemctl --user enable --now openshell-gateway failed (exit ${enable.exitCode}): ` +
+        `${(enable.stderr || enable.stdout || "no output").trim()}`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Register the local gateway endpoint with the CLI and mark it active.
+ * Both calls are idempotent: re-registering an existing name returns a
+ * non-zero "already exists" we treat as success, and `gateway select`
+ * is a no-op when the named gateway is already the active one.
+ */
+async function registerLocalGateway({ signal, onProgress }) {
+  onProgress?.({ phase: "openshell", message: "Registering local gateway...", percent: 85 });
+  const add = await wslRun(
+    [
+      "-d",
+      DISTRO_NAME,
+      "--user",
+      "banker",
+      "--",
+      "openshell",
+      "gateway",
+      "add",
+      LOCAL_GATEWAY_URL,
+      "--local",
+      "--name",
+      LOCAL_GATEWAY_NAME,
+    ],
+    { timeout: 30_000, signal },
+  );
+  // "already exists" / "already registered" — treat as success.
+  const addOk =
+    add.exitCode === 0 ||
+    /already (exists|registered)/i.test(`${add.stderr}\n${add.stdout}`);
+  if (!addOk) {
+    return {
+      ok: false,
+      error: `openshell gateway add failed (exit ${add.exitCode}): ${(add.stderr || add.stdout || "").trim()}`,
+    };
+  }
+  const select = await wslRun(
+    [
+      "-d",
+      DISTRO_NAME,
+      "--user",
+      "banker",
+      "--",
+      "openshell",
+      "gateway",
+      "select",
+      LOCAL_GATEWAY_NAME,
+    ],
+    { timeout: 15_000, signal },
+  );
+  if (select.exitCode !== 0) {
+    return {
+      ok: false,
+      error: `openshell gateway select failed (exit ${select.exitCode}): ${(select.stderr || select.stdout || "").trim()}`,
+    };
+  }
+  return { ok: true };
 }
 
 /**

@@ -57,11 +57,18 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 
 # OpenShell CLI — pulled from NVIDIA's published installer. The script
-# drops the binary into /usr/local/bin and writes default config into
-# /etc/openshell. We do NOT run `openshell init --bootstrap-policies`
-# here because that creates per-host state; installer.mjs phaseOpenshell
-# does that on the banker's machine.
-RUN curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/main/install.sh | bash
+# drops the binary into /usr/local/bin/openshell. The repo is
+# `NVIDIA/OpenShell` (the canonical one); `NVIDIA/OpenShell-Community`
+# is a separate sandbox-recipes repo whose `main/install.sh` doesn't
+# exist — pointing the Dockerfile at the community repo would 404.
+#
+# Pin OPENSHELL_VERSION so the CI rootfs and the banker laptop agree on
+# which CLI surface they're testing against. Bump deliberately, not on
+# every build. See apps/desktop/RELEASE-OPENSHELL.md for the bump
+# procedure.
+ARG OPENSHELL_VERSION=v0.0.45
+RUN curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh \
+        | OPENSHELL_VERSION="${OPENSHELL_VERSION}" sh
 
 # wsl.conf — tells WSL to use systemd as PID 1 (required for
 # `service docker start` and openshell's gateway pod) and pins the
