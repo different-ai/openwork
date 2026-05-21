@@ -46,6 +46,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@opencode-ai/sdk": "^1.14.38",
     "better-sqlite3": "^11.10.0",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -444,71 +445,33 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-type OpencodeQueryValue = string | number | boolean | null | undefined;
+type OpencodeClientResult<T, E> =
+  | { data: T | undefined; error: undefined; response: Response }
+  | { data: undefined; error: E; response: Response };
 
-async function fetchOpencodeJson(
-  config: ServerConfig,
-  workspace: WorkspaceInfo,
-  path: string,
-  init: { method: string; body?: unknown; query?: URLSearchParams | Record<string, OpencodeQueryValue> },
-) {
+function createWorkspaceOpencodeClient(config: ServerConfig, workspace: WorkspaceInfo) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-  const baseUrl = connection.baseUrl?.trim() ?? "";
-  if (!baseUrl) {
-    throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
-  }
-
-  const url = new URL(baseUrl);
-  url.pathname = path.startsWith("/") ? path : `/${path}`;
   const directory = resolveOpencodeDirectory(workspace);
-  if (init.query instanceof URLSearchParams) {
-    const params = new URLSearchParams(init.query);
-    if (directory && !params.has("directory")) {
-      params.set("directory", directory);
-    }
-    url.search = params.toString();
-  } else if (init.query) {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(init.query)) {
-      if (value === undefined || value === null) continue;
-      params.set(key, String(value));
-    }
-    if (directory && !params.has("directory")) {
-      params.set("directory", directory);
-    }
-    url.search = params.toString();
-  } else {
-    url.search = directory ? new URLSearchParams({ directory }).toString() : "";
-  }
 
-  const headers = new Headers();
-  headers.set("Content-Type", "application/json");
-
-  if (directory) {
-    headers.set("x-opencode-directory", directory);
-  }
-
-  const auth = connection.authHeader ?? null;
-  if (auth) {
-    headers.set("Authorization", auth);
-  }
-
-  const response = await fetch(url.toString(), {
-    method: init.method,
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  return createOpencodeClient({
+    baseUrl: connection.baseUrl?.trim(),
+    ...(directory ? { directory } : {}),
+    ...(connection.authHeader ? { headers: { Authorization: connection.authHeader } } : {}),
   });
+}
 
-  const text = await response.text();
-  const json = parseJsonResponse(text);
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: json ?? text,
-      path,
-    });
+function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, path: string): NonNullable<T> {
+  if (result.data != null) {
+    return result.data;
   }
-  return json;
+  if (result.error === undefined) {
+    throw new ApiError(502, "opencode_empty_response", "OpenCode returned an empty response", { path });
+  }
+  throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+    status: result.response.status,
+    body: result.error,
+    path,
+  });
 }
 
 async function proxyOpencodeRequest(input: {
@@ -1858,9 +1821,8 @@ function createRoutes(
     }
 
     // OpenCode session deletion via the upstream API.
-        await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    });
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    unwrapOpencodeResult(await opencode.session.delete({ sessionID: sessionId }), `/session/${encodeURIComponent(sessionId)}`);
 
     return jsonResponse({ ok: true });
   });
@@ -3008,13 +2970,15 @@ function createRoutes(
 
     // Best-effort disconnect so any active connection is torn down.
     try {
-      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      unwrapOpencodeResult(await opencode.mcp.disconnect({ name }), `/mcp/${encodeURIComponent(name)}/disconnect`);
     } catch {
       // ignore
     }
 
     try {
-      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      unwrapOpencodeResult(await opencode.mcp.auth.remove({ name }), `/mcp/${encodeURIComponent(name)}/auth`);
     } catch (error) {
       // Treat missing credentials as a successful logout (idempotent).
       if (
@@ -3294,16 +3258,17 @@ async function listWorkspaceSessions(
   input: { roots?: boolean; start?: number; search?: string; limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionList(
-      await fetchOpencodeJson(config, workspace, "/session", {
-        method: "GET",
-        query: {
+      unwrapOpencodeResult(
+        await opencode.session.list({
           roots: input.roots,
           start: input.start,
           search: input.search,
           limit: input.limit,
-        },
-      }),
+        }),
+        "/session",
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3312,10 +3277,12 @@ async function listWorkspaceSessions(
 
 async function readWorkspaceSession(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSession(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.get({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3329,11 +3296,12 @@ async function readWorkspaceSessionMessages(
   input: { limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionMessages(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
-        method: "GET",
-        query: { limit: input.limit },
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
+        `/session/${encodeURIComponent(sessionId)}/message`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3342,10 +3310,12 @@ async function readWorkspaceSessionMessages(
 
 async function readWorkspaceSessionTodos(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionTodos(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.todo({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}/todo`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3354,10 +3324,9 @@ async function readWorkspaceSessionTodos(config: ServerConfig, workspace: Worksp
 
 async function readWorkspaceSessionStatuses(config: ServerConfig, workspace: WorkspaceInfo) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionStatuses(
-      await fetchOpencodeJson(config, workspace, "/session/status", {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(await opencode.session.status(), "/session/status"),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3371,20 +3340,18 @@ async function readWorkspaceSessionSnapshot(
   input: { limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     const [session, messages, todos, statuses] = await Promise.all([
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-        method: "GET",
-      }),
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
-        method: "GET",
-        query: { limit: input.limit },
-      }),
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
-        method: "GET",
-      }),
-      fetchOpencodeJson(config, workspace, "/session/status", {
-        method: "GET",
-      }),
+      opencode.session
+        .get({ sessionID: sessionId })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}`)),
+      opencode.session
+        .messages({ sessionID: sessionId, limit: input.limit })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/message`)),
+      opencode.session
+        .todo({ sessionID: sessionId })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
+      opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
     ]);
     return buildSessionSnapshot({ session, messages, todos, statuses });
   } catch (error) {
@@ -3487,16 +3454,6 @@ function parseOptionalBoolean(value: string | null, name: string): boolean | und
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   throw new ApiError(400, "invalid_query", `${name} must be a boolean`);
-}
-
-function parseJsonResponse(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return trimmed;
-  }
 }
 
 function ensurePlainObject(value: unknown): Record<string, unknown> {
@@ -3897,11 +3854,9 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   }
 
   const created: Array<{ templateId: string; sessionId: string; title: string }> = [];
+  const opencode = createWorkspaceOpencodeClient(config, workspace);
   for (const template of templates) {
-    const result = await fetchOpencodeJson(config, workspace, "/session", {
-      method: "POST",
-      body: template.title ? { title: template.title } : undefined,
-    });
+    const result = unwrapOpencodeResult(await opencode.session.create({ title: template.title }), "/session");
     const sessionId =
       result && typeof result === "object" && "id" in result && typeof result.id === "string" ? result.id.trim() : "";
     if (!sessionId) {

@@ -297,6 +297,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.14.38
+        version: 1.14.38
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
