@@ -120,15 +120,40 @@ async function checkWindows() {
 // Microsoft-Hyper-V role is Pro/Enterprise only; VirtualMachinePlatform
 // is what WSL2 needs and is available on Home too. Keeping the internal
 // id "hyperv" so the UI's component-state contract doesn't shift.
+//
+// We query via Get-CimInstance Win32_OptionalFeature rather than
+// Get-WindowsOptionalFeature: the DISM-backed cmdlet requires admin
+// elevation, but Electron runs un-elevated, so it would fail on every
+// non-admin machine and the doctor would falsely declare the whole
+// system "unsupported." Win32_OptionalFeature is readable un-elevated
+// and returns an InstallState integer: 1 = Enabled, 2 = Disabled,
+// 3 = Absent.
 /** @returns {Promise<OpenShellComponent>} */
 async function checkHyperV() {
   try {
     const r = await runPowerShell(
-      "Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform " +
-        "| Select-Object -ExpandProperty State",
+      "(Get-CimInstance -ClassName Win32_OptionalFeature " +
+        "-Filter \"Name='VirtualMachinePlatform'\" -ErrorAction Stop)" +
+        ".InstallState",
     );
-    const state = r.stdout.trim();
-    if (state === "Enabled") {
+    if (r.exitCode !== 0) {
+      // Query failed (CIM/WMI service unavailable, permission denied,
+      // etc). Don't pretend we know the feature is missing — surface as
+      // unknown so aggregateStatus doesn't escalate to "unsupported."
+      const detail = (r.stderr || r.stdout || "").trim();
+      return {
+        id: "hyperv",
+        label: "Virtualization (WSL2)",
+        state: "unknown",
+        version: null,
+        detail: detail
+          ? `Could not query VirtualMachinePlatform: ${detail}`
+          : `Get-CimInstance exited ${r.exitCode}.`,
+        actionable: null,
+      };
+    }
+    const code = r.stdout.trim();
+    if (code === "1") {
       return {
         id: "hyperv",
         label: "Virtualization (WSL2)",
@@ -138,14 +163,17 @@ async function checkHyperV() {
         actionable: null,
       };
     }
+    const label =
+      code === "2" ? "Disabled"
+        : code === "3" ? "Absent"
+        : code === "" ? "feature not present"
+        : `InstallState ${code}`;
     return {
       id: "hyperv",
       label: "Virtualization (WSL2)",
       state: "missing",
       version: null,
-      detail: state
-        ? `VirtualMachinePlatform state: ${state}`
-        : "VirtualMachinePlatform feature not present.",
+      detail: `VirtualMachinePlatform: ${label}.`,
       actionable:
         "Enable it from Windows Features (\"Virtual Machine Platform\"), or run " +
         "`dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart` as admin.",
@@ -528,24 +556,67 @@ async function checkOrphans() {
 }
 
 // 7. OpenShell gateway pod is Ready. The gateway is what spawns per-session
-// sandboxes; without it, sandbox creation is impossible. The JSON shape
-// from `openshell status` has shifted across versions — when the parse
-// fails we surface the raw text so IT/the user can see what the CLI
-// actually printed instead of an opaque "unknown" badge.
+// sandboxes; without it, sandbox creation is impossible. The shape of
+// `openshell status` has shifted across versions:
+//
+//   - Pre-0.0.45 era: `openshell status --json` returned a structured
+//     `{ gateway: { state }, version }` payload.
+//   - 0.0.45+: `--json` was dropped; bare `openshell status` prints a
+//     human-readable block with "Status: Connected" / "Version: X.Y.Z".
+//
+// We try the JSON form first (newer CLIs may reintroduce it), and on
+// "unrecognized argument" we fall back to parsing the plain text. When
+// even that fails we surface the raw output so a stale verb assumption
+// here doesn't hide a working gateway behind an opaque "missing" badge.
 /** @returns {Promise<OpenShellComponent>} */
 async function checkOpenShellGateway() {
   try {
-    const r = await wslRun(
+    const json = await wslRun(
       ["-d", DISTRO_NAME, "--", "openshell", "status", "--json"],
       { timeout: 10_000 },
     );
-    if (r.exitCode !== 0) {
-      // Strings like "No gateway configured" arrive here with a non-zero
-      // exit on some CLI versions; the `actionable` line steers the user
-      // at the Restart button which now drives the docker-direct fallback.
-      const stderr = (r.stderr || "").trim();
-      const stdout = (r.stdout || "").trim();
-      const detail = stderr || stdout || "openshell status failed.";
+    if (json.exitCode === 0) {
+      const parsed = parseJsonSafely(json.stdout);
+      if (parsed !== null) {
+        const gatewayState = parsed?.gateway?.state ?? parsed?.state ?? null;
+        if (gatewayState === "Ready" || gatewayState === "ok") {
+          return {
+            id: "openshell-gateway",
+            label: "OpenShell gateway",
+            state: "ok",
+            version: parsed?.version ?? null,
+            detail: null,
+            actionable: null,
+          };
+        }
+        return {
+          id: "openshell-gateway",
+          label: "OpenShell gateway",
+          state: "warn",
+          version: parsed?.version ?? null,
+          detail: `Gateway state: ${gatewayState ?? "unknown"}.`,
+          actionable: "Click Settings → Sandbox → Restart gateway.",
+        };
+      }
+      // JSON-mode succeeded but output wasn't JSON — treat the text as
+      // the v0.0.45+ plain-status format.
+      return classifyPlainStatus(json.stdout);
+    }
+    // --json rejected. Differentiate "flag dropped by CLI" from a real
+    // gateway failure: only the former should trigger the text fallback.
+    const errorBlob = `${json.stderr}\n${json.stdout}`;
+    const flagDropped = /unexpected argument|unknown|unrecognized/i.test(errorBlob);
+    if (flagDropped) {
+      const plain = await wslRun(
+        ["-d", DISTRO_NAME, "--", "openshell", "status"],
+        { timeout: 10_000 },
+      );
+      if (plain.exitCode === 0) {
+        return classifyPlainStatus(plain.stdout);
+      }
+      const detail =
+        (plain.stderr || plain.stdout || "").trim() ||
+        "openshell status failed.";
       return {
         id: "openshell-gateway",
         label: "OpenShell gateway",
@@ -555,39 +626,17 @@ async function checkOpenShellGateway() {
         actionable: "Click Settings → Sandbox → Restart gateway, or reset the distro if that fails.",
       };
     }
-    const parsed = parseJsonSafely(r.stdout);
-    if (parsed === null) {
-      // CLI succeeded but didn't return JSON. Don't pretend we know its
-      // state — surface the raw text so the next bug report has the
-      // information we'd otherwise have to ask for.
-      const preview = (r.stdout || "").trim().slice(0, 400);
-      return {
-        id: "openshell-gateway",
-        label: "OpenShell gateway",
-        state: "warn",
-        version: null,
-        detail: `openshell status returned non-JSON output: "${preview}"`,
-        actionable: "Click Settings → Sandbox → Restart gateway. If that fails, file a bug with this detail.",
-      };
-    }
-    const gatewayState = parsed?.gateway?.state ?? parsed?.state ?? null;
-    if (gatewayState === "Ready" || gatewayState === "ok") {
-      return {
-        id: "openshell-gateway",
-        label: "OpenShell gateway",
-        state: "ok",
-        version: parsed?.version ?? null,
-        detail: null,
-        actionable: null,
-      };
-    }
+    // Genuine non-zero from `status --json` (gateway down, no
+    // registration, etc).
+    const detail =
+      (json.stderr || json.stdout || "").trim() || "openshell status failed.";
     return {
       id: "openshell-gateway",
       label: "OpenShell gateway",
-      state: "warn",
-      version: parsed?.version ?? null,
-      detail: `Gateway state: ${gatewayState ?? "unknown"}.`,
-      actionable: "Click Settings → Sandbox → Restart gateway.",
+      state: "missing",
+      version: null,
+      detail,
+      actionable: "Click Settings → Sandbox → Restart gateway, or reset the distro if that fails.",
     };
   } catch (err) {
     return {
@@ -599,6 +648,49 @@ async function checkOpenShellGateway() {
       actionable: null,
     };
   }
+}
+
+// Map the v0.0.45+ plain-text `openshell status` output to a doctor
+// component result. The format is a "Server Status" header followed by
+// indented "Key: Value" lines; ANSI escape sequences from the CLI's
+// colour output have to be stripped before regex matching.
+function classifyPlainStatus(text) {
+  const clean = String(text || "")
+    // Strip ANSI CSI escape sequences (colour codes) emitted by the CLI.
+    // eslint-disable-next-line no-control-regex
+    .replace(/\[[0-9;]*m/g, "")
+    .trim();
+  const statusLine = clean.match(/^\s*Status:\s*(.+?)\s*$/m)?.[1] ?? null;
+  const versionLine = clean.match(/^\s*Version:\s*(.+?)\s*$/m)?.[1] ?? null;
+  if (statusLine && /^connected$/i.test(statusLine)) {
+    return {
+      id: "openshell-gateway",
+      label: "OpenShell gateway",
+      state: "ok",
+      version: versionLine,
+      detail: null,
+      actionable: null,
+    };
+  }
+  if (statusLine) {
+    return {
+      id: "openshell-gateway",
+      label: "OpenShell gateway",
+      state: "warn",
+      version: versionLine,
+      detail: `Gateway status: ${statusLine}.`,
+      actionable: "Click Settings → Sandbox → Restart gateway.",
+    };
+  }
+  const preview = clean.slice(0, 400);
+  return {
+    id: "openshell-gateway",
+    label: "OpenShell gateway",
+    state: "warn",
+    version: null,
+    detail: `openshell status returned unparseable output: "${preview}"`,
+    actionable: "Click Settings → Sandbox → Restart gateway. If that fails, file a bug with this detail.",
+  };
 }
 
 function aggregateStatus(components) {
@@ -664,4 +756,5 @@ export const __testing = {
   checkOpenShellGateway,
   checkDiskUsage,
   checkOrphans,
+  classifyPlainStatus,
 };

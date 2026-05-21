@@ -79,35 +79,55 @@ test("checkWindows: non-win32 platform reports missing", async () => {
 
 // ── checkHyperV ────────────────────────────────────────────────────────
 
-test("checkHyperV: Enabled → ok", async () => {
-  process.env.MOCK_PWSH_STDOUT = "Enabled\n";
+test("checkHyperV: InstallState 1 (Enabled) → ok", async () => {
+  process.env.MOCK_PWSH_STDOUT = "1\n";
   const c = await __testing.checkHyperV();
   assert.equal(c.id, "hyperv");
   assert.equal(c.state, "ok");
   assert.equal(c.actionable, null);
 });
 
-test("checkHyperV: Disabled → missing with remediation", async () => {
-  process.env.MOCK_PWSH_STDOUT = "Disabled\n";
+test("checkHyperV: InstallState 2 (Disabled) → missing with remediation", async () => {
+  process.env.MOCK_PWSH_STDOUT = "2\n";
   const c = await __testing.checkHyperV();
   assert.equal(c.state, "missing");
   assert.match(c.detail, /Disabled/);
   assert.match(c.actionable, /dism|VirtualMachinePlatform|Virtual Machine Platform/);
 });
 
-test("checkHyperV: missing feature (empty stdout) → missing", async () => {
+test("checkHyperV: InstallState 3 (Absent) → missing", async () => {
+  process.env.MOCK_PWSH_STDOUT = "3\n";
+  const c = await __testing.checkHyperV();
+  assert.equal(c.state, "missing");
+  assert.match(c.detail, /Absent/);
+});
+
+test("checkHyperV: empty stdout (no instance returned) → missing", async () => {
   process.env.MOCK_PWSH_STDOUT = "";
   const c = await __testing.checkHyperV();
   assert.equal(c.state, "missing");
 });
 
-test("checkHyperV: invokes powershell with Get-WindowsOptionalFeature query", async () => {
-  process.env.MOCK_PWSH_STDOUT = "Enabled";
+test("checkHyperV: powershell non-zero exit → unknown (not missing)", async () => {
+  // Regression: Get-WindowsOptionalFeature required elevation, so an un-
+  // elevated query failed and the doctor wrongly reported "missing,"
+  // which made aggregateStatus declare the whole system "unsupported."
+  // Now a failed query maps to "unknown" so the rest of the report is
+  // still actionable.
+  process.env.MOCK_PWSH_EXIT = "1";
+  process.env.MOCK_PWSH_STDERR = "Access is denied";
+  const c = await __testing.checkHyperV();
+  assert.equal(c.state, "unknown");
+  assert.match(c.detail, /Access is denied|Could not query/i);
+});
+
+test("checkHyperV: invokes powershell with Get-CimInstance query", async () => {
+  process.env.MOCK_PWSH_STDOUT = "1";
   await __testing.checkHyperV();
   const lines = readLog(pwshLog);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /-NoProfile -NonInteractive -Command/);
-  assert.match(lines[0], /Get-WindowsOptionalFeature.*VirtualMachinePlatform/);
+  assert.match(lines[0], /Get-CimInstance.*VirtualMachinePlatform/);
 });
 
 // ── checkWsl ───────────────────────────────────────────────────────────
@@ -222,6 +242,59 @@ test("checkOpenShellGateway: non-zero exit → missing", async () => {
   process.env.MOCK_WSL_EXIT = "1";
   const c = await __testing.checkOpenShellGateway();
   assert.equal(c.state, "missing");
+});
+
+// v0.0.45+ dropped `--json`; we fall back to parsing plain `openshell
+// status`. The CLI prints ANSI-coloured "Server Status" + "Key: Value"
+// lines. classifyPlainStatus handles the parsing; testing it directly
+// keeps coverage independent of the mock's single-response limitation.
+
+test("classifyPlainStatus: 'Status: Connected' → ok with version", () => {
+  const text = [
+    "Server Status",
+    "",
+    "  Gateway: openshell",
+    "  Server: https://127.0.0.1:17670",
+    "  Status: Connected",
+    "  Version: 0.0.45",
+  ].join("\n");
+  const c = __testing.classifyPlainStatus(text);
+  assert.equal(c.state, "ok");
+  assert.equal(c.version, "0.0.45");
+});
+
+test("classifyPlainStatus: strips ANSI colour codes before matching", () => {
+  // Exactly the byte sequence the CLI emits for the green checkmark
+  // around "Connected". If the escape stripper is wrong, the regex
+  // sees "\x1b[32mConnected\x1b[0m" and misclassifies as warn.
+  const text = "  Status: \x1b[32mConnected\x1b[0m\n  Version: 0.0.45\n";
+  const c = __testing.classifyPlainStatus(text);
+  assert.equal(c.state, "ok");
+  assert.equal(c.version, "0.0.45");
+});
+
+test("classifyPlainStatus: 'Status: Disconnected' → warn", () => {
+  const text = "  Status: Disconnected\n  Version: 0.0.45\n";
+  const c = __testing.classifyPlainStatus(text);
+  assert.equal(c.state, "warn");
+  assert.match(c.detail, /Disconnected/);
+  assert.match(c.actionable, /[Rr]estart/);
+});
+
+test("classifyPlainStatus: no Status line → warn with preview", () => {
+  const c = __testing.classifyPlainStatus("nothing useful here");
+  assert.equal(c.state, "warn");
+  assert.match(c.detail, /unparseable/);
+});
+
+test("checkOpenShellGateway: --json returning plain text → routed through classifier", async () => {
+  // Some CLI versions return exit 0 to unknown flags and just print the
+  // plain status anyway. The doctor must not treat that as a fatal
+  // gateway error.
+  process.env.MOCK_WSL_STDOUT = "  Status: Connected\n  Version: 0.0.45\n";
+  const c = await __testing.checkOpenShellGateway();
+  assert.equal(c.state, "ok");
+  assert.equal(c.version, "0.0.45");
 });
 
 // ── checkDiskUsage ─────────────────────────────────────────────────────
@@ -408,7 +481,7 @@ test("openshellDoctor returns a well-formed result on non-Windows host", async (
   // synchronously and the rest of the calls go through our mocks but
   // with no canned stdout (so they'll mostly report missing/unknown).
   // We just verify the result shape is sane and aggregation runs.
-  process.env.MOCK_PWSH_STDOUT = "Disabled";
+  process.env.MOCK_PWSH_STDOUT = "2";
   process.env.MOCK_WSL_EXIT = "1";
   const result = await doctor.openshellDoctor();
   assert.ok(["ready", "degraded", "missing", "unsupported"].includes(result.status));
