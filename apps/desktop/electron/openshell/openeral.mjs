@@ -21,6 +21,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
 import { DISTRO_NAME, toWslPath, wslRun, wslSpawn } from "./wsl.mjs";
 
@@ -147,6 +148,9 @@ export async function pullImage(imageRef, options = {}) {
  * True if a sandbox with this name is registered. Used to short-circuit
  * createOpenEralSandbox when re-opening a workspace whose Postgres-backed
  * /home/agent should restore from the existing sandbox.
+ *
+ * Tolerates both the flat-array (`[...]`) and envelope (`{sandboxes:[...]}`,
+ * `{items:[...]}`) JSON shapes the upstream CLI has emitted across releases.
  */
 export async function sandboxExists(name) {
   if (!name) return false;
@@ -155,18 +159,24 @@ export async function sandboxExists(name) {
     { timeout: 10_000 },
   );
   if (r.exitCode !== 0) return false;
+  let parsed;
   try {
-    const parsed = JSON.parse(r.stdout);
-    if (Array.isArray(parsed)) {
-      return parsed.some((s) => {
-        if (typeof s === "string") return s === name;
-        return s?.name === name;
-      });
-    }
-    return false;
+    parsed = JSON.parse(r.stdout);
   } catch {
     return false;
   }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.sandboxes)
+      ? parsed.sandboxes
+      : Array.isArray(parsed?.items)
+        ? parsed.items
+        : null;
+  if (!list) return false;
+  return list.some((s) => {
+    if (typeof s === "string") return s === name;
+    return s?.name === name;
+  });
 }
 
 /**
@@ -289,9 +299,14 @@ export async function createOpenEralSandbox(opts) {
       { timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS },
     );
     if (r.exitCode !== 0) {
+      // Include the CLI version in the error — flag-shape drift is the
+      // dominant cause here, so the next bug report tells us which
+      // version we're dealing with without another round-trip.
+      const cli = await getCliInfo().catch(() => null);
+      const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
       throw new Error(
-        `openshell sandbox create failed (exit ${r.exitCode}): ` +
-          `${(r.stderr || r.stdout).trim()}`,
+        `openshell sandbox create failed (exit ${r.exitCode})${versionTag}: ` +
+          `${(r.stderr || r.stdout).trim() || "(no output)"}`,
       );
     }
     onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });

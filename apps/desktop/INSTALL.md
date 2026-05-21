@@ -141,9 +141,14 @@ free space and toasts you when you drop below 10%. If that happens:
 
 ### "My session won't start — Doctor says gateway: missing"
 
-Settings → Sandbox → **Restart gateway**. That runs
-`openshell gateway start --recreate` inside the distro, which handles
-stopped and crashed gateway containers cleanly.
+Settings → Sandbox → **Restart gateway**. OpenWork probes the installed
+OpenShell CLI for whichever start verb it exposes (the documented one
+has shifted between releases), then falls back to restarting the
+gateway container directly through Docker if the CLI doesn't expose a
+start verb anymore.
+
+If that still fails, the error toast includes the CLI version and the
+exact commands that were attempted — paste both into a help-desk ticket.
 
 ---
 

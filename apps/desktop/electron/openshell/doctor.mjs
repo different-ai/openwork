@@ -285,7 +285,9 @@ async function checkDockerInDistro() {
   }
 }
 
-// 6. OpenShell CLI installed inside the distro.
+// 6. OpenShell CLI installed inside the distro. Tries the JSON form
+// first (newer CLIs), then plain `--version`, so the doctor still
+// captures *some* version string when upstream stops emitting JSON.
 /** @returns {Promise<OpenShellComponent>} */
 async function checkOpenShellCli() {
   try {
@@ -294,6 +296,25 @@ async function checkOpenShellCli() {
       { timeout: 10_000 },
     );
     if (r.exitCode !== 0) {
+      // Some releases moved version under `--version` instead of a
+      // `version` subcommand. Try once more before declaring the binary
+      // missing — that lets the doctor distinguish "no binary" from
+      // "binary present but CLI surface changed".
+      const fallback = await wslRun(
+        ["-d", DISTRO_NAME, "--", "openshell", "--version"],
+        { timeout: 10_000 },
+      ).catch(() => null);
+      if (fallback && fallback.exitCode === 0) {
+        const v = fallback.stdout.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? fallback.stdout.trim();
+        return {
+          id: "openshell-cli",
+          label: "OpenShell CLI",
+          state: "ok",
+          version: v || null,
+          detail: null,
+          actionable: null,
+        };
+      }
       return {
         id: "openshell-cli",
         label: "OpenShell CLI",
@@ -507,7 +528,10 @@ async function checkOrphans() {
 }
 
 // 7. OpenShell gateway pod is Ready. The gateway is what spawns per-session
-// sandboxes; without it, sandbox creation is impossible.
+// sandboxes; without it, sandbox creation is impossible. The JSON shape
+// from `openshell status` has shifted across versions — when the parse
+// fails we surface the raw text so IT/the user can see what the CLI
+// actually printed instead of an opaque "unknown" badge.
 /** @returns {Promise<OpenShellComponent>} */
 async function checkOpenShellGateway() {
   try {
@@ -516,16 +540,36 @@ async function checkOpenShellGateway() {
       { timeout: 10_000 },
     );
     if (r.exitCode !== 0) {
+      // Strings like "No gateway configured" arrive here with a non-zero
+      // exit on some CLI versions; the `actionable` line steers the user
+      // at the Restart button which now drives the docker-direct fallback.
+      const stderr = (r.stderr || "").trim();
+      const stdout = (r.stdout || "").trim();
+      const detail = stderr || stdout || "openshell status failed.";
       return {
         id: "openshell-gateway",
         label: "OpenShell gateway",
         state: "missing",
         version: null,
-        detail: r.stderr || "openshell status failed.",
-        actionable: "Run `openshell gateway start --detach` inside the distro.",
+        detail,
+        actionable: "Click Settings → Sandbox → Restart gateway, or reset the distro if that fails.",
       };
     }
     const parsed = parseJsonSafely(r.stdout);
+    if (parsed === null) {
+      // CLI succeeded but didn't return JSON. Don't pretend we know its
+      // state — surface the raw text so the next bug report has the
+      // information we'd otherwise have to ask for.
+      const preview = (r.stdout || "").trim().slice(0, 400);
+      return {
+        id: "openshell-gateway",
+        label: "OpenShell gateway",
+        state: "warn",
+        version: null,
+        detail: `openshell status returned non-JSON output: "${preview}"`,
+        actionable: "Click Settings → Sandbox → Restart gateway. If that fails, file a bug with this detail.",
+      };
+    }
     const gatewayState = parsed?.gateway?.state ?? parsed?.state ?? null;
     if (gatewayState === "Ready" || gatewayState === "ok") {
       return {
@@ -543,7 +587,7 @@ async function checkOpenShellGateway() {
       state: "warn",
       version: parsed?.version ?? null,
       detail: `Gateway state: ${gatewayState ?? "unknown"}.`,
-      actionable: "Restart the gateway from Settings, or re-run `openshell gateway start`.",
+      actionable: "Click Settings → Sandbox → Restart gateway.",
     };
   } catch (err) {
     return {

@@ -21,6 +21,7 @@ import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import * as openshellClient from "./openshell/client.mjs";
+import * as openshellCli from "./openshell/cli.mjs";
 import * as openeral from "./openshell/openeral.mjs";
 import * as openeralCredentials from "./openshell/openeral-credentials.mjs";
 import * as openeralPty from "./openshell/openeral-pty.mjs";
@@ -1426,19 +1427,69 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "openshellGatewayStatus":
       return openshellClient.getGatewayStatus();
     case "openshellGatewayRestart": {
-      // openshell gateway start --recreate handles both "stopped" and
-      // "crashed" gateway containers without conflicts (matches the
-      // recovery instruction in OpenShell's own troubleshooting docs).
-      const r = await wslRun(
-        ["-d", OPENSHELL_DISTRO_NAME, "--", "openshell", "gateway", "start", "--recreate"],
-        { timeout: 60_000 },
-      );
-      if (r.exitCode !== 0) {
-        throw new Error(
-          `openshell gateway restart failed: ${r.stderr || r.stdout || "unknown error"}`,
+      // Verb drift is the dominant failure mode here: the documented
+      // `gateway start --recreate` is gone in newer CLIs and bare
+      // `gateway start` was renamed in some releases. We probe what the
+      // installed binary actually exposes and try the recovery verbs in
+      // order, then fall back to docker-direct restart of whichever
+      // openshell-cluster* container is already registered with the
+      // distro. Surface a single user-facing error only if every path
+      // failed, so the renderer's toast tells them what to do next.
+      const cliInfo = await openshellCli.getCliInfo();
+      const attempts = [];
+      const tryWsl = async (args) => {
+        const r = await wslRun(
+          ["-d", OPENSHELL_DISTRO_NAME, "--", "openshell", ...args],
+          { timeout: 60_000 },
         );
+        attempts.push({ args: ["openshell", ...args], r });
+        return r.exitCode === 0;
+      };
+
+      const hasStart = await openshellCli.hasSubcommand("gateway", "start");
+      if (hasStart) {
+        if (await tryWsl(["gateway", "start", "--recreate"])) return { ok: true };
+        if (await tryWsl(["gateway", "start", "--detach"])) return { ok: true };
+        if (await tryWsl(["gateway", "start"])) return { ok: true };
       }
-      return { ok: true };
+
+      // Docker-direct fallback: any container with `openshell` in its
+      // name that already exists in the distro gets a fresh `docker
+      // start`. We don't create one — see installer.tryDockerGatewayFallback.
+      const list = await wslRun(
+        [
+          "-d",
+          OPENSHELL_DISTRO_NAME,
+          "--",
+          "bash",
+          "-c",
+          "docker ps -a --filter 'name=openshell' --format '{{.Names}}'",
+        ],
+        { timeout: 15_000 },
+      ).catch((err) => ({ exitCode: -1, stdout: "", stderr: err?.message ?? String(err) }));
+
+      const names = list.stdout
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (names.length === 1) {
+        const restart = await wslRun(
+          ["-d", OPENSHELL_DISTRO_NAME, "--", "docker", "restart", names[0]],
+          { timeout: 60_000 },
+        );
+        if (restart.exitCode === 0) return { ok: true, recoveredVia: `docker restart ${names[0]}` };
+        attempts.push({ args: ["docker", "restart", names[0]], r: restart });
+      }
+
+      const detail = attempts
+        .map(({ args, r }) => `\`${args.join(" ")}\` → exit ${r.exitCode}: ${(r.stderr || r.stdout || "").trim().slice(0, 200) || "(no output)"}`)
+        .join(" | ");
+      throw new Error(
+        `Could not restart the OpenShell gateway. CLI ${cliInfo.version ?? "(unknown)"} ` +
+          `does not respond to any documented start verb, and no recoverable container was ` +
+          `found. Tried: ${detail || "(no attempts)"}. ` +
+          `Run Settings → Sandbox → Refresh, or reset the distro if this persists.`,
+      );
     }
     case "openshellListPolicies": {
       // Lists the bundled policy YAML files. Returns just filenames for
