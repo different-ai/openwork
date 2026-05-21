@@ -25,9 +25,14 @@ import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
 import { DISTRO_NAME, toWslPath, wslRun, wslSpawn } from "./wsl.mjs";
 
+// Same image for both providers — the openeral README at
+// github.com/stringcost/openeral is the source of truth. Provider
+// differentiation happens through the `--provider` flag on
+// `openshell sandbox create`, not through forked images.
+const SANDBOX_IMAGE = "ghcr.io/sandys/openeral/sandbox:just-bash";
 const IMAGE_BY_PROFILE = {
-  "openeral-claude": "ghcr.io/sandys/openeral/sandbox:just-bash",
-  "openeral-openclaw": "ghcr.io/pavitra-programmers/openeral/sandbox:just-bash",
+  "openeral-claude": SANDBOX_IMAGE,
+  "openeral-openclaw": SANDBOX_IMAGE,
 };
 
 // Maps a profile to the `--provider` value passed to `openshell sandbox create`.
@@ -275,6 +280,14 @@ export async function createOpenEralSandbox(opts) {
   try {
     const wslUploadDir = toWslPath(bundle.hostDir);
     onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
+    // `openshell sandbox create` flag shape (verified against CLI 0.0.45):
+    //   --tty --name NAME --from FROM --upload UPLOAD --provider P --auto-providers [-- COMMAND...]
+    // --tty matches the canonical openeral README incantation and is required
+    // because both Claude Code and OpenClaw refuse to start without a
+    // controlling terminal. No --detach: when --name is given the CLI
+    // creates and persists the sandbox without attaching interactively, so
+    // wslRun returns once the gateway has registered it. We attach later
+    // via openeralPty.openSession → `openshell sandbox connect <name>`.
     const r = await wslRun(
       [
         "-d",
@@ -283,6 +296,7 @@ export async function createOpenEralSandbox(opts) {
         "openshell",
         "sandbox",
         "create",
+        "--tty",
         "--name",
         name,
         "--from",
@@ -292,7 +306,6 @@ export async function createOpenEralSandbox(opts) {
         "--provider",
         provider,
         "--auto-providers",
-        "--detach",
         "--",
         "openeral",
       ],

@@ -73,10 +73,11 @@ test("imageForProfile: maps claude profile to sandys image", () => {
   );
 });
 
-test("imageForProfile: maps openclaw profile to pavitra-programmers image", () => {
+test("imageForProfile: maps openclaw profile to sandys image (same as claude)", () => {
+  // openeral README: same image, only --provider differs.
   assert.equal(
     openeral.imageForProfile("openeral-openclaw"),
-    "ghcr.io/pavitra-programmers/openeral/sandbox:just-bash",
+    "ghcr.io/sandys/openeral/sandbox:just-bash",
   );
 });
 
@@ -211,8 +212,9 @@ test("createOpenEralSandbox: claude profile builds correct argv", async () => {
   assert.match(createLine, /--name openeral-new/);
   assert.match(createLine, /--from ghcr\.io\/sandys\/openeral\/sandbox:just-bash/);
   assert.match(createLine, /--upload .*:\/sandbox\/openeral-input/);
+  assert.match(createLine, /sandbox create --tty --name openeral-new/);
   assert.match(createLine, /--provider claude --auto-providers/);
-  assert.match(createLine, /--detach -- openeral$/);
+  assert.match(createLine, /--auto-providers -- openeral$/);
 });
 
 test("createOpenEralSandbox: openclaw profile ensures provider + builds argv", async () => {
@@ -234,7 +236,7 @@ test("createOpenEralSandbox: openclaw profile ensures provider + builds argv", a
   const createLine = lines.find((l) => /openshell sandbox create/.test(l));
   assert.ok(createLine);
   assert.match(createLine, /--name openeral-claws/);
-  assert.match(createLine, /--from ghcr\.io\/pavitra-programmers\/openeral/);
+  assert.match(createLine, /--from ghcr\.io\/sandys\/openeral\/sandbox:just-bash/);
   assert.match(createLine, /--provider openclaw --auto-providers/);
 });
 
