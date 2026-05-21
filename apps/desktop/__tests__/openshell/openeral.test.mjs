@@ -85,39 +85,32 @@ test("imageForProfile: throws on unknown profile", () => {
   assert.throws(() => openeral.imageForProfile("openeral-unknown"), /Unknown OpenEral profile/);
 });
 
-test("providerForProfile: maps claude → 'claude', openclaw → 'openclaw'", () => {
-  assert.equal(openeral.providerForProfile("openeral-claude"), "claude");
-  assert.equal(openeral.providerForProfile("openeral-openclaw"), "openclaw");
+// ── buildWslEnvForwarding ──────────────────────────────────────────────
+
+test("buildWslEnvForwarding: extends WSLENV with forwarded names", () => {
+  const env = openeral.__testing.buildWslEnvForwarding({
+    ANTHROPIC_API_KEY: "sk-ant-test",
+    OPENERAL_AGENT: "openclaw",
+  });
+  assert.equal(env.ANTHROPIC_API_KEY, "sk-ant-test");
+  assert.equal(env.OPENERAL_AGENT, "openclaw");
+  const names = env.WSLENV.split(":").filter(Boolean);
+  assert.ok(names.includes("ANTHROPIC_API_KEY"));
+  assert.ok(names.includes("OPENERAL_AGENT"));
 });
 
-// ── ensureOpenClawProvider ─────────────────────────────────────────────
-
-test("ensureOpenClawProvider: returns {created:true} when create succeeds", async () => {
-  // Mock wsl emits 0 exit; first invocation is the create.
-  process.env.MOCK_WSL_STDOUT = "ok";
-  const r = await openeral.ensureOpenClawProvider();
-  assert.equal(r.created, true);
-  const lines = readArgsLog();
-  assert.equal(lines.length, 1);
-  assert.match(lines[0], /openshell provider create --name openclaw/);
-  assert.match(lines[0], /OPENERAL_AGENT=openclaw/);
-});
-
-test("ensureOpenClawProvider: falls back to update when create fails", async () => {
-  // We can't make the mock fail one call and succeed the next without a
-  // stateful mock. Approach: set exit=1 — both create AND update fail,
-  // and we assert the error message mentions both. Then in a second
-  // test below (success), we cover the happy path.
-  process.env.MOCK_WSL_EXIT = "1";
-  process.env.MOCK_WSL_STDERR = "boom";
-  await assert.rejects(
-    () => openeral.ensureOpenClawProvider(),
-    /Could not ensure openclaw provider/,
-  );
-  const lines = readArgsLog();
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /provider create --name openclaw/);
-  assert.match(lines[1], /provider update openclaw/);
+test("buildWslEnvForwarding: preserves existing WSLENV entries", () => {
+  const prev = process.env.WSLENV;
+  process.env.WSLENV = "EXISTING_VAR";
+  try {
+    const env = openeral.__testing.buildWslEnvForwarding({ FOO: "bar" });
+    const names = env.WSLENV.split(":").filter(Boolean);
+    assert.ok(names.includes("EXISTING_VAR"), `expected EXISTING_VAR in ${env.WSLENV}`);
+    assert.ok(names.includes("FOO"), `expected FOO in ${env.WSLENV}`);
+  } finally {
+    if (prev === undefined) delete process.env.WSLENV;
+    else process.env.WSLENV = prev;
+  }
 });
 
 // ── sandboxExists ──────────────────────────────────────────────────────
@@ -163,16 +156,16 @@ test("createOpenEralSandbox: throws when DATABASE_URL is unconfigured", async ()
   );
 });
 
-test("createOpenEralSandbox: throws when openclaw missing ANTHROPIC_API_KEY", async () => {
+test("createOpenEralSandbox: throws when ANTHROPIC_API_KEY missing (any profile)", async () => {
   await credentials.setCredential("databaseUrl", "postgresql://test/db");
   await assert.rejects(
     () =>
       openeral.createOpenEralSandbox({
         name: "openeral-test",
-        profile: "openeral-openclaw",
+        profile: "openeral-claude",
         skipImagePull: true,
       }),
-    /ANTHROPIC_API_KEY is required for OpenClaw/,
+    /ANTHROPIC_API_KEY is not configured/,
   );
 });
 
@@ -192,9 +185,12 @@ test("createOpenEralSandbox: short-circuits when sandbox already exists", async 
   assert.match(lines[0], /openshell sandbox list --json/);
 });
 
-test("createOpenEralSandbox: claude profile builds correct argv", async () => {
+test("createOpenEralSandbox: claude profile builds canonical openeral argv", async () => {
   await credentials.setCredential("databaseUrl", "postgresql://test/db");
-  // Sandbox NOT in list, but list itself succeeds (returns [])
+  await credentials.setCredential("anthropicApiKey", "sk-ant-test");
+  // Mock always emits "[]" so sandbox list parses to empty and the
+  // stageDbUrlFile mktemp pretends to return "[]" — good enough since
+  // we only assert on argv shape, not the exact /tmp/ path.
   process.env.MOCK_WSL_STDOUT = "[]";
   const result = await openeral.createOpenEralSandbox({
     name: "openeral-new",
@@ -203,68 +199,58 @@ test("createOpenEralSandbox: claude profile builds correct argv", async () => {
   });
   assert.equal(result.existed, false);
   assert.equal(result.imageRef, "ghcr.io/sandys/openeral/sandbox:just-bash");
-  assert.equal(result.provider, "claude");
+
   const lines = readArgsLog();
-  // Expected calls: 1) sandbox list (exists check), 2) sandbox create.
-  // No provider create (claude is built-in). No image pull (skipped).
+
+  // No `provider create` calls — the canonical flow uses --auto-providers
+  // to pick up ANTHROPIC_API_KEY from the env at sandbox-create time.
+  assert.equal(
+    lines.filter((l) => /openshell provider create/.test(l)).length,
+    0,
+    "canonical openeral flow does not call `provider create` ahead of time",
+  );
+
+  // DATABASE_URL gets staged via a bash heredoc.
+  assert.ok(
+    lines.some((l) => /bash -c .*mktemp \/tmp\/openeral-db-url/.test(l)),
+    "expected DATABASE_URL to be staged via mktemp + cat",
+  );
+
+  // Sandbox create matches the openeral README exactly.
   const createLine = lines.find((l) => /openshell sandbox create/.test(l));
   assert.ok(createLine, `no create line. lines=${JSON.stringify(lines)}`);
+  assert.match(createLine, /sandbox create --tty/);
   assert.match(createLine, /--name openeral-new/);
   assert.match(createLine, /--from ghcr\.io\/sandys\/openeral\/sandbox:just-bash/);
-  assert.match(createLine, /--upload .*:\/sandbox\/openeral-input/);
-  assert.match(createLine, /sandbox create --tty --name openeral-new/);
+  assert.match(createLine, /--upload \S+:\/sandbox\/db-url/);
   assert.match(createLine, /--provider claude --auto-providers/);
-  assert.match(createLine, /--auto-providers -- openeral$/);
+  assert.match(createLine, /-- openeral$/);
+  // Things that should NOT be there.
+  assert.doesNotMatch(createLine, /--gateway/, "no --gateway flag in canonical flow");
+  assert.doesNotMatch(createLine, /--no-tty/, "canonical flow uses --tty, not --no-tty");
+  assert.doesNotMatch(createLine, /--provider db/, "no explicit db provider");
 });
 
-test("createOpenEralSandbox: openclaw profile ensures provider + builds argv", async () => {
+test("createOpenEralSandbox: openclaw profile sets OPENERAL_AGENT env via WSLENV", async () => {
   await credentials.setCredential("databaseUrl", "postgresql://test/db");
   await credentials.setCredential("anthropicApiKey", "sk-ant-xxx");
   process.env.MOCK_WSL_STDOUT = "[]";
-  const result = await openeral.createOpenEralSandbox({
+  await openeral.createOpenEralSandbox({
     name: "openeral-claws",
     profile: "openeral-openclaw",
     skipImagePull: true,
   });
-  assert.equal(result.provider, "openclaw");
+  // We can't directly observe WSLENV from the mock log (it sets env
+  // for wsl.exe, not in argv). Instead exercise buildWslEnvForwarding
+  // separately in its own test — done above. Here just confirm the
+  // create line is otherwise identical to the claude path (same
+  // --provider claude --auto-providers + trailing openeral).
   const lines = readArgsLog();
-  // Expected calls: list, provider create (OR update), sandbox create.
-  assert.ok(
-    lines.some((l) => /openshell provider create --name openclaw/.test(l)),
-    "provider create call expected",
-  );
   const createLine = lines.find((l) => /openshell sandbox create/.test(l));
   assert.ok(createLine);
   assert.match(createLine, /--name openeral-claws/);
-  assert.match(createLine, /--from ghcr\.io\/sandys\/openeral\/sandbox:just-bash/);
-  assert.match(createLine, /--provider openclaw --auto-providers/);
-});
-
-test("createOpenEralSandbox: cleans up temp credential bundle after success", async () => {
-  await credentials.setCredential("databaseUrl", "postgresql://test/db");
-  process.env.MOCK_WSL_STDOUT = "[]";
-  await openeral.createOpenEralSandbox({
-    name: "openeral-cleanup",
-    profile: "openeral-claude",
-    skipImagePull: true,
-  });
-  // The bundle dir was a randomly-named subdir of os.tmpdir(); the
-  // staged path is in the recorded argv. After cleanup it should not
-  // exist on disk.
-  const lines = readArgsLog();
-  const createLine = lines.find((l) => /sandbox create/.test(l));
-  const uploadMatch = createLine.match(/--upload (\S+):\/sandbox\/openeral-input/);
-  assert.ok(uploadMatch, "expected --upload path in argv");
-  const uploadPath = uploadMatch[1];
-  // Convert WSL path back to a check: toWslPath outputs /mnt/<drive>/...
-  // On Linux, the input was the host path; toWslPath passes POSIX paths
-  // unchanged. So the dir is the host path.
-  const { existsSync } = await import("node:fs");
-  assert.equal(
-    existsSync(uploadPath),
-    false,
-    `temp credential dir ${uploadPath} should have been cleaned up`,
-  );
+  assert.match(createLine, /--provider claude --auto-providers/);
+  assert.match(createLine, /-- openeral$/);
 });
 
 test("createOpenEralSandbox: requires name and profile", async () => {

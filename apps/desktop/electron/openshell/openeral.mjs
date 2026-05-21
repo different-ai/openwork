@@ -1,41 +1,48 @@
-// OpenEral sandbox lifecycle. Everything below assumes:
-//   - The openwork-openshell WSL distro is registered and healthy
-//     (Phase 1–6 installer brings that up).
-//   - The user has configured at least DATABASE_URL via
-//     openeral-credentials.mjs; ANTHROPIC_API_KEY is additionally
-//     required for the OpenClaw profile.
+// OpenEral sandbox lifecycle. Mirrors the minimal canonical incantation
+// the openeral maintainers run by hand to launch Claude Code:
 //
-// What OpenEral expects on `openshell sandbox create`:
-//   1. The image at ghcr.io/sandys/openeral/... or
-//      ghcr.io/pavitra-programmers/openeral/... — different forks per agent.
-//   2. A `--upload <localDir>:/sandbox/openeral-input` directory that
-//      contains `db-url`, optional `anthropic-api-key`, optional
-//      `presign.json` files. setup.sh inside the image reads these.
-//   3. `--provider claude --auto-providers` (claude is built-in) or
-//      `--provider openclaw --auto-providers` (we create the openclaw
-//      provider idempotently before sandbox-create).
-//   4. The literal command `openeral` — a /usr/local/bin shim that
-//      execs setup.sh.
+//   export ANTHROPIC_API_KEY='sk-ant-...'
+//   export DATABASE_URL='postgresql://...'
+//
+//   printf '%s' "$DATABASE_URL" > /tmp/openeral-db-url
+//   chmod 600 /tmp/openeral-db-url
+//
+//   openshell gateway start   # installer already does this
+//
+//   openshell sandbox create --tty \
+//     --from ghcr.io/sandys/openeral/sandbox:just-bash \
+//     --upload /tmp/openeral-db-url:/sandbox/db-url \
+//     --provider claude --auto-providers \
+//     -- openeral
+//
+//   rm -f /tmp/openeral-db-url
+//
+// Why this shape:
+//   - DATABASE_URL lives in a FILE (one file, not a directory) inside
+//     the distro at /tmp/openeral-db-url, uploaded to /sandbox/db-url.
+//     The openeral image's setup.sh reads it from there.
+//   - ANTHROPIC_API_KEY rides in via the env var. --auto-providers
+//     auto-discovers the `claude` provider's credential from the host
+//     env when sandbox create runs.
+//   - We set ANTHROPIC_API_KEY on the wsl.exe process and add its name
+//     to WSLENV so WSL forwards it into the Linux side where openshell
+//     reads it.
+//   - --tty (not --no-tty) — Claude Code requires a TTY. We later
+//     attach via `openshell sandbox connect` over node-pty.
+//   - Trailing command is `openeral` — a wrapper binary in the image
+//     that runs setup.sh + the agent.
+//   - No --gateway: relies on the active selected gateway, which the
+//     installer registers via `gateway add --local --name openshell`
+//     and selects via `gateway select`.
 
 import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
 import { DISTRO_NAME, wslRun, wslSpawn } from "./wsl.mjs";
 
-// Same image for both providers — the openeral README at
-// github.com/stringcost/openeral is the source of truth. Provider
-// differentiation happens through the `--provider` flag on
-// `openshell sandbox create`, not through forked images.
 const SANDBOX_IMAGE = "ghcr.io/sandys/openeral/sandbox:just-bash";
 const IMAGE_BY_PROFILE = {
   "openeral-claude": SANDBOX_IMAGE,
   "openeral-openclaw": SANDBOX_IMAGE,
-};
-
-// Maps a profile to the `--provider` value passed to `openshell sandbox create`.
-// "claude" is built into OpenShell; "openclaw" we create idempotently below.
-const PROVIDER_BY_PROFILE = {
-  "openeral-claude": "claude",
-  "openeral-openclaw": "openclaw",
 };
 
 const DEFAULT_PULL_TIMEOUT_MS = 10 * 60_000;
@@ -48,67 +55,9 @@ export function imageForProfile(profile) {
   return img;
 }
 
-export function providerForProfile(profile) {
-  const provider = PROVIDER_BY_PROFILE[profile];
-  if (!provider) throw new Error(`Unknown OpenEral profile: ${profile}`);
-  return provider;
-}
-
-/**
- * Idempotently make sure the `openclaw` provider exists. Claude is the
- * built-in default and needs no provider registration. Returns:
- *   { created: true }   on first create
- *   { created: false }  if it existed and we updated (or it was already current)
- */
-export async function ensureOpenClawProvider() {
-  const credentialFlag = "OPENERAL_AGENT=openclaw";
-  const create = await wslRun(
-    [
-      "-d",
-      DISTRO_NAME,
-      "--",
-      "openshell",
-      "provider",
-      "create",
-      "--name",
-      "openclaw",
-      "--type",
-      "generic",
-      "--credential",
-      credentialFlag,
-    ],
-    { timeout: 30_000 },
-  );
-  if (create.exitCode === 0) return { created: true };
-  // Likely already exists. Try update.
-  const update = await wslRun(
-    [
-      "-d",
-      DISTRO_NAME,
-      "--",
-      "openshell",
-      "provider",
-      "update",
-      "openclaw",
-      "--credential",
-      credentialFlag,
-    ],
-    { timeout: 30_000 },
-  );
-  if (update.exitCode === 0) return { created: false };
-  throw new Error(
-    `Could not ensure openclaw provider: ` +
-      `create exit=${create.exitCode} stderr=${create.stderr.trim()}, ` +
-      `update exit=${update.exitCode} stderr=${update.stderr.trim()}`,
-  );
-}
-
 /**
  * Pull the OpenEral image into the distro's Docker. Streamed via
  * wslSpawn so a long-running pull shows incremental progress.
- *
- * onProgress receives raw docker-pull lines verbatim (Pulling fs layer,
- * Extracting, etc.); caller decides how to render them.
  *
  * @param {string} imageRef
  * @param {{ onProgress?: (text: string) => void, timeoutMs?: number }} [options]
@@ -147,10 +96,9 @@ export async function pullImage(imageRef, options = {}) {
 
 /**
  * True if a sandbox with this name is registered. Used to short-circuit
- * createOpenEralSandbox when re-opening a workspace whose Postgres-backed
- * /home/agent should restore from the existing sandbox.
+ * createOpenEralSandbox when re-opening a workspace.
  *
- * Tolerates both the flat-array (`[...]`) and envelope (`{sandboxes:[...]}`,
+ * Tolerates the flat-array (`[...]`) and envelope (`{sandboxes:[...]}`,
  * `{items:[...]}`) JSON shapes the upstream CLI has emitted across releases.
  */
 export async function sandboxExists(name) {
@@ -181,108 +129,57 @@ export async function sandboxExists(name) {
 }
 
 /**
- * Stage the credential files OpenEral's setup.sh reads from
- * /sandbox/openeral-input/. Critically: we stage *inside the WSL distro*,
- * not on the Windows side.
+ * Stage DATABASE_URL into a one-shot file inside the distro at
+ * /tmp/openeral-db-url-<random>, with mode 0600. The value never
+ * touches the Windows filesystem — it flows through wsl.exe stdin and
+ * is written by bash inside the distro.
  *
- * Background: we used to write to a tmpdir on the Windows host (via Node
- * `mkdtemp`) and pass `/mnt/c/.../<dir>` to `openshell sandbox create
- * --upload`. WSL2 mounts the Windows filesystem via 9P, which mangles
- * Linux file modes: a file created with `0o600` on the Windows side is
- * effectively unreadable to the `banker` user inside the distro, so
- * openshell fails the upload with ENOENT ("No such file or directory")
- * even though the path exists. Staging inside the distro avoids the 9P
- * translation entirely and is more secure — secrets never touch the
- * Windows filesystem.
- *
- * The secret bytes flow through `wsl.exe` stdin (memory-only) into a
- * `cat > <file>` running inside the distro under `umask 077`.
- *
- * Returns the in-distro WSL path plus a cleanup() that removes it.
+ * Returns the in-distro path and a cleanup() that removes the file.
  */
-async function stageCredentialBundle({ profile }) {
-  const databaseUrl = await getCredential("databaseUrl");
-  if (!databaseUrl) {
-    throw new Error(
-      "DATABASE_URL is not configured. Set it in Settings → Sandbox → OpenEral configuration.",
-    );
-  }
-  const anthropicApiKey = await getCredential("anthropicApiKey");
-  if (profile === "openeral-openclaw" && !anthropicApiKey) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is required for OpenClaw (its embedded gateway can't resolve " +
-        "OpenShell provider placeholders). Set it in Settings → Sandbox → OpenEral configuration.",
-    );
-  }
-
-  // mktemp inside the distro. Owned by whoever wsl.exe runs as by
-  // default (`banker` in our rootfs). 0o700 mode set explicitly.
-  const mk = await wslRun(
-    [
-      "-d",
-      DISTRO_NAME,
-      "--",
-      "bash",
-      "-c",
-      "set -e; d=$(mktemp -d -t openeral-input-XXXXXXXX); chmod 700 \"$d\"; printf '%s' \"$d\"",
-    ],
-    { timeout: 10_000 },
+async function stageDbUrlFile(databaseUrl) {
+  const script =
+    `set -e; umask 077; ` +
+    `f=$(mktemp /tmp/openeral-db-url-XXXXXXXX); ` +
+    `cat > "$f"; ` +
+    `chmod 600 "$f"; ` +
+    `printf '%s' "$f"`;
+  const r = await wslRun(
+    ["-d", DISTRO_NAME, "--", "bash", "-c", script],
+    { timeout: 10_000, stdin: databaseUrl },
   );
-  if (mk.exitCode !== 0 || !mk.stdout.trim()) {
+  if (r.exitCode !== 0 || !r.stdout.trim()) {
     throw new Error(
-      `Could not create in-distro staging dir: ${(mk.stderr || mk.stdout).trim() || "no output"}`,
+      `Could not stage DATABASE_URL inside distro: ` +
+        `${(r.stderr || r.stdout).trim() || "no output"}`,
     );
   }
-  const wslDir = mk.stdout.trim();
-
-  const writeSecret = async (filename, value) => {
-    // `cat > $file` consumes stdin and writes to the path; umask 077
-    // makes the file readable only by the owner.
-    const r = await wslRun(
-      [
-        "-d",
-        DISTRO_NAME,
-        "--",
-        "bash",
-        "-c",
-        `set -e; umask 077; cat > "${wslDir}/${filename}"`,
-      ],
-      { timeout: 10_000, stdin: value },
-    );
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `Could not stage ${filename}: ${(r.stderr || r.stdout).trim() || "no output"}`,
-      );
-    }
-  };
-
-  const cleanup = async () => {
-    await wslRun(
-      ["-d", DISTRO_NAME, "--", "rm", "-rf", "--", wslDir],
-      { timeout: 10_000 },
-    ).catch(() => {
-      // Best-effort. A leaked tmp dir under /tmp inside the distro is
-      // recovered on the next reboot.
-    });
-  };
-
-  try {
-    await writeSecret("db-url", databaseUrl);
-    if (anthropicApiKey) {
-      await writeSecret("anthropic-api-key", anthropicApiKey);
-    }
-    // STRINGCOST presign is intentionally not staged here — the README's
-    // flow creates it via a curl call against app.stringcost.com which
-    // needs a separate IPC handler we don't have yet. Phase O8 follow-up.
-  } catch (err) {
-    await cleanup();
-    throw err;
-  }
-
+  const wslPath = r.stdout.trim();
   return {
-    /** In-distro WSL path, e.g. /tmp/openeral-input-AbCdEfGh. */
-    wslDir,
-    cleanup,
+    wslPath,
+    cleanup: async () => {
+      await wslRun(
+        ["-d", DISTRO_NAME, "--", "rm", "-f", "--", wslPath],
+        { timeout: 5_000 },
+      ).catch(() => {
+        // Best-effort. A leaked /tmp file is reaped on the next distro
+        // reboot or `wsl --shutdown`.
+      });
+    },
+  };
+}
+
+/**
+ * Build the wsl.exe env that forwards ANTHROPIC_API_KEY (and, for the
+ * openclaw profile, OPENERAL_AGENT) into the Linux side. WSL only
+ * forwards env vars whose names appear in WSLENV.
+ */
+function buildWslEnvForwarding(extra) {
+  const forwardedNames = Object.keys(extra);
+  const existingWslEnv = process.env.WSLENV ? [process.env.WSLENV] : [];
+  return {
+    ...process.env,
+    ...extra,
+    WSLENV: [...existingWslEnv, ...forwardedNames].join(":"),
   };
 }
 
@@ -290,10 +187,6 @@ async function stageCredentialBundle({ profile }) {
  * Create (or resume into) an OpenEral sandbox. Sandbox naming is stable
  * per-workspace — re-running with the same name on the same Postgres
  * is OpenEral's whole portability story.
- *
- * Returns { name, profile, imageRef, provider, existed }. `existed === true`
- * means we short-circuited because the sandbox was already up; the caller
- * skips straight to connect.
  *
  * @param {Object} opts
  * @param {string} opts.name
@@ -308,19 +201,28 @@ export async function createOpenEralSandbox(opts) {
   if (!profile) throw new Error("createOpenEralSandbox: profile is required");
 
   const imageRef = imageForProfile(profile);
-  const provider = providerForProfile(profile);
 
   // Short-circuit if the sandbox already exists (workspace reopen).
   if (await sandboxExists(name)) {
     onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
-    return { name, profile, imageRef, provider, existed: true };
+    return { name, profile, imageRef, existed: true };
   }
 
-  if (profile === "openeral-openclaw") {
-    onProgress?.({ phase: "provider", message: "Ensuring openclaw provider exists..." });
-    await ensureOpenClawProvider();
+  // Validate credentials.
+  const databaseUrl = await getCredential("databaseUrl");
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is not configured. Set it in Settings → Sandbox → OpenEral configuration.",
+    );
+  }
+  const anthropicApiKey = await getCredential("anthropicApiKey");
+  if (!anthropicApiKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY is not configured. Set it in Settings → Sandbox → OpenEral configuration.",
+    );
   }
 
+  // Image pull (~1.5 GB on first run for :just-bash).
   if (!skipImagePull) {
     onProgress?.({ phase: "pull", message: `Pulling ${imageRef}...` });
     await pullImage(imageRef, {
@@ -328,47 +230,41 @@ export async function createOpenEralSandbox(opts) {
     });
   }
 
-  onProgress?.({ phase: "stage", message: "Staging credential bundle..." });
-  const bundle = await stageCredentialBundle({ profile });
+  // Stage DATABASE_URL → /tmp/openeral-db-url-XXXXXX inside the distro.
+  onProgress?.({ phase: "stage", message: "Staging DATABASE_URL..." });
+  const dbFile = await stageDbUrlFile(databaseUrl);
 
   try {
-    const wslUploadDir = bundle.wslDir;
+    // Env vars to forward into the distro via WSLENV. ANTHROPIC_API_KEY
+    // is always forwarded; for the openclaw profile we additionally set
+    // OPENERAL_AGENT=openclaw so the openeral wrapper picks the right
+    // agent at runtime.
+    const forwarded = { ANTHROPIC_API_KEY: anthropicApiKey };
+    if (profile === "openeral-openclaw") {
+      forwarded.OPENERAL_AGENT = "openclaw";
+    }
+    const env = buildWslEnvForwarding(forwarded);
+
     onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
-    // `openshell sandbox create` flag shape (verified against CLI 0.0.45):
-    //   --tty --name NAME --from FROM --upload UPLOAD --provider P --auto-providers [-- COMMAND...]
-    // --tty matches the canonical openeral README incantation and is required
-    // because both Claude Code and OpenClaw refuse to start without a
-    // controlling terminal. No --detach: when --name is given the CLI
-    // creates and persists the sandbox without attaching interactively, so
-    // wslRun returns once the gateway has registered it. We attach later
-    // via openeralPty.openSession → `openshell sandbox connect <name>`.
     const r = await wslRun(
       [
-        "-d",
-        DISTRO_NAME,
-        "--",
-        "openshell",
-        "sandbox",
-        "create",
+        "-d", DISTRO_NAME, "--",
+        "openshell", "sandbox", "create",
         "--tty",
-        "--name",
-        name,
-        "--from",
-        imageRef,
-        "--upload",
-        `${wslUploadDir}:/sandbox/openeral-input`,
-        "--provider",
-        provider,
+        "--name", name,
+        "--from", imageRef,
+        "--upload", `${dbFile.wslPath}:/sandbox/db-url`,
+        "--provider", "claude",
         "--auto-providers",
         "--",
         "openeral",
       ],
-      { timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS },
+      {
+        timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
+        env,
+      },
     );
     if (r.exitCode !== 0) {
-      // Include the CLI version in the error — flag-shape drift is the
-      // dominant cause here, so the next bug report tells us which
-      // version we're dealing with without another round-trip.
       const cli = await getCliInfo().catch(() => null);
       const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
       throw new Error(
@@ -377,9 +273,9 @@ export async function createOpenEralSandbox(opts) {
       );
     }
     onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
-    return { name, profile, imageRef, provider, existed: false };
+    return { name, profile, imageRef, existed: false };
   } finally {
-    await bundle.cleanup();
+    await dbFile.cleanup();
   }
 }
 
@@ -396,8 +292,6 @@ export async function deleteOpenEralSandbox(name) {
  * `postgres:16-alpine` container inside the distro. Pulls lazily on
  * first call (~6 MB). Returns `{ ok: true, reachable: true }` on
  * successful `SELECT 1`, throws otherwise.
- *
- * Replaces the openeralTestDatabase stub in main.mjs.
  */
 export async function probeDatabaseUrl({ timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } = {}) {
   const url = await getCredential("databaseUrl");
@@ -433,6 +327,6 @@ export async function probeDatabaseUrl({ timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } 
 
 export const __testing = {
   IMAGE_BY_PROFILE,
-  PROVIDER_BY_PROFILE,
-  stageCredentialBundle,
+  buildWslEnvForwarding,
+  stageDbUrlFile,
 };
