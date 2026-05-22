@@ -1,0 +1,19 @@
+apps/app/src/components/message-list.tsx
+  s_39ed906ffce7d6::t_386dddce839249 14,86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "9a4c00798cc8ee2a9daf6f58231b16fb15c8116a",
+  "prompts": {},
+  "sessions": {
+    "s_39ed906ffce7d6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b5a58c50-349f-4f1c-bbbc-f912f62fc9b5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
