@@ -1,5 +1,6 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
+import { isEntraSsoEnabled, mapEntraProfileToUser, normalizeEntraTenantId } from "./entra-sso.js";
 import { env } from "./env.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
@@ -12,7 +13,7 @@ import {
   denOrganizationAccess,
   denOrganizationStaticRoles,
 } from "./organization-access.js";
-import { seedDefaultOrganizationRoles } from "./orgs.js";
+import { ensureEntraSsoMembershipForAccount, seedDefaultOrganizationRoles } from "./orgs.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -70,6 +71,18 @@ const socialProviders = {
         },
       }
     : {}),
+  ...(isEntraSsoEnabled(env.entra)
+    ? {
+        microsoft: {
+          clientId: env.entra.clientId!,
+          clientSecret: env.entra.clientSecret!,
+          tenantId: normalizeEntraTenantId(env.entra.tenantId),
+          authority: "https://login.microsoftonline.com",
+          scope: ["openid", "profile", "email"],
+          mapProfileToUser: mapEntraProfileToUser,
+        },
+      }
+    : {}),
 };
 
 function hasRole(roleValue: string, roleName: string) {
@@ -112,6 +125,30 @@ export const auth = betterAuth({
     schema,
   }),
   databaseHooks: {
+    account: {
+      create: {
+        after: async (account) => {
+          if (account.providerId === "microsoft") {
+            await ensureEntraSsoMembershipForAccount({
+              idToken: account.idToken,
+              providerId: account.providerId,
+              userId: normalizeDenTypeId("user", account.userId),
+            });
+          }
+        },
+      },
+      update: {
+        after: async (account) => {
+          if (account.providerId === "microsoft") {
+            await ensureEntraSsoMembershipForAccount({
+              idToken: account.idToken,
+              providerId: account.providerId,
+              userId: normalizeDenTypeId("user", account.userId),
+            });
+          }
+        },
+      },
+    },
     session: {
       create: {
         before: async (session) => {
@@ -186,7 +223,7 @@ export const auth = betterAuth({
       },
       "/sign-up/email": {
         window: 3600,
-        max: env.devMode ? 100 : 5,
+        max: 3,
       },
       "/email-otp/send-verification-otp": {
         window: 3600,

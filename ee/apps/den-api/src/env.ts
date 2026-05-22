@@ -1,4 +1,5 @@
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
+import { parseEntraSsoEnv, validateEntraSsoEnv } from "./entra-sso.js"
 import { z } from "zod"
 
 const EnvSchema = z.object({
@@ -21,6 +22,14 @@ const EnvSchema = z.object({
   GITHUB_CONNECTOR_APP_WEBHOOK_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  DEN_ENTRA_TENANT_ID: z.string().optional(),
+  DEN_ENTRA_CLIENT_ID: z.string().optional(),
+  DEN_ENTRA_CLIENT_SECRET: z.string().optional(),
+  DEN_ENTRA_AUTO_JOIN_ENABLED: z.string().optional(),
+  DEN_ENTRA_AUTO_JOIN_ORG_ID: z.string().optional(),
+  DEN_ENTRA_AUTO_JOIN_ORG_SLUG: z.string().optional(),
+  DEN_ENTRA_ADMIN_GROUP_IDS: z.string().optional(),
+  DEN_ENTRA_MEMBER_GROUP_IDS: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
@@ -121,6 +130,14 @@ const EnvSchema = z.object({
       }
     }
   }
+
+  for (const issue of validateEntraSsoEnv(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: issue.message,
+      path: [issue.path],
+    })
+  }
 })
 
 const parsed = EnvSchema.parse(process.env)
@@ -154,7 +171,6 @@ const polarFeatureGateEnabled =
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
-
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
 
@@ -196,6 +212,7 @@ export const env = {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),
     clientSecret: optionalString(parsed.GOOGLE_CLIENT_SECRET),
   },
+  entra: parseEntraSsoEnv(parsed),
   email: {
     from: optionalString(parsed.EMAIL_FROM),
   },
