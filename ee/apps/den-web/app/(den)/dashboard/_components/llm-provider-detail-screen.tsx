@@ -185,10 +185,10 @@ export function LlmProviderDetailScreen({
                     </div>
 
                     <div
-                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasCredential ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
                     >
                         <KeyRound className="h-4 w-4" />
-                        {provider.hasApiKey
+                        {provider.hasCredential
                             ? "Credential saved"
                             : "Credential missing"}
                     </div>
@@ -221,10 +221,10 @@ export function LlmProviderDetailScreen({
                     </div>
                     <div className="rounded-[24px] bg-gray-50 p-5">
                         <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                            Updated
+                            Credential
                         </p>
                         <p className="mt-3 text-[16px] font-medium text-gray-900">
-                            {formatProviderTimestamp(provider.updatedAt)}
+                            {provider.credentialKind === "opencode_oauth" ? "OpenCode OAuth" : "API key"}
                         </p>
                     </div>
                 </div>
