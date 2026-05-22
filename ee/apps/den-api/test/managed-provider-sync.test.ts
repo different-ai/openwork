@@ -36,7 +36,7 @@ function createApp(input: {
     credentialKind: "api_key" as const,
     providerConfig: { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic" },
     models: [{ id: "claude", name: "Claude", config: { id: "claude" } }],
-    apiKey: "sk-secret-den-test",
+    apiKey: "plain-provider-secret-den-test",
     revision: "rev-1",
   }
   managedProviderModule.registerManagedProviderSyncRoutes(app as never, {
@@ -76,21 +76,23 @@ test("managed provider sync sends credentials only to worker runtime and redacts
   const response = await app.request(`http://den.local/v1/workers/${workerId}/managed-providers/sync`, { method: "POST" })
   expect(response.status).toBe(200)
   const body = await response.json()
-  expect(JSON.stringify(body)).not.toContain("sk-secret")
-  expect(JSON.stringify(calls[0])).toContain("sk-secret-den-test")
+  expect(JSON.stringify(body)).not.toContain("plain-provider-secret")
+  expect(JSON.stringify(calls[0])).toContain("plain-provider-secret-den-test")
   expect(body).toMatchObject({ status: "applied", providerCount: 1 })
 })
 
 test("managed provider sync sanitizes worker failures", async () => {
   const { app, workerId } = createApp({
-    pushRuntime: async () => ({ ok: false, status: 500, payload: { message: "failed with sk-secret-den-test" } }),
+    pushRuntime: async () => ({ ok: false, status: 500, payload: { message: "failed with plain-provider-secret-den-test access-token-den refresh-token-den" } }),
   })
   const response = await app.request(`http://den.local/v1/workers/${workerId}/managed-providers/sync`, { method: "POST" })
   expect(response.status).toBe(502)
   const body = await response.json()
   expect(body.status).toBe("failed")
-  expect(JSON.stringify(body)).not.toContain("sk-secret")
-  expect(body.reason).toContain("[redacted]")
+  expect(JSON.stringify(body)).not.toContain("plain-provider-secret")
+  expect(JSON.stringify(body)).not.toContain("access-token-den")
+  expect(JSON.stringify(body)).not.toContain("refresh-token-den")
+  expect(body.reason).toBe("Worker provider sync failed.")
 })
 
 test("managed provider sync reports missing worker as not found", async () => {
@@ -102,5 +104,5 @@ test("managed provider sync reports missing worker as not found", async () => {
 
 test("managed provider revision is stable and redaction helper removes token-shaped secrets", () => {
   expect(managedProviderModule.computeManagedProviderRevision([{ id: "b", revision: "2" }, { id: "a", revision: "1" }])).toBe("a:1|b:2")
-  expect(managedProviderModule.sanitizeManagedProviderSyncFailure({ message: "bad sk-live-secret" })).toBe("bad [redacted]")
+  expect(managedProviderModule.sanitizeManagedProviderSyncFailure({ message: "bad plain-secret access-token refresh-token" })).toBe("Worker provider sync failed.")
 })
