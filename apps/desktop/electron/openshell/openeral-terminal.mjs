@@ -82,7 +82,23 @@ function launchWindowsTerminal(sandboxName, windowTitle) {
   // directly as the command. If wt isn't installed (older Win11
   // installs), fall back to cmd.exe /K so the window stays open after
   // the connect command exits.
-  const wslArgs = ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "connect", sandboxName];
+  // `sandbox connect` doesn't accept a trailing command. Use `exec
+  // --tty -- openeral` so the external terminal launches Claude Code
+  // directly inside a real PTY (the terminal emulator allocates one
+  // for the wsl.exe child).
+  const wslArgs = [
+    "-d",
+    DISTRO_NAME,
+    "--",
+    "openshell",
+    "sandbox",
+    "exec",
+    "--name",
+    sandboxName,
+    "--tty",
+    "--",
+    "openeral",
+  ];
 
   const wtChild = spawn(
     "wt.exe",
@@ -126,7 +142,23 @@ function launchMacOSTerminal(sandboxName, windowTitle) {
 async function launchLinuxTerminal(sandboxName, windowTitle) {
   // Linux is dev convenience only — banker laptops are Windows. Probe a
   // list of common terminal emulators in priority order.
-  const wslArgs = ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "connect", sandboxName];
+  // `sandbox connect` doesn't accept a trailing command. Use `exec
+  // --tty -- openeral` so the external terminal launches Claude Code
+  // directly inside a real PTY (the terminal emulator allocates one
+  // for the wsl.exe child).
+  const wslArgs = [
+    "-d",
+    DISTRO_NAME,
+    "--",
+    "openshell",
+    "sandbox",
+    "exec",
+    "--name",
+    sandboxName,
+    "--tty",
+    "--",
+    "openeral",
+  ];
   const candidates = detectLinuxTerminal();
   for (const cand of candidates) {
     const args = cand.build("wsl.exe", wslArgs);

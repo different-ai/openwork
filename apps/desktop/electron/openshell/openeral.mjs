@@ -1,39 +1,36 @@
-// OpenEral sandbox lifecycle. Mirrors the minimal canonical incantation
-// the openeral maintainers run by hand to launch Claude Code:
+// OpenEral sandbox lifecycle. The upstream openeral maintainers'
+// recipe runs everything (provision + Claude Code REPL) in one
+// `openshell sandbox create --tty -- openeral` from an interactive
+// shell. We can't do that headlessly: createOpenEralSandbox runs via
+// wslRun (piped stdio, no TTY), so passing `-- openeral` as the
+// trailing command would deadlock — Claude Code's first-run "Use this
+// API key?" prompt has no terminal to read from, ssh eventually
+// times out, sandbox create returns exit 1.
 //
-//   export ANTHROPIC_API_KEY='sk-ant-...'
-//   export DATABASE_URL='postgresql://...'
+// Two-step shape we use instead:
 //
-//   printf '%s' "$DATABASE_URL" > /tmp/openeral-db-url
-//   chmod 600 /tmp/openeral-db-url
+//   1. `openshell sandbox create --no-tty ... -- /bin/true`
+//      Provisions the container, uploads /sandbox/db-url, returns as
+//      soon as /bin/true exits (≈ container-ready time).
 //
-//   openshell gateway start   # installer already does this
+//   2. `openshell sandbox exec <name> --tty -- openeral`
+//      Spawned by openeral-pty.mjs (node-pty) or openeral-terminal.mjs
+//      (external terminal emulator). Both give the wsl.exe child a
+//      real PTY, so Claude Code's prompt is answerable on first run
+//      and /home/agent persists the answer for re-connects.
 //
-//   openshell sandbox create --tty \
-//     --from ghcr.io/sandys/openeral/sandbox:just-bash \
-//     --upload /tmp/openeral-db-url:/sandbox/db-url \
-//     --provider claude --auto-providers \
-//     -- openeral
-//
-//   rm -f /tmp/openeral-db-url
-//
-// Why this shape:
-//   - DATABASE_URL lives in a FILE (one file, not a directory) inside
-//     the distro at /tmp/openeral-db-url, uploaded to /sandbox/db-url.
-//     The openeral image's setup.sh reads it from there.
-//   - ANTHROPIC_API_KEY rides in via the env var. --auto-providers
-//     auto-discovers the `claude` provider's credential from the host
-//     env when sandbox create runs.
-//   - We set ANTHROPIC_API_KEY on the wsl.exe process and add its name
-//     to WSLENV so WSL forwards it into the Linux side where openshell
-//     reads it.
-//   - --tty (not --no-tty) — Claude Code requires a TTY. We later
-//     attach via `openshell sandbox connect` over node-pty.
-//   - Trailing command is `openeral` — a wrapper binary in the image
-//     that runs setup.sh + the agent.
-//   - No --gateway: relies on the active selected gateway, which the
-//     installer registers via `gateway add --local --name openshell`
+// Other invariants:
+//   - DATABASE_URL is staged as a FILE (one file, not a directory) in
+//     the distro at /tmp/openeral-db-url-<uuid> and uploaded to
+//     /sandbox/db-url. The openeral image's setup.sh reads it from
+//     there at first `openeral` exec.
+//   - ANTHROPIC_API_KEY rides in via env + WSLENV; --auto-providers
+//     auto-creates the `claude` provider from it at create time.
+//   - No --gateway flag: relies on the active selected gateway, which
+//     the installer registers via `gateway add --local --name openshell`
 //     and selects via `gateway select`.
+//   - The rootfs MUST include openssh-client — openshell shells out
+//     to ssh/scp for upload, connect, exec, download.
 
 import { randomUUID } from "node:crypto";
 
@@ -51,6 +48,17 @@ const DEFAULT_PULL_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_CREATE_TIMEOUT_MS = 3 * 60_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 15_000;
 
+// Docker pulls happen under user `banker` inside the distro. If Docker
+// Desktop's WSL integration ever ran for this distro (or runs again on
+// a future boot) it can write a `credsStore: "desktop"` line into
+// ~/.docker/config.json that points at /mnt/c/.../docker-credential-desktop.exe.
+// Linux docker can't exec a Windows binary — pulls then fail with
+// `exec format error`. We route our docker invocations through an empty
+// managed config dir so the credential helper is never invoked. The
+// images we pull (openeral sandbox, postgres:16-alpine) are public, so
+// skipping credentials is correct, not a workaround.
+const DOCKER_CONFIG_DIR = "/tmp/openwork-docker-config";
+
 export function imageForProfile(profile) {
   const img = IMAGE_BY_PROFILE[profile];
   if (!img) throw new Error(`Unknown OpenEral profile: ${profile}`);
@@ -67,7 +75,14 @@ export function imageForProfile(profile) {
 export async function pullImage(imageRef, options = {}) {
   const { onProgress, timeoutMs = DEFAULT_PULL_TIMEOUT_MS } = options;
   return new Promise((resolve, reject) => {
-    const child = wslSpawn(["-d", DISTRO_NAME, "--", "docker", "pull", imageRef]);
+    const child = wslSpawn([
+      "-d",
+      DISTRO_NAME,
+      "--",
+      "bash",
+      "-c",
+      `mkdir -p ${DOCKER_CONFIG_DIR} && exec docker --config ${DOCKER_CONFIG_DIR} pull ${shellQuote(imageRef)}`,
+    ]);
     let lastStderr = "";
     const tail = (chunk) => {
       const text = chunk.toString("utf8");
@@ -213,23 +228,27 @@ export async function createOpenEralSandbox(opts) {
   }
   const env = buildWslEnvForwarding(forwarded);
 
-  // Critical: staging the DATABASE_URL file AND running `openshell
-  // sandbox create` happen in ONE bash session. Two separate wsl.exe
-  // calls landed in different /tmp namespaces on at least one banker
-  // distro (per-session PrivateTmp from systemd-logind), so openshell
-  // saw ENOENT trying to upload a file that "existed" from our
-  // staging call's perspective. Doing it in one bash subshell means
-  // /tmp is necessarily the same namespace for the cat write and the
-  // --upload read.
+  // Staging the DATABASE_URL file AND running `openshell sandbox
+  // create` happen in ONE bash session — two separate wsl.exe calls
+  // can land in different /tmp namespaces on some banker distros, so
+  // openshell would see ENOENT trying to upload a file that "existed"
+  // from our staging call's perspective. One bash subshell keeps /tmp
+  // consistent for both the cat write and the --upload read.
   //
-  // Shape mirrors the openeral maintainer's canonical bash incantation:
+  // We deliberately do NOT pass `-- openeral` as the trailing command:
+  // `openshell sandbox create` BLOCKS until the trailing command exits,
+  // but `openeral` launches Claude Code (an interactive REPL that
+  // never exits), and we have no TTY here (wslRun is piped). That used
+  // to deadlock until ssh timed out with `exit status 1`. Instead we
+  // run `-- /bin/true` to provision the sandbox, return immediately,
+  // and rely on `sandbox exec --tty -- openeral` from openeral-pty.mjs
+  // / openeral-terminal.mjs to launch the REPL inside a real PTY.
   //
-  //   printf '%s' "$DATABASE_URL" > /tmp/openeral-db-url
-  //   chmod 600 /tmp/openeral-db-url
-  //   openshell sandbox create --tty --from <img>
-  //     --upload /tmp/openeral-db-url:/sandbox/db-url
-  //     --provider claude --auto-providers -- openeral
-  //   rm -f /tmp/openeral-db-url
+  // Note: openshell's --upload (and connect/exec/download) shells out
+  // to `ssh`/`scp` locally. The rootfs Dockerfile MUST include
+  // openssh-client or every sandbox operation fails with a cryptic
+  // "Error: × No such file or directory (os error 2)" from the failed
+  // exec.
   const dbPath = `/tmp/openeral-db-url-${randomUUID()}`;
   const script = [
     "set -e",
@@ -239,12 +258,12 @@ export async function createOpenEralSandbox(opts) {
     // trap cleans up the staging file whether sandbox create succeeds
     // or fails. EXIT fires once when the bash subshell exits.
     `trap 'rm -f ${dbPath}' EXIT`,
-    `exec openshell sandbox create --tty ` +
+    `exec openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
       `--from ${shellQuote(imageRef)} ` +
       `--upload ${dbPath}:/sandbox/db-url ` +
       `--provider claude --auto-providers ` +
-      `-- openeral`,
+      `-- /bin/true`,
   ].join("\n");
 
   onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
@@ -287,22 +306,17 @@ export async function probeDatabaseUrl({ timeoutMs = DEFAULT_PROBE_TIMEOUT_MS } 
   if (!url) {
     throw new Error("DATABASE_URL is not configured.");
   }
+  // Same DOCKER_CONFIG sidestep as pullImage — postgres:16-alpine is
+  // public and we don't want Docker Desktop's credential helper in the
+  // path here either.
   const r = await wslRun(
     [
       "-d",
       DISTRO_NAME,
       "--",
-      "docker",
-      "run",
-      "--rm",
-      "-i",
-      "-e",
-      "PGCONNECT_TIMEOUT=10",
-      "postgres:16-alpine",
-      "psql",
-      url,
-      "-tAc",
-      "select 1",
+      "bash",
+      "-c",
+      `mkdir -p ${DOCKER_CONFIG_DIR} && exec docker --config ${DOCKER_CONFIG_DIR} run --rm -i -e PGCONNECT_TIMEOUT=10 postgres:16-alpine psql ${shellQuote(url)} -tAc 'select 1'`,
     ],
     { timeout: timeoutMs },
   );

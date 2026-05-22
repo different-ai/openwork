@@ -73,8 +73,14 @@ export async function setCredential(key, value) {
   if (!isKnownKey(key)) {
     throw new Error(`Unknown OpenEral credential key: ${key}`);
   }
-  const plaintext = String(value ?? "");
-  if (!plaintext.trim()) {
+  // Trim whitespace before storing. Users routinely paste from
+  // dashboards / 1Password with a trailing newline or space, and a
+  // postgres URL with " " on the end produces a confusing
+  // "password authentication failed for user 'postgres'" downstream
+  // because pg's URL parser treats trailing whitespace as part of the
+  // password.
+  const plaintext = String(value ?? "").trim();
+  if (!plaintext) {
     throw new Error("Credential value is empty.");
   }
   // Test seam: when OPENWORK_TEST_CREDENTIALS_DIR is set, write a plain

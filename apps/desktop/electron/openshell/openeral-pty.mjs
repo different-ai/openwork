@@ -66,7 +66,24 @@ let spawnImpl = async ({ sandboxName, cols, rows }) => {
   // openshell CLI then plumbs into the sandbox container.
   return pty.spawn(
     "wsl.exe",
-    ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "connect", sandboxName],
+    // `sandbox connect` doesn't accept a trailing command. Use
+    // `sandbox exec --tty -- openeral` instead — node-pty has already
+    // allocated a real PTY for this wsl child, so Claude Code's
+    // first-run "Use this API key?" prompt gets handled normally and
+    // /home/agent stores the answer for subsequent launches.
+    [
+      "-d",
+      DISTRO_NAME,
+      "--",
+      "openshell",
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--tty",
+      "--",
+      "openeral",
+    ],
     {
       name: "xterm-256color",
       cols,
@@ -237,7 +254,24 @@ export const __testing = {
       const pty = await import("node-pty");
       return pty.spawn(
         "wsl.exe",
-        ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "connect", sandboxName],
+        // `sandbox connect` doesn't accept a trailing command. Use
+    // `sandbox exec --tty -- openeral` instead — node-pty has already
+    // allocated a real PTY for this wsl child, so Claude Code's
+    // first-run "Use this API key?" prompt gets handled normally and
+    // /home/agent stores the answer for subsequent launches.
+    [
+      "-d",
+      DISTRO_NAME,
+      "--",
+      "openshell",
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--tty",
+      "--",
+      "openeral",
+    ],
         {
           name: "xterm-256color",
           cols,

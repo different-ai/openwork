@@ -399,12 +399,14 @@ async function startSystemdGateway({ signal, onProgress }) {
   onProgress?.({ phase: "openshell", message: "Enabling openshell-gateway service...", percent: 75 });
   // `systemctl --user` needs a user systemd manager. On a fresh distro
   // we may need to nudge it; `loginctl enable-linger banker` keeps the
-  // user manager alive without a live session. Best-effort — if it
-  // fails we still try the start command.
-  await wslRun(
+  // user manager alive without a live session. Capture the result so we
+  // can surface it if the subsequent --user call dies — a silent failure
+  // here used to hide rootfs bugs (missing systemd-sysv/dbus) behind an
+  // opaque "Connection refused" downstream.
+  const linger = await wslRun(
     ["-d", DISTRO_NAME, "--user", "root", "--", "loginctl", "enable-linger", "banker"],
     { timeout: 15_000, signal },
-  ).catch(() => null);
+  ).catch((err) => ({ exitCode: -1, stdout: "", stderr: err?.message ?? String(err) }));
 
   const enable = await wslRun(
     [
@@ -422,10 +424,35 @@ async function startSystemdGateway({ signal, onProgress }) {
     { timeout: 60_000, signal },
   );
   if (enable.exitCode !== 0) {
+    const out = `${enable.stderr}\n${enable.stdout}`;
+    const lingerOut = `${linger.stderr}\n${linger.stdout}`;
+    // Specific failure mode: systemd never took over as PID 1 in the
+    // distro. Happens when the rootfs is missing systemd-sysv/dbus, or
+    // when /etc/wsl.conf was changed without a `wsl --shutdown`. No
+    // amount of retrying systemctl recovers from this — give the user
+    // an action that actually fixes it.
+    const systemdMissing =
+      /Failed to connect to bus|System has not been booted with systemd as init system|No medium found/i.test(out) ||
+      /Failed to connect to bus|System has not been booted with systemd as init system/i.test(lingerOut);
+    if (systemdMissing) {
+      return {
+        ok: false,
+        error:
+          "systemd is not running as PID 1 inside the openwork-openshell distro, " +
+          "so the user-scoped gateway service can't start. Run `wsl --shutdown` " +
+          "from PowerShell and reopen the app. If it persists, reset the distro " +
+          "from Settings → Sandbox (the bundled rootfs may be missing systemd-sysv " +
+          "and dbus, which Settings → Reset distro will reinstall from the latest tarball). " +
+          `(loginctl: exit ${linger.exitCode}; systemctl: exit ${enable.exitCode}: ${out.trim().slice(0, 200)})`,
+      };
+    }
     return {
       ok: false,
       error: `systemctl --user enable --now openshell-gateway failed (exit ${enable.exitCode}): ` +
-        `${(enable.stderr || enable.stdout || "no output").trim()}`,
+        `${(enable.stderr || enable.stdout || "no output").trim()}` +
+        (linger.exitCode !== 0
+          ? ` (preceded by loginctl enable-linger banker exit ${linger.exitCode}: ${(linger.stderr || linger.stdout || "no output").trim().slice(0, 200)})`
+          : ""),
     };
   }
   return { ok: true };

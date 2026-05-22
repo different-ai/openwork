@@ -617,23 +617,27 @@ async function checkOpenShellGateway() {
       const detail =
         (plain.stderr || plain.stdout || "").trim() ||
         "openshell status failed.";
+      // Use "warn" not "missing": the CLI, distro, and Docker are all
+      // installed at this point — only the gateway *runtime* is down.
+      // "missing" would aggregate up to a "not installed yet" banner,
+      // hiding the Restart button users actually need.
       return {
         id: "openshell-gateway",
         label: "OpenShell gateway",
-        state: "missing",
+        state: "warn",
         version: null,
         detail,
         actionable: "Click Settings → Sandbox → Restart gateway, or reset the distro if that fails.",
       };
     }
     // Genuine non-zero from `status --json` (gateway down, no
-    // registration, etc).
+    // registration, etc). Same rationale: runtime down ≠ install missing.
     const detail =
       (json.stderr || json.stdout || "").trim() || "openshell status failed.";
     return {
       id: "openshell-gateway",
       label: "OpenShell gateway",
-      state: "missing",
+      state: "warn",
       version: null,
       detail,
       actionable: "Click Settings → Sandbox → Restart gateway, or reset the distro if that fails.",

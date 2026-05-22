@@ -95,6 +95,15 @@ export default defineConfig({
     react(),
   ],
   server: {
+    // Default to 127.0.0.1 (IPv4 loopback) rather than letting Vite
+    // pick `localhost`. On Windows, `localhost` resolves to ::1 (IPv6
+    // loopback) first, and Hyper-V's dynamic port-exclusion ranges
+    // routinely grab IPv6 ports after a reboot. Binding to ::1 then
+    // fails with `EACCES: permission denied ::1:<port>` even though
+    // the port isn't actually in use. IPv4 loopback is unaffected by
+    // these reservations. Override with VITE_HOST=0.0.0.0 (or any
+    // valid address/0) to expose the dev server to the LAN.
+    host: process.env.VITE_HOST?.trim() || "127.0.0.1",
     port: devPort,
     strictPort: true,
     ...(allowedHosts.size > 0 ? { allowedHosts: Array.from(allowedHosts) } : {}),

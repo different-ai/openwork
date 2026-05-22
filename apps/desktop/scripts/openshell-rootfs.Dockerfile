@@ -20,18 +20,37 @@ ENV DEBIAN_FRONTEND=noninteractive
 # for adding the Docker apt repo; sudo because OpenShell's default
 # `sandbox` user expects passwordless escalation for systemd service
 # control; iproute2/net-tools for openshell's network probes.
+#
+# systemd-sysv / dbus / dbus-user-session / policykit-1 are mandatory:
+# without them WSL's /init silently refuses to exec systemd as PID 1
+# (it probes /sbin/init, which only exists when systemd-sysv is
+# installed), the system bus never starts, systemd-logind can't run,
+# `loginctl enable-linger` fails, and the user-scoped openshell-gateway
+# service never comes up. The symptom is a "Connection refused on
+# :17670" the desktop doctor mis-attributes to "not installed."
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        dbus \
+        dbus-user-session \
         gnupg \
         iproute2 \
         less \
         net-tools \
+        openssh-client \
+        policykit-1 \
         procps \
         sudo \
         systemd \
+        systemd-sysv \
     && rm -rf /var/lib/apt/lists/*
+
+# openssh-client is required for `openshell sandbox connect / upload /
+# download / exec` — the CLI runs `ssh` and `scp` locally to reach the
+# sandbox container over the supervisor SSH relay. Without it every
+# operation fails with the cryptic `Error: × No such file or directory
+# (os error 2)` (Rust's stringified ENOENT from a failed exec()).
 
 # Non-root default user. Matches the OpenShell convention of
 # `run_as_user: sandbox` in policy.yaml.
