@@ -124,8 +124,15 @@
     {
       "idx": 18,
       "version": "5",
+      "when": 1779380000000,
+      "tag": "0018_invited_org_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
       "when": 1777486400000,
-      "tag": "0018_llm_provider_opencode_oauth",
+      "tag": "0019_llm_provider_opencode_oauth",
       "breakpoints": true
     }
   ]
