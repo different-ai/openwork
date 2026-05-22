@@ -1546,6 +1546,58 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "POST", "/managed-providers/sync", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const payload = parseManagedProviderSyncPayload(body);
+    const workspace = config.workspaces[0];
+    if (!workspace) {
+      throw new ApiError(409, "workspace_unavailable", "No worker workspace is available for managed provider sync");
+    }
+
+    const configFingerprintBefore = await computeReloadFingerprint(workspace.path, "config");
+    const applied: string[] = [];
+    try {
+      for (const provider of payload.providers) {
+        await applyManagedProviderConfig(workspace.path, provider);
+        await applyManagedProviderAuth(config, workspace, provider);
+        applied.push(provider.id);
+      }
+    } catch (error) {
+      return jsonResponse({
+        status: "failed",
+        providerCount: applied.length,
+        revision: payload.revision,
+        reason: sanitizeManagedProviderApplyError(error),
+      }, 502);
+    }
+
+    await writeOpenworkConfig(workspace.path, {
+      managedProviders: {
+        source: "den",
+        revision: payload.revision,
+        applied,
+        appliedAt: new Date().toISOString(),
+      },
+    }, true);
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "managedProviders.sync",
+      target: "opencode.json",
+      summary: `Synced ${applied.length} managed provider${applied.length === 1 ? "" : "s"}`,
+      timestamp: Date.now(),
+    });
+
+    if (configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+    }
+
+    return jsonResponse({ status: "applied", providerCount: applied.length, revision: payload.revision });
+  });
+
   addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
@@ -3534,6 +3586,152 @@ async function persistServerWorkspaceState(config: ServerConfig): Promise<boolea
 
 function normalizeOpencodeScope(value: string | null | undefined): "project" | "global" {
   return value?.trim().toLowerCase() === "global" ? "global" : "project";
+}
+
+type ManagedProviderSyncProvider = {
+  id: string;
+  providerId: string;
+  name: string;
+  source: string;
+  credentialKind: "api_key" | "opencode_oauth";
+  providerConfig: Record<string, unknown>;
+  models: Array<{ id: string; name: string; config: Record<string, unknown> }>;
+  apiKey?: string;
+  opencodeAuth?: string;
+  revision: string;
+};
+
+type ManagedProviderSyncPayload = {
+  providers: ManagedProviderSyncProvider[];
+  revision: string;
+};
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "invalid_payload", `${key} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${key} must be a string`);
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function parseManagedProviderSyncPayload(input: unknown): ManagedProviderSyncPayload {
+  if (!isRecordValue(input) || !Array.isArray(input.providers)) {
+    throw new ApiError(400, "invalid_payload", "providers must be an array");
+  }
+  const revision = readRequiredString(input, "revision");
+  const providers = input.providers.map((entry) => {
+    if (!isRecordValue(entry)) {
+      throw new ApiError(400, "invalid_payload", "Each provider must be an object");
+    }
+    const rawCredentialKind = entry.credentialKind;
+    if (rawCredentialKind !== "api_key" && rawCredentialKind !== "opencode_oauth") {
+      throw new ApiError(400, "invalid_payload", "credentialKind must be api_key or opencode_oauth");
+    }
+    const credentialKind: ManagedProviderSyncProvider["credentialKind"] = rawCredentialKind;
+    const providerConfig = entry.providerConfig;
+    if (!isRecordValue(providerConfig)) {
+      throw new ApiError(400, "invalid_payload", "providerConfig must be an object");
+    }
+    const modelsInput = entry.models;
+    if (!Array.isArray(modelsInput)) {
+      throw new ApiError(400, "invalid_payload", "models must be an array");
+    }
+    const models = modelsInput.map((model) => {
+      if (!isRecordValue(model) || !isRecordValue(model.config)) {
+        throw new ApiError(400, "invalid_payload", "Each model must include config");
+      }
+      return {
+        id: readRequiredString(model, "id"),
+        name: readRequiredString(model, "name"),
+        config: model.config,
+      };
+    });
+    return {
+      id: readRequiredString(entry, "id"),
+      providerId: readRequiredString(entry, "providerId"),
+      name: readRequiredString(entry, "name"),
+      source: readRequiredString(entry, "source"),
+      credentialKind,
+      providerConfig,
+      models,
+      apiKey: readOptionalString(entry, "apiKey"),
+      opencodeAuth: readOptionalString(entry, "opencodeAuth"),
+      revision: readRequiredString(entry, "revision"),
+    };
+  });
+  return { providers, revision };
+}
+
+function getManagedProviderEnv(config: Record<string, unknown>) {
+  return Array.isArray(config.env) ? config.env.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncProvider, "id" | "providerId" | "source" | "credentialKind">) {
+  if (provider.source === "openwork") return "openwork";
+  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
+  return provider.id.trim();
+}
+
+export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncProvider) {
+  const models = Object.fromEntries(provider.models.map((model) => [model.id, { ...model.config, id: model.id, name: model.name }]));
+  const next: Record<string, unknown> = {
+    id: provider.providerId,
+    name: provider.name,
+    env: getManagedProviderEnv(provider.providerConfig),
+    models,
+  };
+  for (const key of ["npm", "api", "options", "whitelist", "blacklist"] as const) {
+    const value = provider.providerConfig[key];
+    if (value !== undefined) next[key] = value;
+  }
+  return next;
+}
+
+async function applyManagedProviderConfig(workspaceRoot: string, provider: ManagedProviderSyncProvider) {
+  const providerId = getManagedProviderRuntimeId(provider);
+  await updateJsoncPath(opencodeConfigPath(workspaceRoot), ["provider", providerId], buildManagedProviderRuntimeConfig(provider));
+}
+
+function parseManagedOpencodeAuth(provider: ManagedProviderSyncProvider): unknown {
+  if (provider.credentialKind === "api_key") {
+    if (!provider.apiKey) throw new ApiError(400, "missing_provider_credential", "Managed provider is missing an API credential");
+    return { type: "api", key: provider.apiKey };
+  }
+  if (!provider.opencodeAuth) throw new ApiError(400, "missing_provider_credential", "Managed provider is missing an OAuth credential");
+  try {
+    const auth = JSON.parse(provider.opencodeAuth) as unknown;
+    if (!isRecordValue(auth) || auth.type !== "oauth") throw new Error("invalid auth");
+    return auth;
+  } catch {
+    throw new ApiError(400, "invalid_provider_credential", "Managed provider OAuth credential is invalid");
+  }
+}
+
+async function applyManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, provider: ManagedProviderSyncProvider) {
+  const providerId = getManagedProviderRuntimeId(provider);
+  await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+    method: "POST",
+    body: { providerID: providerId, auth: parseManagedOpencodeAuth(provider) },
+  });
+}
+
+function sanitizeManagedProviderApplyError(error: unknown) {
+  const message = error instanceof ApiError || error instanceof Error ? error.message : "Managed provider sync failed";
+  return message.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]").slice(0, 300);
 }
 
 function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
