@@ -65,10 +65,7 @@ export function computeManagedProviderRevision(providers: Pick<ManagedProviderSy
 }
 
 export function sanitizeManagedProviderSyncFailure(payload: unknown) {
-  if (!payload || typeof payload !== "object") return "Worker provider sync failed."
-  const record = payload as Record<string, unknown>
-  const message = typeof record.message === "string" ? record.message : typeof record.error === "string" ? record.error : "Worker provider sync failed."
-  return message.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]").slice(0, 300)
+  return "Worker provider sync failed."
 }
 
 export async function listManagedProviderSyncProviders(organizationId: OrganizationId) {
