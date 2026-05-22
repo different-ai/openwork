@@ -710,6 +710,7 @@ function normalizeWorkspaceEntry(input) {
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
+    sandboxProfile: input.sandboxProfile ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
   };
@@ -1013,6 +1014,8 @@ async function handleDesktopInvoke(event, command, ...args) {
         path: folderPath,
         preset,
         workspaceType: "local",
+        sandboxBackend: input.sandboxBackend ?? null,
+        sandboxProfile: input.sandboxProfile ?? null,
       });
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
@@ -1063,6 +1066,7 @@ async function handleDesktopInvoke(event, command, ...args) {
         openworkWorkspaceId,
         openworkWorkspaceName: input.openworkWorkspaceName ?? null,
         sandboxBackend: input.sandboxBackend ?? null,
+        sandboxProfile: input.sandboxProfile ?? null,
         sandboxRunId: input.sandboxRunId ?? null,
         sandboxContainerName: input.sandboxContainerName ?? null,
       });
