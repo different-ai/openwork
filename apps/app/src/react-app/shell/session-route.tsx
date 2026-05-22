@@ -34,6 +34,8 @@ import {
   workspaceUpdateDisplayName,
   type EngineInfo,
   type OpenworkServerInfo,
+  type SandboxBackend,
+  type SandboxProfile,
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/desktop";
@@ -1595,7 +1597,12 @@ export function SessionRoute() {
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
 
-  const handleCreateWorkspace = useCallback(async (preset: WorkspacePreset, folder: string | null) => {
+  const handleCreateWorkspace = useCallback(async (
+    preset: WorkspacePreset,
+    folder: string | null,
+    sandboxBackend?: SandboxBackend,
+    sandboxProfile?: SandboxProfile,
+  ) => {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
@@ -1605,6 +1612,8 @@ export function SessionRoute() {
         folderPath: folder,
         name: workspaceName,
         preset,
+        sandboxBackend: sandboxBackend ?? null,
+        sandboxProfile: sandboxProfile ?? null,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {
@@ -1896,6 +1905,8 @@ export function SessionRoute() {
       localError={createWorkspaceError}
       remoteSubmitting={createWorkspaceRemoteBusy}
       remoteError={createWorkspaceRemoteError}
+      defaultSandboxBackend={local.prefs.preferredSandboxBackend}
+      defaultSandboxProfile={local.prefs.preferredSandboxProfile}
     />
     <RenameWorkspaceModal
       open={renameWorkspaceId !== null}

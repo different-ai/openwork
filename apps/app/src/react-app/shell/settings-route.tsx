@@ -57,6 +57,8 @@ import {
   workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type SandboxBackend,
+  type SandboxProfile,
   type WorkspaceInfo,
 } from "../../app/lib/desktop";
 import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
@@ -970,7 +972,12 @@ export function SettingsRoute() {
     setCreateWorkspaceOpen(true);
   };
 
-  const handleCreateWorkspace = async (preset: WorkspacePreset, folder: string | null) => {
+  const handleCreateWorkspace = async (
+    preset: WorkspacePreset,
+    folder: string | null,
+    sandboxBackend?: SandboxBackend,
+    sandboxProfile?: SandboxProfile,
+  ) => {
     if (!folder) return;
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
@@ -980,6 +987,8 @@ export function SettingsRoute() {
         folderPath: folder,
         name: workspaceName,
         preset,
+        sandboxBackend: sandboxBackend ?? null,
+        sandboxProfile: sandboxProfile ?? null,
       });
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {

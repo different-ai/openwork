@@ -223,6 +223,8 @@ pub struct WorkspaceInfo {
     #[serde(default)]
     pub sandbox_backend: Option<String>,
     #[serde(default)]
+    pub sandbox_profile: Option<String>,
+    #[serde(default)]
     pub sandbox_run_id: Option<String>,
     #[serde(default)]
     pub sandbox_container_name: Option<String>,

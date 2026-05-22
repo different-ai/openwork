@@ -237,6 +237,8 @@ pub fn workspace_create(
     folder_path: String,
     name: String,
     preset: String,
+    sandbox_backend: Option<String>,
+    sandbox_profile: Option<String>,
     watch_state: State<WorkspaceWatchState>,
 ) -> Result<WorkspaceList, String> {
     println!("[workspace] create local request");
@@ -283,7 +285,12 @@ pub fn workspace_create(
         openwork_host_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
-        sandbox_backend: None,
+        sandbox_backend: sandbox_backend
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        sandbox_profile: sandbox_profile
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         sandbox_run_id: None,
         sandbox_container_name: None,
     });
@@ -311,6 +318,7 @@ pub fn workspace_create_remote(
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
+    sandbox_profile: Option<String>,
     sandbox_run_id: Option<String>,
     sandbox_container_name: Option<String>,
     watch_state: State<WorkspaceWatchState>,
@@ -402,6 +410,9 @@ pub fn workspace_create_remote(
         sandbox_backend: sandbox_backend
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
+        sandbox_profile: sandbox_profile
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         sandbox_run_id: sandbox_run_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
@@ -433,6 +444,7 @@ pub fn workspace_update_remote(
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
     sandbox_backend: Option<String>,
+    sandbox_profile: Option<String>,
     sandbox_run_id: Option<String>,
     sandbox_container_name: Option<String>,
 ) -> Result<WorkspaceList, String> {
@@ -532,6 +544,13 @@ pub fn workspace_update_remote(
         .filter(|value| !value.is_empty())
     {
         entry.sandbox_backend = Some(next_backend);
+    }
+
+    if let Some(next_profile) = sandbox_profile
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        entry.sandbox_profile = Some(next_profile);
     }
 
     if let Some(next_run_id) = sandbox_run_id
@@ -1002,6 +1021,7 @@ pub fn workspace_import_config(
         openwork_workspace_id: None,
         openwork_workspace_name: None,
         sandbox_backend: None,
+        sandbox_profile: None,
         sandbox_run_id: None,
         sandbox_container_name: None,
     });

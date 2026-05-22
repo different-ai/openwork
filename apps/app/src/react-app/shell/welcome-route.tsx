@@ -10,6 +10,8 @@ import {
   workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type SandboxBackend,
+  type SandboxProfile,
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 import { useLocal } from "../kernel/local-provider";
@@ -54,7 +56,12 @@ export function WelcomeRoute() {
   }, [local]);
 
   const handleCreateWorkspace = useCallback(
-    async (_preset: string, folder: string | null) => {
+    async (
+      _preset: string,
+      folder: string | null,
+      sandboxBackend?: SandboxBackend,
+      sandboxProfile?: SandboxProfile,
+    ) => {
       if (!folder) return;
       setCreateBusy(true);
       setCreateError(null);
@@ -64,6 +71,8 @@ export function WelcomeRoute() {
           folderPath: folder,
           name: workspaceName,
           preset: "starter",
+          sandboxBackend: sandboxBackend ?? null,
+          sandboxProfile: sandboxProfile ?? null,
         });
         const createdId =
           resolveWorkspaceListSelectedId(list) ||
@@ -181,6 +190,8 @@ export function WelcomeRoute() {
             ? undefined
             : t("app.local_disabled_reason")
         }
+        defaultSandboxBackend={local.prefs.preferredSandboxBackend}
+        defaultSandboxProfile={local.prefs.preferredSandboxProfile}
       />
     </>
   );

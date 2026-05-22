@@ -219,11 +219,15 @@ export async function workspaceCreate(input: {
   folderPath: string;
   name: string;
   preset: string;
+  sandboxBackend?: SandboxBackend | null;
+  sandboxProfile?: SandboxProfile | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create", {
     folderPath: input.folderPath,
     name: input.name,
     preset: input.preset,
+    sandboxBackend: input.sandboxBackend ?? null,
+    sandboxProfile: input.sandboxProfile ?? null,
   });
 }
 
