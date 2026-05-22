@@ -17,6 +17,7 @@ export type ProvisionInput = {
   hostToken: string
   clientToken: string
   activityToken: string
+  unavailableStaticWorkerUrls?: string[]
 }
 
 export type ProvisionedInstance = {
@@ -24,6 +25,20 @@ export type ProvisionedInstance = {
   url: string
   status: "provisioning" | "healthy"
   region?: string
+}
+
+export type StaticWorkerConfig = {
+  urls: string[]
+  healthPath: string
+  healthcheckTimeoutMs: number
+  healthcheckIntervalMs: number
+  reservationTtlMs?: number
+  unavailableUrls?: string[]
+}
+
+type StaticWorkerReservation = {
+  workerId: string
+  expiresAt: number
 }
 
 type RenderService = {
@@ -54,6 +69,7 @@ const terminalDeployStates = new Set([
 ])
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const staticWorkerReservations = new Map<string, StaticWorkerReservation>()
 
 const slug = (value: string) =>
   value
@@ -135,23 +151,172 @@ async function waitForDeployLive(serviceId: string) {
 async function waitForHealth(
   url: string,
   timeoutMs = env.render.healthcheckTimeoutMs,
+  intervalMs = env.render.pollIntervalMs,
+  healthPath = "/health",
 ) {
-  const healthUrl = `${url.replace(/\/$/, "")}/health`
+  const normalizedPath = healthPath.startsWith("/") ? healthPath : `/${healthPath}`
+  const healthUrl = `${url.replace(/\/$/, "")}${normalizedPath}`
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < timeoutMs) {
+    const remainingMs = timeoutMs - (Date.now() - startedAt)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), remainingMs)
+
     try {
-      const response = await fetch(healthUrl, { method: "GET" })
+      const response = await fetch(healthUrl, {
+        method: "GET",
+        signal: controller.signal,
+      })
       if (response.ok) {
         return
       }
     } catch {
       // ignore transient network failures while the instance boots
+    } finally {
+      clearTimeout(timeout)
     }
-    await sleep(env.render.pollIntervalMs)
+
+    const elapsedMs = Date.now() - startedAt
+    const sleepMs = Math.min(intervalMs, Math.max(timeoutMs - elapsedMs, 0))
+    if (sleepMs > 0) {
+      await sleep(sleepMs)
+    }
   }
 
   throw new Error(`Timed out waiting for worker health endpoint ${healthUrl}`)
+}
+
+export function normalizeStaticWorkerUrl(value: string) {
+  const parsedUrl = new URL(value.trim())
+  parsedUrl.hash = ""
+  parsedUrl.search = ""
+  parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/, "")
+  return parsedUrl.toString().replace(/\/+$/, "")
+}
+
+function safeNormalizeWorkerUrl(value: string) {
+  try {
+    return normalizeStaticWorkerUrl(value)
+  } catch {
+    return ""
+  }
+}
+
+function pruneExpiredStaticWorkerReservations(now = Date.now()) {
+  for (const [url, reservation] of staticWorkerReservations) {
+    if (reservation.expiresAt <= now) {
+      staticWorkerReservations.delete(url)
+    }
+  }
+}
+
+function selectStaticWorkerUrl(workerId: string, config: StaticWorkerConfig) {
+  pruneExpiredStaticWorkerReservations()
+
+  return selectStaticWorkerUrlFromPool(workerId, config, true)
+}
+
+export function selectStaticWorkerUrlFromPool(
+  workerId: string,
+  config: StaticWorkerConfig,
+  includeInProcessReservations = false,
+) {
+  if (includeInProcessReservations) {
+    pruneExpiredStaticWorkerReservations()
+  }
+
+  const urls = config.urls.map(safeNormalizeWorkerUrl).filter(Boolean)
+  if (urls.length === 0) {
+    throw new Error("STATIC_WORKER_URLS is required when PROVISIONER_MODE=static")
+  }
+
+  const unavailableUrls = new Set(
+    (config.unavailableUrls ?? []).map(safeNormalizeWorkerUrl).filter(Boolean),
+  )
+  if (includeInProcessReservations) {
+    for (const [url, reservation] of staticWorkerReservations) {
+      if (reservation.workerId !== workerId) {
+        unavailableUrls.add(url)
+      }
+    }
+  }
+
+  const availableUrls = urls.filter((url) => !unavailableUrls.has(url))
+
+  if (availableUrls.length === 0) {
+    throw new Error(
+      "No available static worker URL remains; all configured STATIC_WORKER_URLS are already assigned to active workers",
+    )
+  }
+
+  let hash = 0
+  for (const char of workerId) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  }
+
+  return availableUrls[hash % availableUrls.length]!
+}
+
+function reserveStaticWorkerUrl(workerId: string, url: string, ttlMs: number) {
+  if (ttlMs <= 0) {
+    return
+  }
+  staticWorkerReservations.set(url, {
+    workerId,
+    expiresAt: Date.now() + ttlMs,
+  })
+}
+
+function releaseStaticWorkerUrl(workerId: string, url: string) {
+  const reservation = staticWorkerReservations.get(url)
+  if (reservation?.workerId === workerId) {
+    staticWorkerReservations.delete(url)
+  }
+}
+
+export async function provisionStaticWorker(
+  input: ProvisionInput,
+  config: StaticWorkerConfig = env.staticWorkers,
+): Promise<ProvisionedInstance> {
+  const reservationTtlMs = config.reservationTtlMs ?? 300000
+  const url = selectStaticWorkerUrl(input.workerId, {
+    ...config,
+    unavailableUrls: config.unavailableUrls ?? input.unavailableStaticWorkerUrls,
+  })
+  reserveStaticWorkerUrl(input.workerId, url, reservationTtlMs)
+
+  try {
+    await waitForHealth(
+      url,
+      config.healthcheckTimeoutMs,
+      config.healthcheckIntervalMs,
+      config.healthPath,
+    )
+  } catch (error) {
+    releaseStaticWorkerUrl(input.workerId, url)
+    throw error
+  }
+
+  if (reservationTtlMs <= 0) {
+    releaseStaticWorkerUrl(input.workerId, url)
+  }
+
+  return {
+    provider: "static",
+    url,
+    status: "healthy",
+    region: "on-prem",
+  }
+}
+
+export async function checkStaticWorkerHealth(url: string, config: StaticWorkerConfig) {
+  await waitForHealth(
+    url,
+    config.healthcheckTimeoutMs,
+    config.healthcheckIntervalMs,
+    config.healthPath,
+  )
 }
 
 async function listRenderServices(limit = 200) {
@@ -343,6 +508,10 @@ export async function provisionWorker(
     return provisionWorkerOnDaytona(input)
   }
 
+  if (env.provisionerMode === "static") {
+    return provisionStaticWorker(input)
+  }
+
   const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}"
   const url = template.replace("{workerId}", input.workerId)
   return {
@@ -356,6 +525,13 @@ export async function deprovisionWorker(input: {
   workerId: WorkerId
   instanceUrl: string | null
 }) {
+  if (env.provisionerMode === "static") {
+    if (input.instanceUrl) {
+      releaseStaticWorkerUrl(input.workerId, safeNormalizeWorkerUrl(input.instanceUrl))
+    }
+    return
+  }
+
   if (env.provisionerMode === "daytona") {
     await deprovisionWorkerOnDaytona(input.workerId)
     return
