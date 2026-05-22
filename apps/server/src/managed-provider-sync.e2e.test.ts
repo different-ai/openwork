@@ -32,7 +32,7 @@ function providerPayload() {
         credentialKind: "api_key",
         providerConfig: { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic" },
         models: [{ id: "claude", name: "Claude", config: { id: "claude", limit: { context: 200000 } } }],
-        apiKey: "sk-server-secret",
+        apiKey: "plain-server-secret",
         revision: "provider-rev-1",
       },
       {
@@ -63,7 +63,7 @@ async function boot(options: { failAuth?: boolean } = {}) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/auth/")) {
         authCalls.push(await request.json());
-        if (options.failAuth) return Response.json({ error: "bad sk-server-secret" }, { status: 500 });
+        if (options.failAuth) return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
         return Response.json({ ok: true });
       }
       return Response.json({ ok: true });
@@ -129,16 +129,16 @@ describe("managed provider sync runtime route", () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body).toEqual({ status: "applied", providerCount: 2, revision: "sync-rev-1" });
-      expect(JSON.stringify(body)).not.toContain("sk-server-secret");
+      expect(JSON.stringify(body)).not.toContain("plain-server-secret");
       expect(JSON.stringify(body)).not.toContain("refresh-secret");
     }
 
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
     expect(config.match(/llmProvider_den_anthropic/g)?.length).toBe(1);
     expect(config.match(/"openai"/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(config).not.toContain("sk-server-secret");
+    expect(config).not.toContain("plain-server-secret");
     expect(authCalls).toHaveLength(4);
-    expect(JSON.stringify(authCalls[0])).toContain("sk-server-secret");
+    expect(JSON.stringify(authCalls[0])).toContain("plain-server-secret");
     expect(JSON.stringify(authCalls[1])).toContain("refresh-secret");
   });
 
@@ -152,6 +152,9 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(502);
     const body = await response.json();
     expect(body.status).toBe("failed");
-    expect(JSON.stringify(body)).not.toContain("sk-server-secret");
+    expect(JSON.stringify(body)).not.toContain("plain-server-secret");
+    expect(JSON.stringify(body)).not.toContain("access-secret");
+    expect(JSON.stringify(body)).not.toContain("refresh-secret");
+    expect(body.reason).toBe("Managed provider sync failed");
   });
 });

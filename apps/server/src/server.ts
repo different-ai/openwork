@@ -3730,8 +3730,7 @@ async function applyManagedProviderAuth(config: ServerConfig, workspace: Workspa
 }
 
 function sanitizeManagedProviderApplyError(error: unknown) {
-  const message = error instanceof ApiError || error instanceof Error ? error.message : "Managed provider sync failed";
-  return message.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]").slice(0, 300);
+  return "Managed provider sync failed";
 }
 
 function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
