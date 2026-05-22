@@ -69,6 +69,23 @@ export type GithubRepoDiscoveryResult = {
   warnings: string[]
 }
 
+export type GithubDiscoveryCacheIdentity = {
+  branch: string
+  ref: string
+  repositoryFullName: string
+  sourceRevisionRef: string
+}
+
+export function isGithubDiscoveryCacheFresh(input: GithubDiscoveryCacheIdentity & {
+  cached: GithubDiscoveryCacheIdentity | null
+}) {
+  return Boolean(input.cached
+    && input.cached.branch === input.branch
+    && input.cached.ref === input.ref
+    && input.cached.repositoryFullName === input.repositoryFullName
+    && input.cached.sourceRevisionRef === input.sourceRevisionRef)
+}
+
 type MarketplaceEntry = {
   agents?: unknown
   commands?: unknown

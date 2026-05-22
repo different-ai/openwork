@@ -486,7 +486,7 @@ export async function getGithubRepositoryTextFile(input: {
   return Buffer.from(response.body.content.replace(/\n/g, ""), "base64").toString("utf8")
 }
 
-export async function getGithubRepositoryTree(input: {
+async function getGithubRepositoryCommit(input: {
   branch: string
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
@@ -522,6 +522,36 @@ export async function getGithubRepositoryTree(input: {
     throw new GithubConnectorRequestError("GitHub commit response was missing the head or tree sha.", 502, commitResponse.body)
   }
 
+  return {
+    headSha,
+    repositoryParts,
+    token,
+    treeSha,
+  }
+}
+
+export async function getGithubRepositoryHeadSha(input: {
+  branch: string
+  config: GithubConnectorAppConfig
+  fetchFn?: GithubFetch
+  installationId: number
+  repositoryFullName: string
+  token?: string
+}) {
+  const commit = await getGithubRepositoryCommit(input)
+  return commit.headSha
+}
+
+export async function getGithubRepositoryTree(input: {
+  branch: string
+  config: GithubConnectorAppConfig
+  fetchFn?: GithubFetch
+  installationId: number
+  repositoryFullName: string
+  token?: string
+}) {
+  const commit = await getGithubRepositoryCommit(input)
+
   const treeResponse = await requestGithubJson<{
     truncated?: boolean
     tree?: Array<{
@@ -532,8 +562,10 @@ export async function getGithubRepositoryTree(input: {
     }>
   }>({
     fetchFn: input.fetchFn,
-    headers: authHeaders,
-    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/git/trees/${encodeURIComponent(treeSha)}?recursive=1`,
+    headers: {
+      Authorization: `Bearer ${commit.token}`,
+    },
+    path: `/repos/${encodeURIComponent(commit.repositoryParts.owner)}/${encodeURIComponent(commit.repositoryParts.repo)}/git/trees/${encodeURIComponent(commit.treeSha)}?recursive=1`,
   })
 
   const treeEntries = Array.isArray(treeResponse.body.tree)
@@ -555,10 +587,10 @@ export async function getGithubRepositoryTree(input: {
     : []
 
   return {
-    headSha,
+    headSha: commit.headSha,
     truncated: Boolean(treeResponse.body.truncated),
     treeEntries,
-    treeSha,
+    treeSha: commit.treeSha,
   } satisfies GithubRepositoryTreeSnapshot
 }
 

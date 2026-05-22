@@ -1,11 +1,31 @@
 import { describe, expect, test } from "bun:test"
-import { buildGithubRepoDiscovery, type GithubDiscoveryTreeEntry } from "../src/routes/org/plugin-system/github-discovery.js"
+import { buildGithubRepoDiscovery, isGithubDiscoveryCacheFresh, type GithubDiscoveryTreeEntry } from "../src/routes/org/plugin-system/github-discovery.js"
 
 function blob(path: string): GithubDiscoveryTreeEntry {
   return { id: path, kind: "blob", path, sha: null, size: null }
 }
 
 describe("github discovery", () => {
+  test("treats a changed source revision as a stale discovery cache", () => {
+    const cached = {
+      branch: "main",
+      ref: "refs/heads/main",
+      repositoryFullName: "different-ai/openwork",
+      sourceRevisionRef: "old-head",
+    }
+
+    expect(isGithubDiscoveryCacheFresh({
+      ...cached,
+      cached,
+      sourceRevisionRef: "old-head",
+    })).toBe(true)
+    expect(isGithubDiscoveryCacheFresh({
+      ...cached,
+      cached,
+      sourceRevisionRef: "new-head",
+    })).toBe(false)
+  })
+
   test("classifies marketplace repos and resolves local plugin roots", () => {
     const result = buildGithubRepoDiscovery({
       entries: [

@@ -31,6 +31,7 @@ import {
   getGithubAppSummary,
   getGithubConnectorAppConfig,
   getGithubInstallationAccessToken,
+  getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
   getGithubInstallationSummary,
@@ -40,6 +41,7 @@ import {
 } from "./github-app.js"
 import {
   buildGithubRepoDiscovery,
+  isGithubDiscoveryCacheFresh,
   type GithubDiscoveredPlugin,
   type GithubDiscoveryClassification,
   type GithubMarketplaceInfo,
@@ -2480,6 +2482,12 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
     installationId,
     ref,
     repositoryFullName,
+    sourceRevisionRef: await getGithubRepositoryHeadSha({
+      branch,
+      config: githubConnectorAppConfig(),
+      installationId,
+      repositoryFullName,
+    }),
   }
 }
 
@@ -2727,10 +2735,13 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
     ? discoveryContext.connectorTarget.targetConfigJson as Record<string, unknown>
     : null
   const cached = readGithubDiscoveryCache(targetConfig)
-  if (cached
-    && cached.branch === discoveryContext.branch
-    && cached.ref === discoveryContext.ref
-    && cached.repositoryFullName === discoveryContext.repositoryFullName) {
+  if (cached && isGithubDiscoveryCacheFresh({
+    cached,
+    branch: discoveryContext.branch,
+    ref: discoveryContext.ref,
+    repositoryFullName: discoveryContext.repositoryFullName,
+    sourceRevisionRef: discoveryContext.sourceRevisionRef,
+  })) {
     return {
       autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
       cache: cached,

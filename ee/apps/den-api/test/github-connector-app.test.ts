@@ -7,6 +7,7 @@ import {
   getGithubAppSummary,
   getGithubConnectorAppConfig,
   getGithubInstallationSummary,
+  getGithubRepositoryHeadSha,
   listGithubInstallationRepositories,
   normalizeGithubPrivateKey,
   validateGithubInstallationTarget,
@@ -84,6 +85,32 @@ describe("github connector app helpers", () => {
     expect(repositories).toEqual([
       { defaultBranch: "main", fullName: "different-ai/openwork", hasPluginManifest: true, id: 42, manifestKind: "marketplace", marketplacePluginCount: 3, private: true },
       { defaultBranch: "dev", fullName: "different-ai/opencode", hasPluginManifest: true, id: 99, manifestKind: "plugin", marketplacePluginCount: null, private: false },
+    ])
+  })
+
+  test("reads the current GitHub branch head sha without fetching the full tree", async () => {
+    const requests: string[] = []
+    const headSha = await getGithubRepositoryHeadSha({
+      branch: "main",
+      config: { appId: "123456", privateKey: privateKeyPem },
+      fetchFn: async (url) => {
+        requests.push(String(url))
+        if (String(url).endsWith("/access_tokens")) {
+          return new Response(JSON.stringify({ token: "installation-token" }), { status: 201 })
+        }
+        if (String(url).endsWith("/repos/different-ai/openwork/commits/main")) {
+          return new Response(JSON.stringify({ sha: "head-sha-1", commit: { tree: { sha: "tree-sha-1" } } }), { status: 200 })
+        }
+        return new Response(JSON.stringify({ message: "not found" }), { status: 404 })
+      },
+      installationId: 777,
+      repositoryFullName: "different-ai/openwork",
+    })
+
+    expect(headSha).toBe("head-sha-1")
+    expect(requests).toEqual([
+      "https://api.github.com/app/installations/777/access_tokens",
+      "https://api.github.com/repos/different-ai/openwork/commits/main",
     ])
   })
 
