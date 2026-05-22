@@ -61,6 +61,51 @@ const fileToDataUrl = (file: File) =>
     reader.readAsDataURL(file);
   });
 
+const fileToText = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
+    reader.onload = () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    };
+    reader.readAsText(file);
+  });
+
+// MIME types that downstream providers accept as multimodal bytes in the prompt.
+// Anthropic accepts image/* + application/pdf in messages; OpenAI accepts image/* + application/pdf.
+// Anything else is rejected or silently dropped, so we route those through a text fallback instead.
+const TEXT_MIME_ALLOWLIST = new Set([
+  "application/csv",
+  "application/json",
+  "application/javascript",
+  "application/sql",
+  "application/typescript",
+  "application/xml",
+  "application/x-sh",
+  "application/x-yaml",
+  "application/yaml",
+]);
+const MAX_TEXT_INLINE_BYTES = 256 * 1024;
+
+type AttachmentDelivery = "multimodal" | "text-inline" | "text-too-large" | "binary-unsupported";
+
+function classifyAttachment(attachment: ComposerAttachment): AttachmentDelivery {
+  const mime = attachment.mimeType?.trim().toLowerCase() ?? "";
+  if (attachment.kind === "image" || mime.startsWith("image/")) return "multimodal";
+  if (mime === "application/pdf") return "multimodal";
+  if (mime.startsWith("text/") || TEXT_MIME_ALLOWLIST.has(mime)) {
+    return attachment.size <= MAX_TEXT_INLINE_BYTES ? "text-inline" : "text-too-large";
+  }
+  return "binary-unsupported";
+}
+
+function formatAttachmentSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function createSessionActionsStore(options: {
   client: () => Client | null;
   baseUrl: () => string;
@@ -146,12 +191,36 @@ export function createSessionActionsStore(options: {
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
-  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => ({
-    type: "file",
-    url: await fileToDataUrl(attachment.file),
-    filename: attachment.name,
-    mime: attachment.mimeType,
-  });
+  const attachmentToPart = async (attachment: ComposerAttachment): Promise<PartInput> => {
+    const delivery = classifyAttachment(attachment);
+    if (delivery === "multimodal") {
+      return {
+        type: "file",
+        url: await fileToDataUrl(attachment.file),
+        filename: attachment.name,
+        mime: attachment.mimeType,
+      } satisfies FilePartInput;
+    }
+    if (delivery === "text-inline") {
+      const content = await fileToText(attachment.file);
+      const header = `[attached file: ${attachment.name}]`;
+      const footer = `[end of ${attachment.name}]`;
+      return {
+        type: "text",
+        text: `${header}\n${content}\n${footer}`,
+      } satisfies TextPartInput;
+    }
+    if (delivery === "text-too-large") {
+      return {
+        type: "text",
+        text: `[attached text file: ${attachment.name} (${formatAttachmentSize(attachment.size)}) is too large to inline. Save it to the workspace and use Read/Bash to access it.]`,
+      } satisfies TextPartInput;
+    }
+    return {
+      type: "text",
+      text: `[attached binary file: ${attachment.name} (${attachment.mimeType || "unknown type"}, ${formatAttachmentSize(attachment.size)}) is not multimodal-supported by the current provider. Save it to the workspace and use Read/Bash to access it.]`,
+    } satisfies TextPartInput;
+  };
 
   const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
     const parts: PartInput[] = [];
@@ -190,7 +259,7 @@ export function createSessionActionsStore(options: {
       }
     }
 
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
+    parts.push(...(await Promise.all(draft.attachments.map(attachmentToPart))));
     return parts;
   };
 
@@ -225,7 +294,13 @@ export function createSessionActionsStore(options: {
       } as FilePartInput);
     }
 
-    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
+    // Slash commands strictly accept file parts only, so we drop the text-fallback
+    // attachments here. The agent will still get the file metadata via the prompt
+    // surface when the user runs the same attachment through a regular send.
+    const attachmentParts = await Promise.all(draft.attachments.map(attachmentToPart));
+    for (const part of attachmentParts) {
+      if (part.type === "file") parts.push(part);
+    }
     return parts;
   };
 
