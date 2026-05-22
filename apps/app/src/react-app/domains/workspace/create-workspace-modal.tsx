@@ -29,6 +29,7 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
+import { stripOpenworkWorkspaceMount, writeOpenworkServerSettings } from "../../../app/lib/openwork-server";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
@@ -401,8 +402,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     try {
       const tokens = await denClient.getWorkerTokens(worker.workerId, orgId);
       const openworkUrl = tokens.openworkUrl?.trim() ?? "";
+      const openworkHostUrl = stripOpenworkWorkspaceMount(openworkUrl);
       const accessToken =
-        tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
+        tokens.clientToken?.trim() || tokens.ownerToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
         throw new Error(t("dashboard.error_workspace_not_ready"));
       }
@@ -412,6 +414,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           openworkToken: accessToken,
           openworkClientToken: tokens.clientToken?.trim() || null,
           openworkHostToken: tokens.hostToken?.trim() || null,
+          openworkDenBaseUrl: cloudSettings.baseUrl,
+          openworkDenOrgId: orgId,
+          openworkDenWorkerId: worker.workerId,
           directory: null,
           displayName: worker.workerName,
           closeModal: true,
@@ -423,6 +428,16 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             name: worker.workerName,
           }),
         );
+      }
+      writeOpenworkServerSettings({
+        urlOverride: openworkHostUrl || openworkUrl,
+        token: accessToken,
+        hostToken: tokens.hostToken?.trim() || undefined,
+      });
+      try {
+        window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+      } catch {
+        // Best-effort; the next route refresh will still read persisted settings.
       }
     } catch (error) {
       setWorkersError(

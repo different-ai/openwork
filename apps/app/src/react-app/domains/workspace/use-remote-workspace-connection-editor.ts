@@ -43,8 +43,8 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
     () => ({
       openworkHostUrl: workspace?.openworkHostUrl ?? workspace?.baseUrl ?? "",
       openworkToken:
-        workspace?.openworkToken ??
         workspace?.openworkClientToken ??
+        workspace?.openworkToken ??
         workspace?.openworkHostToken ??
         "",
       directory: workspace?.directory ?? workspace?.path ?? "",

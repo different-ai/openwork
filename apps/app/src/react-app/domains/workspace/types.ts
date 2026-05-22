@@ -7,6 +7,9 @@ export type RemoteWorkspaceInput = {
   openworkToken?: string | null;
   openworkClientToken?: string | null;
   openworkHostToken?: string | null;
+  openworkDenBaseUrl?: string | null;
+  openworkDenOrgId?: string | null;
+  openworkDenWorkerId?: string | null;
   directory?: string | null;
   displayName?: string | null;
   closeModal?: boolean;

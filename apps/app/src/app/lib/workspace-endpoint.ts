@@ -31,6 +31,8 @@ export type ResolvedWorkspaceEndpoint = {
   baseUrl: string;
   /** Auth token for that server. May be empty for unauthenticated local servers. */
   token: string;
+  /** Host/admin token for routes that require worker mutation privileges. */
+  hostToken: string;
   /** Workspace id as the owning server expects it in URL paths. No `rem_` prefix. */
   workspaceId: string;
   /** True when the workspace lives on a remote OpenWork worker, not the user's local server. */
@@ -93,11 +95,16 @@ function pickRemoteBaseUrl(workspace: WorkspaceEndpointInput): string {
 function pickRemoteToken(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
   return (
-    workspace.openworkToken ??
     workspace.openworkClientToken ??
+    workspace.openworkToken ??
     workspace.openworkHostToken ??
     ""
   ).trim();
+}
+
+function pickRemoteHostToken(workspace: WorkspaceEndpointInput): string {
+  if (!workspace) return "";
+  return (workspace.openworkHostToken ?? "").trim();
 }
 
 /**
@@ -116,10 +123,12 @@ export function resolveWorkspaceEndpoint(
     const baseUrl = pickRemoteBaseUrl(workspace);
     if (!baseUrl) return null;
     const token = pickRemoteToken(workspace);
+    const hostToken = pickRemoteHostToken(workspace);
     const workspaceId = workspaceServerId(workspace);
     const client = createOpenworkServerClient({
       baseUrl,
       token: token || undefined,
+      hostToken: hostToken || undefined,
     });
     const mountedBaseUrl = (
       buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
@@ -127,6 +136,7 @@ export function resolveWorkspaceEndpoint(
     return {
       baseUrl,
       token,
+      hostToken,
       workspaceId,
       isRemote: true,
       client,
@@ -149,6 +159,7 @@ export function resolveWorkspaceEndpoint(
   return {
     baseUrl: localBaseUrl,
     token: localToken,
+    hostToken: "",
     workspaceId,
     isRemote: false,
     client,

@@ -66,6 +66,9 @@ export type WorkspaceInfo = {
   openworkHostToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+  openworkDenBaseUrl?: string | null;
+  openworkDenOrgId?: string | null;
+  openworkDenWorkerId?: string | null;
   sandboxBackend?: "docker" | "microsandbox" | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
