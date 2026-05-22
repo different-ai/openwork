@@ -195,9 +195,8 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             {/* Icon */}
             <div className="relative shrink-0">
               <div
-                className={`flex size-12 items-center justify-center rounded-xl border ${
-                  connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover"
-                }`}
+                className={`flex size-12 items-center justify-center rounded-xl border ${connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover"
+                  }`}
               >
                 {resolvedIconSrc ? (
                   <div className="flex size-8 items-center justify-center rounded-md bg-white">
@@ -345,7 +344,7 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
         </div>
 
         <DialogFooter className="shrink-0">
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <div>
               {connected && onUninstall ? (
                 <Button
