@@ -1,23 +1,32 @@
 services:
   openwork-host:
     build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        # Keep this in sync with apps/orchestrator/package.json if you want a pinned release.
-        OPENWORK_ORCHESTRATOR_VERSION: 0.11.22
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile
     ports:
-      - "8787:8787"
+      - "${OPENWORK_HOST_PORT:-8787}:8787"
     environment:
-      # Set these explicitly for stable sharing.
-      # OPENWORK_TOKEN: "..."
-      # OPENWORK_HOST_TOKEN: "..."
+      # Optional. If unset, the image generates stable per-worker tokens in /data/openwork-worker.env.
+      OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
+      OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
+      # Set to the LAN IP/DNS name clients and Den should use for this worker.
+      OPENWORK_CONNECT_HOST: ${OPENWORK_CONNECT_HOST:-127.0.0.1}
       # Optional: OPENWORK_APPROVAL_MODE: "auto"
       # Optional: OPENWORK_APPROVAL_TIMEOUT_MS: "30000"
+      OPENWORK_APPROVAL_MODE: ${OPENWORK_APPROVAL_MODE:-manual}
+      OPENWORK_APPROVAL_TIMEOUT_MS: ${OPENWORK_APPROVAL_TIMEOUT_MS:-30000}
+      OPENWORK_CORS_ORIGINS: ${OPENWORK_CORS_ORIGINS:-*}
+      OPENWORK_PORT: 8787
       OPENWORK_DATA_DIR: /data/openwork-orchestrator
       OPENWORK_SIDECAR_DIR: /data/sidecars
     volumes:
       # Mount an existing project/workspace here.
-      - ./workspace:/workspace
+      - ${OPENWORK_WORKSPACE_DIR:-./workspace}:/workspace
       # Persistent host data (OpenCode caches, server config, tokens).
-      - ./data:/data
+      - ${OPENWORK_DATA_DIR_HOST:-./data}:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s

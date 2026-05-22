@@ -18,8 +18,19 @@
 #   DEN_BETTER_AUTH_URL     — browser-facing auth origin (default: http://<DEN_PUBLIC_HOST>:<DEN_WEB_PORT>)
 #   DEN_BETTER_AUTH_TRUSTED_ORIGINS — Better Auth trusted origins (defaults to DEN_CORS_ORIGINS)
 #   DEN_CORS_ORIGINS        — comma-separated trusted origins for Better Auth + CORS
-#   DEN_PROVISIONER_MODE    — stub, render, or daytona (default: stub)
+#   DEN_PROVISIONER_MODE    — stub, static, render, or daytona (default: stub)
 #   DEN_WORKER_URL_TEMPLATE — worker URL template used by stub provisioning
+#   DEN_STATIC_WORKER_URLS  — comma-separated LAN/OpenWork worker URLs for static mode
+#                           — each URL is assigned to at most one active worker_instance
+#                           — for the smoke-test service below, use http://static-worker-smoke:8787
+#   DEN_STATIC_WORKER_HEALTH_PATH / DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS
+#                           — optional static worker health-check overrides
+#   DEN_ENTRA_TENANT_ID / DEN_ENTRA_CLIENT_ID / DEN_ENTRA_CLIENT_SECRET
+#                           — optional Microsoft Entra ID SSO provider config
+#   DEN_ENTRA_AUTO_JOIN_ENABLED / DEN_ENTRA_AUTO_JOIN_ORG_ID
+#                           — optional SSO organization auto-join target
+#   DEN_ENTRA_ADMIN_GROUP_IDS / DEN_ENTRA_MEMBER_GROUP_IDS
+#                           — comma-separated Entra group object IDs mapped to roles
 #   DAYTONA_API_URL / DAYTONA_API_KEY / DAYTONA_TARGET / DAYTONA_SNAPSHOT
 #                           — optional Daytona passthrough vars when DEN_PROVISIONER_MODE=daytona
 #   POLAR_FEATURE_GATE_ENABLED / POLAR_API_BASE / POLAR_ACCESS_TOKEN
@@ -81,6 +92,25 @@ services:
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788,http://127.0.0.1:8788}
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
       WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
+      STATIC_WORKER_URLS: ${DEN_STATIC_WORKER_URLS:-}
+      STATIC_WORKER_HEALTH_PATH: ${DEN_STATIC_WORKER_HEALTH_PATH:-/health}
+      STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS:-10000}
+      STATIC_WORKER_HEALTHCHECK_INTERVAL_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_INTERVAL_MS:-1000}
+      DEN_ENTRA_TENANT_ID: ${DEN_ENTRA_TENANT_ID:-}
+      DEN_ENTRA_CLIENT_ID: ${DEN_ENTRA_CLIENT_ID:-}
+      DEN_ENTRA_CLIENT_SECRET: ${DEN_ENTRA_CLIENT_SECRET:-}
+      DEN_ENTRA_AUTO_JOIN_ENABLED: ${DEN_ENTRA_AUTO_JOIN_ENABLED:-false}
+      DEN_ENTRA_AUTO_JOIN_ORG_ID: ${DEN_ENTRA_AUTO_JOIN_ORG_ID:-}
+      DEN_ENTRA_AUTO_JOIN_ORG_SLUG: ${DEN_ENTRA_AUTO_JOIN_ORG_SLUG:-}
+      DEN_ENTRA_ADMIN_GROUP_IDS: ${DEN_ENTRA_ADMIN_GROUP_IDS:-}
+      DEN_ENTRA_MEMBER_GROUP_IDS: ${DEN_ENTRA_MEMBER_GROUP_IDS:-}
+      EMAIL_FROM: ${DEN_EMAIL_FROM:-OpenWork Den <den@openwork.local>}
+      RESEND_API_KEY: ${DEN_RESEND_API_KEY:-}
+      SMTP_HOST: ${DEN_SMTP_HOST:-}
+      SMTP_PORT: ${DEN_SMTP_PORT:-}
+      SMTP_USER: ${DEN_SMTP_USER:-}
+      SMTP_PASS: ${DEN_SMTP_PASS:-}
+      SMTP_SECURE: ${DEN_SMTP_SECURE:-false}
       POLAR_FEATURE_GATE_ENABLED: ${POLAR_FEATURE_GATE_ENABLED:-false}
       POLAR_API_BASE: ${POLAR_API_BASE:-}
       POLAR_ACCESS_TOKEN: ${POLAR_ACCESS_TOKEN:-}
@@ -145,6 +175,32 @@ services:
       DEN_AUTH_FALLBACK_BASE: http://den:8788
       DEN_AUTH_ORIGIN: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
       NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}
+
+  static-worker-smoke:
+    <<: *shared
+    image: node:20-alpine
+    profiles: ["static-worker-smoke"]
+    command:
+      - node
+      - -e
+      - |
+        require('http').createServer((req,res)=>{
+          if (req.url === '/health') {
+            res.writeHead(200, {'content-type':'application/json'});
+            res.end(JSON.stringify({ok:true, mode:'static-worker-smoke'}));
+            return;
+          }
+          res.writeHead(404);
+          res.end('not found');
+        }).listen(8787, '0.0.0.0')
+    ports:
+      - "${DEN_STATIC_WORKER_SMOKE_PORT:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
 volumes:
   den-mysql-data:

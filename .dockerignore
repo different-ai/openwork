@@ -1,10 +1,14 @@
 .git
 .github
 .opencode
+.codenomad
 node_modules
 **/node_modules
 tmp
 dist
 **/dist
+artifacts
+apps/desktop/src-tauri/target
+**/target
 .env
 .env.*
