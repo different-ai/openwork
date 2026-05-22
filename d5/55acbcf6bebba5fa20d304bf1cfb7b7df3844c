@@ -1,0 +1,22 @@
+apps/app/src/components/tools/webfetch.tsx
+  s_39ed906ffce7d6::t_955487dea596d3 8,10,21-47,49-57,59-63
+  s_39ed906ffce7d6::t_6ef481a2d96a8f 1-5,7,11,16,18-20,48,64-65
+  s_39ed906ffce7d6::t_8837666b3b97eb 6,12-15,17
+  s_39ed906ffce7d6::t_44026a2d9a8ba3 9,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "d555acbcf6bebba5fa20d304bf1cfb7b7df3844c",
+  "prompts": {},
+  "sessions": {
+    "s_39ed906ffce7d6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b5a58c50-349f-4f1c-bbbc-f912f62fc9b5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
