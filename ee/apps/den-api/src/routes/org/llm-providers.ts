@@ -73,10 +73,12 @@ const customProviderSchema = z.object({
 const llmProviderWriteSchema = z.object({
   name: z.string().trim().min(1).max(255),
   source: z.enum(["models_dev", "custom"]),
+  credentialKind: z.enum(["api_key", "opencode_oauth"]).optional().default("api_key"),
   providerId: z.string().trim().min(1).max(255).optional(),
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
   customConfigText: z.string().trim().min(1).optional(),
   apiKey: z.string().trim().max(65535).optional(),
+  opencodeAuth: z.string().trim().max(65535).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
 }).superRefine((value, ctx) => {
@@ -103,6 +105,14 @@ const llmProviderWriteSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["customConfigText"],
       message: "Paste a custom provider config.",
+    })
+  }
+
+  if (value.credentialKind === "opencode_oauth" && value.source === "models_dev" && value.providerId?.trim().toLowerCase() !== "openai") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["credentialKind"],
+      message: "OpenCode OAuth credentials can only be used with the OpenAI catalog provider.",
     })
   }
 })
@@ -160,6 +170,33 @@ export function redactLlmProviderCredentials<T extends { apiKey?: unknown; openc
     ...provider,
     apiKey: undefined,
     opencodeAuth: undefined,
+  }
+}
+
+export function canImportLlmProviderCredential(payload: { currentMember: { isOwner: boolean; role: string } }) {
+  return isOrganizationAdmin(payload)
+}
+
+function normalizeOpencodeAuth(value: string | undefined) {
+  const trimmed = value?.trim() ?? ""
+  if (!trimmed) return null
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed as Record<string, unknown>).type !== "oauth") {
+      throw new Error("invalid auth")
+    }
+    return JSON.stringify(parsed)
+  } catch {
+    throw createFailure(400, "invalid_opencode_auth", "OpenCode OAuth credential must be valid OAuth auth JSON.")
+  }
+}
+
+function buildLlmProviderCredentialPayload(provider: LlmProviderRow) {
+  return {
+    ...redactLlmProviderCredentials(provider),
+    ...getCredentialFlags(provider),
+    apiKey: provider.credentialKind === "api_key" ? provider.apiKey : undefined,
+    opencodeAuth: provider.credentialKind === "opencode_oauth" ? provider.opencodeAuth : undefined,
   }
 }
 
@@ -292,6 +329,10 @@ async function resolveTeamIds(input: {
 }
 
 async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteSchema>) {
+  const credentialKind = input.credentialKind
+  const apiKey = credentialKind === "api_key" ? input.apiKey?.trim() || null : null
+  const opencodeAuth = credentialKind === "opencode_oauth" ? normalizeOpencodeAuth(input.opencodeAuth) : null
+
   if (input.source === "models_dev") {
     const provider = await getModelsDevProvider(input.providerId ?? "")
     if (!provider) {
@@ -308,10 +349,9 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
       return model
     })
 
-    const apiKey = input.apiKey?.trim() || null
-
     return {
       source: input.source,
+      credentialKind,
       providerId: provider.id,
       name: input.name,
       providerConfig: provider.config,
@@ -321,6 +361,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
         config: model.config,
       })),
       apiKey,
+      opencodeAuth,
     }
   }
 
@@ -344,6 +385,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
 
   return {
     source: input.source,
+    credentialKind,
     providerId: customProvider.data.id,
     name: input.name,
     providerConfig: providerConfig as JsonRecord,
@@ -352,7 +394,8 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
       name: model.name,
       config: model as JsonRecord,
     })),
-    apiKey: input.apiKey?.trim() || null,
+    apiKey,
+    opencodeAuth,
   }
 }
 
@@ -710,6 +753,67 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     },
   )
 
+  app.get(
+    "/v1/llm-providers/:llmProviderId/import-credential",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Import LLM provider credential",
+      description: "Returns credential material for an organization-managed LLM provider to privileged callers only.",
+      responses: {
+        200: jsonResponse("Provider credential returned successfully.", llmProviderResponseSchema),
+        400: jsonResponse("The provider path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to import an organization LLM provider credential.", unauthorizedSchema),
+        403: jsonResponse("Only members who can manage this provider can import its credential.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+      },
+    }),
+    requireUserMiddleware,
+    paramValidator(orgLlmProviderParamsSchema),
+    resolveOrganizationContextMiddleware,
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const params = c.req.valid("param")
+
+      let llmProviderId: LlmProviderId
+      try {
+        llmProviderId = parseLlmProviderId(params.llmProviderId)
+      } catch {
+        return c.json({ error: "llm_provider_not_found" }, 404)
+      }
+
+      const providerRows = await db
+        .select()
+        .from(LlmProviderTable)
+        .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
+        .limit(1)
+
+      const provider = providerRows[0]
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+      if (!canImportLlmProviderCredential(payload)) {
+        return c.json({ error: "forbidden", message: "Only organization admins can import provider credentials." }, 403)
+      }
+
+      const models = await db
+        .select()
+        .from(LlmProviderModelTable)
+        .where(eq(LlmProviderModelTable.llmProviderId, llmProviderId))
+
+      return c.json({
+        llmProvider: {
+          ...buildLlmProviderCredentialPayload(provider),
+          models: models
+            .map((model) => ({
+              id: model.modelId,
+              name: model.name,
+              config: model.modelConfig,
+              createdAt: model.createdAt,
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        },
+      })
+    },
+  )
+
   app.post(
     "/v1/llm-providers",
     describeRoute({
@@ -751,10 +855,12 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             organizationId: payload.organization.id,
             createdByOrgMembershipId: payload.currentMember.id,
             source: normalized.source,
+            credentialKind: normalized.credentialKind,
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
             apiKey: normalized.apiKey,
+            opencodeAuth: normalized.opencodeAuth,
             createdAt: now,
             updatedAt: now,
           })
@@ -800,13 +906,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             organizationId: payload.organization.id,
             createdByOrgMembershipId: payload.currentMember.id,
             source: normalized.source,
-            credentialKind: "api_key",
+            credentialKind: normalized.credentialKind,
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
             hasApiKey: Boolean(normalized.apiKey),
-            hasOpencodeAuth: false,
-            hasCredential: Boolean(normalized.apiKey),
+            hasOpencodeAuth: Boolean(normalized.opencodeAuth),
+            hasCredential: normalized.credentialKind === "opencode_oauth" ? Boolean(normalized.opencodeAuth) : Boolean(normalized.apiKey),
             createdAt: now,
             updatedAt: now,
           },
@@ -890,10 +996,16 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             .update(LlmProviderTable)
             .set({
               source: normalized.source,
+              credentialKind: normalized.credentialKind,
               providerId: normalized.providerId,
               name: normalized.name,
               providerConfig: normalized.providerConfig,
-              apiKey: input.apiKey === undefined ? provider.apiKey : normalized.apiKey,
+              apiKey: normalized.credentialKind === "api_key"
+                ? (input.apiKey === undefined ? provider.apiKey : normalized.apiKey)
+                : null,
+              opencodeAuth: normalized.credentialKind === "opencode_oauth"
+                ? (input.opencodeAuth === undefined ? provider.opencodeAuth : normalized.opencodeAuth)
+                : null,
               updatedAt,
             })
             .where(eq(LlmProviderTable.id, provider.id))
@@ -943,10 +1055,16 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
-            credentialKind: provider.credentialKind,
-            hasApiKey: input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey),
-            hasOpencodeAuth: Boolean(provider.opencodeAuth),
-            hasCredential: input.apiKey === undefined ? getCredentialFlags(provider).hasCredential : Boolean(normalized.apiKey),
+            credentialKind: normalized.credentialKind,
+            hasApiKey: normalized.credentialKind === "api_key"
+              ? (input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey))
+              : false,
+            hasOpencodeAuth: normalized.credentialKind === "opencode_oauth"
+              ? (input.opencodeAuth === undefined ? Boolean(provider.opencodeAuth) : Boolean(normalized.opencodeAuth))
+              : false,
+            hasCredential: normalized.credentialKind === "opencode_oauth"
+              ? (input.opencodeAuth === undefined ? Boolean(provider.opencodeAuth) : Boolean(normalized.opencodeAuth))
+              : (input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey)),
             updatedAt,
           },
         })
