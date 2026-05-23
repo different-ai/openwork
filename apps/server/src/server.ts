@@ -580,6 +580,46 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   return new Response(response.body, { status: response.status, headers });
 }
 
+async function fetchOpencodeJson(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<unknown> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim();
+  if (!baseUrl) {
+    throw new ApiError(502, "opencode_unavailable", "OpenCode base URL is not configured");
+  }
+
+  const target = new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) {
+    headers.set("X-OpenCode-Directory", directory);
+    headers.set("X-Opencode-Directory", directory);
+  }
+  if (connection.authHeader) {
+    headers.set("Authorization", connection.authHeader);
+  }
+
+  const response = await fetch(target, {
+    method: init.method ?? "GET",
+    headers,
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+  const text = await response.text();
+  const json = text ? parseOpencodeErrorBody(text) : null;
+  if (!response.ok) {
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      status: response.status,
+      body: json,
+      path,
+    });
+  }
+  return json;
+}
+
 async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
   const header = request.headers.get("authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
