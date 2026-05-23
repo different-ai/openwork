@@ -30,7 +30,11 @@ export const LlmProviderTable = mysqlTable(
     providerConfig: json("provider_config")
       .$type<Record<string, unknown>>()
       .notNull(),
+    credentialKind: mysqlEnum("credential_kind", ["api_key", "opencode_oauth"])
+      .notNull()
+      .default("api_key"),
     apiKey: encryptedTextColumn("api_key"),
+    opencodeAuth: encryptedTextColumn("opencode_auth"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()

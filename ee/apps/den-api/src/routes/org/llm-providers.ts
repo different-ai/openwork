@@ -145,6 +145,24 @@ function isOrganizationAdmin(payload: { currentMember: { isOwner: boolean; role:
   return payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")
 }
 
+export function getCredentialFlags(provider: Pick<LlmProviderRow, "credentialKind" | "apiKey" | "opencodeAuth">) {
+  const hasApiKey = Boolean(provider.apiKey && provider.apiKey.trim().length > 0)
+  const hasOpencodeAuth = Boolean(provider.opencodeAuth && provider.opencodeAuth.trim().length > 0)
+  return {
+    hasApiKey,
+    hasOpencodeAuth,
+    hasCredential: provider.credentialKind === "opencode_oauth" ? hasOpencodeAuth : hasApiKey,
+  }
+}
+
+export function redactLlmProviderCredentials<T extends { apiKey?: unknown; opencodeAuth?: unknown }>(provider: T): Omit<T, "apiKey" | "opencodeAuth"> & { apiKey: undefined; opencodeAuth: undefined } {
+  return {
+    ...provider,
+    apiKey: undefined,
+    opencodeAuth: undefined,
+  }
+}
+
 function canManageLlmProvider(
   payload: { currentMember: { id: MemberId; isOwner: boolean; role: string } },
   provider: LlmProviderRow,
@@ -464,7 +482,7 @@ async function loadLlmProviders(input: {
 
   return providers.map((provider) => ({
     ...provider,
-    hasApiKey: Boolean(provider.apiKey && provider.apiKey.trim().length > 0),
+    ...getCredentialFlags(provider),
     models: (modelsByProviderId.get(provider.id) ?? [])
       .map((model) => ({
         id: model.modelId,
@@ -607,8 +625,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       return c.json({
         llmProviders: providers.map((provider) => ({
-          ...provider,
-          apiKey: undefined,
+          ...redactLlmProviderCredentials(provider),
           canManage: canManageLlmProvider(payload, provider),
         })),
       })
@@ -678,6 +695,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       return c.json({
         llmProvider: {
           ...provider,
+          opencodeAuth: undefined,
+          ...getCredentialFlags(provider),
           models: models
             .map((model) => ({
               id: model.modelId,
@@ -781,10 +800,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             organizationId: payload.organization.id,
             createdByOrgMembershipId: payload.currentMember.id,
             source: normalized.source,
+            credentialKind: "api_key",
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
             hasApiKey: Boolean(normalized.apiKey),
+            hasOpencodeAuth: false,
+            hasCredential: Boolean(normalized.apiKey),
             createdAt: now,
             updatedAt: now,
           },
@@ -916,12 +938,15 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
         return c.json({
           llmProvider: {
-            ...provider,
+            ...redactLlmProviderCredentials(provider),
             source: normalized.source,
             providerId: normalized.providerId,
             name: normalized.name,
             providerConfig: normalized.providerConfig,
+            credentialKind: provider.credentialKind,
             hasApiKey: input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey),
+            hasOpencodeAuth: Boolean(provider.opencodeAuth),
+            hasCredential: input.apiKey === undefined ? getCredentialFlags(provider).hasCredential : Boolean(normalized.apiKey),
             updatedAt,
           },
         })
