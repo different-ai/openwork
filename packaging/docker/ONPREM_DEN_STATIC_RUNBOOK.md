@@ -212,6 +212,20 @@ Email/password sign-in stays enabled for break-glass administrator access. Micro
 
 This batch does not implement a first-admin/org bootstrap flow. Before enabling Entra auto-join in production, ensure a first Den administrator and target organization already exist through a supported setup path for your deployment. A dedicated first-admin/org bootstrap capability remains a future setup prerequisite. Entra auto-join only adds Microsoft users to an existing organization; it never creates the initial organization and never assigns `owner`.
 
+For disposable E2E and operator smoke-test deployments, create a demo owner and organization with the Den seed tool instead of editing database rows manually. Run this from the Compose host after the `den` service is healthy, using a temporary password kept out of shell history where possible:
+
+```bash
+read -rs -p "Demo owner password: " DEN_DEMO_OWNER_PASSWORD; echo
+export DEN_DEMO_OWNER_PASSWORD
+docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-dev.yml exec \
+  -e DEN_DEMO_OWNER_EMAIL=admin@acme.test \
+  -e DEN_DEMO_OWNER_PASSWORD \
+  -e DEN_DEMO_SEED_FETCH_GITHUB=0 \
+  den pnpm --dir /app/ee/apps/den-api run seed:demo-org
+```
+
+The seed command prints the demo owner email, organization summary, and object counts, but does not print the supplied password. Use `-- --reset` at the end only for disposable environments when you intentionally want to recreate the demo organization.
+
 ### Entra app registration
 
 1. In Microsoft Entra admin center, create or open an App registration for Den.

@@ -1037,7 +1037,8 @@ async function main() {
   log("✓", `done in ${elapsedSeconds}s`)
   log(" ", `${memberIdsByEmail.size} members · ${teamIdsByName.size} teams · ${seededPlugins} plugins · ${seededObjects} config objects`)
   console.log()
-  log("→", `login: ${DEMO_OWNER_EMAIL} / ${DEMO_OWNER_PASSWORD}`)
+  log("→", `login email: ${DEMO_OWNER_EMAIL}`)
+  log("→", "login password: use the DEN_DEMO_OWNER_PASSWORD value supplied to this seed run")
   log("→", "open: /organization or /dashboard")
   console.log()
 }
