@@ -148,6 +148,10 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
 
       const providers = await listProviders(normalizedOrgId)
       const revision = computeManagedProviderRevision(providers)
+      if (providers.length === 0) {
+        return c.json({ status: "applied", providerCount: 0, revision })
+      }
+
       const runtime = await pushRuntime(worker.id, { providers, revision })
       if (!runtime.ok) {
         return c.json({
