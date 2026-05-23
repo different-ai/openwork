@@ -111,10 +111,13 @@ export type DenOrgLlmProviderModel = {
 export type DenOrgLlmProvider = {
   id: string;
   source: "models_dev" | "custom" | "openwork";
+  credentialKind: "api_key" | "opencode_oauth";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
+  hasOpencodeAuth: boolean;
+  hasCredential: boolean;
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
@@ -122,6 +125,7 @@ export type DenOrgLlmProvider = {
 
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
   apiKey: string | null;
+  opencodeAuth: string | null;
 };
 
 export type DenPluginConfigObjectType = "skill" | "agent" | "command" | "tool" | "mcp" | "hook" | "context" | "custom";
@@ -897,10 +901,13 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
   return {
     id: value.id,
     source: value.source,
+    credentialKind: value.credentialKind === "opencode_oauth" ? "opencode_oauth" : "api_key",
     providerId: value.providerId,
     name: value.name,
     providerConfig: isRecord(value.providerConfig) ? value.providerConfig : {},
     hasApiKey: value.hasApiKey === true,
+    hasOpencodeAuth: value.hasOpencodeAuth === true,
+    hasCredential: value.hasCredential === true || value.hasApiKey === true || value.hasOpencodeAuth === true,
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
@@ -936,6 +943,7 @@ function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConn
   return {
     ...provider,
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
+    opencodeAuth: typeof payload.llmProvider.opencodeAuth === "string" ? payload.llmProvider.opencodeAuth : null,
   };
 }
 
