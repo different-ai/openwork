@@ -23,6 +23,7 @@ beforeAll(async () => {
 function createApp(input: {
   role?: string
   isOwner?: boolean
+  listProviders?: Parameters<typeof managedProviderModule.registerManagedProviderSyncRoutes>[1]["listProviders"]
   pushRuntime?: Parameters<typeof managedProviderModule.registerManagedProviderSyncRoutes>[1]["pushRuntime"]
 }) {
   const app = new Hono()
@@ -52,7 +53,7 @@ function createApp(input: {
       paramValidator(workersSharedModule.workerIdParamSchema),
     ] as never,
     getWorker: async (id, activeOrgId) => id === workerId && activeOrgId === orgId ? { id } : null,
-    listProviders: async () => [provider],
+    listProviders: input.listProviders ?? (async () => [provider]),
     pushRuntime: input.pushRuntime ?? (async () => ({ ok: true, status: 200, payload: { status: "applied" } })),
   })
   return { app, workerId, provider }
@@ -93,6 +94,22 @@ test("managed provider sync sanitizes worker failures", async () => {
   expect(JSON.stringify(body)).not.toContain("access-token-den")
   expect(JSON.stringify(body)).not.toContain("refresh-token-den")
   expect(body.reason).toBe("Worker provider sync failed.")
+})
+
+test("managed provider sync treats an empty provider set as applied without calling worker", async () => {
+  let called = false
+  const { app, workerId } = createApp({
+    listProviders: async () => [],
+    pushRuntime: async () => {
+      called = true
+      return { ok: false, status: 500, payload: { message: "should not be called" } }
+    },
+  })
+
+  const response = await app.request(`http://den.local/v1/workers/${workerId}/managed-providers/sync`, { method: "POST" })
+  expect(response.status).toBe(200)
+  await expect(response.json()).resolves.toEqual({ status: "applied", providerCount: 0, revision: "empty" })
+  expect(called).toBe(false)
 })
 
 test("managed provider sync reports missing worker as not found", async () => {
