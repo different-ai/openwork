@@ -34,6 +34,7 @@ import {
     requestLlmProviderCatalogDetail,
     useOrgLlmProviders,
     type DenLlmProvider,
+    type DenLlmProviderCredentialKind,
     type DenModelsDevProviderDetail,
     type DenModelsDevProviderSummary,
 } from "./llm-provider-data";
@@ -88,7 +89,18 @@ export function LlmProviderEditorScreen({
     const [customConfigText, setCustomConfigText] = useState(
         buildCustomProviderTemplate(),
     );
+    const [credentialKind, setCredentialKind] =
+        useState<DenLlmProviderCredentialKind>("api_key");
     const [apiKey, setApiKey] = useState("");
+    const [opencodeAuth, setOpencodeAuth] = useState("");
+    const [openAiOauthBusy, setOpenAiOauthBusy] = useState(false);
+    const [openAiOauthError, setOpenAiOauthError] = useState<string | null>(null);
+    const [openAiOauthSession, setOpenAiOauthSession] = useState<{
+        verificationUrl: string;
+        userCode: string;
+        deviceAuthId: string;
+        intervalMs: number;
+    } | null>(null);
     const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
     const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
     const [saveBusy, setSaveBusy] = useState(false);
@@ -146,7 +158,11 @@ export function LlmProviderEditorScreen({
                     ? buildEditableCustomProviderText(provider)
                     : buildCustomProviderTemplate(),
             );
+            setCredentialKind(provider.credentialKind);
             setApiKey("");
+            setOpencodeAuth("");
+            setOpenAiOauthError(null);
+            setOpenAiOauthSession(null);
             return;
         }
 
@@ -159,8 +175,89 @@ export function LlmProviderEditorScreen({
         );
         setSelectedTeamIds([]);
         setCustomConfigText(buildCustomProviderTemplate());
+        setCredentialKind("api_key");
         setApiKey("");
+        setOpencodeAuth("");
+        setOpenAiOauthError(null);
+        setOpenAiOauthSession(null);
     }, [orgContext?.currentMember.id, provider]);
+
+    useEffect(() => {
+        setOpenAiOauthError(null);
+        setOpenAiOauthSession(null);
+    }, [credentialKind, selectedProviderId, source]);
+
+    async function startOpenAiOauth() {
+        setOpenAiOauthBusy(true);
+        setOpenAiOauthError(null);
+        try {
+            const { response, payload } = await requestJson(
+                "/v1/llm-providers/openai-oauth/start",
+                { method: "POST", body: JSON.stringify({}) },
+                20000,
+            );
+            if (!response.ok) {
+                throw new Error(getErrorMessage(payload, `Failed to start OpenAI OAuth (${response.status}).`));
+            }
+            if (!payload || typeof payload !== "object") {
+                throw new Error("OpenAI OAuth response was empty.");
+            }
+            const data = payload as Record<string, unknown>;
+            if (
+                typeof data.verificationUrl !== "string" ||
+                typeof data.userCode !== "string" ||
+                typeof data.deviceAuthId !== "string" ||
+                typeof data.intervalMs !== "number"
+            ) {
+                throw new Error("OpenAI OAuth response was incomplete.");
+            }
+            setOpenAiOauthSession({
+                verificationUrl: data.verificationUrl,
+                userCode: data.userCode,
+                deviceAuthId: data.deviceAuthId,
+                intervalMs: data.intervalMs,
+            });
+            window.open(data.verificationUrl, "_blank", "noopener,noreferrer");
+        } catch (error) {
+            setOpenAiOauthError(error instanceof Error ? error.message : "Could not start OpenAI OAuth.");
+        } finally {
+            setOpenAiOauthBusy(false);
+        }
+    }
+
+    async function completeOpenAiOauth() {
+        if (!openAiOauthSession) {
+            setOpenAiOauthError("Start OpenAI OAuth first.");
+            return;
+        }
+        setOpenAiOauthBusy(true);
+        setOpenAiOauthError(null);
+        try {
+            const { response, payload } = await requestJson(
+                "/v1/llm-providers/openai-oauth/complete",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        deviceAuthId: openAiOauthSession.deviceAuthId,
+                        userCode: openAiOauthSession.userCode,
+                    }),
+                },
+                20000,
+            );
+            if (!response.ok) {
+                throw new Error(getErrorMessage(payload, response.status === 409 ? "OpenAI authorization is not complete yet." : `Failed to complete OpenAI OAuth (${response.status}).`));
+            }
+            if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>).opencodeAuth !== "string") {
+                throw new Error("OpenAI OAuth completion response was incomplete.");
+            }
+            setOpencodeAuth((payload as { opencodeAuth: string }).opencodeAuth);
+            setOpenAiOauthSession(null);
+        } catch (error) {
+            setOpenAiOauthError(error instanceof Error ? error.message : "Could not complete OpenAI OAuth.");
+        } finally {
+            setOpenAiOauthBusy(false);
+        }
+    }
 
     useEffect(() => {
         if (source !== "models_dev" || !orgId || !selectedProviderId) {
@@ -286,6 +383,11 @@ export function LlmProviderEditorScreen({
             }
         }
 
+        if (credentialKind === "opencode_oauth" && source === "models_dev" && selectedProviderId !== "openai") {
+            setSaveError("OpenCode OAuth credentials are only available for the OpenAI catalog provider.");
+            return;
+        }
+
         if (source === "custom" && !customConfigText.trim()) {
             setSaveError("Paste a custom provider config.");
             return;
@@ -297,6 +399,7 @@ export function LlmProviderEditorScreen({
             const body: Record<string, unknown> = {
                 name: providerName.trim(),
                 source,
+                credentialKind,
                 memberIds: [...new Set(selectedMemberIds)],
                 teamIds: [...new Set(selectedTeamIds)],
             };
@@ -308,8 +411,12 @@ export function LlmProviderEditorScreen({
                 body.customConfigText = customConfigText;
             }
 
-            if (apiKey.trim() || !provider) {
+            if (credentialKind === "api_key" && (apiKey.trim() || !provider || provider.credentialKind !== "api_key")) {
                 body.apiKey = apiKey.trim();
+            }
+
+            if (credentialKind === "opencode_oauth" && (opencodeAuth.trim() || !provider || provider.credentialKind !== "opencode_oauth")) {
+                body.opencodeAuth = opencodeAuth.trim();
             }
 
             const path = provider
@@ -607,28 +714,113 @@ export function LlmProviderEditorScreen({
                             Credential
                         </h2>
                     </div>
-                    {provider?.hasApiKey ? (
+                    {provider?.hasCredential ? (
                         <span className="rounded-full bg-emerald-50 px-4 py-2 text-[13px] font-medium text-emerald-700">
                             Existing credential saved
                         </span>
                     ) : null}
                 </div>
 
-                <label className="grid gap-3">
-                    <span className="text-[14px] font-medium text-gray-700">
-                        API key / credential
-                    </span>
-                    <DenInput
-                        type="password"
-                        value={apiKey}
-                        onChange={(event) => setApiKey(event.target.value)}
-                        placeholder={
-                            provider?.hasApiKey
-                                ? "Leave blank to keep current credential"
-                                : "Paste the provider credential"
-                        }
+                <div className="mb-6 grid gap-3 md:grid-cols-2">
+                    <DenSelectableRow
+                        selected={credentialKind === "api_key"}
+                        title="API key"
+                        description="Store a provider API key and import it into teammates' workspaces."
+                        onClick={() => setCredentialKind("api_key")}
                     />
-                </label>
+                    <DenSelectableRow
+                        selected={credentialKind === "opencode_oauth"}
+                        title="OpenCode OAuth"
+                        description="Store the native OpenCode OAuth auth JSON for the OpenAI provider."
+                        onClick={() => setCredentialKind("opencode_oauth")}
+                    />
+                </div>
+
+                {credentialKind === "api_key" ? (
+                    <label className="grid gap-3">
+                        <span className="text-[14px] font-medium text-gray-700">
+                            API key / credential
+                        </span>
+                        <DenInput
+                            type="password"
+                            value={apiKey}
+                            onChange={(event) => setApiKey(event.target.value)}
+                            placeholder={
+                                provider?.credentialKind === "api_key" && provider.hasApiKey
+                                    ? "Leave blank to keep current credential"
+                                    : "Paste the provider credential"
+                            }
+                        />
+                    </label>
+                ) : (
+                    <div className="grid gap-4">
+                        <div className="rounded-[24px] border border-blue-100 bg-blue-50 p-5">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                <div>
+                                    <p className="text-[14px] font-semibold text-blue-950">Connect OpenAI with OpenCode OAuth</p>
+                                    <p className="mt-2 text-[13px] leading-6 text-blue-800">
+                                        This uses the same ChatGPT Pro/Plus device flow as OpenCode, then stores the resulting OAuth auth JSON encrypted in Den.
+                                    </p>
+                                </div>
+                                <DenButton
+                                    variant="secondary"
+                                    loading={openAiOauthBusy && !openAiOauthSession}
+                                    onClick={() => void startOpenAiOauth()}
+                                >
+                                    Connect OpenAI
+                                </DenButton>
+                            </div>
+
+                            {openAiOauthSession ? (
+                                <div className="mt-5 rounded-[18px] bg-white p-4 ring-1 ring-inset ring-blue-100">
+                                    <p className="text-[13px] font-medium text-gray-800">Enter this code on OpenAI:</p>
+                                    <div className="mt-3 inline-flex rounded-xl bg-gray-950 px-4 py-2 font-mono text-[22px] font-semibold tracking-[0.18em] text-white">
+                                        {openAiOauthSession.userCode}
+                                    </div>
+                                    <div className="mt-4 flex flex-wrap gap-3">
+                                        <a
+                                            href={openAiOauthSession.verificationUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-[13px] font-medium text-gray-700 ring-1 ring-inset ring-gray-200 transition hover:bg-gray-50"
+                                        >
+                                            Open OpenAI page
+                                        </a>
+                                        <DenButton
+                                            loading={openAiOauthBusy}
+                                            onClick={() => void completeOpenAiOauth()}
+                                        >
+                                            I finished authorization
+                                        </DenButton>
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            {openAiOauthError ? (
+                                <p className="mt-4 text-[13px] leading-6 text-red-700">{openAiOauthError}</p>
+                            ) : null}
+                        </div>
+
+                        <label className="grid gap-3">
+                            <span className="text-[14px] font-medium text-gray-700">
+                                OpenCode OAuth JSON
+                            </span>
+                            <DenTextarea
+                                value={opencodeAuth}
+                                onChange={(event) => setOpencodeAuth(event.target.value)}
+                                rows={8}
+                                placeholder={
+                                    provider?.credentialKind === "opencode_oauth" && provider.hasOpencodeAuth
+                                        ? "Leave blank to keep current OpenCode OAuth credential"
+                                        : '{ "type": "oauth", "access": "...", "refresh": "...", "expires": 0 }'
+                                }
+                            />
+                            <p className="text-[13px] leading-6 text-gray-500">
+                                You can connect above or paste the same auth shape OpenCode writes to auth.json for OAuth providers.
+                            </p>
+                        </label>
+                    </div>
+                )}
             </section>
 
             {source === "models_dev" ? (
