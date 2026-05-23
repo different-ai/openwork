@@ -8,10 +8,7 @@ import path from "node:path";
 
 import * as openeral from "./openshell/openeral.mjs";
 import { openshellDoctor } from "./openshell/doctor.mjs";
-import {
-  deriveOpenEralSandboxName,
-  launchExternalTerminalToSandbox,
-} from "./openshell/openeral-terminal.mjs";
+import { deriveOpenEralSandboxName } from "./openshell/openeral-terminal.mjs";
 
 // Tracks per-workspace detached host metadata from orchestratorStartDetached
 // so orchestratorInstanceDispose can find and tear down the right
@@ -1611,9 +1608,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // OpenEral profile branch: skip the npm orchestrator entirely.
     // OpenEral's agent (Claude Code / OpenClaw) runs as a foreground TTY
     // process inside the sandbox — there is no openwork-server HTTP
-    // endpoint to spawn. We create or resume the sandbox, launch an
-    // external terminal pointed at it, and return a slimmer host-info
-    // shape (no openworkUrl).
+    // endpoint to spawn. We create (or resume) the sandbox here and
+    // return a slimmer host-info shape (no openworkUrl). The renderer's
+    // <OpenEralTerminal> component (apps/app/src/react-app/domains/
+    // session/surface/openeral-terminal.tsx) then opens an in-window
+    // xterm.js bound to the sandbox via openeralPtyOpen — per spec §2.2
+    // ("Renderer: opens xterm.js + chat UI bound to openworkUrl").
+    // No external OS terminal is launched.
     if (sandboxBackend === "openshell" && isOpenEralProfile) {
       const workspaceId =
         String(options.workspaceId ?? "").trim() || path.basename(workspacePath);
@@ -1622,16 +1623,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         name: sandboxName,
         profile: sandboxProfile,
       });
-      // Best-effort terminal launch — Phase O5 replaces this with an
-      // in-app xterm.js view. If the OS terminal isn't reachable, the
-      // session is still created and the caller can connect manually.
-      let terminalLaunch = null;
-      let terminalError = null;
-      try {
-        terminalLaunch = await launchExternalTerminalToSandbox(sandboxName);
-      } catch (err) {
-        terminalError = err instanceof Error ? err.message : String(err);
-      }
       const hostInfo = {
         openworkUrl: null,
         token: null,
@@ -1643,8 +1634,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         sandboxRunId: sandboxName,
         sandboxContainerName: sandboxName,
         openeralExisted: result.existed,
-        terminalLaunch,
-        terminalError,
+        terminalLaunch: null,
+        terminalError: null,
       };
       activeDetachedHosts.set(normalizeWorkspaceKey(workspacePath), hostInfo);
       return hostInfo;
