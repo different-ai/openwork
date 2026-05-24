@@ -140,19 +140,30 @@ export async function sandboxExists(name) {
   try {
     parsed = JSON.parse(r.stdout);
   } catch {
+    console.warn("[sandboxExists] openshell sandbox list returned non-JSON:", r.stdout.slice(0, 200));
     return false;
   }
+  // Tolerate multiple shapes the CLI has emitted across releases:
+  //   flat array of strings: ["name1", "name2"]
+  //   flat array of objects: [{"name": "name1"}, ...]
+  //   envelope {sandboxes: [...]}, {items: [...]}, {data: [...]}
   const list = Array.isArray(parsed)
     ? parsed
     : Array.isArray(parsed?.sandboxes)
       ? parsed.sandboxes
       : Array.isArray(parsed?.items)
         ? parsed.items
-        : null;
-  if (!list) return false;
+        : Array.isArray(parsed?.data)
+          ? parsed.data
+          : null;
+  if (!list) {
+    console.warn("[sandboxExists] unrecognised sandbox list shape:", JSON.stringify(parsed).slice(0, 200));
+    return false;
+  }
   return list.some((s) => {
     if (typeof s === "string") return s === name;
-    return s?.name === name;
+    // Try every plausible name key the CLI might use
+    return s?.name === name || s?.sandbox_name === name || s?.id === name;
   });
 }
 
@@ -287,11 +298,19 @@ export async function createOpenEralSandbox(opts) {
     },
   );
   if (r.exitCode !== 0) {
+    const output = (r.stderr || r.stdout).trim();
+    // openshell exits 1 with "already exists" when sandboxExists() returned
+    // a false-negative (e.g. unexpected JSON shape from sandbox list). Treat
+    // this as a successful reconnect instead of a hard failure.
+    if (/already exists/i.test(output)) {
+      onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
+      return { name, profile, imageRef, existed: true };
+    }
     const cli = await getCliInfo().catch(() => null);
     const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
     throw new Error(
       `openshell sandbox create failed (exit ${r.exitCode})${versionTag}: ` +
-        `${(r.stderr || r.stdout).trim() || "(no output)"}`,
+        `${output || "(no output)"}`,
     );
   }
   onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
