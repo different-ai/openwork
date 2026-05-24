@@ -172,9 +172,15 @@ export async function getSandboxStatus(name) {
 
 export async function listSandboxes() {
   const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "list", "--json"],
-    { timeout: 10_000 },
+    ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+    { timeout: 20_000 },
   );
+  if (r.exitCode === 124) {
+    throw new Error(
+      "OpenShell gateway is not responding (sandbox list timed out). " +
+        "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway.",
+    );
+  }
   if (r.exitCode !== 0) {
     throw new Error(`listSandboxes failed: ${r.stderr || r.stdout || "unknown error"}`);
   }

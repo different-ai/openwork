@@ -304,6 +304,45 @@ function appendDelta(messages: UIMessage[], messageId: string, partId: string, d
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
 
+  if (event.type === "session.error") {
+    const props = (event.properties ?? {}) as { sessionID?: string; error?: unknown };
+    if (!props.sessionID) return;
+    if (!isTrackedSession(entry, props.sessionID)) return;
+    // Extract a human-readable error message from whatever shape the backend sends.
+    const errorRecord =
+      typeof props.error === "object" && props.error !== null
+        ? (props.error as Record<string, unknown>)
+        : null;
+    const errorMsg =
+      typeof errorRecord?.message === "string" && errorRecord.message.trim()
+        ? errorRecord.message.trim()
+        : typeof props.error === "string" && props.error.trim()
+          ? props.error.trim()
+          : "Session failed";
+    // Transition the session back to idle so the composer re-enables.
+    queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    // Append a synthetic assistant message with the error text so the
+    // user can see why no response arrived, instead of silent failure.
+    queryClient.setQueryData<UIMessage[]>(
+      transcriptKey(workspaceId, props.sessionID),
+      (current = []) => [
+        ...current,
+        {
+          id: `session-error-${props.sessionID}-${Date.now()}`,
+          role: "assistant" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Error: ${errorMsg}`,
+              state: "done" as const,
+            },
+          ],
+        } satisfies UIMessage,
+      ],
+    );
+    return;
+  }
+
   if (event.type === "session.status") {
     const props = (event.properties ?? {}) as { sessionID?: string; status?: SessionStatus };
     if (!props.sessionID || !props.status) return;

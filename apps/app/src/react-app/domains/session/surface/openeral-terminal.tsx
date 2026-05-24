@@ -69,6 +69,22 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const [reconnectKey, setReconnectKey] = useState(0);
   const reconnect = useCallback(() => setReconnectKey((k) => k + 1), []);
 
+  // xterm.js is opened while the container is still hidden (phase =
+  // "mounting-terminal"), so its initial fit() call measures 0 px and
+  // sets cols = 1, producing vertical text.  Re-fit once the container
+  // becomes visible so the terminal fills the panel correctly.
+  useEffect(() => {
+    if (phase !== "connected" && phase !== "exited") return;
+    const raf = requestAnimationFrame(() => {
+      try {
+        fitRef.current?.fit();
+      } catch {
+        // Container not yet measured — ignore.
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [phase]);
+
   useEffect(() => {
     let cancelled = false;
     let unsubData: (() => void) | undefined;
@@ -431,8 +447,10 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
   // Detect actionable errors so the founder sees a clear next step
   // instead of a raw stderr dump.
   const missingDatabase = /DATABASE_URL is not configured/i.test(props.message);
-  const missingApiKey = /ANTHROPIC_API_KEY is required/i.test(props.message);
+  // Backend throws "ANTHROPIC_API_KEY is not configured" (not "is required")
+  const missingApiKey = /ANTHROPIC_API_KEY is not configured/i.test(props.message);
   const openshellUnready = /OpenShell is not ready/i.test(props.message);
+  const gatewayUnresponsive = /gateway is not responding|sandbox list timed out/i.test(props.message);
   const credentialIssue = missingDatabase || missingApiKey;
 
   let title = "Could not start OpenEral session.";
@@ -443,10 +461,15 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
       "OpenEral stores workspace state in PostgreSQL. Open Settings → Sandbox → " +
       "OpenEral configuration and paste your connection string.";
   } else if (missingApiKey) {
-    title = "ANTHROPIC_API_KEY is required for OpenClaw.";
+    title = "ANTHROPIC_API_KEY is not configured.";
     detail =
-      "OpenClaw's embedded gateway can't resolve OpenShell provider placeholders. " +
+      "OpenEral needs an Anthropic API key to auto-provision the Claude provider. " +
       "Open Settings → Sandbox → OpenEral configuration and paste your Anthropic API key.";
+  } else if (gatewayUnresponsive) {
+    title = "OpenShell gateway is not responding.";
+    detail =
+      "The openshell CLI couldn't reach its gateway. Open Settings → Sandbox → " +
+      "OpenShell health and click Restart Gateway, then try again.";
   } else if (openshellUnready) {
     title = "OpenShell stack isn't ready.";
     detail =

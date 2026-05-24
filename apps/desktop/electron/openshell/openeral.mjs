@@ -120,10 +120,21 @@ export async function pullImage(imageRef, options = {}) {
  */
 export async function sandboxExists(name) {
   if (!name) return false;
+  // Wrap with bash timeout so the openshell CLI is force-killed after
+  // 15 s if the gateway is unreachable. Without this wrapper the
+  // process hangs until wslRun's full timeout fires — making the UI
+  // appear frozen. bash exits 124 when it kills the child.
   const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "list", "--json"],
-    { timeout: 10_000 },
+    ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+    { timeout: 20_000 },
   );
+  if (r.exitCode === 124) {
+    throw new Error(
+      "OpenShell gateway is not responding (openshell sandbox list timed out). " +
+        "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+        "then try again.",
+    );
+  }
   if (r.exitCode !== 0) return false;
   let parsed;
   try {

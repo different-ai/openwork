@@ -34,7 +34,7 @@ import {
   installOpenShellStack,
   loadInstallerState as loadOpenShellInstallerState,
 } from "./openshell/installer.mjs";
-import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, distroExists, wslRun } from "./openshell/wsl.mjs";
+import { DISTRO_NAME as OPENSHELL_DISTRO_NAME, distroExists, ensureDistroRunning, wslRun } from "./openshell/wsl.mjs";
 
 // Preflight gate for every OpenEral entry point. If the WSL distro
 // isn't registered, the very first `wsl -d openwork-openshell -- docker
@@ -56,6 +56,18 @@ async function assertOpenShellReady() {
     throw new Error(
       `OpenShell is not ready: WSL distro "${OPENSHELL_DISTRO_NAME}" is not registered. ` +
         "Open Settings → Sandbox and run the installer.",
+    );
+  }
+  // Distro is registered — make sure it is actually running before any
+  // sandbox commands are issued. A stopped distro needs WSL to boot it
+  // first, which can take 30–60 s on a cold machine; without this step
+  // the subsequent `openshell sandbox list --json` (10 s timeout) races
+  // against the boot and times out.
+  try {
+    await ensureDistroRunning();
+  } catch (err) {
+    throw new Error(
+      `OpenShell is not ready: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
