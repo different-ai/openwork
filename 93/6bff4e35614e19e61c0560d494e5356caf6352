@@ -1,0 +1,19 @@
+apps/app/src/lib/build-in-tools.ts
+  s_8e8dd0cfe05fe7::t_7ba8ae47e77359 285,291,297,303,309,315,321,327,333,339,345,357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "936bff4e35614e19e61c0560d494e5356caf6352",
+  "prompts": {},
+  "sessions": {
+    "s_8e8dd0cfe05fe7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e60f6-45b9-73d0-87f4-4fcf74710c32",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
