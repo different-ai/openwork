@@ -1,0 +1,57 @@
+apps/app/src/components/tools/webfetch.tsx
+  s_dfaa8e410982c9::t_c81b3de7c9c3de 12
+  s_dfaa8e410982c9::t_94998f83befa72 33,35
+  s_dfaa8e410982c9::t_8e69e4d9fda0e8 2
+  s_dfaa8e410982c9::t_6bffddae835fcf 1
+  s_dfaa8e410982c9::t_0415c89da900d6 8
+apps/app/src/components/tools/websearch.tsx
+  s_dfaa8e410982c9::t_99b5e4376ef4af 3
+  s_dfaa8e410982c9::t_8a426c5c4f0a51 15,18
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_b8563c8aaa2346::t_b4a5f148c1a9fd 1187-1188
+apps/app/src/components/chat/message-list-provider.tsx
+  s_b8563c8aaa2346::t_a93023cd0cb161 8-33
+apps/app/src/components/chat/message-list.tsx
+  s_dfaa8e410982c9::t_072f4904f98cad 69-73,77-81,85,89-105,109-113,117
+  s_dfaa8e410982c9::t_5a97a60bc570c0 293
+  s_dfaa8e410982c9::t_e463dafda63273 160
+  s_dfaa8e410982c9::t_85540651813f37 39-53
+  s_b8563c8aaa2346::t_6cc5f16678809f 163-186
+  s_dfaa8e410982c9::t_e8b15139969240 326
+  s_dfaa8e410982c9::t_b139b07bc8e12e 350
+  s_dfaa8e410982c9::t_f1b1fd6a23eec2 384
+  s_dfaa8e410982c9::t_6e48670eb9ccbd 55
+  s_dfaa8e410982c9::t_2facc7bea1208d 21
+  s_b8563c8aaa2346::t_49764508b693aa 114
+  s_dfaa8e410982c9::t_051269ab54d2ab 305
+  s_dfaa8e410982c9::t_c3f33155c3a360 3-20,22-36
+apps/app/src/lib/build-in-tools.ts
+  s_dfaa8e410982c9::t_a3a8de27891c33 292-293,298-299,305,310-311,316-317,323,328-329,334-335,341,346-347,352-353,359
+  s_dfaa8e410982c9::t_c6f3c1f577664e 285-287,291,297,303,309,315,321,327,333,339,345,357
+  s_dfaa8e410982c9::t_519fca4bc13625 354
+  s_dfaa8e410982c9::t_f53f2b4ebf6dbc 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "6fa6f5f45ea46e88ed59d61429123e3d70085831",
+  "prompts": {},
+  "sessions": {
+    "s_b8563c8aaa2346": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f4203881-cf8c-4b0a-984a-9a2d7cda5025",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_dfaa8e410982c9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b6e68ee9-ce4d-4b54-96ab-69234a496c99",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
