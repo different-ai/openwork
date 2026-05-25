@@ -1,0 +1,47 @@
+apps/app/src/react-app/domains/session/surface/composer/mention-encoding.ts
+  s_844be27d3ca376::t_5ca99152948f36 9-12
+  s_844be27d3ca376::t_82eaaaeb0d14df 14
+  s_2d64cdd7cbd636::t_a8e5198397264f 5,7-8,13,15
+  s_844be27d3ca376::t_8c809585f5b5e2 1-4
+  s_33890dfc5dc23b::t_728c422806823a 6
+apps/app/tests/mention-encoding.test.ts
+  s_33890dfc5dc23b::t_e8808e2eabfb38 1-22
+apps/app/src/react-app/domains/session/surface/composer/editor.tsx
+  s_2d64cdd7cbd636::t_177d4efdada3a5 35,89,411
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_33890dfc5dc23b::t_cac7b19f0a330f 720,727
+  s_2d64cdd7cbd636::t_b1f62966a5380a 34,704,833
+  s_2d64cdd7cbd636::t_af318161aa8334 717-719
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "dbac1065d2fb7d8c86e1e50d923668c51402d13a",
+  "prompts": {},
+  "sessions": {
+    "s_2d64cdd7cbd636": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e5ee8-8c36-7852-a6b6-b6a8ed0c0620",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_33890dfc5dc23b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "b2963031-a75e-432a-8438-741b28de07af",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_844be27d3ca376": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f5f4e83c-855a-4606-b36e-5ab918130634",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
