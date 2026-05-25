@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import type { ReloadEventStore } from "./events.js";
+import { computeReloadFingerprint, fingerprintedReloadReasons } from "./reload-fingerprint.js";
 import type { ReloadReason, ReloadTrigger, ServerConfig, WorkspaceInfo } from "./types.js";
 
 type LogLevel = "info" | "warn" | "error";
@@ -16,23 +17,27 @@ type DirectoryTreeWatcher = {
   close: () => void;
 };
 
+type WorkspaceReloadWatcher = {
+  refreshBaseline: (reasons?: ReloadReason[]) => Promise<void>;
+  close: () => void;
+};
+
 export function startReloadWatchers(input: {
   config: ServerConfig;
   reloadEvents: ReloadEventStore;
   logger?: Logger | null;
   debounceMs?: number;
-}): { close: () => void } {
+}): { close: () => void; refreshWorkspace: (workspaceId: string, reasons?: ReloadReason[]) => Promise<void> } {
   const { config, reloadEvents } = input;
   const logger = input.logger ?? null;
   const debounceMs = typeof input.debounceMs === "number" ? input.debounceMs : 750;
 
-  const closers: Array<() => void> = [];
+  const workspaceWatchers = new Map<string, WorkspaceReloadWatcher>();
 
   for (const workspace of config.workspaces) {
     try {
-      closers.push(
-        startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs }),
-      );
+      const watcher = startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs });
+      workspaceWatchers.set(workspace.id, watcher);
     } catch (error) {
       logger?.log("warn", "Reload watcher failed to start", {
         workspaceId: workspace.id,
@@ -50,13 +55,17 @@ export function startReloadWatchers(input: {
 
   return {
     close: () => {
-      for (const close of closers) {
+      for (const watcher of workspaceWatchers.values()) {
         try {
-          close();
+          watcher.close();
         } catch {
           // ignore
         }
       }
+      workspaceWatchers.clear();
+    },
+    refreshWorkspace: async (workspaceId: string, reasons?: ReloadReason[]) => {
+      await workspaceWatchers.get(workspaceId)?.refreshBaseline(reasons);
     },
   };
 }
@@ -66,24 +75,128 @@ function startWorkspaceReloadWatcher(input: {
   reloadEvents: ReloadEventStore;
   logger: Logger | null;
   debounceMs: number;
-}): () => void {
+}): WorkspaceReloadWatcher {
   const { workspace, reloadEvents, logger, debounceMs } = input;
   const root = resolve(workspace.path);
+  const opencodeRoot = join(root, ".opencode");
 
   const trees: DirectoryTreeWatcher[] = [];
+  const baselines = new Map<ReloadReason, string>();
+  const pendingChecks = new Map<ReloadReason, { timer: ReturnType<typeof setTimeout>; trigger?: ReloadTrigger }>();
+
+  let closed = false;
+  let rootWatcher: FSWatcher | null = null;
+  let opencodeRootWatcher: FSWatcher | null = null;
+
   const closeAll = () => {
+    closed = true;
+    for (const pending of pendingChecks.values()) {
+      clearTimeout(pending.timer);
+    }
+    pendingChecks.clear();
     for (const tree of trees) {
       tree.close();
     }
     rootWatcher?.close();
+    opencodeRootWatcher?.close();
   };
 
-  const record = (reason: ReloadReason, trigger?: ReloadTrigger) => {
+  const refreshBaseline = async (reasons: ReloadReason[] = fingerprintedReloadReasons) => {
+    for (const reason of reasons) {
+      if (!fingerprintedReloadReasons.includes(reason)) continue;
+      baselines.set(reason, await computeReloadFingerprint(root, reason));
+    }
+  };
+
+  const checkReason = async (reason: ReloadReason, trigger?: ReloadTrigger) => {
+    if (closed) return;
+    if (!fingerprintedReloadReasons.includes(reason)) return;
+
+    const current = await computeReloadFingerprint(root, reason);
+    const previous = baselines.get(reason);
+    baselines.set(reason, current);
+
+    if (previous === undefined || previous === current) return;
     reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
   };
 
+  const scheduleReasonCheck = (reason: ReloadReason, trigger?: ReloadTrigger) => {
+    if (closed) return;
+    if (!fingerprintedReloadReasons.includes(reason)) return;
+
+    const existing = pendingChecks.get(reason);
+    if (existing) {
+      clearTimeout(existing.timer);
+    }
+
+    const timer = setTimeout(() => {
+      const pending = pendingChecks.get(reason);
+      pendingChecks.delete(reason);
+      void checkReason(reason, pending?.trigger ?? trigger);
+    }, debounceMs);
+    pendingChecks.set(reason, { timer, trigger });
+  };
+
+  const ensureOpencodeRootWatcher = () => {
+    if (!existsSync(opencodeRoot)) {
+      opencodeRootWatcher?.close();
+      opencodeRootWatcher = null;
+      return;
+    }
+    if (opencodeRootWatcher) return;
+
+    try {
+      opencodeRootWatcher = watch(
+        opencodeRoot,
+        { persistent: false },
+        (_eventType, filename) => {
+          const raw = filename ? filename.toString() : "";
+          const name = raw.trim();
+          if (!name) {
+            const inferredConfigPath = existsSync(join(opencodeRoot, "opencode.jsonc"))
+              ? join(opencodeRoot, "opencode.jsonc")
+              : existsSync(join(opencodeRoot, "opencode.json"))
+                ? join(opencodeRoot, "opencode.json")
+                : null;
+            scheduleReasonCheck("config", inferredConfigPath
+              ? { type: "config", name: basename(inferredConfigPath), action: "updated", path: inferredConfigPath }
+              : undefined);
+            for (const tree of trees) tree.scheduleRescan();
+            return;
+          }
+
+          if (name === "opencode.json" || name === "opencode.jsonc") {
+            scheduleReasonCheck("config", {
+              type: "config",
+              name,
+              action: "updated",
+              path: join(opencodeRoot, name),
+            });
+            return;
+          }
+
+          if (name === "skills" || name === "commands" || name === "plugins" || name === "agents" || name === "agent") {
+            for (const tree of trees) tree.scheduleRescan();
+          }
+        },
+      );
+      opencodeRootWatcher.on("error", (error) => {
+        logger?.log("warn", "Reload watcher .opencode error", {
+          workspaceId: workspace.id,
+          workspacePath: root,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    } catch (error) {
+      logger?.log("warn", "Reload watcher .opencode failed", {
+        workspaceId: workspace.id,
+        workspacePath: root,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   // Watch the workspace root for top-level config files.
-  let rootWatcher: FSWatcher | null = null;
   if (existsSync(root)) {
     try {
       rootWatcher = watch(
@@ -93,12 +206,14 @@ function startWorkspaceReloadWatcher(input: {
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
+            scheduleReasonCheck("config");
+            scheduleReasonCheck("agents");
             for (const tree of trees) tree.scheduleRescan();
             return;
           }
 
           if (name === "opencode.json" || name === "opencode.jsonc") {
-            record("config", {
+            scheduleReasonCheck("config", {
               type: "config",
               name,
               action: "updated",
@@ -108,7 +223,7 @@ function startWorkspaceReloadWatcher(input: {
           }
 
           if (name === "AGENTS.md") {
-            record("agents", {
+            scheduleReasonCheck("agents", {
               type: "agent",
               action: "updated",
               path: join(root, name),
@@ -118,6 +233,8 @@ function startWorkspaceReloadWatcher(input: {
 
           // If .opencode is created/removed, rescan the relevant trees.
           if (name === ".opencode") {
+            ensureOpencodeRootWatcher();
+            scheduleReasonCheck("config");
             for (const tree of trees) tree.scheduleRescan();
           }
         },
@@ -138,61 +255,56 @@ function startWorkspaceReloadWatcher(input: {
     }
   }
 
-  const opencodeRoot = join(root, ".opencode");
+  ensureOpencodeRootWatcher();
 
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "skills"),
       workspace,
-      reloadEvents,
       reason: "skills",
       triggerType: "skill",
-      debounceMs,
       logger,
+      onChange: (trigger) => scheduleReasonCheck("skills", trigger),
     }),
   );
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "commands"),
       workspace,
-      reloadEvents,
       reason: "commands",
       triggerType: "command",
-      debounceMs,
       logger,
+      onChange: (trigger) => scheduleReasonCheck("commands", trigger),
     }),
   );
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "plugins"),
       workspace,
-      reloadEvents,
       reason: "plugins",
       triggerType: "plugin",
-      debounceMs,
       logger,
+      onChange: (trigger) => scheduleReasonCheck("plugins", trigger),
     }),
   );
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "agents"),
       workspace,
-      reloadEvents,
       reason: "agents",
       triggerType: "agent",
-      debounceMs,
       logger,
+      onChange: (trigger) => scheduleReasonCheck("agents", trigger),
     }),
   );
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "agent"),
       workspace,
-      reloadEvents,
       reason: "agents",
       triggerType: "agent",
-      debounceMs,
       logger,
+      onChange: (trigger) => scheduleReasonCheck("agents", trigger),
     }),
   );
 
@@ -200,20 +312,20 @@ function startWorkspaceReloadWatcher(input: {
   for (const tree of trees) {
     tree.scheduleRescan();
   }
+  void refreshBaseline();
 
-  return closeAll;
+  return { close: closeAll, refreshBaseline };
 }
 
 function createDirectoryTreeWatcher(input: {
   rootDir: string;
   workspace: WorkspaceInfo;
-  reloadEvents: ReloadEventStore;
   reason: ReloadReason;
   triggerType: ReloadTrigger["type"];
-  debounceMs: number;
   logger: Logger | null;
+  onChange: (trigger?: ReloadTrigger) => void;
 }): DirectoryTreeWatcher {
-  const { rootDir, workspace, reloadEvents, reason, triggerType, debounceMs, logger } = input;
+  const { rootDir, workspace, reason, triggerType, logger, onChange } = input;
   const resolvedRoot = resolve(rootDir);
 
   const watchers = new Map<string, FSWatcher>();
@@ -255,14 +367,24 @@ function createDirectoryTreeWatcher(input: {
       }
     }
 
-    reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
+    onChange(trigger);
   };
 
   const shouldIgnoreEntry = (absPath: string) => {
     const base = basename(absPath);
     if (!base) return true;
     if (base === ".DS_Store" || base === "Thumbs.db") return true;
+    if (base.startsWith(".") || base.endsWith("~") || base.endsWith(".tmp") || base.endsWith(".swp")) return true;
     return false;
+  };
+
+  const shouldRecordEntry = (absPath: string) => {
+    if (shouldIgnoreEntry(absPath)) return false;
+    const base = basename(absPath);
+    if (triggerType === "skill") return /^SKILL\.md$/i.test(base);
+    if (triggerType === "command") return /\.md$/i.test(base);
+    if (triggerType === "agent") return /\.(md|json|jsonc)$/i.test(base);
+    return true;
   };
 
   const shouldSkipDir = (name: string) => {
@@ -283,7 +405,7 @@ function createDirectoryTreeWatcher(input: {
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           const absPath = name ? join(dir, name) : dir;
-          if (!shouldIgnoreEntry(absPath)) {
+          if (shouldRecordEntry(absPath)) {
             record(absPath);
           }
           scheduleRescan();
@@ -341,7 +463,7 @@ function createDirectoryTreeWatcher(input: {
       const existsNow = existsSync(resolvedRoot);
       if (existsNow !== lastRootExists) {
         lastRootExists = existsNow;
-        reloadEvents.recordDebounced(workspace.id, reason, { type: triggerType, action: "updated", path: resolvedRoot }, debounceMs);
+        onChange({ type: triggerType, action: "updated", path: resolvedRoot });
       }
       if (!existsNow) {
         for (const watcher of watchers.values()) {

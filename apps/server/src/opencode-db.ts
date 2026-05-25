@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 
 type SeedMessage = {
   role: "assistant" | "user";
@@ -99,7 +99,7 @@ function findOpencodeSessionDbPath(sessionId: string, inputPath?: string): strin
   for (const dbPath of candidates) {
     const db = new Database(dbPath, { readonly: true });
     try {
-      const session = db.query("select id from session where id = ?1").get(sessionId);
+      const session = db.prepare("select id from session where id = ?1").get(sessionId);
       if (session) return dbPath;
     } catch {
       // ignore non-matching dbs
@@ -157,12 +157,12 @@ export function seedOpencodeSessionMessages(input: {
 
   try {
     const run = db.transaction(() => {
-      const session = db.query("select id from session where id = ?1").get(sessionId);
+      const session = db.prepare("select id from session where id = ?1").get(sessionId);
       if (!session) {
         throw new Error(`OpenCode session not found: ${sessionId}`);
       }
 
-      const existing = db.query("select count(1) as count from message where session_id = ?1").get(sessionId) as { count?: number } | null;
+      const existing = db.prepare("select count(1) as count from message where session_id = ?1").get(sessionId) as { count?: number } | null;
       if ((existing?.count ?? 0) > 0) {
         return { inserted: 0, skipped: true };
       }

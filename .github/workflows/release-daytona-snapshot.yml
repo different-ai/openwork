@@ -7,11 +7,6 @@ on:
         description: "Tag to build from (e.g., v0.11.200). Defaults to current ref."
         required: false
         type: string
-      deploy_den:
-        description: "Whether to promote the published snapshot into the Den Render service"
-        required: false
-        type: boolean
-        default: true
       snapshot_name:
         description: "Optional explicit Daytona snapshot name"
         required: false
@@ -26,11 +21,6 @@ on:
         description: "Tag to build from (e.g., v0.11.200). Defaults to release tag/current ref."
         required: false
         type: string
-      deploy_den:
-        description: "Whether to promote the published snapshot into the Den Render service"
-        required: false
-        type: boolean
-        default: true
       snapshot_name:
         description: "Optional explicit Daytona snapshot name"
         required: false
@@ -161,12 +151,3 @@ jobs:
 
           echo "Publishing Daytona snapshot: ${DAYTONA_SNAPSHOT_NAME}"
           ./scripts/create-daytona-openwork-snapshot.sh "${DAYTONA_SNAPSHOT_NAME}"
-
-  deploy-den:
-    name: Promote Daytona Snapshot to Den Render Service
-    needs: [publish-daytona-snapshot]
-    if: ${{ inputs.deploy_den }}
-    uses: ./.github/workflows/deploy-den.yml
-    with:
-      daytona_snapshot: ${{ needs.publish-daytona-snapshot.outputs.snapshot_name }}
-    secrets: inherit

@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
+  InvitationTable,
   MemberTable,
   SkillHubMemberTable,
   SkillHubSkillTable,
@@ -100,6 +101,11 @@ const addSkillHubAccessSchema = z.object({
 type SkillId = typeof SkillTable.$inferSelect.id
 type SkillHubId = typeof SkillHubTable.$inferSelect.id
 type SkillHubMemberId = typeof SkillHubMemberTable.$inferSelect.id
+
+function getInvitedMemberName(email: string) {
+  const [localPart, domain = "invited"] = email.split("@")
+  return `${localPart} ${domain.split(".")[0] ?? "invited"}`.trim()
+}
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 type SkillRow = typeof SkillTable.$inferSelect
@@ -603,11 +609,15 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
             email: AuthUserTable.email,
             image: AuthUserTable.image,
           },
+          invitation: {
+            email: InvitationTable.email,
+          },
         })
         .from(SkillHubMemberTable)
         .innerJoin(MemberTable, eq(SkillHubMemberTable.orgMembershipId, MemberTable.id))
-        .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-        .where(and(inArray(SkillHubMemberTable.skillHubId, skillHubIds), isNotNull(SkillHubMemberTable.orgMembershipId)))
+        .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+        .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
+        .where(and(inArray(SkillHubMemberTable.skillHubId, skillHubIds), isNotNull(SkillHubMemberTable.orgMembershipId), isNull(MemberTable.removedAt)))
 
       const teamAccessRows = await db
         .select({
@@ -673,13 +683,21 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
           accessibleVia: accessibleViaByHubId.get(skillHub.id) ?? { orgMembershipIds: [], teamIds: [] },
           skills: skillsByHubId.get(skillHub.id) ?? [],
           access: {
-            members: (memberAccessByHubId.get(skillHub.id) ?? []).map((row) => ({
-              id: row.access.id,
-              orgMembershipId: row.member.id,
-              role: row.member.role,
-              user: row.user,
-              createdAt: row.access.createdAt,
-            })),
+            members: (memberAccessByHubId.get(skillHub.id) ?? []).map((row) => {
+              const email = row.user?.email ?? row.invitation?.email ?? "invited@example.com"
+              return {
+                id: row.access.id,
+                orgMembershipId: row.member.id,
+                role: row.member.role,
+                user: {
+                  id: row.user?.id ?? row.member.id,
+                  name: row.user?.name ?? getInvitedMemberName(email),
+                  email,
+                  image: row.user?.image ?? null,
+                },
+                createdAt: row.access.createdAt,
+              }
+            }),
             teams: (teamAccessByHubId.get(skillHub.id) ?? []).map((row) => ({
               id: row.access.id,
               teamId: row.team.id,
@@ -1020,7 +1038,7 @@ export function registerOrgSkillRoutes<T extends { Variables: OrgRouteVariables 
         const memberRows = await db
           .select({ id: MemberTable.id })
           .from(MemberTable)
-          .where(and(eq(MemberTable.id, orgMembershipId), eq(MemberTable.organizationId, payload.organization.id)))
+          .where(and(eq(MemberTable.id, orgMembershipId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
           .limit(1)
 
         if (!memberRows[0]) {

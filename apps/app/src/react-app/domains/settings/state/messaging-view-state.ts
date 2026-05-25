@@ -325,13 +325,13 @@ export function useMessagingViewProps(
     setSendError(null);
     setSendResult(null);
     try {
-      const result = await client.sendOpenCodeRouterMessage(id, {
+      const result = (await (client as any).sendOpenCodeRouterMessage(id, {
         channel: sendChannel,
         text,
         ...(sendDirectory.trim() ? { directory: sendDirectory.trim() } : {}),
         ...(sendPeerId.trim() ? { peerId: sendPeerId.trim() } : {}),
         ...(sendAutoBind ? { autoBind: true } : {}),
-      });
+      })) as OpenworkOpenCodeRouterSendResult;
       setSendResult(result);
       const base = t("identities.dispatched_messages", undefined, {
         sent: result.sent,
@@ -408,10 +408,10 @@ export function useMessagingViewProps(
       }
 
       const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
-        client.getOpenCodeRouterHealth(id),
-        client.getOpenCodeRouterTelegramIdentities(id),
-        client.getOpenCodeRouterSlackIdentities(id),
-        client.getOpenCodeRouterTelegram(id).catch(() => null),
+        (client as any).getOpenCodeRouterHealth(id),
+        (client as any).getOpenCodeRouterTelegramIdentities(id),
+        (client as any).getOpenCodeRouterSlackIdentities(id),
+        (client as any).getOpenCodeRouterTelegram(id).catch(() => null),
       ]);
 
       setTelegramBotUsername(getTelegramUsernameFromResult(telegramInfo));
@@ -607,7 +607,7 @@ export function useMessagingViewProps(
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.upsertOpenCodeRouterTelegramIdentity(id, {
+      const result = await (client as any).upsertOpenCodeRouterTelegramIdentity(id, {
         token,
         enabled: telegramEnabled,
         access,
@@ -681,7 +681,7 @@ export function useMessagingViewProps(
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.deleteOpenCodeRouterTelegramIdentity(id, identityId);
+      const result = await (client as any).deleteOpenCodeRouterTelegramIdentity(id, identityId);
       if (result.ok) {
         setTelegramBotUsername(null);
         setTelegramPairingCode(null);
@@ -730,7 +730,7 @@ export function useMessagingViewProps(
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.upsertOpenCodeRouterSlackIdentity(id, {
+      const result = await (client as any).upsertOpenCodeRouterSlackIdentity(id, {
         botToken,
         appToken,
         enabled: slackEnabled,
@@ -779,7 +779,7 @@ export function useMessagingViewProps(
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.deleteOpenCodeRouterSlackIdentity(id, identityId);
+      const result = await (client as any).deleteOpenCodeRouterSlackIdentity(id, identityId);
       if (result.ok) {
         setSlackStatus(
           result.applied === false

@@ -22,13 +22,9 @@ import {
 } from "../../../../app/lib/desktop";
 import {
   ELECTRON_ALPHA_RELEASE_PAGE_URL,
-  resolveElectronAlphaArtifact,
   type ElectronAlphaArtifact,
 } from "../../../../app/lib/electron-alpha";
-import {
-  migrateToElectron,
-  writeMigrationSnapshotFromTauri,
-} from "../../../../app/lib/migration";
+
 import {
   writeOpenworkServerSettings,
 } from "../../../../app/lib/openwork-server";
@@ -37,7 +33,6 @@ import {
   isDesktopRuntime,
   isElectronRuntime,
   isMacPlatform,
-  isTauriRuntime,
   safeStringify,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
@@ -51,6 +46,13 @@ const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
 const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
 
 type ResetModalMode = "onboarding" | "all";
+
+const ONBOARDING_LOCAL_STORAGE_KEYS = [
+  "openwork.acknowledgedProviders",
+  "openwork.orgOnboardingSeen",
+  "openwork.reloadAfterOrgOnboarding",
+  "openwork.seenProviderIds",
+];
 
 type UseDebugViewModelOptions = {
   developerMode: boolean;
@@ -88,6 +90,27 @@ function clearStoredString(key: string): void {
   }
 }
 
+function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (mode === "all") {
+      window.localStorage.clear();
+      return;
+    }
+    for (const key of ONBOARDING_LOCAL_STORAGE_KEYS) {
+      window.localStorage.removeItem(key);
+    }
+    const raw = window.localStorage.getItem("openwork.preferences");
+    if (raw) {
+      const prefs = JSON.parse(raw);
+      prefs.hasCompletedOnboarding = false;
+      window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+    }
+  } catch {
+    // ignore persistence failures
+  }
+}
+
 function downloadTextAsFile(filename: string, content: string, mimeType: string) {
   if (typeof window === "undefined") return;
   const blob = new Blob([content], { type: mimeType });
@@ -111,7 +134,7 @@ function readEngineSource(): "path" | "sidecar" | "custom" {
 }
 
 function readOpencodeEnableExa(): boolean {
-  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "0") === "1";
+  return readStoredString(OPENCODE_ENABLE_EXA_KEY, "1") === "1";
 }
 
 function statusPill(
@@ -157,12 +180,12 @@ function describeEngine(info: EngineInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
-      t("settings.debug_runtime", undefined, { runtime: info?.runtime ?? "—" }),
-      t("settings.diag_opencode_binary", undefined, { binary: formatOpencodeBinary(info) }),
-      t("settings.debug_pid", undefined, { pid: info?.pid ? String(info.pid) : "—" }),
-      t("settings.debug_hostname", undefined, { hostname: info?.hostname ?? "—" }),
-      t("settings.debug_port", undefined, { port: info?.port ? String(info.port) : "—" }),
+      t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
+      t("settings.debug_runtime", { runtime: info?.runtime ?? "—" }),
+      t("settings.diag_opencode_binary", { binary: formatOpencodeBinary(info) }),
+      t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
+      t("settings.debug_hostname", { hostname: info?.hostname ?? "—" }),
+      t("settings.debug_port", { port: info?.port ? String(info.port) : "—" }),
     ],
     stdout: info?.lastStdout ?? null,
     stderr: info?.lastStderr ?? null,
@@ -193,13 +216,13 @@ function describeOpenworkServer(info: OpenworkServerInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: info?.baseUrl ?? "—" }),
-      t("settings.diag_opencode_binary", undefined, { binary: formatManagedOpencodeBinary(info) }),
-      t("settings.debug_connect_url", undefined, { url: info?.connectUrl ?? "—" }),
-      t("settings.debug_lan_url", undefined, { url: info?.lanUrl ?? "—" }),
-      t("settings.debug_mdns_url", undefined, { url: info?.mdnsUrl ?? "—" }),
-      t("settings.debug_pid", undefined, { pid: info?.pid ? String(info.pid) : "—" }),
-      t("settings.debug_remote_access", undefined, {
+      t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
+      t("settings.diag_opencode_binary", { binary: formatManagedOpencodeBinary(info) }),
+      t("settings.debug_connect_url", { url: info?.connectUrl ?? "—" }),
+      t("settings.debug_lan_url", { url: info?.lanUrl ?? "—" }),
+      t("settings.debug_mdns_url", { url: info?.mdnsUrl ?? "—" }),
+      t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
+      t("settings.debug_remote_access", {
         value: info?.remoteAccessEnabled ? t("settings.on") : t("settings.off"),
       }),
     ],
@@ -214,9 +237,9 @@ function describeOpencodeConnect(engine: EngineInfo | null) {
   return {
     ...statusPill(running),
     lines: [
-      t("settings.debug_base_url", undefined, { url: engine?.baseUrl ?? "—" }),
-      t("settings.debug_project_dir", undefined, { path: engine?.projectDir ?? "—" }),
-      t("settings.debug_runtime", undefined, { runtime: engine?.runtime ?? "—" }),
+      t("settings.debug_base_url", { url: engine?.baseUrl ?? "—" }),
+      t("settings.debug_project_dir", { path: engine?.projectDir ?? "—" }),
+      t("settings.debug_runtime", { runtime: engine?.runtime ?? "—" }),
     ],
     metricsLines: [] as string[],
     error: null as string | null,
@@ -268,7 +291,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [electronMigrationSha256, setElectronMigrationSha256] = useState("");
   const [electronMigrationSha512, setElectronMigrationSha512] = useState("");
   const [electronMigrationArtifact, setElectronMigrationArtifact] = useState<ElectronAlphaArtifact | null>(null);
-  const [electronMigrationBusy, setElectronMigrationBusy] = useState(false);
+  const [electronMigrationBusy] = useState(false);
   const [electronMigrationStatus, setElectronMigrationStatus] = useState<string | null>(null);
   const [electronAlphaUpdaterBusy, setElectronAlphaUpdaterBusy] = useState(false);
   const [electronAlphaUpdaterStatus, setElectronAlphaUpdaterStatus] = useState<string | null>(null);
@@ -277,7 +300,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const refreshEngineInfo = useCallback(async () => {
     if (!isDesktopRuntime()) return;
     try {
-      const info = await engineInfoCmd();
+      const info = await engineInfoCmd() as EngineInfo | null;
       setEngineInfoState(info);
     } catch {
       setEngineInfoState(null);
@@ -289,7 +312,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     void (async () => {
       if (!isDesktopRuntime()) return;
       try {
-        const build = await appBuildInfoCmd();
+        const build = await appBuildInfoCmd() as AppBuildInfo | null;
         setAppBuild(build);
       } catch {
         setAppBuild(null);
@@ -447,40 +470,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, [electronMigrationArtifact]);
 
   const onResolveElectronAlphaArtifact = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Electron alpha migration resolution is only available in the Tauri desktop app.");
-      return;
-    }
-    if (!isMacPlatform()) {
-      setElectronMigrationStatus("Electron alpha migration is macOS-only for now.");
-      return;
-    }
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const artifact = await resolveElectronAlphaArtifact("arm64");
-      setElectronMigrationArtifact(artifact);
-      setElectronMigrationUrl(artifact.url);
-      setElectronMigrationSha512(artifact.sha512);
-      setElectronMigrationSha256("");
-      setElectronMigrationStatus(
-        `Resolved Electron alpha v${artifact.version} from latest-mac.yml. Review Advanced if you need to override the artifact URL.`,
-      );
-      pushDeveloperLog(`resolved Electron alpha artifact version=${artifact.version} path=${artifact.path}`);
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-    } finally {
-      setElectronMigrationBusy(false);
-    }
-  }, [pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri → Electron migration controls were removed after Electron became the desktop runtime.");
+  }, []);
 
   const onRevealElectronMigrationBackup = useCallback(async () => {
-    if (!isTauriRuntime() && !isElectronRuntime()) {
+    if (!isElectronRuntime()) {
       setElectronMigrationStatus("Migration backup reveal is available only in the desktop app.");
       return;
     }
     try {
-      const env = await updaterEnvironmentCmd();
+      const env = await updaterEnvironmentCmd() as { appBundlePath?: string };
       const appBundlePath = env.appBundlePath?.trim();
       if (!appBundlePath) {
         setElectronMigrationStatus("Could not resolve the current OpenWork.app bundle path.");
@@ -494,89 +493,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   }, []);
 
   const onPrepareElectronMigrationSnapshot = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Migration snapshot export is only available in the Tauri desktop app.");
-      return;
-    }
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const result = await writeMigrationSnapshotFromTauri();
-      if (!result.ok) {
-        throw new Error(result.reason ?? "Failed to write migration snapshot.");
-      }
-      setElectronMigrationStatus(
-        `Prepared Electron migration data (${result.keyCount} localStorage key${result.keyCount === 1 ? "" : "s"}). This did not replace or quit Tauri.`,
-      );
-      pushDeveloperLog(`prepared Electron migration snapshot keyCount=${result.keyCount}`);
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-    } finally {
-      setElectronMigrationBusy(false);
-    }
-  }, [pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri migration snapshots are no longer available because Tauri has been removed.");
+  }, []);
 
   const onInstallElectronPreviewFromTauri = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setElectronMigrationStatus("Electron install handoff is only available in the Tauri desktop app.");
-      return;
-    }
-
-    const url = electronMigrationUrl.trim();
-    if (!url) {
-      setElectronMigrationStatus("Paste a trusted Electron artifact URL before starting the install handoff.");
-      return;
-    }
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "https:") {
-        setElectronMigrationStatus("Electron artifact URLs must use https://.");
-        return;
-      }
-    } catch {
-      setElectronMigrationStatus("Paste a valid https:// Electron artifact URL before starting the install handoff.");
-      return;
-    }
-
-    const confirmed =
-      typeof window === "undefined" ||
-      window.confirm(
-        "This debug-only migration action first writes a migration snapshot, then starts the Tauri → Electron handoff. On macOS, the installer swaps OpenWork.app in place and keeps OpenWork.app.migrate-bak for rollback. Tauri stable updates remain unchanged. Continue?",
-      );
-    if (!confirmed) return;
-
-    const doubleConfirmed =
-      typeof window === "undefined" ||
-      window.confirm(
-        "Final confirmation: quit Tauri and start installing the resolved Electron alpha now? The current app bundle will be moved to OpenWork.app.migrate-bak before replacement.",
-      );
-    if (!doubleConfirmed) {
-      setElectronMigrationStatus("Install handoff cancelled before any app replacement step.");
-      return;
-    }
-
-    setElectronMigrationBusy(true);
-    setElectronMigrationStatus(null);
-    try {
-      const snapshot = await writeMigrationSnapshotFromTauri();
-      if (!snapshot.ok) {
-        throw new Error(snapshot.reason ?? "Failed to write migration snapshot.");
-      }
-      pushDeveloperLog(`prepared Electron migration snapshot before install keyCount=${snapshot.keyCount}`);
-      const result = await migrateToElectron({
-        url,
-        sha256: electronMigrationSha256.trim() || undefined,
-        sha512: electronMigrationSha512.trim() || undefined,
-      });
-      if (!result.ok) {
-        throw new Error(result.reason ?? "Electron install handoff failed.");
-      }
-      setElectronMigrationStatus("Electron install handoff started. Tauri will quit if the native handoff accepted the request.");
-    } catch (error) {
-      setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
-      setElectronMigrationBusy(false);
-    }
-  }, [electronMigrationSha256, electronMigrationSha512, electronMigrationUrl, pushDeveloperLog]);
+    setElectronMigrationStatus("Tauri → Electron install handoff is no longer available because Electron is now the desktop runtime.");
+  }, []);
 
   useEffect(() => {
     if (!developerMode || !isElectronRuntime()) return;
@@ -664,14 +586,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setSandboxProbeBusy(true);
     setSandboxProbeStatus(null);
     try {
-      const result = await sandboxDebugProbeCmd();
+      const result = (await sandboxDebugProbeCmd()) as SandboxDebugProbeResult | null;
       setSandboxProbeResult(result);
       setSandboxProbeStatus(
-        result.ready
+        result!.ready
           ? t("settings.sandbox_probe_success")
-          : (result.error ?? t("settings.sandbox_error")),
+          : (result!.error ?? t("settings.sandbox_error")),
       );
-      pushDeveloperLog(`sandbox probe ready=${String(result.ready)}`);
+      pushDeveloperLog(`sandbox probe ready=${String(result!.ready)}`);
     } catch (error) {
       setSandboxProbeStatus(error instanceof Error ? error.message : safeStringify(error));
     } finally {
@@ -731,12 +653,16 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     // `client.listWorkspaces()` later returns the full set, not just the
     // active one.
     const workspacePaths = [workspacePath];
+    const workspacePathSet = new Set(workspacePaths);
     try {
-      const list = await workspaceBootstrapCmd();
+      const list = (await workspaceBootstrapCmd()) as { workspaces?: Array<{ workspaceType?: string; path?: string }> } | null;
       for (const entry of list?.workspaces ?? []) {
         if (entry.workspaceType === "remote") continue;
         const path = entry.path?.trim() ?? "";
-        if (path && !workspacePaths.includes(path)) workspacePaths.push(path);
+        if (path && !workspacePathSet.has(path)) {
+          workspacePaths.push(path);
+          workspacePathSet.add(path);
+        }
       }
     } catch {
       // best-effort: fall back to just the active workspace path
@@ -754,7 +680,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     // engine_start restarts openwork-server on a NEW port and lets that server
     // manage OpenCode. Re-read host info and persist the fresh URL/token.
     try {
-      const hostInfo = await openworkServerInfoCmd();
+      const hostInfo = (await openworkServerInfoCmd()) as {
+        baseUrl?: string;
+        ownerToken?: string;
+        clientToken?: string;
+        hostToken?: string;
+        port?: number;
+        remoteAccessEnabled?: boolean;
+      } | null;
       if (hostInfo?.baseUrl) {
         writeOpenworkServerSettings({
           urlOverride: hostInfo.baseUrl,
@@ -785,14 +718,14 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       await bootFullEngineStack();
       setOpencodeServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", undefined, { service: "OpenCode" }),
+        message: t("settings.restart_succeeded_template", { service: "OpenCode" }),
       });
       pushDeveloperLog("Restarted OpenCode via engine_start");
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setOpencodeServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", undefined, { service: "OpenCode" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "OpenCode" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
@@ -811,7 +744,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       });
       setOpenworkServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", undefined, { service: "OpenWork server" }),
+        message: t("settings.restart_succeeded_template", { service: "OpenWork server" }),
       });
       pushDeveloperLog("Restarted openwork-server");
       await openworkServerStore.reconnectOpenworkServer();
@@ -819,7 +752,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       setOpenworkServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", undefined, { service: "OpenWork server" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "OpenWork server" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
@@ -851,7 +784,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpencodeLogStatus(t("settings.copied_service_logs", undefined, { service: "OpenCode" }));
+      setOpencodeLogStatus(t("settings.copied_service_logs", { service: "OpenCode" }));
     } catch (error) {
       setOpencodeLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -884,7 +817,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpenworkLogStatus(t("settings.copied_service_logs", undefined, { service: "OpenWork server" }));
+      setOpenworkLogStatus(t("settings.copied_service_logs", { service: "OpenWork server" }));
     } catch (error) {
       setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -924,11 +857,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setResetModalBusy(true);
       setResetStatus(null);
       void resetOpenworkState(mode)
-        .then(() => {
+        .then(async () => {
+          clearOpenworkLocalStorageForReset(mode);
           setResetStatus(
             mode === "all"
               ? "Reset OpenWork state. Restart the app to see changes."
-              : "Reset onboarding state.",
+              : "Reset onboarding state. Restart the app to see changes.",
           );
           pushDeveloperLog(`reset_openwork_state mode=${mode}`);
         })
@@ -988,7 +922,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onClearDeveloperLog,
       onCopyDeveloperLog,
       onExportDeveloperLog,
-      electronMigrationAvailable: isTauriRuntime(),
+      electronMigrationAvailable: false,
       electronMigrationUrl,
       electronMigrationSha256,
       electronMigrationSha512,

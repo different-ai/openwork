@@ -39,7 +39,6 @@ export type CreateWorkspaceModalProps = {
   localError?: string | null;
   remoteSubmitting?: boolean;
   remoteError?: string | null;
-  inline?: boolean;
   showClose?: boolean;
   defaultPreset?: WorkspacePreset;
   title?: string;
@@ -77,7 +76,6 @@ export type CreateRemoteWorkspaceModalProps = {
   };
   submitting?: boolean;
   error?: string | null;
-  inline?: boolean;
   showClose?: boolean;
   title?: string;
   subtitle?: string;

@@ -28,7 +28,7 @@ on:
           - publish-ready
         default: smoke
       artifact_source:
-        description: "Where to source desktop .deb"
+        description: "Where to source Electron desktop tarball"
         required: false
         type: choice
         options:
@@ -47,9 +47,9 @@ on:
         description: "Artifact name in artifact_run_id"
         required: false
         type: string
-        default: openwork-desktop-linux-amd64-deb
+        default: openwork-electron-linux-x64
       asset_url_x86_64:
-        description: "Optional explicit public URL for x86_64 .deb"
+        description: "Optional explicit public URL for x86_64 Electron tarball"
         required: false
         type: string
       push_to_aur:
@@ -93,7 +93,7 @@ on:
       artifact_name:
         required: false
         type: string
-        default: openwork-desktop-linux-amd64-deb
+        default: openwork-electron-linux-x64
       asset_url_x86_64:
         required: false
         type: string
@@ -131,7 +131,7 @@ jobs:
       INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
       INPUT_ASSET_URL_X86_64: ${{ inputs.asset_url_x86_64 }}
       INPUT_ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
-      INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
+      INPUT_ARTIFACT_NAME: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
       PUSH_TO_AUR: ${{ inputs.push_to_aur && 'true' || 'false' }}
       AUR_REPO: ${{ inputs.aur_repo || 'openwork' }}
     steps:
@@ -195,7 +195,7 @@ jobs:
           chmod 0440 /etc/sudoers.d/builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-      - name: Download release asset (.deb)
+      - name: Download release asset (Electron tarball)
         if: env.ARTIFACT_SOURCE == 'release'
         shell: bash
         env:
@@ -220,11 +220,12 @@ jobs:
 
           asset_url="${INPUT_ASSET_URL_X86_64:-}"
           if [ -z "$asset_url" ]; then
-            asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/openwork-desktop-linux-amd64.deb"
+            version="${release_tag#v}"
+            asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}/openwork-linux-x64-${version}.tar.gz"
           fi
 
           mkdir -p /tmp/aur-artifacts
-          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "$asset_url" -o /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "$asset_url" -o /tmp/aur-artifacts/openwork-linux-x64.tar.gz
 
           echo "RESOLVED_RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
           echo "RESOLVED_ASSET_URL_X86_64=${asset_url}" >> "$GITHUB_ENV"
@@ -233,7 +234,7 @@ jobs:
         if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
         uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.artifact_name || 'openwork-desktop-linux-amd64-deb' }}
+          name: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
           run-id: ${{ inputs.artifact_run_id }}
           github-token: ${{ github.token }}
           path: /tmp/aur-artifacts
@@ -244,21 +245,24 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/aur-artifacts
-          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "${INPUT_ASSET_URL_X86_64}" -o /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+          curl -fL --retry 5 --retry-all-errors --retry-delay 2 "${INPUT_ASSET_URL_X86_64}" -o /tmp/aur-artifacts/openwork-linux-x64.tar.gz
 
       - name: Resolve local artifact path
         if: env.ARTIFACT_SOURCE == 'local-build-artifact'
         shell: bash
         run: |
           set -euo pipefail
-          deb_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name '*.deb' | head -n 1)
-          if [ -z "${deb_path:-}" ]; then
-            echo "No .deb file found in /tmp/aur-artifacts" >&2
+          asset_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name 'openwork-linux-x64-*.tar.gz' | head -n 1)
+          if [ -z "${asset_path:-}" ]; then
+            asset_path=$(find /tmp/aur-artifacts -maxdepth 3 -type f -name '*.tar.gz' | head -n 1)
+          fi
+          if [ -z "${asset_path:-}" ]; then
+            echo "No Electron tarball found in /tmp/aur-artifacts" >&2
             exit 1
           fi
 
-          if [ "$deb_path" != "/tmp/aur-artifacts/openwork-desktop-linux-amd64.deb" ]; then
-            cp "$deb_path" /tmp/aur-artifacts/openwork-desktop-linux-amd64.deb
+          if [ "$asset_path" != "/tmp/aur-artifacts/openwork-linux-x64.tar.gz" ]; then
+            cp "$asset_path" /tmp/aur-artifacts/openwork-linux-x64.tar.gz
           fi
 
       - name: Resolve version, URL, and checksum
@@ -267,9 +271,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          deb_path="/tmp/aur-artifacts/openwork-desktop-linux-amd64.deb"
-          if [ ! -f "$deb_path" ]; then
-            echo "Expected $deb_path to exist" >&2
+          asset_path="/tmp/aur-artifacts/openwork-linux-x64.tar.gz"
+          if [ ! -f "$asset_path" ]; then
+            echo "Expected $asset_path to exist" >&2
             exit 1
           fi
 
@@ -286,14 +290,14 @@ jobs:
             exit 1
           fi
 
-          sha256="$(sha256sum "$deb_path" | awk '{print $1}')"
+          sha256="$(sha256sum "$asset_path" | awk '{print $1}')"
 
           source_url="${RESOLVED_ASSET_URL_X86_64:-}"
           if [ -z "$source_url" ] && [ -n "${INPUT_ASSET_URL_X86_64:-}" ]; then
             source_url="${INPUT_ASSET_URL_X86_64}"
           fi
           if [ -z "$source_url" ]; then
-            source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/openwork-desktop-linux-amd64.deb"
+            source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/openwork-linux-x64-${version}.tar.gz"
           fi
 
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -325,7 +329,7 @@ jobs:
           text = re.sub(r"^arch=.*$", "arch=('x86_64')", text, flags=re.M)
           text = re.sub(
               r"^source_x86_64=.*$",
-              "source_x86_64=(\"${pkgname}-${pkgver}.deb::" + source_url + "\")",
+              "source_x86_64=(\"${pkgname}-${pkgver}-x64.tar.gz::" + source_url + "\")",
               text,
               flags=re.M,
           )

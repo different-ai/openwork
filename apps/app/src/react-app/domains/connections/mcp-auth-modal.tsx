@@ -1,15 +1,24 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCcw } from "lucide-react";
 
-import type { McpDirectoryInfo } from "../../../app/constants";
-import { openDesktopUrl, opencodeMcpAuth } from "../../../app/lib/desktop";
-import { unwrap } from "../../../app/lib/opencode";
-import { validateMcpServerName } from "../../../app/mcp";
-import type { Client } from "../../../app/types";
-import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
-import { t } from "../../../i18n";
-import { Button } from "../../design-system/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { McpDirectoryInfo } from "@/app/constants";
+import { openDesktopUrl, opencodeMcpAuth } from "@/app/lib/desktop";
+import { unwrap } from "@/app/lib/opencode";
+import { validateMcpServerName } from "@/app/mcp";
+import type { Client } from "@/app/types";
+import { isDesktopRuntime, normalizeDirectoryPath } from "@/app/utils";
+import { t } from "@/i18n";
+import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
@@ -60,6 +69,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
   const authCopyTimeoutRef = useRef<number | null>(null);
   const previousOpenRef = useRef(false);
   const previousEntryNameRef = useRef<string | null>(null);
+  const reloadAuthRunRef = useRef(false);
 
   const stopStatusPolling = () => {
     if (statusPollRef.current !== null) {
@@ -324,7 +334,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setCliAuthResult(null);
 
     try {
-      const result = await opencodeMcpAuth(props.projectDir, props.entry.name);
+      const result = await opencodeMcpAuth(props.projectDir, props.entry.name) as { ok: boolean; stderr?: string; stdout?: string };
       if (result.ok) {
         setError(null);
         setNeedsReload(true);
@@ -367,13 +377,14 @@ export function McpAuthModal(props: McpAuthModalProps) {
   }, [props.open, props.entry, props.client, props.reloadRequired]);
 
   useEffect(() => {
-    if (!props.open || !awaitingReload || props.reloadBlocked || !props.onReloadEngine || !props.entry || reloadStarting) {
+    if (!props.open || !awaitingReload || props.reloadBlocked || !props.onReloadEngine || !props.entry || reloadAuthRunRef.current) {
       return;
     }
 
     let cancelled = false;
 
     void (async () => {
+      reloadAuthRunRef.current = true;
       setReloadStarting(true);
       setError(null);
       setNeedsReload(false);
@@ -408,6 +419,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
         setNeedsReload(true);
         setError(message);
       } finally {
+        reloadAuthRunRef.current = false;
         if (!cancelled) {
           setReloadStarting(false);
         }
@@ -416,8 +428,9 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     return () => {
       cancelled = true;
+      reloadAuthRunRef.current = false;
     };
-  }, [props.open, awaitingReload, props.reloadBlocked, props.onReloadEngine, props.entry, reloadStarting]);
+  }, [props.open, awaitingReload, props.reloadBlocked, props.onReloadEngine, props.entry]);
 
   const handleRetry = () => {
     void startAuth(true);
@@ -580,37 +593,26 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setStatusChecking(false);
   };
 
-  if (!props.open) return null;
-
   const isBusy = loading || statusChecking || manualAuthBusy;
   const isPreparingReload = awaitingReload || reloadStarting;
   const serverName = props.entry?.name ?? "MCP Server";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-gray-1/60 backdrop-blur-sm" onClick={handleClose} />
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {t("mcp.auth.connect_server", { server: serverName })}
+          </DialogTitle>
+          <DialogDescription>{t("mcp.auth.open_browser_signin")}</DialogDescription>
+        </DialogHeader>
 
-      <div
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-6 bg-gray-2 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-gray-6 px-6 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-12">
-              {t("mcp.auth.connect_server", { server: serverName })}
-            </h2>
-            <p className="text-sm text-gray-11">{t("mcp.auth.open_browser_signin")}</p>
-          </div>
-          <button
-            type="button"
-            className="rounded-lg p-2 text-gray-11 transition-colors hover:bg-gray-4 hover:text-gray-12"
-            onClick={handleClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-5 px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
           {isBusy ? (
             <div className="space-y-4 rounded-xl border border-gray-6/60 bg-gray-1/40 px-5 py-6 text-center">
               <div className="flex items-center justify-center">
@@ -677,7 +679,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
           {!isBusy && alreadyConnected ? (
             <div className="space-y-4 rounded-xl border border-green-7/20 bg-green-7/10 p-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-green-7/20">
                   <CheckCircle2 size={24} className="text-green-11" />
                 </div>
                 <div>
@@ -698,7 +700,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
               <div className="flex flex-wrap gap-2 pt-1">
                 {props.onReloadEngine ? (
                   <Button
-                    variant="secondary"
                     onClick={() => void handleReloadAndRetry()}
                     disabled={props.reloadBlocked}
                     title={props.reloadBlocked ? t("mcp.reload_banner_blocked_hint") : undefined}
@@ -707,7 +708,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                     {t("mcp.auth.reload_engine_retry")}
                   </Button>
                 ) : null}
-                <Button variant="ghost" onClick={handleRetry}>
+                <Button variant="outline" onClick={handleRetry}>
                   {t("mcp.auth.retry_now")}
                 </Button>
               </div>
@@ -722,7 +723,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 <div className="flex flex-wrap gap-2 pt-2">
                   {props.onReloadEngine ? (
                     <Button
-                      variant="secondary"
                       onClick={() => void handleReloadAndRetry()}
                       disabled={props.reloadBlocked}
                       title={props.reloadBlocked ? t("mcp.reload_banner_blocked_hint") : undefined}
@@ -731,13 +731,13 @@ export function McpAuthModal(props: McpAuthModalProps) {
                       {t("mcp.auth.reload_engine_retry")}
                     </Button>
                   ) : null}
-                  <Button variant="ghost" onClick={handleRetry}>
+                  <Button variant="outline" onClick={handleRetry}>
                     {t("mcp.auth.retry_now")}
                   </Button>
                 </div>
               ) : (
                 <div className="pt-2">
-                  <Button variant="ghost" onClick={handleRetry}>
+                  <Button variant="outline" onClick={handleRetry}>
                     {t("mcp.auth.retry")}
                   </Button>
                 </div>
@@ -748,7 +748,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                   <p className="text-xs text-red-11">{t("mcp.auth.invalid_refresh_token")}</p>
                   {!props.isRemoteWorkspace ? (
                     isDesktopRuntime() ? (
-                      <Button variant="secondary" onClick={() => void handleCliReauth()} disabled={cliAuthBusy}>
+                      <Button onClick={() => void handleCliReauth()} disabled={cliAuthBusy}>
                         {cliAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
                         {cliAuthBusy
                           ? t("mcp.auth.reauth_running")
@@ -779,7 +779,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                   </div>
                   <div className="truncate font-mono text-[11px] text-gray-11">{authorizationUrl}</div>
                 </div>
-                <Button variant="ghost" className="text-xs" onClick={() => void handleCopyAuthorizationUrl()}>
+                <Button variant="outline" size="sm" onClick={() => void handleCopyAuthorizationUrl()}>
                   {authUrlCopied ? t("mcp.auth.copied") : t("mcp.auth.copy_link")}
                 </Button>
               </div>
@@ -792,7 +792,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
               <div className="text-[11px] text-gray-9">{t("mcp.auth.port_forward_hint")}</div>
               <div className="flex justify-end">
                 <Button
-                  variant="secondary"
                   onClick={() => void handleManualComplete()}
                   disabled={manualAuthBusy || !callbackInput.trim()}
                 >
@@ -807,7 +806,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
             <>
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     1
                   </div>
                   <div>
@@ -819,7 +818,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     2
                   </div>
                   <div>
@@ -829,7 +828,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
+                  <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-4 text-xs font-medium text-gray-11">
                     3
                   </div>
                   <div>
@@ -856,25 +855,25 @@ export function McpAuthModal(props: McpAuthModalProps) {
           ) : null}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/50 px-6 py-4">
+        <DialogFooter className="shrink-0">
           {alreadyConnected ? (
-            <Button variant="primary" onClick={() => void handleComplete()}>
-              <CheckCircle2 size={16} />
+            <Button onClick={() => void handleComplete()}>
+              <CheckCircle2 data-icon="inline-start" />
               {t("mcp.auth.done")}
             </Button>
           ) : (
             <>
-              <Button variant="ghost" onClick={handleClose}>
+              <DialogClose render={<Button variant="outline" />}>
                 {t("mcp.auth.cancel")}
-              </Button>
-              <Button variant="secondary" onClick={() => void handleComplete()}>
-                <CheckCircle2 size={16} />
+              </DialogClose>
+              <Button onClick={() => void handleComplete()}>
+                <CheckCircle2 data-icon="inline-start" />
                 {t("mcp.auth.im_done")}
               </Button>
             </>
           )}
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

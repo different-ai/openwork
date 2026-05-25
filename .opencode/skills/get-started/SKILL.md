@@ -1,6 +1,6 @@
 ---
 name: get-started
-description: Guide users through the get started setup and Chrome DevTools demo.
+description: Guide users through the get started setup and OpenWork Browser demo.
 ---
 
 ## When to use
@@ -18,5 +18,5 @@ description: Guide users through the get started setup and Chrome DevTools demo.
 
 ## Then
 
-- If the user writes "go on google.com" (or "hey go on google.com"), use the chrome-devtools MCP to open the site.
+- If the user writes "go on google.com" (or "hey go on google.com"), use the built-in OpenWork Browser tools to open the site.
 - After the navigation completes, reply: "I'm on <site>" where <site> is the final URL or page title they asked for.

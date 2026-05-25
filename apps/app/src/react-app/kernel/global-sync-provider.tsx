@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -11,7 +11,6 @@ import {
 } from "react";
 import type {
   Config,
-  ConfigProvidersResponse,
   Event,
   GlobalHealthResponse,
   LspStatus,
@@ -28,10 +27,9 @@ import { t } from "../../i18n";
 import { unwrap } from "../../app/lib/opencode";
 import type { McpStatusMap, TodoItem } from "../../app/types";
 import { safeStringify } from "../../app/utils";
-import {
-  filterProviderList,
-  mapConfigProvidersToList,
-} from "../../app/utils/providers";
+import { filterProviderList } from "../../app/utils/providers";
+import { getReactQueryClient } from "../infra/query-client";
+import { ensureProviderListQuery } from "../domains/connections/provider-list-query";
 
 import { useGlobalSDK } from "./global-sdk-provider";
 
@@ -168,25 +166,14 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
     }
     try {
       const result = filterProviderList(
-        unwrap(await globalSDK.client.provider.list()),
+        await ensureProviderListQuery(getReactQueryClient(), {
+          client: globalSDK.client,
+        }),
         disabledProviders,
       );
       setField("provider", result);
     } catch {
-      const fallback = unwrap(
-        await globalSDK.client.config.providers(),
-      ) as ConfigProvidersResponse;
-      setField(
-        "provider",
-        filterProviderList(
-          {
-            all: mapConfigProvidersToList(fallback.providers),
-            connected: [],
-            default: fallback.default,
-          },
-          disabledProviders,
-        ),
-      );
+      setField("provider", { all: [], connected: [], default: {} });
     }
   }, [globalSDK.client, setField]);
 
@@ -252,13 +239,10 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
     setField("project", projects);
     setProjectMetaForProjects(projects);
     await Promise.allSettled(
-      projects
-        .map((project) => project.worktree)
-        .filter(
-          (worktree): worktree is string =>
-            typeof worktree === "string" && worktree.length > 0,
-        )
-        .map((worktree) => refreshVcs(worktree)),
+      projects.flatMap((project) => {
+        const worktree = project.worktree;
+        return typeof worktree === "string" && worktree.length > 0 ? [refreshVcs(worktree)] : [];
+      }),
     );
   }, [globalSDK.client, refreshVcs, setField, setProjectMetaForProjects]);
 
@@ -400,7 +384,7 @@ export function GlobalSyncProvider({ children }: GlobalSyncProviderProps) {
 }
 
 export function useGlobalSync(): GlobalSyncContextValue {
-  const context = useContext(GlobalSyncContext);
+  const context = use(GlobalSyncContext);
   if (!context) {
     throw new Error("Global sync context is missing");
   }

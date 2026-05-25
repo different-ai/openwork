@@ -120,14 +120,20 @@ const lookupEntry = (loc: Language, candidateKey: string): string | null => {
   return null;
 };
 
-const pluralRulesCache = new Map<Language, Intl.PluralRules>();
+const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
+  en: new Intl.PluralRules("en"),
+  ja: new Intl.PluralRules("ja"),
+  zh: new Intl.PluralRules("zh"),
+  vi: new Intl.PluralRules("vi"),
+  "pt-BR": new Intl.PluralRules("pt-BR"),
+  th: new Intl.PluralRules("th"),
+  fr: new Intl.PluralRules("fr"),
+  ca: new Intl.PluralRules("ca"),
+  es: new Intl.PluralRules("es"),
+  ru: new Intl.PluralRules("ru"),
+};
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
-  let rules = pluralRulesCache.get(loc);
-  if (!rules) {
-    rules = new Intl.PluralRules(loc);
-    pluralRulesCache.set(loc, rules);
-  }
-  return rules.select(count);
+  return pluralRulesByLanguage[loc].select(count);
 };
 
 /**
@@ -155,8 +161,19 @@ const resolvePluralKey = (loc: Language, key: string, count: number): string => 
  *   `${key}_one` / `${key}_other` (or `${key}_zero` when count === 0) per
  *   `Intl.PluralRules`, and falls back to the bare key when no variants exist.
  */
-export const t = (key: string, params?: Record<string, string | number> & { lng?: Language }): string => {
-  const loc = params?.lng ?? locale();
+type TranslationParams = Record<string, string | number> & { lng?: Language };
+
+export const t = (
+  key: string,
+  paramsOrLocale?: TranslationParams | Language,
+  legacyParams?: Record<string, string | number>,
+): string => {
+  const params = legacyParams ?? (typeof paramsOrLocale === "string" ? undefined : paramsOrLocale);
+  const loc: Language = typeof paramsOrLocale === "string"
+    ? paramsOrLocale
+    : isLanguage(params?.lng)
+      ? params.lng
+      : locale();
 
   const lookupKey =
     typeof params?.count === "number" ? resolvePluralKey(loc, key, params.count) : key;

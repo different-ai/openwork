@@ -1,5 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+const computerUseHelperAppName = "Computer Use.app";
 
 const sidecarBases = [
   "opencode",
@@ -31,6 +34,41 @@ function resolveSidecarsDir(context) {
     return appName ? path.join(context.appOutDir, appName, "Contents", "Resources", "sidecars") : null;
   }
   return path.join(context.appOutDir, "resources", "sidecars");
+}
+
+function resolveMacAppPath(context) {
+  if (context.electronPlatformName !== "darwin") return null;
+  const appName = `${context.packager.appInfo.productFilename}.app`;
+  const direct = path.join(context.appOutDir, appName);
+  if (fs.existsSync(direct)) return direct;
+
+  const entries = fs.existsSync(context.appOutDir) ? fs.readdirSync(context.appOutDir) : [];
+  const fallback = entries.find((entry) => entry.endsWith(".app"));
+  return fallback ? path.join(context.appOutDir, fallback) : null;
+}
+
+function signComputerUseHelper(context) {
+  const appPath = resolveMacAppPath(context);
+  if (!appPath) return;
+
+  const helperPath = path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
+  if (!fs.existsSync(helperPath)) {
+    throw new Error(`Missing Computer Use helper app at ${helperPath}`);
+  }
+
+  const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
+    || process.env.CSC_NAME
+    || process.env.APPLE_CODESIGN_IDENTITY
+    || "-";
+  const args = ["--force", "--deep", "--options", "runtime", "--sign", identity];
+  if (identity !== "-") args.push("--timestamp");
+  args.push(helperPath);
+
+  const result = spawnSync("codesign", args, { stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`codesign failed for Computer Use helper app with status ${result.status}`);
+  }
 }
 
 function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
@@ -82,6 +120,8 @@ async function afterPack(context) {
       fs.rmSync(path.join(sidecarsDir, entry), { force: true, recursive: true });
     }
   }
+
+  signComputerUseHelper(context);
 }
 
 module.exports = afterPack;

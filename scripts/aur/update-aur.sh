@@ -29,8 +29,8 @@ if [[ "$TAG" != v* ]]; then
 fi
 
 VERSION="${TAG#v}"
-ASSET_NAME_AMD64="${AUR_ASSET_NAME:-openwork-desktop-linux-amd64.deb}"
-ASSET_NAME_ARM64="openwork-desktop-linux-arm64.deb"
+ASSET_NAME_AMD64="${AUR_ASSET_NAME:-openwork-linux-x64-${VERSION}.tar.gz}"
+ASSET_NAME_ARM64="openwork-linux-arm64-${VERSION}.tar.gz"
 ASSET_URL_AMD64="https://github.com/different-ai/openwork/releases/download/${TAG}/${ASSET_NAME_AMD64}"
 ASSET_URL_ARM64="https://github.com/different-ai/openwork/releases/download/${TAG}/${ASSET_NAME_ARM64}"
 
@@ -81,22 +81,23 @@ if not match:
     raise SystemExit("Could not determine pkgname from PKGBUILD")
 pkgname = match.group(1).strip()
 
-renamed = f"{pkgname}-{version}.deb"
+renamed_amd64 = f"{pkgname}-{version}-x64.tar.gz"
+renamed_arm64 = f"{pkgname}-{version}-arm64.tar.gz"
 
 text = srcinfo_path.read_text()
 text = re.sub(r"^\s*pkgver = .*", f"\tpkgver = {version}", text, flags=re.M)
 text = re.sub(r"^\s*pkgrel = .*", "\tpkgrel = 1", text, flags=re.M)
-text = re.sub(r"^\s*noextract = .*", f"\tnoextract = {renamed}", text, flags=re.M)
+text = re.sub(r"^\s*noextract = .*\n?", "", text, flags=re.M)
 text = re.sub(
     r"^\s*source_x86_64 = .*",
-    f"\tsource_x86_64 = {renamed}::{url_amd64}",
+    f"\tsource_x86_64 = {renamed_amd64}::{url_amd64}",
     text,
     flags=re.M,
 )
 text = re.sub(r"^\s*sha256sums_x86_64 = .*", f"\tsha256sums_x86_64 = {sha_amd64}", text, flags=re.M)
 text = re.sub(
     r"^\s*source_aarch64 = .*",
-    f"\tsource_aarch64 = {renamed}::{url_arm64}",
+    f"\tsource_aarch64 = {renamed_arm64}::{url_arm64}",
     text,
     flags=re.M,
 )

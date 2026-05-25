@@ -1,7 +1,3 @@
-import { normalizeDesktopAppRestrictions, type DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
-
-export type DenDesktopAppRestrictions = DesktopAppRestrictions;
-
 export type DenOrgSummary = {
   id: string;
   name: string;
@@ -18,9 +14,11 @@ export type DenOrgSummary = {
 
 export type DenOrgMember = {
   id: string;
-  userId: string;
+  userId: string | null;
+  inviteId: string | null;
   role: string;
   createdAt: string | null;
+  joinedAt: string | null;
   isOwner: boolean;
   user: {
     id: string;
@@ -37,6 +35,7 @@ export type DenOrgInvitation = {
   status: string;
   expiresAt: string | null;
   createdAt: string | null;
+  inviteToken: string | null;
 };
 
 export type DenOrgTeam = {
@@ -112,7 +111,6 @@ export type DenOrgContext = {
     slug: string;
     logo: string | null;
     allowedEmailDomains: string[] | null;
-    desktopAppRestrictions: DenDesktopAppRestrictions;
     metadata: string | null;
     createdAt: string | null;
     updatedAt: string | null;
@@ -207,10 +205,6 @@ export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): 
   return [...new Set(values.map((entry) => normalizeDesktopVersionString(entry)).filter((entry): entry is string => Boolean(entry)))];
 }
 
-function asDesktopAppRestrictions(value: unknown): DenDesktopAppRestrictions {
-  return normalizeDesktopAppRestrictions(value);
-}
-
 function parsePermissionRecord(value: unknown): Record<string, string[]> {
   if (!isRecord(value)) {
     return {};
@@ -243,6 +237,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean) {
     canInviteMembers: isAdmin,
     canCancelInvitations: isAdmin,
     canManageMembers: isOwner,
+    canRemoveMembers: isAdmin,
     canManageRoles: isOwner,
     canManageTeams: isAdmin,
     canManageApiKeys: isAdmin,
@@ -281,8 +276,24 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/custom-llm-providers`;
 }
 
+export function getInferenceRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+}
+
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
+}
+
+export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
+}
+
+export function getNewDesktopPolicyRoute(orgSlug?: string | null): string {
+  return `${getDesktopPoliciesRoute(orgSlug)}/new`;
+}
+
+export function getDesktopPolicyRoute(orgSlug: string | null | undefined, desktopPolicyId: string): string {
+  return `${getDesktopPoliciesRoute(orgSlug)}/${encodeURIComponent(desktopPolicyId)}`;
 }
 
 export function getLlmProviderRoute(orgSlug: string | null | undefined, llmProviderId: string): string {
@@ -452,15 +463,17 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
           const userEmail = asString(user.email);
           const userName = asString(user.name);
           const userIdentity = asString(user.id);
-          if (!id || !userId || !role || !userEmail || !userName || !userIdentity) {
+          if (!id || !role || !userEmail || !userName || !userIdentity) {
             return null;
           }
 
           return {
             id,
             userId,
+            inviteId: asString(entry.inviteId),
             role,
             createdAt: asIsoString(entry.createdAt),
+            joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
             user: {
               id: userIdentity,
@@ -495,6 +508,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             status,
             expiresAt: asIsoString(entry.expiresAt),
             createdAt: asIsoString(entry.createdAt),
+            inviteToken: asString(entry.inviteToken),
           } satisfies DenOrgInvitation;
         })
         .filter((entry): entry is DenOrgInvitation => entry !== null)
@@ -580,7 +594,6 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       slug: organizationSlug,
       logo: asString(organization.logo),
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
-      desktopAppRestrictions: asDesktopAppRestrictions(organization.desktopAppRestrictions),
       metadata: asString(organization.metadata),
       createdAt: asIsoString(organization.createdAt),
       updatedAt: asIsoString(organization.updatedAt),

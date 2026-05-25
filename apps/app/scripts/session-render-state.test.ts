@@ -6,10 +6,10 @@ import {
   deriveRenderedSessionMessages,
   resolveRenderedSessionSnapshot,
 } from "../src/react-app/domains/session/surface/session-render-state";
-import { mergeSnapshotIntoCachedMessages } from "../src/react-app/domains/session/sync/message-merge";
+import { reconcileTranscriptMessages } from "../src/react-app/domains/session/sync/transcript-reconcile";
 
 function snapshotWithMessages(
-  messages: Array<{ id: string; role: "user" | "assistant"; text: string }>,
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string; created?: number }>,
   sessionId = "ses_test",
 ): OpenworkSessionSnapshot {
   return {
@@ -26,7 +26,7 @@ function snapshotWithMessages(
         id: message.id,
         role: message.role,
         sessionID: sessionId,
-        time: { created: index + 1 },
+        time: { created: message.created ?? index + 1 },
       },
       parts: [
         {
@@ -43,10 +43,11 @@ function snapshotWithMessages(
   } as unknown as OpenworkSessionSnapshot;
 }
 
-function uiMessage(id: string, role: "user" | "assistant", text: string): UIMessage {
+function uiMessage(id: string, role: "user" | "assistant", text: string, created?: number): UIMessage {
   return {
     id,
     role,
+    ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
     parts: [{ type: "text", text, state: "done" }],
   };
 }
@@ -55,16 +56,40 @@ function snapshotWithText(text: string, sessionId = "ses_test"): OpenworkSession
   return snapshotWithMessages([{ id: "msg_user", role: "user", text }], sessionId);
 }
 
-describe("mergeSnapshotIntoCachedMessages", () => {
+describe("reconcileTranscriptMessages", () => {
+  it("hydrates an empty transcript cache from the snapshot", () => {
+    const snapshot = [uiMessage("msg_user", "user", "hello")];
+
+    expect(reconcileTranscriptMessages({
+      currentMessages: [],
+      snapshotMessages: snapshot,
+      reason: "snapshot",
+    })).toBe(snapshot);
+  });
+
+  it("does not clear live messages when a snapshot is temporarily empty", () => {
+    const current = [
+      uiMessage("msg_user", "user", "latest prompt"),
+      uiMessage("msg_assistant", "assistant", "latest answer"),
+    ];
+
+    expect(reconcileTranscriptMessages({
+      currentMessages: current,
+      snapshotMessages: [],
+      reason: "snapshot",
+    })).toBe(current);
+  });
+
   it("keeps older cached messages when a busy snapshot only contains the active tail", () => {
-    const merged = mergeSnapshotIntoCachedMessages(
-      [uiMessage("msg_current_user", "user", "latest prompt")],
-      [
+    const merged = reconcileTranscriptMessages({
+      snapshotMessages: [uiMessage("msg_current_user", "user", "latest prompt")],
+      currentMessages: [
         uiMessage("msg_old_user", "user", "old prompt"),
         uiMessage("msg_old_assistant", "assistant", "old answer"),
         uiMessage("msg_current_user", "user", "latest"),
       ],
-    );
+      reason: "snapshot",
+    });
 
     expect(merged.map((message) => message.id)).toEqual([
       "msg_old_user",
@@ -72,6 +97,69 @@ describe("mergeSnapshotIntoCachedMessages", () => {
       "msg_current_user",
     ]);
     expect(merged[2]?.parts[0]).toMatchObject({ text: "latest prompt" });
+  });
+
+  it("keeps snapshot history and live-only tail messages together", () => {
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [
+        uiMessage("msg_current_user", "user", "latest prompt"),
+        uiMessage("msg_current_assistant", "assistant", "streaming answer"),
+      ],
+      snapshotMessages: [
+        uiMessage("msg_old_user", "user", "old prompt"),
+        uiMessage("msg_old_assistant", "assistant", "old answer"),
+      ],
+      reason: "snapshot",
+    });
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
+      "msg_current_user",
+      "msg_current_assistant",
+    ]);
+  });
+
+  it("keeps longer live text when the snapshot lags the event stream", () => {
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [
+        uiMessage("msg_user", "user", "hello"),
+        uiMessage("msg_assistant", "assistant", "finished answer"),
+      ],
+      snapshotMessages: [
+        uiMessage("msg_user", "user", "hello"),
+        uiMessage("msg_assistant", "assistant", "finished"),
+      ],
+      reason: "snapshot",
+    });
+
+    expect(merged[1]?.parts[0]).toMatchObject({ text: "finished answer" });
+  });
+
+  it("inserts cached-only message blocks by timestamp instead of appending them", () => {
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block2", "assistant", "block 2", 2),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+        uiMessage("msg_streaming", "assistant", "streaming", 5),
+      ],
+      snapshotMessages: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+      ],
+      reason: "snapshot",
+    });
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "msg_block1",
+      "msg_block2",
+      "msg_block3",
+      "msg_block4",
+      "msg_streaming",
+    ]);
   });
 });
 
@@ -89,19 +177,17 @@ describe("deriveRenderedSessionMessages", () => {
     });
   });
 
-  it("keeps live transcript cache when it covers the snapshot", () => {
+  it("keeps longer live text when the cache covers the snapshot", () => {
     const cached: UIMessage[] = [
-      {
-        id: "msg_user",
-        role: "assistant",
-        parts: [{ type: "text", text: "live text", state: "done" }],
-      },
+      uiMessage("msg_user", "user", "snapshot text plus live tail", 1),
     ];
 
-    expect(deriveRenderedSessionMessages({
+    const messages = deriveRenderedSessionMessages({
       transcriptState: cached,
       snapshot: snapshotWithText("snapshot text"),
-    })).toBe(cached);
+    });
+
+    expect(messages[0]?.parts[0]).toMatchObject({ text: "snapshot text plus live tail" });
   });
 
   it("keeps snapshot history visible when the live cache only has the active turn", () => {
@@ -122,7 +208,6 @@ describe("deriveRenderedSessionMessages", () => {
         { id: "msg_old_user", role: "user", text: "old prompt" },
         { id: "msg_old_assistant", role: "assistant", text: "old answer" },
       ]),
-      includeLiveOnlyMessages: true,
     });
 
     expect(messages.map((message) => message.id)).toEqual([
@@ -130,6 +215,51 @@ describe("deriveRenderedSessionMessages", () => {
       "msg_old_assistant",
       "msg_current_user",
       "msg_current_assistant",
+    ]);
+  });
+
+  it("keeps live-only tail messages after the stream flips idle before the snapshot catches up", () => {
+    const messages = deriveRenderedSessionMessages({
+      transcriptState: [
+        uiMessage("msg_current_user", "user", "latest prompt"),
+        uiMessage("msg_current_assistant", "assistant", "latest answer"),
+      ],
+      snapshot: snapshotWithMessages([
+        { id: "msg_old_user", role: "user", text: "old prompt" },
+        { id: "msg_old_assistant", role: "assistant", text: "old answer" },
+      ]),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
+      "msg_current_user",
+      "msg_current_assistant",
+    ]);
+  });
+
+  it("renders cached-only message blocks by timestamp instead of appending them", () => {
+    const messages = deriveRenderedSessionMessages({
+      transcriptState: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block2", "assistant", "block 2", 2),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+        uiMessage("msg_streaming", "assistant", "streaming", 5),
+      ],
+      snapshot: snapshotWithMessages([
+        { id: "msg_block1", role: "user", text: "block 1", created: 1 },
+        { id: "msg_block3", role: "user", text: "block 3", created: 3 },
+        { id: "msg_block4", role: "assistant", text: "block 4", created: 4 },
+      ]),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "msg_block1",
+      "msg_block2",
+      "msg_block3",
+      "msg_block4",
+      "msg_streaming",
     ]);
   });
 

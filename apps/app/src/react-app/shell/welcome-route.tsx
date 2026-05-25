@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../i18n";
@@ -10,19 +10,76 @@ import {
   workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type WorkspaceInfo,
+  type WorkspaceList,
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
+import { createClient, unwrap } from "../../app/lib/opencode";
 import { useLocal } from "../kernel/local-provider";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import { resolveOpenworkConnection } from "./openwork-connection";
-import { createOpenworkServerClient } from "../../app/lib/openwork-server";
-import { writeActiveWorkspaceId } from "./session-memory";
+import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
+import { workspaceSessionRoute } from "./workspace-routes";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? "workspace";
+}
+
+function focusPromptSoon() {
+  if (typeof window === "undefined") return;
+  const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
+  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
+}
+
+type WelcomeState = {
+  modalOpen: boolean;
+  createBusy: boolean;
+  createError: string | null;
+  remoteBusy: boolean;
+  remoteError: string | null;
+};
+
+type WelcomeAction =
+  | { type: "open" }
+  | { type: "close" }
+  | { type: "create:start" }
+  | { type: "create:error"; error: string }
+  | { type: "create:finish" }
+  | { type: "remote:start" }
+  | { type: "remote:error"; error: string }
+  | { type: "remote:finish" };
+
+const initialWelcomeState: WelcomeState = {
+  modalOpen: false,
+  createBusy: false,
+  createError: null,
+  remoteBusy: false,
+  remoteError: null,
+};
+
+function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeState {
+  switch (action.type) {
+    case "open":
+      return { ...state, modalOpen: true };
+    case "close":
+      return { ...state, modalOpen: false, createError: null, remoteError: null };
+    case "create:start":
+      return { ...state, createBusy: true, createError: null };
+    case "create:error":
+      return { ...state, createError: action.error };
+    case "create:finish":
+      return { ...state, createBusy: false };
+    case "remote:start":
+      return { ...state, remoteBusy: true, remoteError: null };
+    case "remote:error":
+      return { ...state, remoteError: action.error };
+    case "remote:finish":
+      return { ...state, remoteBusy: false };
+  }
 }
 
 /**
@@ -36,11 +93,7 @@ function folderNameFromPath(path: string) {
 export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
-  const [modalOpen, setModalOpen] = useState(false);
-  const [createBusy, setCreateBusy] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [remoteBusy, setRemoteBusy] = useState(false);
-  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -56,19 +109,21 @@ export function WelcomeRoute() {
   const handleCreateWorkspace = useCallback(
     async (_preset: string, folder: string | null) => {
       if (!folder) return;
-      setCreateBusy(true);
-      setCreateError(null);
+      dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
-        const list = await workspaceCreate({
-          folderPath: folder,
-          name: workspaceName,
-          preset: "starter",
-        });
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
+      const list = await workspaceCreate({
+        folderPath: folder,
+        name: workspaceName,
+        preset: "starter",
+      }) as WorkspaceList;
+      const createdId =
+        resolveWorkspaceListSelectedId(list) ||
+        list.workspaces[list.workspaces.length - 1]?.id ||
+        "";
+      let targetWorkspaceId = createdId;
+      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
+        let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -84,26 +139,45 @@ export function WelcomeRoute() {
               token: resolvedToken,
               hostToken: resolvedHostToken || undefined,
             });
-            await openworkClient
+            const serverList = await openworkClient
               .createLocalWorkspace({
                 folderPath: folder,
                 name: workspaceName,
                 preset: "starter",
               })
-              .catch(() => undefined);
+              .catch(() => null);
+            targetWorkspaceId = serverList
+              ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
+              : targetWorkspaceId;
+            targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
+            if (targetWorkspaceId) {
+              const workspacePath = targetWorkspace?.path?.trim() || folder;
+              const session = unwrap(await createClient(
+                `${(buildOpenworkWorkspaceBaseUrl(normalizedBaseUrl, targetWorkspaceId) ?? normalizedBaseUrl).replace(/\/+$/, "")}/opencode`,
+                workspacePath || undefined,
+                { token: resolvedToken, mode: "openwork" },
+              ).session.create({ directory: workspacePath || undefined }));
+              targetSessionId = session.id;
+            }
           }
         } catch {
           // Best-effort server registration.
         }
+        if (targetWorkspaceId) {
+          writeActiveWorkspaceId(targetWorkspaceId);
+          if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
+        }
         markOnboardingComplete();
-        setModalOpen(false);
-        navigate("/settings/general", { replace: true });
+        dispatch({ type: "close" });
+        navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId, targetSessionId) : "/session", { replace: true });
+        if (targetSessionId) focusPromptSoon();
       } catch (error) {
-        setCreateError(
-          error instanceof Error ? error.message : "Failed to create workspace.",
-        );
+        dispatch({
+          type: "create:error",
+          error: error instanceof Error ? error.message : "Failed to create workspace.",
+        });
       } finally {
-        setCreateBusy(false);
+        dispatch({ type: "create:finish" });
       }
     },
     [markOnboardingComplete, navigate],
@@ -118,37 +192,37 @@ export function WelcomeRoute() {
     }) => {
       const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
       if (!baseUrlValue) return false;
-      setRemoteBusy(true);
-      setRemoteError(null);
+      dispatch({ type: "remote:start" });
       try {
-        const list = await workspaceCreateRemote({
-          baseUrl: baseUrlValue,
-          openworkHostUrl: baseUrlValue,
-          openworkToken: input.openworkToken?.trim() || null,
-          displayName: input.displayName?.trim() || null,
-          directory: input.directory?.trim() || null,
-          remoteType: "openwork",
-        });
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
+      const list = await workspaceCreateRemote({
+        baseUrl: baseUrlValue,
+        openworkHostUrl: baseUrlValue,
+        openworkToken: input.openworkToken?.trim() || null,
+        displayName: input.displayName?.trim() || null,
+        directory: input.directory?.trim() || null,
+        remoteType: "openwork",
+      }) as WorkspaceList;
+      const createdId =
+        resolveWorkspaceListSelectedId(list) ||
+        list.workspaces[list.workspaces.length - 1]?.id ||
+        "";
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
           writeActiveWorkspaceId(createdId);
         }
         markOnboardingComplete();
-        setModalOpen(false);
-        navigate("/session", { replace: true });
+        dispatch({ type: "close" });
+        navigate(createdId ? workspaceSessionRoute(createdId) : "/session", { replace: true });
         return true;
       } catch (error) {
-        setRemoteError(
-          error instanceof Error ? error.message : "Connection failed.",
-        );
+        dispatch({
+          type: "remote:error",
+          error: error instanceof Error ? error.message : "Connection failed.",
+        });
         return false;
       } finally {
-        setRemoteBusy(false);
+        dispatch({ type: "remote:finish" });
       }
     },
     [markOnboardingComplete, navigate],
@@ -156,14 +230,10 @@ export function WelcomeRoute() {
 
   return (
     <>
-      <WelcomePage onGetStarted={() => setModalOpen(true)} />
+      <WelcomePage onGetStarted={() => dispatch({ type: "open" })} />
       <CreateWorkspaceModal
-        open={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setCreateError(null);
-          setRemoteError(null);
-        }}
+        open={state.modalOpen}
+        onClose={() => dispatch({ type: "close" })}
         onConfirm={handleCreateWorkspace}
         onConfirmRemote={handleCreateRemote}
         onPickFolder={() =>
@@ -171,10 +241,10 @@ export function WelcomeRoute() {
             string | null
           >
         }
-        submitting={createBusy}
-        localError={createError}
-        remoteSubmitting={remoteBusy}
-        remoteError={remoteError}
+        submitting={state.createBusy}
+        localError={state.createError}
+        remoteSubmitting={state.remoteBusy}
+        remoteError={state.remoteError}
         localDisabled={!isDesktopRuntime()}
         localDisabledReason={
           isDesktopRuntime()

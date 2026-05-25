@@ -1,4 +1,4 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   SkillHubMemberTable,
@@ -76,7 +76,7 @@ async function ensureMembersBelongToOrganization(input: {
   const rows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(eq(MemberTable.organizationId, input.organizationId))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
   const memberIds = new Set(rows.map((row) => row.id))
   return input.memberIds.every((memberId) => memberIds.has(memberId))

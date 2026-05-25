@@ -100,7 +100,7 @@ describe("github connector app helpers", () => {
     const token = createGithubInstallStateToken({
       now: new Date("2026-04-21T19:00:00.000Z"),
       orgId: "org_123",
-      returnPath: "/o/test-org/dashboard/integrations/github",
+      returnPath: "/dashboard/integrations/github",
       secret: "secret-123",
       userId: "user_123",
     })
@@ -108,7 +108,7 @@ describe("github connector app helpers", () => {
     expect(buildGithubAppInstallUrl({ app, state: token })).toBe(`https://github.com/apps/openwork-test/installations/new?state=${encodeURIComponent(token)}`)
     expect(verifyGithubInstallStateToken({ now: new Date("2026-04-21T19:05:00.000Z"), secret: "secret-123", token })).toMatchObject({
       orgId: "org_123",
-      returnPath: "/o/test-org/dashboard/integrations/github",
+      returnPath: "/dashboard/integrations/github",
       userId: "user_123",
     })
     expect(verifyGithubInstallStateToken({ now: new Date("2026-04-21T19:05:00.000Z"), secret: "wrong-secret", token })).toBeNull()

@@ -1,22 +1,118 @@
 /** @jsxImportSource react */
-import { FileSpreadsheet, Globe, FolderOpen, Bot, FileText, Plug } from "lucide-react";
+import type { ReactNode } from "react";
+import { ShareIcon, UserGroupIcon } from "@heroicons/react/24/solid";
+import { PaperGrainGradient } from "@openwork/ui/react";
+
 import { t } from "../../../i18n";
+import {
+  Page,
+  PageBackground,
+  PageDescription,
+  PageHeader,
+  PageTitle,
+  PageTitlebarRegion,
+} from "@/components/page";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
-type CapabilityCardProps = {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-};
+interface BrandIconProps {
+  slug: string;
+  className?: string;
+}
 
-function CapabilityCard({ icon, title, description }: CapabilityCardProps) {
+function BrandIcon({ slug, className }: BrandIconProps) {
   return (
-    <div className="flex flex-col items-center gap-2 rounded-2xl border border-dls-border bg-dls-surface p-5 text-center transition-colors">
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
-        {icon}
+    <img
+      className={cn("block size-4", className)}
+      src={`https://cdn.simpleicons.org/${slug}/_/777b84`}
+      alt=""
+      loading="lazy"
+    />
+  );
+}
+
+const capabilities = [
+  {
+    slug: "googlesheets",
+    title: "Edit spreadsheets",
+    desc: "Create, clean, and transform CSV and Excel files.",
+  },
+  {
+    slug: "semanticweb",
+    title: "Control your browser",
+    desc: "Automate the built-in browser for repetitive web tasks.",
+  },
+  {
+    slug: "apple",
+    title: "Organize files",
+    desc: "Read, write, and manage files and folders.",
+  },
+  {
+    slug: "zapier",
+    title: "Automate tasks",
+    desc: "Build reusable workflows with skills and commands.",
+  },
+  {
+    slug: "medium",
+    title: "Generate content",
+    desc: "Draft documents, emails, and reports.",
+  },
+  {
+    slug: "stripe",
+    title: "Connect to APIs",
+    desc: "Plug into external services and tools via MCP.",
+  },
+];
+
+function ShowcasePanel() {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-lg font-semibold tracking-[-0.01em] text-foreground">
+          Your computer,
+          <br />
+          but it works for you.
+        </h2>
       </div>
-      <div className="text-[14px] font-medium text-dls-text">{title}</div>
-      <div className="text-[12px] leading-relaxed text-dls-secondary">
-        {description}
+
+      <div className="grid grid-cols-2 gap-2">
+        {capabilities.map((cap) => (
+          <div
+            key={cap.title}
+            className="flex flex-col gap-2.5 rounded-xl border border-border p-3"
+          >
+            <BrandIcon className="size-4" slug={cap.slug} />
+            <div className="text-sm font-medium leading-tight text-foreground">
+              {cap.title}
+            </div>
+            <div className="text-xs leading-snug text-muted-foreground">
+              {cap.desc}
+            </div>
+          </div>
+        ))}
+        <div className="flex flex-col items-start gap-2.5 rounded-xl border border-border p-3">
+          <ShareIcon className="size-4 shrink-0 text-muted-foreground" />
+          <div className="flex flex-col gap-1.5">
+            <div className="text-sm font-medium text-foreground">
+              Share in one link
+            </div>
+            <div className="text-xs leading-snug text-muted-foreground">
+              Package skills, MCPs, and configs for your team.
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col items-start gap-2.5 rounded-xl border border-border p-3">
+          <UserGroupIcon className="size-4 shrink-0 text-muted-foreground" />
+          <div className="flex flex-col gap-1.5">
+            <div className="text-sm font-medium text-foreground">
+              Provision your team
+            </div>
+            <div className="text-xs leading-snug text-muted-foreground">
+              Manage workspaces, models, and permissions.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -26,68 +122,102 @@ type WelcomePageProps = {
   onGetStarted: () => void;
 };
 
-export function WelcomePage({ onGetStarted }: WelcomePageProps) {
+type OnboardingStepProps = {
+  number: string;
+  title: string;
+  children: ReactNode;
+};
+
+function OnboardingStep({ number, title, children }: OnboardingStepProps) {
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-dls-background p-6">
-      <div className="mx-auto w-full max-w-[640px] space-y-10">
-        {/* Header */}
-        <div className="space-y-3 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-surface shadow-sm">
-            <Bot size={28} className="text-dls-accent" />
-          </div>
-          <h1 className="text-[28px] font-semibold tracking-[-0.5px] text-dls-text">
-            {t("welcome.title")}
-          </h1>
-          <p className="text-[16px] text-dls-secondary">
-            {t("welcome.subtitle")}
-          </p>
-        </div>
-
-        {/* Capability grid */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <CapabilityCard
-            icon={<FileSpreadsheet size={20} />}
-            title={t("welcome.capability_spreadsheets")}
-            description={t("welcome.capability_spreadsheets_desc")}
-          />
-          <CapabilityCard
-            icon={<Globe size={20} />}
-            title={t("welcome.capability_browser")}
-            description={t("welcome.capability_browser_desc")}
-          />
-          <CapabilityCard
-            icon={<FolderOpen size={20} />}
-            title={t("welcome.capability_files")}
-            description={t("welcome.capability_files_desc")}
-          />
-          <CapabilityCard
-            icon={<Bot size={20} />}
-            title={t("welcome.capability_automate")}
-            description={t("welcome.capability_automate_desc")}
-          />
-          <CapabilityCard
-            icon={<FileText size={20} />}
-            title={t("welcome.capability_content")}
-            description={t("welcome.capability_content_desc")}
-          />
-          <CapabilityCard
-            icon={<Plug size={20} />}
-            title={t("welcome.capability_apis")}
-            description={t("welcome.capability_apis_desc")}
-          />
-        </div>
-
-        {/* CTA */}
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={onGetStarted}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-dls-accent px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-[var(--dls-accent-hover)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)]"
-          >
-            {t("welcome.get_started")}
-          </button>
-        </div>
+    <div className="flex items-start gap-4">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-foreground/5 text-sm font-medium text-foreground">
+        {number}
+      </div>
+      <div className="flex flex-col gap-0.5 pt-1">
+        <div className="text-base font-medium text-foreground">{title}</div>
+        <div className="text-sm text-muted-foreground">{children}</div>
       </div>
     </div>
+  );
+}
+
+export function WelcomePage({ onGetStarted }: WelcomePageProps) {
+  return (
+    <Page className="min-h-screen">
+      <PageBackground />
+
+      <PageTitlebarRegion />
+
+      <ScrollArea className="relative z-10">
+        <div className="flex min-h-screen">
+        {/* ---- Left: onboarding steps ---- */}
+        <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
+          <div className="flex w-full max-w-md flex-col gap-10">
+            {/* Header */}
+            <PageHeader className="text-left">
+              <PageTitle>{t("welcome.title")}</PageTitle>
+              <PageDescription>{t("welcome.subtitle")}</PageDescription>
+            </PageHeader>
+
+            {/* Steps */}
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                  Get started
+                </h2>
+              </div>
+              <OnboardingStep number="1" title="Select a folder">
+                Pick any folder on your machine to create a workspace.
+              </OnboardingStep>
+              <OnboardingStep number="2" title="Chat">
+                Describe what you need. OpenWork handles the rest.
+              </OnboardingStep>
+              <OnboardingStep number="3" title="Interact">
+                Review results, approve actions, and iterate.
+              </OnboardingStep>
+            </div>
+
+            <Button
+              size="lg"
+              className="w-full"
+              onClick={onGetStarted}
+            >
+              {t("welcome.get_started")}
+            </Button>
+          </div>
+        </div>
+
+        {/* ---- Right: shader outer card > white inner card ---- */}
+        <div className="hidden lg:flex lg:w-[55%] lg:items-center lg:justify-center lg:p-6">
+          <div className="relative w-full max-w-xl overflow-hidden rounded-3xl">
+            {/* Shader background */}
+            <div className="absolute inset-0 z-0">
+              <PaperGrainGradient
+                className="size-full bg-white"
+                speed={0}
+                scale={1}
+                rotation={0}
+                offsetX={0}
+                offsetY={0}
+                softness={0.5}
+                intensity={0.5}
+                noise={0.25}
+                shape="corners"
+                frame={37706.748}
+                colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
+                colorBack="#00000000"
+              />
+            </div>
+
+            {/* Inner white card */}
+            <div className="relative z-10 m-3 rounded-2xl bg-background p-7">
+              <ShowcasePanel />
+            </div>
+          </div>
+        </div>
+        </div>
+      </ScrollArea>
+    </Page>
   );
 }

@@ -42,13 +42,22 @@ export const MemberTable = mysqlTable(
   {
     id: denTypeIdColumn("member", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    userId: denTypeIdColumn("user", "user_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id"),
+    inviteId: denTypeIdColumn("invitation", "invite_id"),
+    invitedByOrgMember: denTypeIdColumn("member", "invited_by_org_member"),
     role: varchar("role", { length: 255 }).notNull().default("member"),
+    joinedAt: timestamp("joined_at", { fsp: 3 }).defaultNow(),
+    removedAt: timestamp("removed_at", { fsp: 3 }),
+    removedByOrgMember: denTypeIdColumn("member", "removed_by_org_member"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
     index("member_organization_id").on(table.organizationId),
     index("member_user_id").on(table.userId),
+    index("member_invite_id").on(table.inviteId),
+    index("member_invited_by_org_member").on(table.invitedByOrgMember),
+    index("member_removed_at").on(table.removedAt),
+    index("member_removed_by_org_member").on(table.removedByOrgMember),
     uniqueIndex("member_organization_user").on(table.organizationId, table.userId),
   ],
 )
@@ -63,6 +72,8 @@ export const InvitationTable = mysqlTable(
     status: varchar("status", { length: 32 }).notNull().default("pending"),
     teamId: denTypeIdColumn("team", "team_id"),
     inviterId: denTypeIdColumn("user", "inviter_id").notNull(),
+    orgMemberId: denTypeIdColumn("member", "org_member_id"),
+    inviteToken: varchar("invite_token", { length: 64 }),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
@@ -71,6 +82,8 @@ export const InvitationTable = mysqlTable(
     index("invitation_email").on(table.email),
     index("invitation_status").on(table.status),
     index("invitation_team_id").on(table.teamId),
+    index("invitation_org_member_id").on(table.orgMemberId),
+    uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],
 )
 

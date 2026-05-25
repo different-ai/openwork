@@ -5,11 +5,16 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
+  openworkServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  type EngineInfo,
+  type OpenworkServerInfo,
+  type WorkspaceInfo,
+  type WorkspaceList,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
 import {
@@ -26,12 +31,21 @@ import { useBootState } from "./boot-state";
 // keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
-function isOpenworkServerReady(info?: {
+type BootOpenworkServerInfo = {
   running?: boolean | null;
   baseUrl?: string | null;
   ownerToken?: string | null;
   clientToken?: string | null;
-}) {
+  hostToken?: string | null;
+  port?: number | null;
+  remoteAccessEnabled?: boolean;
+};
+
+function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo {
+  return typeof info === "object" && info !== null;
+}
+
+function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
@@ -79,9 +93,10 @@ export function useDesktopRuntimeBoot() {
           }
         }
         hydrateOpenworkServerSettingsFromEnv();
+        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
 
         setPhase("bootstrapping-workspaces");
-        const list = await workspaceBootstrap().catch(() => null);
+        const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
         if (!list) {
           markReady();
           return;
@@ -112,14 +127,7 @@ export function useDesktopRuntimeBoot() {
             skipped?: boolean;
             error?: string;
             engine?: { baseUrl?: string | null };
-            openworkServer?: {
-              running?: boolean | null;
-              baseUrl?: string | null;
-              ownerToken?: string | null;
-              clientToken?: string | null;
-              port?: number | null;
-              remoteAccessEnabled?: boolean;
-            };
+            openworkServer?: BootOpenworkServerInfo;
           };
 
           if (boot.ok === false) {
@@ -135,8 +143,25 @@ export function useDesktopRuntimeBoot() {
           if (boot.engine?.baseUrl) {
             setActive(boot.engine.baseUrl);
           }
-          const serverInfo = boot.openworkServer;
+          let serverInfo = boot.openworkServer;
+          if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
+            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+              console.warn("[desktop-boot] openworkServerRestart failed:", error);
+              return null;
+            });
+            if (isOpenworkServerInfoLike(restarted)) serverInfo = restarted;
+          }
           if (serverInfo?.baseUrl) {
+            writeOpenworkServerSettings({
+              urlOverride: serverInfo.baseUrl,
+              token:
+                serverInfo.ownerToken?.trim() ||
+                serverInfo.clientToken?.trim() ||
+                undefined,
+              hostToken: serverInfo.hostToken?.trim() || undefined,
+              portOverride: serverInfo.port ?? undefined,
+              remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+            });
             try {
               window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
             } catch {
@@ -153,10 +178,10 @@ export function useDesktopRuntimeBoot() {
         // This mirrors Solid's bootstrap at context/workspace.ts:3883-3907
         // ("localAttachExisting"), which never restarts a running stack.
         try {
-          const engine = await engineInfo();
+          const engine = await engineInfo() as EngineInfo | null;
           if (engine?.running && engine.baseUrl) {
             setActive(engine.baseUrl);
-            const fresh = await openworkServerInfo().catch(() => null);
+            const fresh = await openworkServerInfo().catch(() => null) as OpenworkServerInfo | null;
             if (fresh?.baseUrl) {
               writeOpenworkServerSettings({
                 urlOverride: fresh.baseUrl,
@@ -186,14 +211,17 @@ export function useDesktopRuntimeBoot() {
         // SLOW PATH ─────────────────────────────────────────────────────
         // No running engine. Tauri now mirrors Electron: engine_start boots
         // openwork-server and lets that server manage OpenCode.
-        const localPaths = list.workspaces
-          .filter((entry) => entry.workspaceType !== "remote")
-          .map((entry) => entry.path?.trim() ?? "")
-          .filter((path): path is string => path.length > 0);
+        const localPaths = list.workspaces.flatMap((entry: WorkspaceInfo) => {
+          const path = entry.workspaceType !== "remote" ? entry.path?.trim() ?? "" : "";
+          return path ? [path] : [];
+        });
         const workspacePathsFor = (root: string) => {
           const paths = [root];
+          const pathSet = new Set(paths);
           for (const path of localPaths) {
-            if (!paths.includes(path)) paths.push(path);
+            if (pathSet.has(path)) continue;
+            paths.push(path);
+            pathSet.add(path);
           }
           return paths;
         };
@@ -206,7 +234,7 @@ export function useDesktopRuntimeBoot() {
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
-        });
+        }) as EngineInfo | null;
 
         if (!engineStartResult) {
           const fallback = list.workspaces.find((entry) => {
@@ -228,7 +256,7 @@ export function useDesktopRuntimeBoot() {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
               return null;
-            });
+            }) as EngineInfo | null;
             if (engineStartResult) {
               void workspaceSetSelected(fallback.id).catch(() => undefined);
               void workspaceSetRuntimeActive(fallback.id).catch(() => undefined);
@@ -243,7 +271,7 @@ export function useDesktopRuntimeBoot() {
             setActive(engineStartResult.baseUrl);
           }
           try {
-            const freshInfo = await openworkServerInfo();
+            const freshInfo = await openworkServerInfo() as OpenworkServerInfo | null;
             if (freshInfo?.baseUrl) {
               writeOpenworkServerSettings({
                 urlOverride: freshInfo.baseUrl,

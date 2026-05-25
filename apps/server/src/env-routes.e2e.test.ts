@@ -36,8 +36,8 @@ function baseConfig(): ServerConfig {
   } as ServerConfig;
 }
 
-function boot() {
-  const server = startServer(baseConfig()) as Served;
+async function boot() {
+  const server = await startServer(baseConfig()) as Served;
   stops.push(() => server.stop(true));
   return {
     server,
@@ -79,13 +79,13 @@ afterEach(async () => {
 
 describe("env routes", () => {
   test("rejects unauthenticated requests", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const response = await fetch(`${base}/env`);
     expect(response.status).toBe(401);
   });
 
   test("rejects owner bearer tokens", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const issued = await fetch(`${base}/tokens`, {
       method: "POST",
       headers: hostAuth(),
@@ -101,7 +101,7 @@ describe("env routes", () => {
   });
 
   test("CORS preflight allows PUT", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const response = await fetch(`${base}/env`, {
       method: "OPTIONS",
       headers: {
@@ -114,7 +114,7 @@ describe("env routes", () => {
   });
 
   test("PUT + GET round-trips a single entry and returns raw values", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -131,7 +131,7 @@ describe("env routes", () => {
   });
 
   test("GET /env/keys returns names without values", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -150,7 +150,7 @@ describe("env routes", () => {
 
   test("invalid env store returns 409 instead of overwriting on PUT", async () => {
     writeFileSync(process.env.OPENWORK_ENV_STORE!, "{ this is not json");
-    const { base } = boot();
+    const { base } = await boot();
 
     const put = await fetch(`${base}/env`, {
       method: "PUT",
@@ -164,7 +164,7 @@ describe("env routes", () => {
   });
 
   test("PUT accepts a batch via entries[]", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -185,7 +185,7 @@ describe("env routes", () => {
   });
 
   test("PUT rejects invalid keys with 400", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -199,7 +199,7 @@ describe("env routes", () => {
   });
 
   test("PUT rejects reserved keys with 400", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -213,7 +213,7 @@ describe("env routes", () => {
   });
 
   test("PUT with no entries returns 400", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -223,7 +223,7 @@ describe("env routes", () => {
   });
 
   test("DELETE removes an existing entry", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -240,13 +240,13 @@ describe("env routes", () => {
   });
 
   test("DELETE on missing key returns 404", async () => {
-    const { base } = boot();
+    const { base } = await boot();
     const del = await fetch(`${base}/env/MISSING`, { method: "DELETE", headers: hostAuth() });
     expect(del.status).toBe(404);
   });
 
   test("values persist across server restart", async () => {
-    const first = boot();
+    const first = await boot();
     await fetch(`${first.base}/env`, {
       method: "PUT",
       headers: hostAuth(),
@@ -255,7 +255,7 @@ describe("env routes", () => {
     await first.server.stop(true);
     stops.pop();
 
-    const second = boot();
+    const second = await boot();
     const body = (await (await fetch(`${second.base}/env`, { headers: hostAuth() })).json()) as {
       items: Array<{ key: string; value: string }>;
     };

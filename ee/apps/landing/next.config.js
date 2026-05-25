@@ -5,7 +5,7 @@ const mintlifyOrigin = "https://differentai.mintlify.dev";
 
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["@openwork/ui"],
+  transpilePackages: ["@openwork/email", "@openwork/ui"],
   async rewrites() {
     return [
       {

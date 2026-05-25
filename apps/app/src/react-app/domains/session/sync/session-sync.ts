@@ -1,21 +1,24 @@
 import type { UIMessage } from "ai";
-import type { Part, PermissionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { createClient } from "../../../../app/lib/opencode";
 import { normalizeEvent } from "../../../../app/utils";
-import type { OpencodeEvent, PendingPermission } from "../../../../app/types";
+import type { OpencodeEvent, PendingPermission, PendingQuestion } from "../../../../app/types";
 import { snapshotToUIMessages } from "./usechat-adapter";
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
-import { mergeSnapshotIntoCachedMessages } from "./message-merge";
+import { reconcileTranscriptMessages } from "./transcript-reconcile";
+import { useSessionActivityStore } from "../status/session-activity-store";
 
 type SyncOptions = {
   workspaceId: string;
   baseUrl: string;
   openworkToken: string;
+  onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
+  onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
 };
 
-type PendingDelta = {
+export type PendingDelta = {
   sessionId: string;
   messageId: string;
   partId: string;
@@ -24,9 +27,14 @@ type PendingDelta = {
 };
 
 type SyncEntry = {
+  input: SyncOptions;
   refs: number;
   dispose: () => void;
+  disposeTimer: ReturnType<typeof setTimeout> | null;
   trackedSessionRefs: Map<string, number>;
+  retainedSessionTimers: Map<string, ReturnType<typeof setTimeout>>;
+  sessionUpdatedListeners: Set<NonNullable<SyncOptions["onSessionUpdated"]>>;
+  sessionStatusListeners: Set<NonNullable<SyncOptions["onSessionStatus"]>>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
   // Coalesce rapid-fire delta events from the SSE stream into one cache
   // commit per animation frame. Without this, a long response produces a
@@ -39,6 +47,8 @@ type SyncEntry = {
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
+const retainedSessionTtlMs = 10 * 60_000;
+const idleRetainedSessionTtlMs = 10_000;
 
 export const transcriptKey = (workspaceId: string, sessionId: string) =>
   ["react-session-transcript", workspaceId, sessionId] as const;
@@ -48,6 +58,8 @@ export const todoKey = (workspaceId: string, sessionId: string) =>
   ["react-session-todos", workspaceId, sessionId] as const;
 export const permissionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-permissions", workspaceId, sessionId] as const;
+export const questionKey = (workspaceId: string, sessionId: string) =>
+  ["react-session-questions", workspaceId, sessionId] as const;
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.openworkToken}`;
@@ -70,14 +82,113 @@ function shouldRetrySyncSubscribe(error: unknown) {
 }
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
-  return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0;
+  return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
+}
+
+function getSessionUpdatedInfo(event: OpencodeEvent) {
+  if (event.type !== "session.updated") return null;
+  const props = event.properties;
+  if (!props || typeof props !== "object") return null;
+  const record = props as { sessionID?: unknown; info?: unknown };
+  const info = record.info;
+  if (!info || typeof info !== "object") return null;
+  const sessionId = typeof record.sessionID === "string"
+    ? record.sessionID
+    : typeof (info as { id?: unknown }).id === "string"
+      ? (info as { id: string }).id
+      : "";
+  if (!sessionId) return null;
+  return { sessionId, info: info as Record<string, unknown> };
+}
+
+function isLiveStatus(status: SessionStatus | null | undefined) {
+  return status?.type === "busy" || status?.type === "retry";
+}
+
+function messageHasVisibleAssistantOutput(message: UIMessage) {
+  if (message.role !== "assistant") return false;
+  return message.parts.some((part) => {
+    if ("text" in part && typeof part.text === "string") return part.text.trim().length > 0;
+    return part.type === "dynamic-tool" || part.type === "file";
+  });
+}
+
+function assistantOutputAfterLatestUser(messages: UIMessage[]) {
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  return messages.slice(lastUserIndex + 1).some(messageHasVisibleAssistantOutput);
+}
+
+function sessionIdFromProperties(properties: unknown) {
+  if (!properties || typeof properties !== "object") return "";
+  const sessionID = (properties as { sessionID?: unknown }).sessionID;
+  return typeof sessionID === "string" ? sessionID : "";
+}
+
+function partHasVisibleAssistantOutput(part: Part) {
+  const partType = String(part.type);
+  if ("text" in part && typeof part.text === "string" && part.text.trim().length > 0) return true;
+  return partType === "tool" || partType === "file" || partType === "agent";
+}
+
+function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  entry.trackedSessionRefs.delete(sessionId);
+  const retainedTimer = entry.retainedSessionTimers.get(sessionId);
+  if (retainedTimer) clearTimeout(retainedTimer);
+  entry.retainedSessionTimers.delete(sessionId);
+  entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+    (item) => item.sessionId !== sessionId,
+  );
+  const queryClient = getReactQueryClient();
+  queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+  if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
+    disposeWorkspaceSync(syncKey(input), entry);
+  }
+}
+
+function retainSession(input: SyncOptions, entry: SyncEntry, sessionId: string, ttlMs = retainedSessionTtlMs) {
+  const existing = entry.retainedSessionTimers.get(sessionId);
+  if (existing) clearTimeout(existing);
+  entry.retainedSessionTimers.set(sessionId, setTimeout(() => {
+    clearTrackedSession(input, entry, sessionId);
+  }, ttlMs));
+}
+
+function disposeWorkspaceSync(key: string, entry: SyncEntry) {
+  if (entry.refs > 0) return;
+  if (entry.disposeTimer) {
+    clearTimeout(entry.disposeTimer);
+    entry.disposeTimer = null;
+  }
+  for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
+  entry.retainedSessionTimers.clear();
+  entry.dispose();
+  if (syncs.get(key) === entry) syncs.delete(key);
+}
+
+function releaseRetainedSessionSoon(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  if (!entry.retainedSessionTimers.has(sessionId)) return;
+  retainSession(input, entry, sessionId, idleRetainedSessionTtlMs);
 }
 
 function withReceivedAt(permission: PermissionRequest, receivedAt: number): PendingPermission {
   return { ...permission, receivedAt };
 }
 
+function questionWithReceivedAt(question: QuestionRequest, receivedAt: number): PendingQuestion {
+  return { ...question, receivedAt };
+}
+
 function sortPermissions(a: PendingPermission, b: PendingPermission) {
+  return a.receivedAt - b.receivedAt || a.id.localeCompare(b.id);
+}
+
+function sortQuestions(a: PendingQuestion, b: PendingQuestion) {
   return a.receivedAt - b.receivedAt || a.id.localeCompare(b.id);
 }
 
@@ -87,13 +198,19 @@ export function seedPermissionState(
   permissions: PermissionRequest[],
   options: { snapshotStartedAt?: number } = {},
 ) {
+  useSessionActivityStore.getState().replaceWaitingRequests(
+    workspaceId,
+    sessionId,
+    "permission",
+    permissions.flatMap((permission) => permission.sessionID === sessionId ? [permission.id] : []),
+  );
   const queryClient = getReactQueryClient();
   const now = Date.now();
   queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
-    const seeded = permissions
-      .filter((permission) => permission.sessionID === sessionId)
-      .map((permission) => withReceivedAt(permission, receivedAtById.get(permission.id) ?? now));
+    const seeded = permissions.flatMap((permission) =>
+      permission.sessionID === sessionId ? [withReceivedAt(permission, receivedAtById.get(permission.id) ?? now)] : [],
+    );
     const seededIds = new Set(seeded.map((permission) => permission.id));
     const snapshotStartedAt = options.snapshotStartedAt;
     const liveAfterSnapshot =
@@ -106,6 +223,40 @@ export function seedPermissionState(
           )
         : [];
     return [...seeded, ...liveAfterSnapshot].sort(sortPermissions);
+  });
+}
+
+export function seedQuestionState(
+  workspaceId: string,
+  sessionId: string,
+  questions: QuestionRequest[],
+  options: { snapshotStartedAt?: number } = {},
+) {
+  useSessionActivityStore.getState().replaceWaitingRequests(
+    workspaceId,
+    sessionId,
+    "question",
+    questions.flatMap((question) => question.sessionID === sessionId ? [question.id] : []),
+  );
+  const queryClient = getReactQueryClient();
+  const now = Date.now();
+  queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) => {
+    const receivedAtById = new Map(current.map((question) => [question.id, question.receivedAt]));
+    const seeded = questions.flatMap((question) =>
+      question.sessionID === sessionId ? [questionWithReceivedAt(question, receivedAtById.get(question.id) ?? now)] : [],
+    );
+    const seededIds = new Set(seeded.map((question) => question.id));
+    const snapshotStartedAt = options.snapshotStartedAt;
+    const liveAfterSnapshot =
+      typeof snapshotStartedAt === "number"
+        ? current.filter(
+            (question) =>
+              question.sessionID === sessionId &&
+              question.receivedAt > snapshotStartedAt &&
+              !seededIds.has(question.id),
+          )
+        : [];
+    return [...seeded, ...liveAfterSnapshot].sort(sortQuestions);
   });
 }
 
@@ -302,14 +453,72 @@ function appendDelta(messages: UIMessage[], messageId: string, partId: string, d
   return nextMessages;
 }
 
+export function coalescePendingDeltas(items: PendingDelta[]) {
+  if (items.length < 2) return items;
+
+  const ordered: PendingDelta[] = [];
+  const byKey = new Map<string, PendingDelta>();
+  for (const item of items) {
+    const key = `${item.sessionId}\u0000${item.messageId}\u0000${item.partId}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.delta += item.delta;
+      existing.reasoning = existing.reasoning || item.reasoning;
+      continue;
+    }
+
+    const next = { ...item };
+    byKey.set(key, next);
+    ordered.push(next);
+  }
+  return ordered;
+}
+
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
+  const input = entry.input;
+
+  if (event.type === "session.updated") {
+    const update = getSessionUpdatedInfo(event);
+    if (!update) return;
+    if (!isTrackedSession(entry, update.sessionId)) return;
+    for (const listener of entry.sessionUpdatedListeners) listener(update);
+    return;
+  }
+
+  if (event.type === "session.deleted") {
+    const props = (event.properties ?? {}) as { sessionID?: string; info?: { id?: string } };
+    const sessionId = props.sessionID ?? props.info?.id ?? "";
+    if (sessionId) useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    return;
+  }
+
+  if (event.type === "session.error") {
+    const sessionId = sessionIdFromProperties(event.properties);
+    if (sessionId) useSessionActivityStore.getState().setError(workspaceId, sessionId);
+    return;
+  }
+
+  if (event.type === "session.next.compaction.started") {
+    const sessionId = sessionIdFromProperties(event.properties);
+    if (sessionId) useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, true);
+    return;
+  }
+
+  if (event.type === "session.next.compaction.ended" || event.type === "session.compacted") {
+    const sessionId = sessionIdFromProperties(event.properties);
+    if (sessionId) useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, false);
+    return;
+  }
 
   if (event.type === "session.status") {
     const props = (event.properties ?? {}) as { sessionID?: string; status?: SessionStatus };
     if (!props.sessionID || !props.status) return;
-    if (!isTrackedSession(entry, props.sessionID)) return;
-    queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+    useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, props.status);
+    const tracked = isTrackedSession(entry, props.sessionID);
+    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+    for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: props.status });
+    if (input && tracked && !isLiveStatus(props.status)) releaseRetainedSessionSoon(input, entry, props.sessionID);
     return;
   }
 
@@ -324,6 +533,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "permission.asked") {
     const permission = event.properties as PermissionRequest;
     if (!permission?.id || !permission.sessionID) return;
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
     if (!isTrackedSession(entry, permission.sessionID)) return;
     const receivedAt = Date.now();
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
@@ -340,6 +550,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "permission.replied") {
     const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
     if (!props.sessionID || !props.requestID) return;
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, props.sessionID, "permission", props.requestID, false);
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((permission) => permission.id !== props.requestID),
@@ -347,14 +558,51 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
+  if (event.type === "question.asked") {
+    const question = event.properties as QuestionRequest;
+    if (!question?.id || !question.sessionID) return;
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, question.sessionID, "question", question.id, true);
+    if (!isTrackedSession(entry, question.sessionID)) return;
+    const receivedAt = Date.now();
+    queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, question.sessionID), (current = []) => {
+      const existing = current.find((item) => item.id === question.id);
+      const next = questionWithReceivedAt(question, existing?.receivedAt ?? receivedAt);
+      if (existing) {
+        return current.map((item) => (item.id === question.id ? next : item)).sort(sortQuestions);
+      }
+      return [...current, next].sort(sortQuestions);
+    });
+    return;
+  }
+
+  if (event.type === "question.replied" || event.type === "question.rejected") {
+    const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
+    if (!props.sessionID || !props.requestID) return;
+    useSessionActivityStore.getState().setWaitingRequest(workspaceId, props.sessionID, "question", props.requestID, false);
+    if (!isTrackedSession(entry, props.sessionID)) return;
+    queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, props.sessionID), (current = []) =>
+      current.filter((question) => question.id !== props.requestID),
+    );
+    return;
+  }
+
   if (event.type === "message.updated") {
-    const props = (event.properties ?? {}) as { info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string } };
+    const props = (event.properties ?? {}) as {
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number } };
+    };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
+    useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (!isTrackedSession(entry, info.sessionID)) return;
-    const next = { id: info.id, role: info.role, parts: [] } satisfies UIMessage;
+    const created = info.time?.created;
+    const next = {
+      id: info.id,
+      role: info.role,
+      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      parts: [],
+    } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
       upsertMessage(current, next),
     );
@@ -365,14 +613,41 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
+    if (partHasVisibleAssistantOutput(part)) {
+      useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
+    }
     if (!isTrackedSession(entry, part.sessionID)) return;
     const mapped = toUIPart(part);
     if (!mapped) return;
     const pending = entry.pendingDeltas.get(part.id);
+    // Seed the new part with any deltas that arrived before this
+    // declaration. We deliberately ignore `pending.reasoning` — it
+    // can't be trusted because opencode emits `field: "text"` for
+    // both text and reasoning streams. The part's actual kind
+    // (`mapped.type`) is the source of truth.
+    //
+    // Both `pending.text` and `mapped.text` are cumulative views of the
+    // same stream, so we keep whichever is longer instead of
+    // concatenating (concatenation double-counts the bytes that landed
+    // in both). Without this, reasoning text shows up duplicated in the
+    // streaming UI.
     const seededPart =
-      pending && ((mapped.type === "text" && !pending.reasoning) || (mapped.type === "reasoning" && pending.reasoning))
-        ? { ...mapped, text: `${mapped.text}${pending.text}`, state: "streaming" as const }
+      pending && (mapped.type === "text" || mapped.type === "reasoning")
+        ? {
+            ...mapped,
+            text: pending.text.length > mapped.text.length ? pending.text : mapped.text,
+            state: "streaming" as const,
+          }
         : mapped;
+    // Drop any deltas for this partID still queued in the rAF flush
+    // buffer — they've already been incorporated into `mapped.text`.
+    // Without this, the rAF flush would re-append them on top of the
+    // cumulative text we just wrote, duplicating bytes mid-stream.
+    if (entry.deltaFlushBuffer.length > 0) {
+      entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+        (item) => item.partId !== part.id,
+      );
+    }
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
       // If we already have this message, keep its role; otherwise infer
       // from the alternation pattern. Only the newly-stubbed case needs
@@ -397,14 +672,19 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
+    useSessionActivityStore.getState().markAssistantOutput(workspaceId, props.sessionID, props.messageID, { allowUnknownMessageRole: true });
     if (!isTrackedSession(entry, props.sessionID)) return;
-    // Buffer this delta and let the frame flusher apply all queued deltas
-    // for this entry in a single setQueryData call per affected session.
+    // Note: we do NOT trust `props.field` to disambiguate reasoning vs
+    // text. Opencode emits `field: "text"` for both kinds; the actual
+    // distinction lives on the part's `type`, which we only see via
+    // `message.part.updated`. The flusher resolves the kind at apply
+    // time, falling back to `pendingDeltas` if the part hasn't been
+    // declared yet.
     entry.deltaFlushBuffer.push({
       sessionId: props.sessionID!,
       messageId: props.messageID!,
       partId: props.partID!,
-      reasoning: props.field === "reasoning",
+      reasoning: false,
       delta: props.delta!,
     });
     scheduleDeltaFlush(entry, workspaceId);
@@ -414,8 +694,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.idle") {
     const props = (event.properties ?? {}) as { sessionID?: string };
     if (!props.sessionID) return;
-    if (!isTrackedSession(entry, props.sessionID)) return;
-    queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
+    const tracked = isTrackedSession(entry, props.sessionID);
+    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: idleStatus });
+    if (input && tracked) releaseRetainedSessionSoon(input, entry, props.sessionID);
   }
 }
 
@@ -427,8 +710,14 @@ function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
     if (entry.deltaFlushBuffer.length === 0) return;
     flushDeltas(entry, workspaceId);
   };
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.requestAnimationFrame === "function" &&
+    (typeof document === "undefined" || document.visibilityState === "visible")
+  ) {
     window.requestAnimationFrame(run);
+  } else if (typeof window !== "undefined") {
+    window.setTimeout(run, 50);
   } else {
     queueMicrotask(run);
   }
@@ -436,7 +725,7 @@ function scheduleDeltaFlush(entry: SyncEntry, workspaceId: string) {
 
 function flushDeltas(entry: SyncEntry, workspaceId: string) {
   const queryClient = getReactQueryClient();
-  const pending = entry.deltaFlushBuffer;
+  const pending = coalescePendingDeltas(entry.deltaFlushBuffer);
   entry.deltaFlushBuffer = [];
 
   // Group by session id so each transcript cache is touched at most once
@@ -453,6 +742,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
       transcriptKey(workspaceId, sessionId),
       (current = []) => {
         let next = current;
+        const nextById = new Map(next.map((message) => [message.id, message]));
         // Track which message shells we've ensured exist this flush so we
         // don't call upsertMessage for the same message on every delta.
         const ensuredMessageIds = new Set<string>();
@@ -462,20 +752,32 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             // state; otherwise infer it from the alternation pattern
             // so the brief "stub before message.updated" window doesn't
             // mislabel the message's bubble style.
-            const existing = next.find((m) => m.id === item.messageId);
+            const existing = nextById.get(item.messageId);
             const role = existing?.role ?? inferStubRole(next);
-            next = upsertMessage(next, { id: item.messageId, role, parts: [] });
+            const ensuredMessage = { id: item.messageId, role, parts: existing?.parts ?? [] };
+            next = upsertMessage(next, ensuredMessage);
+            nextById.set(item.messageId, ensuredMessage);
             ensuredMessageIds.add(item.messageId);
           }
-          next = appendDelta(next, item.messageId, item.partId, item.delta, item.reasoning);
-          // If the delta landed on a synthetic "no matching part" case, keep
-          // the text so a later message.part.updated event can stitch it.
-          const message = next.find((m) => m.id === item.messageId);
-          const matched = message?.parts.some((part) =>
-            (part.type === "dynamic-tool" && part.toolCallId === item.partId) ||
-              getPartMetadataId(part) === item.partId,
+          // Resolve the part kind from the transcript instead of trusting
+          // the inbound delta event (opencode emits `field: "text"` for
+          // both text and reasoning parts). If the part hasn't been
+          // declared yet via `message.part.updated`, defer the delta into
+          // `entry.pendingDeltas` so the part can be created with the
+          // correct kind later. Without this, every delta lands as a text
+          // part — and reasoning content leaks into the response markdown
+          // until the next reload reconstructs the transcript from the
+          // snapshot.
+          const ownerMessage = nextById.get(item.messageId);
+          const ownerPartsById = new Map(
+            (ownerMessage?.parts ?? []).flatMap((part) => {
+              const id = part.type === "dynamic-tool" ? part.toolCallId : getPartMetadataId(part);
+              return id ? [[id, part] as const] : [];
+            }),
           );
-          if (!matched) {
+          const ownerPart = ownerPartsById.get(item.partId);
+
+          if (!ownerPart) {
             const existing = entry.pendingDeltas.get(item.partId) ?? {
               messageId: item.messageId,
               reasoning: item.reasoning,
@@ -483,7 +785,11 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             };
             existing.text += item.delta;
             entry.pendingDeltas.set(item.partId, existing);
+            continue;
           }
+
+          const reasoning = ownerPart.type === "reasoning";
+          next = appendDelta(next, item.messageId, item.partId, item.delta, reasoning);
         }
         return next;
       },
@@ -497,10 +803,15 @@ function startSync(input: SyncOptions) {
   const entry = syncs.get(syncKey(input));
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let activeConnectionController: AbortController | null = null;
+  let lastEventAt = Date.now();
   let retryDelayMs = 1_000;
+  const staleStreamMs = 30_000;
 
   const scheduleRetry = () => {
     if (disposed || controller.signal.aborted || retryTimer) return;
+    activeConnectionController = null;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       void connect();
@@ -509,27 +820,48 @@ function startSync(input: SyncOptions) {
   };
 
   const connect = async () => {
+    const connectionController = new AbortController();
+    activeConnectionController = connectionController;
     try {
-      const sub = await client.event.subscribe(undefined, { signal: controller.signal });
+      const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
       retryDelayMs = 1_000;
+      lastEventAt = Date.now();
       for await (const raw of sub.stream) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || connectionController.signal.aborted) return;
+        lastEventAt = Date.now();
         const event = normalizeEvent(raw);
         if (!event) continue;
         if (!entry) continue;
         applyEvent(entry, input.workspaceId, event);
       }
-      if (!controller.signal.aborted) scheduleRetry();
+      if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
-      if (!controller.signal.aborted && shouldRetrySyncSubscribe(error)) scheduleRetry();
+      if (
+        !controller.signal.aborted &&
+        (connectionController.signal.aborted || shouldRetrySyncSubscribe(error))
+      ) {
+        scheduleRetry();
+      }
+    } finally {
+      if (activeConnectionController === connectionController) activeConnectionController = null;
     }
   };
 
   void connect();
+  watchdogTimer = setInterval(() => {
+    if (disposed || controller.signal.aborted || retryTimer) return;
+    const active = activeConnectionController;
+    if (!active || active.signal.aborted) return;
+    if (Date.now() - lastEventAt < staleStreamMs) return;
+    active.abort();
+    scheduleRetry();
+  }, 10_000);
 
   return () => {
     disposed = true;
     if (retryTimer) clearTimeout(retryTimer);
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    activeConnectionController?.abort();
     controller.abort();
   };
 }
@@ -538,14 +870,25 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
+    if (existing.disposeTimer) {
+      clearTimeout(existing.disposeTimer);
+      existing.disposeTimer = null;
+    }
+    if (input.onSessionUpdated) existing.sessionUpdatedListeners.add(input.onSessionUpdated);
+    if (input.onSessionStatus) existing.sessionStatusListeners.add(input.onSessionStatus);
     existing.refs += 1;
     return () => releaseWorkspaceSessionSync(input);
   }
 
   syncs.set(key, {
+    input,
     refs: 1,
     dispose: () => {},
+    disposeTimer: null,
     trackedSessionRefs: new Map(),
+    retainedSessionTimers: new Map(),
+    sessionUpdatedListeners: new Set(input.onSessionUpdated ? [input.onSessionUpdated] : []),
+    sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     pendingDeltas: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
@@ -561,15 +904,13 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (!existing) return;
+  if (input.onSessionUpdated) existing.sessionUpdatedListeners.delete(input.onSessionUpdated);
+  if (input.onSessionStatus) existing.sessionStatusListeners.delete(input.onSessionStatus);
   existing.refs -= 1;
   if (existing.refs > 0) return;
-  // Immediate disposal is important here: a single OpenCode runtime is shared
-  // across local workspaces, and keeping old workspace subscriptions alive for
-  // 10s means rapid workspace switches accumulate multiple parallel event
-  // streams. Under larger transcripts that duplicates cache writes and can make
-  // the UI feel frozen after a handful of switches.
-  existing.dispose();
-  syncs.delete(key);
+  if (existing.retainedSessionTimers.size === 0) {
+    disposeWorkspaceSync(key, existing);
+  }
 }
 
 export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
@@ -578,16 +919,18 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionS
   const incoming = snapshotToUIMessages(snapshot);
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
-  if (existing && existing.length > 0 && (snapshot.status.type === "busy" || snapshot.status.type === "retry")) {
-    // During active streaming the server snapshot may have empty/stale text
-    // for in-progress parts while the cache already accumulated text via
-    // deltas.  Merge so we never overwrite longer cached text with shorter
-    // server text.
-    const merged = mergeSnapshotIntoCachedMessages(incoming, existing);
-    queryClient.setQueryData(key, merged);
-  } else {
-    queryClient.setQueryData(key, incoming);
-  }
+  useSessionActivityStore.getState().seedSessionRun(
+    workspaceId,
+    snapshot.session.id,
+    snapshot.status,
+    assistantOutputAfterLatestUser(incoming),
+  );
+
+  queryClient.setQueryData(key, reconcileTranscriptMessages({
+    currentMessages: existing ?? [],
+    snapshotMessages: incoming,
+    reason: "snapshot",
+  }));
 
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
   queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
@@ -600,6 +943,12 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
   const entry = syncs.get(syncKey(input));
   if (!entry) return () => {};
 
+  const retainedTimer = entry.retainedSessionTimers.get(normalizedSessionId);
+  if (retainedTimer) {
+    clearTimeout(retainedTimer);
+    entry.retainedSessionTimers.delete(normalizedSessionId);
+  }
+
   entry.trackedSessionRefs.set(
     normalizedSessionId,
     (entry.trackedSessionRefs.get(normalizedSessionId) ?? 0) + 1,
@@ -609,13 +958,64 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;
     if (current <= 1) {
       entry.trackedSessionRefs.delete(normalizedSessionId);
-      entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
-        (item) => item.sessionId !== normalizedSessionId,
-      );
-      const queryClient = getReactQueryClient();
-      queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, normalizedSessionId), exact: true });
+      retainSession(input, entry, normalizedSessionId);
       return;
     }
     entry.trackedSessionRefs.set(normalizedSessionId, current - 1);
   };
+}
+
+export function trackWorkspaceSessionsSync(input: SyncOptions, sessionIds: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const releases = sessionIds.flatMap((sessionId) => {
+    const id = sessionId?.trim() ?? "";
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    return [trackWorkspaceSessionSync(input, id)];
+  });
+  return () => {
+    for (const release of releases) release();
+  };
+}
+
+export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
+  const key = syncKey(input);
+  syncs.set(key, {
+    input,
+    refs: 1,
+    dispose: () => {},
+    disposeTimer: null,
+    trackedSessionRefs: new Map(),
+    retainedSessionTimers: new Map(),
+    sessionUpdatedListeners: new Set(),
+    sessionStatusListeners: new Set(),
+    pendingDeltas: new Map(),
+    deltaFlushBuffer: [],
+    deltaFlushScheduled: false,
+  });
+  return () => {
+    const entry = syncs.get(key);
+    if (entry) {
+      for (const timer of entry.retainedSessionTimers.values()) clearTimeout(timer);
+    }
+    syncs.delete(key);
+  };
+}
+
+export function __hasWorkspaceSessionSyncForTest(input: SyncOptions) {
+  return syncs.has(syncKey(input));
+}
+
+export function __disposeWorkspaceSessionSyncForTest(input: SyncOptions) {
+  const key = syncKey(input);
+  const entry = syncs.get(key);
+  if (!entry) return;
+  entry.refs = 0;
+  disposeWorkspaceSync(key, entry);
+}
+
+export function __applySessionSyncEventForTest(input: SyncOptions, event: OpencodeEvent) {
+  const entry = syncs.get(syncKey(input));
+  if (!entry) return;
+  applyEvent(entry, input.workspaceId, event);
 }

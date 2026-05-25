@@ -291,10 +291,6 @@ const initialMcpServers: McpServerEntry[] = [
     name: "linear",
     config: { type: "remote", url: "https://mcp.linear.app/mcp", enabled: true },
   },
-  {
-    name: "chrome-devtools",
-    config: { type: "local", command: ["npx", "-y", "chrome-devtools-mcp@latest"], enabled: true },
-  },
 ];
 
 function toMessageParts(id: string, role: "user" | "assistant", text: string): MessageWithParts {
@@ -345,7 +341,7 @@ export default function NewLayoutApp() {
   const [hubSkills] = createSignal<HubSkillCard[]>(initialHubSkills);
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginInput, setPluginInput] = createSignal("");
-  const [pluginList, setPluginList] = createSignal<string[]>(["@openwork/browser-mcp"]);
+  const [pluginList, setPluginList] = createSignal<string[]>(["opencode-chrome-devtools"]);
   const [pluginStatus, setPluginStatus] = createSignal<string | null>("Sandbox plugin config loaded.");
   const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>("notion");

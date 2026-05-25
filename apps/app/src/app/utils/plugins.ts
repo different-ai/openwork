@@ -11,9 +11,10 @@ type PluginConfig = {
 export function normalizePluginList(value: PluginListValue) {
   if (!value) return [] as string[];
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-      .filter((entry) => entry.length > 0);
+    return value.flatMap((entry) => {
+      const trimmed = typeof entry === "string" ? entry.trim() : "";
+      return trimmed ? [trimmed] : [];
+    });
   }
   if (typeof value === "string") {
     const trimmed = value.trim();

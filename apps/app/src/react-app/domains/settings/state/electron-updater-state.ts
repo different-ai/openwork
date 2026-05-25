@@ -1,10 +1,10 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { DenDesktopConfig } from "../../../../app/lib/den";
 import { isAlphaUpdateAllowed, isUpdateAllowed } from "../../../../app/lib/version-gate";
 import type { ReleaseChannel } from "../../../../app/types";
-import { isElectronRuntime, isTauriRuntime, safeStringify } from "../../../../app/utils";
+import { isElectronRuntime, safeStringify } from "../../../../app/utils";
 
 export type SettingsUpdateStatus = {
   state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
@@ -20,20 +20,38 @@ export type SettingsUpdateStatus = {
 type ElectronUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"] & {
   onDownloadProgress?: (callback: (data: { transferred: number; total: number; percent: number; bytesPerSecond: number }) => void) => (() => void);
 };
-type TauriUpdate = {
-  version?: string;
-  date?: string;
-  body?: string;
-  downloadAndInstall?: (handler?: (event: unknown) => void) => Promise<void>;
-};
-
 type UseElectronUpdaterStateOptions = {
   releaseChannel: ReleaseChannel;
   onReleaseChannelChange: (next: ReleaseChannel) => void;
+  updateAutoCheck: boolean;
   updateAutoDownload: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   setError: (message: string | null) => void;
 };
+
+type ElectronUpdaterEnvState = {
+  appVersion: string | null;
+  updateEnv: { supported?: boolean; reason?: string | null } | null;
+};
+
+type ElectronUpdaterEnvAction =
+  | { type: "app-version"; appVersion: string | null }
+  | { type: "unsupported"; reason: string };
+
+function electronUpdaterEnvReducer(
+  state: ElectronUpdaterEnvState,
+  action: ElectronUpdaterEnvAction,
+): ElectronUpdaterEnvState {
+  switch (action.type) {
+    case "app-version":
+      return { ...state, appVersion: action.appVersion };
+    case "unsupported":
+      return {
+        ...state,
+        updateEnv: { supported: false, reason: action.reason },
+      };
+  }
+}
 
 function electronUpdaterBridge(): ElectronUpdaterBridge | null {
   if (typeof window === "undefined") return null;
@@ -50,14 +68,14 @@ function releaseNotesToText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     return value
-      .map((entry) => {
+      .flatMap((entry) => {
         if (typeof entry === "string") return entry;
         if (entry && typeof entry === "object" && "note" in entry) {
-          return String((entry as { note?: unknown }).note ?? "");
+          const note = String((entry as { note?: unknown }).note ?? "");
+          return note ? [note] : [];
         }
-        return "";
+        return [];
       })
-      .filter(Boolean)
       .join("\n\n") || undefined;
   }
   return undefined;
@@ -75,30 +93,20 @@ function updateProgress(event: unknown): { downloaded?: number; total?: number }
 }
 
 export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions) {
-  const { releaseChannel, onReleaseChannelChange, updateAutoDownload, desktopConfig, setError } = options;
+  const { releaseChannel, onReleaseChannelChange, updateAutoCheck, updateAutoDownload, desktopConfig, setError } = options;
   const [updateStatus, setUpdateStatus] = useState<SettingsUpdateStatus>(null);
-  const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [updateEnv, setUpdateEnv] = useState<{ supported?: boolean; reason?: string | null } | null>(null);
-  const tauriUpdateRef = useRef<TauriUpdate | null>(null);
+  const [envState, dispatchEnvState] = useReducer(electronUpdaterEnvReducer, {
+    appVersion: null,
+    updateEnv: null,
+  });
+  const { appVersion, updateEnv } = envState;
+  const autoCheckKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (isTauriRuntime()) {
-      let cancelled = false;
-      void import("@tauri-apps/api/app")
-        .then(({ getVersion }) => getVersion())
-        .then((version) => {
-          if (!cancelled) setAppVersion(version ?? null);
-        })
-        .catch(() => undefined);
-      return () => {
-        cancelled = true;
-      };
-    }
-
     if (!isElectronRuntime()) return;
     const bridge = electronUpdaterBridge();
     if (!bridge?.getChannel) {
-      setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+      dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
       return;
     }
     let cancelled = false;
@@ -106,11 +114,11 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       .getChannel()
       .then(async (state) => {
         if (cancelled) return;
-        setAppVersion(state.currentVersion ?? null);
+        dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== releaseChannel && bridge.setChannel) {
           const nextState = await bridge.setChannel(releaseChannel);
           if (cancelled) return;
-          setAppVersion(nextState.currentVersion ?? null);
+          dispatchEnvState({ type: "app-version", appVersion: nextState.currentVersion ?? null });
           if (nextState.channel && nextState.channel !== releaseChannel) {
             onReleaseChannelChange(nextState.channel);
           }
@@ -118,7 +126,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       })
       .catch(() => {
         if (!cancelled) {
-          setUpdateEnv({ supported: false, reason: "Electron updater bridge is unavailable." });
+          dispatchEnvState({ type: "unsupported", reason: "Electron updater bridge is unavailable." });
         }
       });
     return () => {
@@ -126,56 +134,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     };
   }, [onReleaseChannelChange, releaseChannel]);
 
-  const downloadUpdate = useCallback(async () => {
-    if (isTauriRuntime()) {
-      let update = tauriUpdateRef.current;
-      if (!update) {
-        const { check } = await import("@tauri-apps/plugin-updater");
-        update = (await check()) as TauriUpdate | null;
-        tauriUpdateRef.current = update;
-      }
-      if (!update?.downloadAndInstall) {
-        setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
-        return;
-      }
-      const allowed = update.version
-        ? releaseChannel === "alpha"
-          ? await isAlphaUpdateAllowed(update.version, desktopConfig)
-          : await isUpdateAllowed(update.version, desktopConfig)
-        : true;
-      if (!allowed) {
-        tauriUpdateRef.current = null;
-        setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
-        return;
-      }
-      let downloadedBytes = 0;
-      setUpdateStatus({
-        state: "downloading",
-        version: update.version,
-        date: update.date,
-        notes: update.body,
-        downloadedBytes: 0,
-        totalBytes: null,
-      });
-      await update.downloadAndInstall((event) => {
-        const progress = updateProgress(event);
-        if (!progress) return;
-        downloadedBytes += progress.downloaded ?? 0;
-        setUpdateStatus((current) => ({
-          ...(current ?? {}),
-          state: "downloading",
-          downloadedBytes,
-          totalBytes: progress.total ?? current?.totalBytes ?? null,
-        }));
-      });
-      setUpdateStatus((current) => ({
-        ...(current ?? {}),
-        state: "ready",
-        downloadedBytes,
-      }));
-      return;
-    }
-
+  const downloadUpdate = useCallback(async (channelOverride?: ReleaseChannel) => {
     const bridge = electronUpdaterBridge();
     if (!bridge?.download) {
       const message = "Electron updater downloads are available only in the Electron desktop app.";
@@ -219,42 +178,8 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     }
   }, [desktopConfig, releaseChannel, setError]);
 
-  const checkForUpdates = useCallback(async () => {
-    if (isTauriRuntime()) {
-      setUpdateStatus({ state: "checking" });
-      try {
-        const { check } = await import("@tauri-apps/plugin-updater");
-        const update = (await check()) as TauriUpdate | null;
-        const allowed = !update?.version
-          ? true
-          : releaseChannel === "alpha"
-            ? await isAlphaUpdateAllowed(update.version, desktopConfig)
-            : await isUpdateAllowed(update.version, desktopConfig);
-        if (!allowed) {
-          tauriUpdateRef.current = null;
-          setUpdateStatus({ state: "idle", lastCheckedAt: Date.now() });
-          return;
-        }
-        tauriUpdateRef.current = update;
-        const nextStatus: Exclude<SettingsUpdateStatus, null> = update
-          ? {
-              state: "available",
-              lastCheckedAt: Date.now(),
-              version: update.version,
-              date: update.date,
-              notes: update.body,
-            }
-          : { state: "idle", lastCheckedAt: Date.now() };
-        setUpdateStatus(nextStatus);
-        if (update && updateAutoDownload) {
-          await downloadUpdate();
-        }
-      } catch (error) {
-        setUpdateStatus({ state: "error", message: describeError(error) });
-      }
-      return;
-    }
-
+  const checkForUpdates = useCallback(async (channelOverride?: ReleaseChannel) => {
+    const activeReleaseChannel = channelOverride ?? releaseChannel;
     const bridge = electronUpdaterBridge();
     if (!bridge?.check) {
       const message = "Electron update checks are available only in the Electron desktop app.";
@@ -265,8 +190,8 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
     setUpdateStatus({ state: "checking" });
     try {
-      const result = await bridge.check();
-      setAppVersion(result.currentVersion ?? null);
+      const result = await bridge.check(activeReleaseChannel);
+      dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
       if (result.channel && result.channel !== releaseChannel) {
         onReleaseChannelChange(result.channel);
       }
@@ -282,8 +207,9 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
 
+      const checkedReleaseChannel = result.channel ?? activeReleaseChannel;
       const availableAllowed = result.available && result.latestVersion
-        ? releaseChannel === "alpha"
+        ? checkedReleaseChannel === "alpha"
           ? await isAlphaUpdateAllowed(result.latestVersion, desktopConfig)
           : await isUpdateAllowed(result.latestVersion, desktopConfig)
         : result.available;
@@ -304,24 +230,22 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           };
       setUpdateStatus(nextStatus);
       if (availableAllowed && updateAutoDownload) {
-        await downloadUpdate();
+        await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
       setUpdateStatus({ state: "error", message: describeError(error) });
     }
   }, [desktopConfig, downloadUpdate, onReleaseChannelChange, releaseChannel, setError, updateAutoDownload]);
 
-  const installUpdateAndRestart = useCallback(async () => {
-    if (isTauriRuntime()) {
-      try {
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
-      } catch (error) {
-        setUpdateStatus({ state: "error", message: describeError(error) });
-      }
-      return;
-    }
+  useEffect(() => {
+    if (!updateAutoCheck || updateEnv?.supported === false) return;
+    const key = `${releaseChannel}:${appVersion ?? "unknown"}`;
+    if (autoCheckKeyRef.current === key) return;
+    autoCheckKeyRef.current = key;
+    void checkForUpdates();
+  }, [appVersion, checkForUpdates, releaseChannel, updateAutoCheck, updateEnv?.supported]);
 
+  const installUpdateAndRestart = useCallback(async () => {
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
       const message = "Electron update install is available only in the Electron desktop app.";
@@ -342,16 +266,16 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (!bridge?.setChannel) return;
       try {
         const state = await bridge.setChannel(next);
-        setAppVersion(state.currentVersion ?? null);
+        dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== next) {
           onReleaseChannelChange(state.channel);
         }
-        setUpdateStatus({ state: "idle", lastCheckedAt: null });
+        await checkForUpdates(state.channel ?? next);
       } catch (error) {
         setUpdateStatus({ state: "error", message: describeError(error) });
       }
     },
-    [onReleaseChannelChange],
+    [checkForUpdates, onReleaseChannelChange],
   );
 
   return {

@@ -1,0 +1,27 @@
+{
+  "name": "@openwork-ee/inference",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "models:build": "node scripts/build-models.mjs",
+    "dev": "pnpm run models:build && tsx watch src/server.ts",
+    "dev:local": "sh -lc 'OPENWORK_DEV_MODE=1 pnpm run models:build && OPENWORK_DEV_MODE=1 PORT=${INFERENCE_PORT:-8791} tsx watch src/server.ts'",
+    "build": "pnpm run models:build && tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/utils": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.7.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.15.7",
+    "typescript": "^5.5.4"
+  }
+}

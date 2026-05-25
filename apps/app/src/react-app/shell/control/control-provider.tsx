@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -388,7 +388,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
 }
 
 export function useOpenworkControl() {
-  return useContext(OpenworkControlContext);
+  return use(OpenworkControlContext);
 }
 
 export function useControlAction(action: OpenworkControlAction | null | false | undefined) {
@@ -437,6 +437,20 @@ export function OpenworkRouteControlActions() {
       execute: () => navigate("/settings/skills"),
     },
     {
+      id: "route.settings.providers",
+      label: "Open provider settings",
+      description: "Navigate to AI provider settings.",
+      sideEffect: "navigation",
+      execute: () => navigate("/settings/ai"),
+    },
+    {
+      id: "route.settings.authorized_folders",
+      label: "Open authorized folder settings",
+      description: "Navigate to authorized folders and file access settings.",
+      sideEffect: "navigation",
+      execute: () => navigate("/settings/permissions"),
+    },
+    {
       id: "route.settings.appearance",
       label: "Open appearance settings",
       description: "Navigate to appearance settings.",
@@ -450,5 +464,7 @@ export function OpenworkRouteControlActions() {
   useControlAction(actions[2]);
   useControlAction(actions[3]);
   useControlAction(actions[4]);
+  useControlAction(actions[5]);
+  useControlAction(actions[6]);
   return null;
 }

@@ -3,8 +3,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useState,
+  useReducer,
   type KeyboardEvent as ReactKeyboardEvent,
+  type SetStateAction,
 } from "react";
 import {
   ArrowLeft,
@@ -23,12 +24,20 @@ import {
   Trash2,
   Upload,
   Users,
-  X,
 } from "lucide-react";
 
-import { t } from "../../../../i18n";
-import type { SkillBundleV1 } from "../../../../app/bundles/types";
-import { saveInstalledSkillToOpenWorkOrg } from "../../../../app/bundles/skill-org-publish";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { t } from "@/i18n";
+import type { SkillBundleV1 } from "@/app/bundles";
+import { saveInstalledSkillToOpenWorkOrg } from "@/app/bundles/skill-org-publish";
 import {
   buildDenAuthUrl,
   createDenClient,
@@ -48,21 +57,15 @@ import type {
 } from "../../../../app/types";
 import {
   inputClass,
-  modalHeaderButtonClass,
-  modalHeaderClass,
   modalNoticeErrorClass,
   modalNoticeSuccessClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
   pillGhostClass,
   pillPrimaryClass,
   pillSecondaryClass,
   surfaceCardClass,
   tagClass,
 } from "../../workspace/modal-styles";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import {
   SelectMenu,
@@ -140,41 +143,222 @@ export type SkillsViewProps = {
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
 };
 
+type SkillsViewLocalState = {
+  uninstallTarget: SkillCard | null;
+  searchQuery: string;
+  activeFilter: SkillsFilter;
+  customRepoOpen: boolean;
+  customRepoOwner: string;
+  customRepoName: string;
+  customRepoRef: string;
+  customRepoError: string | null;
+  shareTarget: SkillCard | null;
+  shareSubView: ShareSkillSubView;
+  shareBusy: boolean;
+  shareUrl: string | null;
+  shareError: string | null;
+  cloudSessionNonce: number;
+  shareTeamBusy: boolean;
+  shareTeamError: string | null;
+  shareTeamSuccess: string | null;
+  sharePermissionChoice: string;
+  shareHubsLoading: boolean;
+  shareHubsError: string | null;
+  shareManageableHubs: DenOrgSkillHubSummary[];
+  selectedSkill: SkillCard | null;
+  selectedContent: string;
+  selectedLoading: boolean;
+  selectedDirty: boolean;
+  selectedError: string | null;
+  installingSkillCreator: boolean;
+  installingHubSkill: string | null;
+  installingCloudSkillId: string | null;
+  denUiTick: number;
+};
+
+type SkillsViewLocalAction<K extends keyof SkillsViewLocalState = keyof SkillsViewLocalState> =
+  | { type: "set"; key: K; value: SetStateAction<any> }
+  | { type: "denSessionUpdated" }
+  | { type: "resetShareChooser" }
+  | { type: "shareHubsStart" }
+  | { type: "shareHubsLoaded"; hubs: DenOrgSkillHubSummary[] }
+  | { type: "shareHubsFailed"; error: string }
+  | { type: "shareHubsDone" }
+  | { type: "closeShare" }
+  | { type: "openShare"; skill: SkillCard };
+
+const initialSkillsViewLocalState: SkillsViewLocalState = {
+  uninstallTarget: null,
+  searchQuery: "",
+  activeFilter: "all",
+  customRepoOpen: false,
+  customRepoOwner: "",
+  customRepoName: "",
+  customRepoRef: "main",
+  customRepoError: null,
+  shareTarget: null,
+  shareSubView: "chooser",
+  shareBusy: false,
+  shareUrl: null,
+  shareError: null,
+  cloudSessionNonce: 0,
+  shareTeamBusy: false,
+  shareTeamError: null,
+  shareTeamSuccess: null,
+  sharePermissionChoice: "org",
+  shareHubsLoading: false,
+  shareHubsError: null,
+  shareManageableHubs: [],
+  selectedSkill: null,
+  selectedContent: "",
+  selectedLoading: false,
+  selectedDirty: false,
+  selectedError: null,
+  installingSkillCreator: false,
+  installingHubSkill: null,
+  installingCloudSkillId: null,
+  denUiTick: 0,
+};
+
+function skillsViewLocalReducer(
+  state: SkillsViewLocalState,
+  action: SkillsViewLocalAction,
+): SkillsViewLocalState {
+  switch (action.type) {
+    case "set": {
+      const current = state[action.key];
+      const next =
+        typeof action.value === "function"
+          ? (action.value as (value: typeof current) => typeof current)(current)
+          : action.value;
+      if (Object.is(current, next)) return state;
+      return { ...state, [action.key]: next };
+    }
+    case "denSessionUpdated":
+      return {
+        ...state,
+        denUiTick: state.denUiTick + 1,
+        cloudSessionNonce: state.cloudSessionNonce + 1,
+      };
+    case "resetShareChooser":
+      return {
+        ...state,
+        shareSubView: "chooser",
+        shareError: null,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+      };
+    case "shareHubsStart":
+      return { ...state, shareHubsLoading: true, shareHubsError: null };
+    case "shareHubsLoaded":
+      return { ...state, shareManageableHubs: action.hubs };
+    case "shareHubsFailed":
+      return { ...state, shareHubsError: action.error, shareManageableHubs: [] };
+    case "shareHubsDone":
+      return { ...state, shareHubsLoading: false };
+    case "closeShare":
+      return {
+        ...state,
+        shareTarget: null,
+        shareSubView: "chooser",
+        shareBusy: false,
+        shareUrl: null,
+        shareError: null,
+        shareTeamBusy: false,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+        shareManageableHubs: [],
+      };
+    case "openShare":
+      return {
+        ...state,
+        shareTarget: action.skill,
+        shareSubView: "chooser",
+        shareBusy: false,
+        shareUrl: null,
+        shareError: null,
+        shareTeamBusy: false,
+        shareTeamError: null,
+        shareTeamSuccess: null,
+        sharePermissionChoice: "org",
+        shareHubsError: null,
+        shareManageableHubs: [],
+        cloudSessionNonce: state.cloudSessionNonce + 1,
+      };
+  }
+}
+
 export function SkillsView(props: SkillsViewProps) {
   const { extensions } = props;
-  const [uninstallTarget, setUninstallTarget] = useState<SkillCard | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeFilter, setActiveFilter] = useState<SkillsFilter>("all");
-  const [customRepoOpen, setCustomRepoOpen] = useState(false);
-  const [customRepoOwner, setCustomRepoOwner] = useState("");
-  const [customRepoName, setCustomRepoName] = useState("");
-  const [customRepoRef, setCustomRepoRef] = useState("main");
-  const [customRepoError, setCustomRepoError] = useState<string | null>(null);
-
-  const [shareTarget, setShareTarget] = useState<SkillCard | null>(null);
-  const [shareSubView, setShareSubView] = useState<ShareSkillSubView>("chooser");
-  const [shareBusy, setShareBusy] = useState(false);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareError, setShareError] = useState<string | null>(null);
-  const [cloudSessionNonce, setCloudSessionNonce] = useState(0);
-  const [shareTeamBusy, setShareTeamBusy] = useState(false);
-  const [shareTeamError, setShareTeamError] = useState<string | null>(null);
-  const [shareTeamSuccess, setShareTeamSuccess] = useState<string | null>(null);
-  const [sharePermissionChoice, setSharePermissionChoice] = useState("org");
-  const [shareHubsLoading, setShareHubsLoading] = useState(false);
-  const [shareHubsError, setShareHubsError] = useState<string | null>(null);
-  const [shareManageableHubs, setShareManageableHubs] = useState<DenOrgSkillHubSummary[]>([]);
-
-  const [selectedSkill, setSelectedSkill] = useState<SkillCard | null>(null);
-  const [selectedContent, setSelectedContent] = useState("");
-  const [selectedLoading, setSelectedLoading] = useState(false);
-  const [selectedDirty, setSelectedDirty] = useState(false);
-  const [selectedError, setSelectedError] = useState<string | null>(null);
-
-  const [installingSkillCreator, setInstallingSkillCreator] = useState(false);
-  const [installingHubSkill, setInstallingHubSkill] = useState<string | null>(null);
-  const [installingCloudSkillId, setInstallingCloudSkillId] = useState<string | null>(null);
-  const [denUiTick, setDenUiTick] = useState(0);
+  const [localState, dispatchLocal] = useReducer(
+    skillsViewLocalReducer,
+    initialSkillsViewLocalState,
+  );
+  const {
+    uninstallTarget,
+    searchQuery,
+    activeFilter,
+    customRepoOpen,
+    customRepoOwner,
+    customRepoName,
+    customRepoRef,
+    customRepoError,
+    shareTarget,
+    shareSubView,
+    shareBusy,
+    shareUrl,
+    shareError,
+    cloudSessionNonce,
+    shareTeamBusy,
+    shareTeamError,
+    shareTeamSuccess,
+    sharePermissionChoice,
+    shareHubsLoading,
+    shareHubsError,
+    shareManageableHubs,
+    selectedSkill,
+    selectedContent,
+    selectedLoading,
+    selectedDirty,
+    selectedError,
+    installingSkillCreator,
+    installingHubSkill,
+    installingCloudSkillId,
+    denUiTick,
+  } = localState;
+  const setLocal = <K extends keyof SkillsViewLocalState>(
+    key: K,
+    value: SetStateAction<SkillsViewLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setUninstallTarget = (value: SetStateAction<SkillCard | null>) => setLocal("uninstallTarget", value);
+  const setSearchQuery = (value: SetStateAction<string>) => setLocal("searchQuery", value);
+  const setActiveFilter = (value: SetStateAction<SkillsFilter>) => setLocal("activeFilter", value);
+  const setCustomRepoOpen = (value: SetStateAction<boolean>) => setLocal("customRepoOpen", value);
+  const setCustomRepoOwner = (value: SetStateAction<string>) => setLocal("customRepoOwner", value);
+  const setCustomRepoName = (value: SetStateAction<string>) => setLocal("customRepoName", value);
+  const setCustomRepoRef = (value: SetStateAction<string>) => setLocal("customRepoRef", value);
+  const setCustomRepoError = (value: SetStateAction<string | null>) => setLocal("customRepoError", value);
+  const setShareTarget = (value: SetStateAction<SkillCard | null>) => setLocal("shareTarget", value);
+  const setShareSubView = (value: SetStateAction<ShareSkillSubView>) => setLocal("shareSubView", value);
+  const setShareBusy = (value: SetStateAction<boolean>) => setLocal("shareBusy", value);
+  const setShareUrl = (value: SetStateAction<string | null>) => setLocal("shareUrl", value);
+  const setShareError = (value: SetStateAction<string | null>) => setLocal("shareError", value);
+  const setShareTeamBusy = (value: SetStateAction<boolean>) => setLocal("shareTeamBusy", value);
+  const setShareTeamError = (value: SetStateAction<string | null>) => setLocal("shareTeamError", value);
+  const setShareTeamSuccess = (value: SetStateAction<string | null>) => setLocal("shareTeamSuccess", value);
+  const setSharePermissionChoice = (value: SetStateAction<string>) => setLocal("sharePermissionChoice", value);
+  const setSelectedSkill = (value: SetStateAction<SkillCard | null>) => setLocal("selectedSkill", value);
+  const setSelectedContent = (value: SetStateAction<string>) => setLocal("selectedContent", value);
+  const setSelectedLoading = (value: SetStateAction<boolean>) => setLocal("selectedLoading", value);
+  const setSelectedDirty = (value: SetStateAction<boolean>) => setLocal("selectedDirty", value);
+  const setSelectedError = (value: SetStateAction<string | null>) => setLocal("selectedError", value);
+  const setInstallingSkillCreator = (value: SetStateAction<boolean>) => setLocal("installingSkillCreator", value);
+  const setInstallingHubSkill = (value: SetStateAction<string | null>) => setLocal("installingHubSkill", value);
+  const setInstallingCloudSkillId = (value: SetStateAction<string | null>) => setLocal("installingCloudSkillId", value);
 
   const showToast = useCallback(
     (title: string, tone: ToastTone = "info") => {
@@ -193,8 +377,7 @@ export function SkillsView(props: SkillsViewProps) {
     void extensions.ensureHubSkillsFresh();
     void extensions.ensureCloudOrgSkillsFresh();
     const onDenSession = () => {
-      setDenUiTick((value) => value + 1);
-      setCloudSessionNonce((value) => value + 1);
+      dispatchLocal({ type: "denSessionUpdated" });
       void extensions.refreshCloudOrgSkills({ force: true });
     };
     window.addEventListener("openwork-den-session-updated", onDenSession);
@@ -207,12 +390,7 @@ export function SkillsView(props: SkillsViewProps) {
       if (event.key !== "Escape") return;
       event.preventDefault();
       if (shareSubView !== "chooser") {
-        setShareSubView("chooser");
-        setShareError(null);
-        setShareTeamError(null);
-        setShareTeamSuccess(null);
-        setSharePermissionChoice("org");
-        setShareHubsError(null);
+        dispatchLocal({ type: "resetShareChooser" });
         return;
       }
       setShareTarget(null);
@@ -246,8 +424,7 @@ export function SkillsView(props: SkillsViewProps) {
 
     let cancelled = false;
     void (async () => {
-      setShareHubsLoading(true);
-      setShareHubsError(null);
+      dispatchLocal({ type: "shareHubsStart" });
       try {
         const settings = readDenSettings();
         const token = settings.authToken?.trim() ?? "";
@@ -264,13 +441,12 @@ export function SkillsView(props: SkillsViewProps) {
         }
         const hubs = await client.listOrgSkillHubSummaries(orgId);
         if (cancelled) return;
-        setShareManageableHubs(hubs.filter((hub) => hub.canManage));
+        dispatchLocal({ type: "shareHubsLoaded", hubs: hubs.filter((hub) => hub.canManage) });
       } catch (error) {
         if (cancelled) return;
-        setShareHubsError(maskError(error));
-        setShareManageableHubs([]);
+        dispatchLocal({ type: "shareHubsFailed", error: maskError(error) });
       } finally {
-        if (!cancelled) setShareHubsLoading(false);
+        if (!cancelled) dispatchLocal({ type: "shareHubsDone" });
       }
     })();
 
@@ -413,26 +589,11 @@ export function SkillsView(props: SkillsViewProps) {
   };
 
   const closeShareLink = useCallback(() => {
-    setShareTarget(null);
-    setShareSubView("chooser");
-    setShareBusy(false);
-    setShareUrl(null);
-    setShareError(null);
-    setShareTeamBusy(false);
-    setShareTeamError(null);
-    setShareTeamSuccess(null);
-    setSharePermissionChoice("org");
-    setShareHubsError(null);
-    setShareManageableHubs([]);
+    dispatchLocal({ type: "closeShare" });
   }, []);
 
   const goBackShareSubView = useCallback(() => {
-    setShareSubView("chooser");
-    setShareError(null);
-    setShareTeamError(null);
-    setShareTeamSuccess(null);
-    setSharePermissionChoice("org");
-    setShareHubsError(null);
+    dispatchLocal({ type: "resetShareChooser" });
   }, []);
 
   const runDesktopAction = useCallback(
@@ -526,18 +687,7 @@ export function SkillsView(props: SkillsViewProps) {
   const openShareLink = useCallback(
     (skill: SkillCard) => {
       if (props.busy) return;
-      setShareTarget(skill);
-      setShareSubView("chooser");
-      setShareBusy(false);
-      setShareUrl(null);
-      setShareError(null);
-      setShareTeamBusy(false);
-      setShareTeamError(null);
-      setShareTeamSuccess(null);
-      setSharePermissionChoice("org");
-      setShareHubsError(null);
-      setShareManageableHubs([]);
-      setCloudSessionNonce((value) => value + 1);
+      dispatchLocal({ type: "openShare", skill });
     },
     [props.busy],
   );
@@ -716,7 +866,7 @@ export function SkillsView(props: SkillsViewProps) {
   };
 
   return (
-    <section className="space-y-8">
+    <section className="space-y-8 max-w-3xl w-full">
       <div className="space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
@@ -833,7 +983,7 @@ export function SkillsView(props: SkillsViewProps) {
                     onKeyDown={(event) => handleSkillCardKeyDown(event, skill)}
                   >
                     <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                         <Package size={20} className="text-dls-secondary" />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -966,7 +1116,7 @@ export function SkillsView(props: SkillsViewProps) {
                       return (
                         <div key={skill.id} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
                           <div className="flex min-w-0 gap-4">
-                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                               <Cloud size={20} className="text-dls-secondary" />
                             </div>
                             <div className="min-w-0 flex-1">
@@ -1070,7 +1220,7 @@ export function SkillsView(props: SkillsViewProps) {
                       type="button"
                       onClick={() => selectHubRepo(repo)}
                       className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                        active ? "bg-dls-accent text-white" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+                        active ? "bg-dls-accent text-[var(--dls-accent-fg)]" : "text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
                       }`}
                       disabled={props.busy}
                     >
@@ -1111,7 +1261,7 @@ export function SkillsView(props: SkillsViewProps) {
                 {filteredHubSkills.map((skill) => (
                   <div key={`${skill.source.owner}/${skill.source.repo}/${skill.name}`} className={`${panelCardClass} flex flex-col gap-4 text-left`}>
                     <div className="flex min-w-0 gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover">
                         <Package size={20} className="text-dls-secondary" />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -1155,41 +1305,35 @@ export function SkillsView(props: SkillsViewProps) {
         </div>
       ) : null}
 
-      {selectedSkill ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-dls-border px-5 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-dls-text">{selectedSkill.name}</div>
+      <Dialog
+        open={Boolean(selectedSkill)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSkill(null);
+            setSelectedContent("");
+            setSelectedDirty(false);
+            setSelectedError(null);
+            setSelectedLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden sm:max-w-4xl">
+            <DialogHeader>
+              <div className="flex min-w-0 items-center gap-3">
+                <DialogTitle className="min-w-0 flex-1 truncate">{selectedSkill?.name}</DialogTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    disabled={!selectedDirty || props.busy}
+                    onClick={() => void saveSelectedSkill()}
+                  >
+                    {t("common.save")}
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    selectedDirty && !props.busy ? "bg-dls-text text-dls-surface hover:opacity-90" : "bg-dls-active text-dls-secondary"
-                  }`}
-                  disabled={!selectedDirty || props.busy}
-                  onClick={() => void saveSelectedSkill()}
-                >
-                  {t("common.save")}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg bg-dls-hover px-3 py-1.5 text-xs font-medium text-dls-text transition-colors hover:bg-dls-active"
-                  onClick={() => {
-                    setSelectedSkill(null);
-                    setSelectedContent("");
-                    setSelectedDirty(false);
-                    setSelectedError(null);
-                    setSelectedLoading(false);
-                  }}
-                >
-                  {t("common.close")}
-                </button>
-              </div>
-            </div>
+            </DialogHeader>
 
-            <div className="p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {selectedError ? <div className="mb-3 rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">{selectedError}</div> : null}
               {selectedLoading ? (
                 <div className="text-xs text-dls-secondary">{t("skills.loading")}</div>
@@ -1205,9 +1349,8 @@ export function SkillsView(props: SkillsViewProps) {
                 />
               )}
             </div>
-          </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
 
       <ConfirmModal
         open={Boolean(uninstallTarget)}
@@ -1215,7 +1358,7 @@ export function SkillsView(props: SkillsViewProps) {
         message={t("skills.uninstall_warning").replace("{name}", uninstallTarget?.name ?? "")}
         confirmLabel={t("skills.uninstall")}
         cancelLabel={t("common.cancel")}
-        confirmButtonVariant="danger"
+        confirmButtonVariant="destructive"
         onCancel={() => setUninstallTarget(null)}
         onConfirm={() => {
           const target = uninstallTarget;
@@ -1225,30 +1368,36 @@ export function SkillsView(props: SkillsViewProps) {
         }}
       />
 
-      {shareTarget ? (
-        <div className={`${modalOverlayClass} items-start pt-[10vh]`}>
-          <div className={`${modalShellClass} max-h-[78vh] max-w-md`} role="dialog" aria-modal="true">
-            <div className={modalHeaderClass}>
-              <div className="flex min-w-0 items-start gap-3">
-                {shareSubView !== "chooser" ? (
-                  <button type="button" onClick={goBackShareSubView} className={modalHeaderButtonClass} aria-label={t("skills.share_back")}>
-                    <ArrowLeft size={16} />
-                  </button>
+      <Dialog
+        open={Boolean(shareTarget)}
+        onOpenChange={(open) => {
+          if (!open) closeShareLink();
+        }}
+      >
+        <DialogContent className="flex max-h-[78vh] min-h-0 w-full max-w-md flex-col overflow-hidden sm:max-w-md">
+          <DialogHeader className="flex-row">
+            {shareSubView !== "chooser" ? (
+              <Button
+                onClick={goBackShareSubView}
+                variant="ghost"
+                size="icon"
+                aria-label={t("skills.share_back")}
+              >
+                <ArrowLeft className="size-4" />
+              </Button>
+            ) : null}
+            <div className="min-w-0 flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <DialogTitle>{t("skills.share_title")}</DialogTitle>
+                {shareSubView === "chooser" ? (
+                  <span className={tagClass}>{shareTarget?.name}</span>
                 ) : null}
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className={modalTitleClass}>{t("skills.share_title")}</h2>
-                    {shareSubView === "chooser" ? <span className={tagClass}>{shareTarget.name}</span> : null}
-                  </div>
-                  <p className={modalSubtitleClass}>{shareModalSubtitle}</p>
-                </div>
               </div>
-              <button type="button" onClick={closeShareLink} className={modalHeaderButtonClass} aria-label={t("skills.share_close")} title={t("skills.share_close")}>
-                <X size={16} />
-              </button>
+              <DialogDescription>{shareModalSubtitle}</DialogDescription>
             </div>
+          </DialogHeader>
 
-            <div className="flex-1 overflow-y-auto px-6 pb-7 pt-2">
+          <div className="min-h-0 flex-1 overflow-y-auto">
               {shareSubView === "chooser" ? (
                 <div className="animate-in space-y-4 fade-in slide-in-from-bottom-3 duration-300">
                   <WorkspaceOptionCard
@@ -1292,11 +1441,6 @@ export function SkillsView(props: SkillsViewProps) {
                         </button>
                       </>
                     )}
-                  </div>
-                  <div className="flex justify-end">
-                    <button type="button" onClick={closeShareLink} className={pillSecondaryClass}>
-                      {t("skills.share_done")}
-                    </button>
                   </div>
                 </div>
               ) : null}
@@ -1354,27 +1498,39 @@ export function SkillsView(props: SkillsViewProps) {
                     </button>
                     {!shareCloudSignedIn ? <p className="mt-3 text-[12px] text-dls-secondary">{t("skills.share_team_sign_in_hint")}</p> : null}
                   </div>
-                  <div className="flex justify-end">
-                    <button type="button" onClick={closeShareLink} className={pillSecondaryClass}>
-                      {t("skills.share_done")}
-                    </button>
-                  </div>
                 </div>
               ) : null}
             </div>
-          </div>
-        </div>
-      ) : null}
+            {shareSubView === "public" ? (
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" />}>
+                  {t("skills.share_done")}
+                </DialogClose>
+              </DialogFooter>
+            ) : null}
+            {shareSubView === "team" ? (
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" />}>
+                  {t("skills.share_done")}
+                </DialogClose>
+              </DialogFooter>
+            ) : null}
+        </DialogContent>
+      </Dialog>
 
-      {customRepoOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-2xl">
-            <div className="space-y-4 p-6">
-              <div>
-                <h3 className="text-lg font-semibold text-dls-text">{t("skills.add_custom_repo")}</h3>
-                <p className="mt-1 text-sm text-dls-secondary">{t("skills.github_repo_hint")}</p>
-              </div>
+      <Dialog
+        open={customRepoOpen}
+        onOpenChange={(open) => {
+          if (!open) closeCustomRepoModal();
+        }}
+      >
+        <DialogContent showCloseButton={false} className="w-full max-w-lg overflow-hidden sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{t("skills.add_custom_repo")}</DialogTitle>
+              <DialogDescription>{t("skills.github_repo_hint")}</DialogDescription>
+            </DialogHeader>
 
+            <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="space-y-1">
                   <div className="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{t("skills.owner_label")}</div>
@@ -1413,19 +1569,20 @@ export function SkillsView(props: SkillsViewProps) {
               </label>
 
               {customRepoError ? <div className="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">{customRepoError}</div> : null}
-
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={closeCustomRepoModal} disabled={props.busy}>
-                  {t("common.cancel")}
-                </Button>
-                <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
-                  {t("skills.save_and_load")}
-                </Button>
-              </div>
             </div>
-          </div>
-        </div>
-      ) : null}
+            <DialogFooter>
+              <DialogClose
+                disabled={props.busy}
+                render={<Button variant="outline" disabled={props.busy} />}
+              >
+                {t("common.cancel")}
+              </DialogClose>
+              <Button variant="secondary" onClick={saveCustomRepo} disabled={props.busy}>
+                {t("skills.save_and_load")}
+              </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -50,6 +50,8 @@ export const idTypesMapNameToPrefix = {
   llmProvider: "lpr",
   llmProviderModel: "lpm",
   llmProviderAccess: "lpa",
+  desktopPolicy: "dpo",
+  desktopPolicyMember: "dpm",
   organizationRole: "orl",
   adminAllowlist: "aal",
   worker: "wrk",
@@ -58,6 +60,16 @@ export const idTypesMapNameToPrefix = {
   workerToken: "wkt",
   workerBundle: "wkb",
   auditEvent: "aev",
+  telemetryEvent: "tev",
+  inferenceKey: "ink",
+  inferenceOrgLimitPolicy: "iolp",
+  inferenceOrgUsageBucket: "ioub",
+  inferenceRequest: "ireq",
+  inferenceUsageLedgerEntry: "iule",
+  inferenceUsageLedgerBucketCharge: "iulc",
+  inferenceModelAlias: "ima",
+  inferenceOrgProviderKey: "iopk",
+  orgSubscription: "osub",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

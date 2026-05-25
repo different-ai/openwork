@@ -41,6 +41,7 @@ type EditorProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
+  onExpandPastedText?: (label: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
@@ -213,6 +214,50 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
+function pastedTextChipLabel(lines: number) {
+  return `Pasted · ${lines} line${lines === 1 ? "" : "s"}`;
+}
+
+function createPastedTextChipDom(label: string, lines: number) {
+  const dom = document.createElement("span");
+  dom.className = "inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11";
+  dom.contentEditable = "false";
+  dom.setAttribute("spellcheck", "false");
+  dom.title = `Pasted text · ${label}`;
+
+  const text = document.createElement("span");
+  text.textContent = pastedTextChipLabel(lines);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-amber-10 transition-colors hover:bg-amber-4 hover:text-amber-12";
+  button.title = "Expand pasted text";
+  button.setAttribute("aria-label", "Expand pasted text");
+  button.dataset.pastedExpandLabel = label;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("class", "h-3 w-3");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M5 3h8v8h-1.5V5.56l-7.97 7.97-1.06-1.06 7.97-7.97H5V3Z");
+  svg.append(path);
+  button.append(svg);
+  dom.append(text, button);
+  return dom;
+}
+
+function updatePastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
+  const text = dom.firstElementChild;
+  if (text) text.textContent = pastedTextChipLabel(lines);
+  const button = dom.querySelector("button[data-pasted-expand-label]");
+  if (button instanceof HTMLButtonElement) {
+    button.dataset.pastedExpandLabel = label;
+  }
+  dom.title = `Pasted text · ${label}`;
+}
+
 type SerializedComposerPastedTextNode = Spread<
   {
     pastedLabel: string;
@@ -256,19 +301,12 @@ class ComposerPastedTextNode extends TextNode {
   }
 
   override createDOM(_config: EditorConfig) {
-    const dom = document.createElement("span");
-    dom.className = "inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11";
-    dom.textContent = `Pasted · ${this.__pastedLines} line${this.__pastedLines === 1 ? "" : "s"}`;
-    dom.contentEditable = "false";
-    dom.setAttribute("spellcheck", "false");
-    dom.title = `Pasted text · ${this.__pastedLabel}`;
-    return dom;
+    return createPastedTextChipDom(this.__pastedLabel, this.__pastedLines);
   }
 
   override updateDOM(prevNode: ComposerPastedTextNode, dom: HTMLElement) {
     if (prevNode.__pastedLabel !== this.__pastedLabel || prevNode.__pastedLines !== this.__pastedLines) {
-      dom.textContent = `Pasted · ${this.__pastedLines} line${this.__pastedLines === 1 ? "" : "s"}`;
-      dom.title = `Pasted text · ${this.__pastedLabel}`;
+      updatePastedTextChipDom(dom, this.__pastedLabel, this.__pastedLines);
     }
     return false;
   }
@@ -357,11 +395,12 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
   }
 
   const segments = value.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/);
+  const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   for (const segment of segments) {
     if (!segment) continue;
     const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
     if (pasteMatch?.[1]) {
-      const target = pastedText?.find((item) => item.label === pasteMatch[1]);
+      const target = pastedTextByLabel.get(pasteMatch[1]);
       if (target) {
         paragraph.append($createComposerPastedTextNode(target.label, target.lines));
         continue;
@@ -414,10 +453,30 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
     const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
+    // Check whether the editor already reflects the desired state BEFORE
+    // entering editor.update(). Even a bail-out inside editor.update()
+    // triggers Lexical's reconciliation cycle which can normalise the DOM
+    // selection and reset the cursor (e.g. after a multi-line paste the
+    // cursor jumps to position 0 instead of staying after the pasted
+    // content). The read() above already gave us `currentText` — reuse it.
+    if (!forceRebuild && currentText === props.value) return;
     editor.update(() => {
+      // Double-check inside the update in case another queued update
+      // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText);
-      $getRoot().selectEnd();
+      // $getRoot().selectEnd() doesn't work when the last node is a
+      // token (chip) — Lexical can't position a cursor inside a token,
+      // so the selection collapses to position 0. Use element-level
+      // selection instead: place the cursor *after* the last child of
+      // the last paragraph.
+      const lastParagraph = $getRoot().getLastChild();
+      if ($isElementNode(lastParagraph)) {
+        const childCount = lastParagraph.getChildrenSize();
+        lastParagraph.select(childCount, childCount);
+      } else {
+        $getRoot().selectEnd();
+      }
     });
   }, [editor, props.mentions, props.pastedText, props.value]);
 
@@ -640,7 +699,7 @@ export function LexicalPromptEditor(props: EditorProps) {
     [],
   );
 
-  const handleChange = useCallback(
+  const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
         const next = serializePromptFromRoot();
@@ -652,6 +711,26 @@ export function LexicalPromptEditor(props: EditorProps) {
     [],
   );
 
+  const handlePastedTextExpandPointer = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest("button[data-pasted-expand-label]");
+    if (!(button instanceof HTMLButtonElement)) return;
+    const label = button.dataset.pastedExpandLabel;
+    if (!label) return;
+    event.preventDefault();
+    event.stopPropagation();
+    props.onExpandPastedText?.(label);
+  }, [props.onExpandPastedText]);
+
+  const handlePastedTextExpandMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.closest("button[data-pasted-expand-label]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
   return (
     <LexicalComposer initialConfig={initialConfig}>
       {/*
@@ -660,7 +739,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative">
+      <div className="relative" onClickCapture={handlePastedTextExpandPointer} onMouseDownCapture={handlePastedTextExpandMouseDown}>
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
@@ -680,7 +759,7 @@ export function LexicalPromptEditor(props: EditorProps) {
           }
           ErrorBoundary={LexicalErrorBoundary}
         />
-        <OnChangePlugin onChange={handleChange} />
+        <OnChangePlugin onChange={syncPromptFromEditorState} />
         <HistoryPlugin />
         <SyncPlugin value={props.value} mentions={props.mentions} pastedText={props.pastedText} disabled={props.disabled} />
         <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />

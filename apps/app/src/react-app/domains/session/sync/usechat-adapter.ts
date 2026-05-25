@@ -82,47 +82,51 @@ function mapToolPart(part: Part): DynamicToolUIPart {
 }
 
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
-  return snapshot.messages.map((message) => ({
-    id: message.info.id,
-    role: message.info.role,
-    parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
-      if (part.type === "text") {
-        return [{
-          type: "text",
-          text: getTextPartValue(part),
-          state: "done" as const,
-          providerMetadata: { opencode: { partId: part.id } },
-        }];
-      }
-      if (part.type === "reasoning") {
-        return [{
-          type: "reasoning",
-          text: getTextPartValue(part),
-          state: "done" as const,
-          providerMetadata: { opencode: { partId: part.id } },
-        }];
-      }
-      if (part.type === "file") {
-        const record = part as Part & { url?: string; filename?: string; mime?: string };
-        return record.url
-          ? [{
-              type: "file",
-              url: record.url,
-              filename: record.filename,
-              mediaType: record.mime ?? "application/octet-stream",
-              providerMetadata: { opencode: { partId: part.id } },
-            }]
-          : [];
-      }
-      if (part.type === "tool") {
-        return [{ ...mapToolPart(part), providerMetadata: { opencode: { partId: part.id } } }];
-      }
-      if (part.type === "step-start") {
-        return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
-      }
-      return [];
-    }),
-  }));
+  return snapshot.messages.map((message) => {
+    const created = message.info.time?.created;
+    return {
+      id: message.info.id,
+      role: message.info.role,
+      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
+        if (part.type === "text") {
+          return [{
+            type: "text",
+            text: getTextPartValue(part),
+            state: "done" as const,
+            providerMetadata: { opencode: { partId: part.id } },
+          }];
+        }
+        if (part.type === "reasoning") {
+          return [{
+            type: "reasoning",
+            text: getTextPartValue(part),
+            state: "done" as const,
+            providerMetadata: { opencode: { partId: part.id } },
+          }];
+        }
+        if (part.type === "file") {
+          const record = part as Part & { url?: string; filename?: string; mime?: string };
+          return record.url
+            ? [{
+                type: "file",
+                url: record.url,
+                filename: record.filename,
+                mediaType: record.mime ?? "application/octet-stream",
+                providerMetadata: { opencode: { partId: part.id } },
+              }]
+            : [];
+        }
+        if (part.type === "tool") {
+          return [{ ...mapToolPart(part), providerMetadata: { opencode: { partId: part.id } } }];
+        }
+        if (part.type === "step-start") {
+          return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
+        }
+        return [];
+      }),
+    };
+  });
 }
 
 function extractLastUserText(messages: UIMessage[]) {
@@ -360,7 +364,7 @@ function handleEventChunk(
 export function createOpenworkChatTransport(options: TransportOptions): ChatTransport<UIMessage> {
   return {
     async sendMessages({ messages, abortSignal }) {
-      const client = createClient(options.baseUrl, {
+      const client = createClient(options.baseUrl, undefined, {
         token: options.openworkToken,
         mode: "openwork",
       });

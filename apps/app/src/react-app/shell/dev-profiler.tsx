@@ -15,12 +15,13 @@
  * the overlay renders null.
  *
  * Findings also land on window.__openwork.slice("profiler") so external
- * tools / Chrome MCP can read them.
+ * tools can read them.
  */
 
 import {
   Profiler,
   useEffect,
+  useReducer,
   useRef,
   useState,
   type PropsWithChildren,
@@ -259,8 +260,14 @@ export function DevProfilerOverlay() {
  * `recordCommit` short-circuits — the profiler becomes free.
  */
 function DevProfilerOverlayToggle() {
-  const stored = readOverlayStoredPreference();
-  const [visible, setVisible] = useState(stored === null ? false : stored);
+  const [visible, toggleVisible] = useReducer((current: boolean, next?: boolean) => {
+    const visible = next ?? !current;
+    writeOverlayStoredPreference(visible);
+    return visible;
+  }, false, () => {
+    const stored = readOverlayStoredPreference();
+    return stored === null ? false : stored;
+  });
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -268,10 +275,7 @@ function DevProfilerOverlayToggle() {
       if (!metaOrCtrl || !event.shiftKey) return;
       if (event.key.toLowerCase() !== "p") return;
       event.preventDefault();
-      setVisible((prev) => {
-        writeOverlayStoredPreference(!prev);
-        return !prev;
-      });
+      toggleVisible();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -279,8 +283,7 @@ function DevProfilerOverlayToggle() {
 
   if (!visible) return null;
   return <DevProfilerOverlayVisible onHide={() => {
-    writeOverlayStoredPreference(false);
-    setVisible(false);
+    toggleVisible(false);
   }} />;
 }
 
@@ -354,7 +357,7 @@ function DevProfilerOverlayVisible({ onHide }: { onHide: () => void }) {
       {collapsed ? null : (
         <div className="max-h-[50vh] overflow-y-auto">
           {topZones.length === 0 ? (
-            <div className="px-3 py-3 text-dls-secondary">
+            <div className="p-3 text-dls-secondary">
               No profiler data yet. Interact with the app.
             </div>
           ) : (

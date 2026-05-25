@@ -8,7 +8,7 @@ import type {
   OpenworkOpenCodeRouterSendResult,
   OpenworkServerStatus,
 } from "../../../../app/lib/openwork-server";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { TextInput } from "../../../design-system/text-input";
 
@@ -202,18 +202,18 @@ export function MessagingView(props: MessagingViewProps) {
       : t("identities.health_unknown");
 
   return (
-    <div className="w-full space-y-6">
+    <div className="space-y-6 max-w-3xl w-full">
       <div>
         <div className="mb-1.5 flex items-center justify-between">
           {props.showHeader !== false ? (
-            <h1 className="text-lg font-bold tracking-tight text-gray-12">{t("identities.title")}</h1>
+            <h1 className="text-lg font-semibold tracking-tight text-gray-12">{t("identities.title")}</h1>
           ) : (
             <div />
           )}
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
-              className="h-8 px-3 text-xs"
+              size="sm"
               onClick={() => void props.onRepairAndReconnect()}
               disabled={props.busy || props.openworkReconnectBusy}
             >
@@ -222,7 +222,7 @@ export function MessagingView(props: MessagingViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-8 px-3 text-xs"
+              size="sm"
               onClick={() => void props.onRefresh()}
               disabled={!serverReady || props.refreshing}
             >
@@ -284,7 +284,7 @@ export function MessagingView(props: MessagingViewProps) {
               </div>
               <Button
                 variant="outline"
-                className="h-8 px-3 text-xs"
+                size="sm"
                 disabled={props.messagingSaving}
                 onClick={props.onOpenDisableMessagingConfirm}
               >
@@ -294,14 +294,13 @@ export function MessagingView(props: MessagingViewProps) {
           ) : null}
 
           {!props.messagingEnabled ? (
-            <div className="space-y-3 rounded-xl border border-gray-4 bg-gray-1 px-4 py-4">
+            <div className="space-y-3 rounded-xl border border-gray-4 bg-gray-1 p-4">
               <div className="text-sm font-semibold text-gray-12">{t("identities.messaging_disabled_title")}</div>
               <p className="text-xs leading-relaxed text-gray-10">{t("identities.messaging_disabled_risk")}</p>
               <p className="text-xs leading-relaxed text-gray-10">{t("identities.messaging_disabled_hint")}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="primary"
-                  className="h-8 px-3 text-xs"
+                  size="sm"
                   disabled={props.messagingSaving || !scopedWorkspaceReady}
                   onClick={props.onOpenMessagingRisk}
                 >
@@ -318,8 +317,7 @@ export function MessagingView(props: MessagingViewProps) {
                   {t("identities.messaging_sidecar_not_running")}
                   <div className="mt-3">
                     <Button
-                      variant="primary"
-                      className="h-8 px-3 text-xs"
+                      size="sm"
                       disabled={props.messagingRestartBusy}
                       onClick={() => void props.onConfirmRestartMessagingWorker()}
                     >
@@ -333,9 +331,9 @@ export function MessagingView(props: MessagingViewProps) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     {isWorkerOnline ? (
-                      <div className="h-2.5 w-2.5 rounded-full bg-emerald-9 animate-pulse" />
+                      <div className="size-2.5 rounded-full bg-emerald-9 animate-pulse" />
                     ) : (
-                      <div className="h-2.5 w-2.5 rounded-full bg-gray-8" />
+                      <div className="size-2.5 rounded-full bg-gray-8" />
                     )}
                     <span className="text-[15px] font-semibold text-gray-12">
                       {isWorkerOnline
@@ -420,7 +418,7 @@ export function MessagingView(props: MessagingViewProps) {
                     </button>
 
                     {props.expandedChannel === "telegram" ? (
-                      <div className="space-y-3 border-t border-gray-4 px-4 py-4 animate-[fadeUp_0.2s_ease-out]">
+                      <div className="space-y-3 border-t border-gray-4 p-4 animate-[fadeUp_0.2s_ease-out]">
                         {props.telegram.identitiesError ? (
                           <div className="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
                             {props.telegram.identitiesError}
@@ -438,7 +436,7 @@ export function MessagingView(props: MessagingViewProps) {
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <div
-                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
+                                        className={`size-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
                                       />
                                       <span className="truncate text-[13px] font-semibold text-gray-12">
                                         <span className="font-mono text-[12px]">{item.id}</span>
@@ -450,7 +448,7 @@ export function MessagingView(props: MessagingViewProps) {
                                   </div>
                                   <Button
                                     variant="outline"
-                                    className="h-7 shrink-0 px-2.5 text-[11px]"
+                                    size="xs" className="shrink-0"
                                     disabled={props.telegram.saving || item.id === "env" || !scopedWorkspaceReady}
                                     onClick={() => void props.onDeleteTelegram(item.id)}
                                   >
@@ -465,7 +463,7 @@ export function MessagingView(props: MessagingViewProps) {
                                 <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.status_label")}</div>
                                 <div className="flex items-center gap-1.5">
                                   <div
-                                    className={`h-1.5 w-1.5 rounded-full ${
+                                    className={`size-1.5 rounded-full ${
                                       props.telegram.identities.some((item) => item.running) ? "bg-emerald-9" : "bg-gray-8"
                                     }`}
                                   />
@@ -507,7 +505,7 @@ export function MessagingView(props: MessagingViewProps) {
                               <div className="text-[12px] font-semibold text-gray-12">{t("identities.quick_setup")}</div>
                               <ol className="space-y-2 text-[12px] leading-relaxed text-gray-10">
                                 <li className="flex items-start gap-2">
-                                  <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
+                                  <span className="mt-0.5 flex size-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">1</span>
                                   <span>
                                     {t("identities.botfather_step1_open")}{" "}
                                     <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="font-medium text-gray-12 underline">
@@ -518,11 +516,11 @@ export function MessagingView(props: MessagingViewProps) {
                                   </span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                  <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">2</span>
+                                  <span className="mt-0.5 flex size-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">2</span>
                                   <span>{t("identities.copy_bot_token_hint")}</span>
                                 </li>
                                 <li className="flex items-start gap-2">
-                                  <span className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
+                                  <span className="mt-0.5 flex size-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
                                   <span>
                                     {t("identities.botfather_step3_choose")} <span className="font-medium text-gray-12">{t("identities.botfather_step3_public")}</span>{" "}
                                     {t("identities.botfather_step3_or_private")} <span className="font-medium text-gray-12">{t("identities.botfather_step3_private")}</span>{" "}
@@ -567,7 +565,7 @@ export function MessagingView(props: MessagingViewProps) {
                               }`}
                             >
                               {props.telegram.saving ? (
-                                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                <div className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                               ) : (
                                 <Link size={15} />
                               )}
@@ -586,7 +584,7 @@ export function MessagingView(props: MessagingViewProps) {
                               style={{ background: "#229ED9" }}
                             >
                               {props.telegram.saving ? (
-                                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                <div className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                               ) : (
                                 <Shield size={15} />
                               )}
@@ -608,11 +606,11 @@ export function MessagingView(props: MessagingViewProps) {
                                 .
                               </div>
                               <div className="flex items-center gap-2">
-                                <Button variant="outline" className="h-7 px-2.5 text-[11px]" onClick={() => void props.onCopyTelegramPairingCode()}>
+                                <Button variant="outline" size="xs" onClick={() => void props.onCopyTelegramPairingCode()}>
                                   <Copy size={12} />
                                   <span className="ml-1">{t("identities.copy_code")}</span>
                                 </Button>
-                                <Button variant="outline" className="h-7 px-2.5 text-[11px]" onClick={props.onHideTelegramPairingCode}>
+                                <Button variant="outline" size="xs" onClick={props.onHideTelegramPairingCode}>
                                   {t("common.hide")}
                                 </Button>
                               </div>
@@ -673,7 +671,7 @@ export function MessagingView(props: MessagingViewProps) {
                     </button>
 
                     {props.expandedChannel === "slack" ? (
-                      <div className="space-y-3 border-t border-gray-4 px-4 py-4 animate-[fadeUp_0.2s_ease-out]">
+                      <div className="space-y-3 border-t border-gray-4 p-4 animate-[fadeUp_0.2s_ease-out]">
                         {props.slack.identitiesError ? (
                           <div className="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
                             {props.slack.identitiesError}
@@ -691,7 +689,7 @@ export function MessagingView(props: MessagingViewProps) {
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2">
                                       <div
-                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
+                                        className={`size-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
                                       />
                                       <span className="truncate text-[13px] font-semibold text-gray-12">
                                         <span className="font-mono text-[12px]">{item.id}</span>
@@ -703,7 +701,7 @@ export function MessagingView(props: MessagingViewProps) {
                                   </div>
                                   <Button
                                     variant="outline"
-                                    className="h-7 shrink-0 px-2.5 text-[11px]"
+                                    size="xs" className="shrink-0"
                                     disabled={props.slack.saving || item.id === "env" || !scopedWorkspaceReady}
                                     onClick={() => void props.onDeleteSlack(item.id)}
                                   >
@@ -718,7 +716,7 @@ export function MessagingView(props: MessagingViewProps) {
                                 <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.status_label")}</div>
                                 <div className="flex items-center gap-1.5">
                                   <div
-                                    className={`h-1.5 w-1.5 rounded-full ${
+                                    className={`size-1.5 rounded-full ${
                                       props.slack.identities.some((item) => item.running) ? "bg-emerald-9" : "bg-gray-8"
                                     }`}
                                   />
@@ -799,7 +797,7 @@ export function MessagingView(props: MessagingViewProps) {
                             style={{ background: "#4A154B" }}
                           >
                             {props.slack.saving ? (
-                              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                              <div className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                             ) : (
                               <Link size={15} />
                             )}
@@ -890,7 +888,7 @@ export function MessagingView(props: MessagingViewProps) {
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
-                    className="h-8 px-3 text-xs"
+                    size="sm"
                     onClick={() => void props.onLoadAgentFile()}
                     disabled={props.agent.loading || !scopedWorkspaceReady}
                   >
@@ -899,7 +897,7 @@ export function MessagingView(props: MessagingViewProps) {
                   {!props.agent.exists ? (
                     <Button
                       variant="outline"
-                      className="h-8 px-3 text-xs"
+                      size="sm"
                       onClick={() => void props.onCreateDefaultAgentFile()}
                       disabled={props.agent.saving || !scopedWorkspaceReady}
                     >
@@ -907,8 +905,7 @@ export function MessagingView(props: MessagingViewProps) {
                     </Button>
                   ) : null}
                   <Button
-                    variant="secondary"
-                    className="h-8 px-3 text-xs"
+                    size="sm"
                     onClick={() => void props.onSaveAgentFile()}
                     disabled={props.agent.saving || !scopedWorkspaceReady || !agentDirty}
                   >
@@ -986,8 +983,7 @@ export function MessagingView(props: MessagingViewProps) {
 
                 <div className="flex items-center gap-2">
                   <Button
-                    variant="secondary"
-                    className="h-8 px-3 text-xs"
+                    size="sm"
                     onClick={() => void props.onSendTestMessage()}
                     disabled={props.sendTest.busy || !scopedWorkspaceReady || !props.sendTest.text.trim()}
                   >
@@ -1004,7 +1000,7 @@ export function MessagingView(props: MessagingViewProps) {
                       {props.sendTest.result.failures?.length ? ` failures=${props.sendTest.result.failures.length}` : ""}
                       {props.sendTest.result.reason?.trim() ? ` reason=${props.sendTest.result.reason}` : ""}
                     </div>
-                    {props.sendTest.result.failures?.map((failure) => (
+                    {props.sendTest.result.failures?.map((failure: { identityId: string; peerId: string; error: string }) => (
                       <div key={`${failure.identityId}:${failure.peerId}:${failure.error}`} className="text-red-11">
                         {failure.identityId}/{failure.peerId}: {failure.error}
                       </div>
@@ -1057,8 +1053,7 @@ export function MessagingView(props: MessagingViewProps) {
             confirmLabel={t("identities.public_bot_confirm")}
             cancelLabel={t("common.cancel")}
             variant="danger"
-            confirmButtonVariant="danger"
-            cancelButtonVariant="primary"
+            confirmButtonVariant="destructive"
             onCancel={props.onCancelPublicTelegramWarning}
             onConfirm={() => void props.onConfirmPublicTelegram()}
           />

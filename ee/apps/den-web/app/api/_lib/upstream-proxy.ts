@@ -134,7 +134,7 @@ function applyCorsHeaders(request: NextRequest, headers: Headers): void {
   headers.set("access-control-allow-origin", allowOrigin);
   headers.set("access-control-allow-credentials", "true");
   headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  headers.set("access-control-allow-headers", "Content-Type,Authorization,X-Api-Key,X-Request-Id,X-Requested-With");
+  headers.set("access-control-allow-headers", "Content-Type,Authorization,X-Api-Key,X-Request-Id,X-Requested-With,X-OpenWork-Legacy-Org-Id");
   headers.append("vary", "Origin");
 }
 
@@ -189,6 +189,7 @@ function buildHeaders(request: NextRequest, contentType: string | null): Headers
     "user-agent",
     "x-requested-with",
     "x-api-key",
+    "x-openwork-legacy-org-id",
     "origin",
     "x-forwarded-for",
   ];

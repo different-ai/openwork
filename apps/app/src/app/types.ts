@@ -17,6 +17,9 @@ export type SidebarSessionItem = {
   id: string;
   title: string;
   slug?: string | null;
+  status?: unknown;
+  state?: unknown;
+  runStatus?: unknown;
   parentID?: string | null;
   time?: {
     updated?: number | null;
@@ -171,7 +174,14 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export type SettingsTab =
   | "general"
-  | "den"
+  | "ai"
+  | "preferences"
+  | "permissions"
+  | "shell"
+  | "cloud-account"
+  | "cloud-marketplaces"
+  | "cloud-workers"
+  | "cloud-providers"
   | "skills"
   | "extensions"
   | "environment"
@@ -407,6 +417,8 @@ export type ModelOption = {
   isFree: boolean;
   isConnected: boolean;
   isRecommended?: boolean;
+  /** "cloud" for org-managed providers (lpr_*), undefined for local. */
+  source?: "cloud";
 };
 
 export type SelectedSessionSnapshot = {

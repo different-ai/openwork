@@ -97,6 +97,99 @@ Known regressions this catches:
 
 ---
 
+## Flow 1A — Artifact pane opens generated spreadsheet/markdown targets
+
+**Why**: Artifact opening must be deterministic from tool/file outputs, not a
+one-off LLM convention. This catches regressions in target extraction,
+classification, right-pane mode switching, and artifact preview fallbacks.
+
+Steps:
+1. Run this once in an existing workspace, then create a new workspace and run
+   it again there. The default OpenWork agent should include artifact guidance
+   in both cases.
+2. Hover the workspace header in the sidebar → click **New task**.
+3. Fill the composer:
+   `Create reports/artifact-eval.csv with three rows of sample revenue data, reports/artifact-eval.xlsx with the same data, reports/artifact-eval.md summarizing it, and reports/index.html with a tiny HTML preview. Mention all four file paths when done.`
+4. Click **Run task** and wait until the status bar returns to **Ready**.
+5. Observe the right pane.
+
+Pass criteria:
+- The right pane opens automatically after the run completes.
+- The right-side rail shows compact Browser and Artifact icon buttons, and the
+  Artifact icon is active while the artifact pane is visible.
+- The artifact pane only auto-opens a file after the OpenWork server confirms
+  it exists on the workspace filesystem.
+- Searching or listing implementation files such as `package.json` does not
+  populate the artifact rail; only previewable deliverables are shown there.
+- The artifact pane shows `artifact-eval.csv` and `artifact-eval.xlsx` in the
+  same spreadsheet grid renderer, `artifact-eval.md` as rendered markdown, and
+  `index.html` as a sandboxed HTML preview.
+- The artifact pane includes a per-session artifact strip when multiple files
+  are detected.
+- CSV/XLSX spreadsheet artifacts allow editing cells and saving through the
+  OpenWork server.
+- Markdown artifacts open directly in the text editor and can save through the
+  OpenWork server write API without switching into a separate edit view.
+- CSV/XLSX/Markdown artifacts expose a **Download artifact** action backed by
+  the OpenWork server, so it works for local and remote workspaces.
+- Clicking **Browser** still restores the browser panel without losing the
+  selected artifact button.
+- There are no console errors from `ArtifactPanel`, `deriveOpenTargets`, or
+  the right pane resize layout.
+
+Tool recipe:
+```
+chrome-devtools_click { uid: <New task button> }
+chrome-devtools_click { uid: <composer textbox> }
+chrome-devtools_type_text { text: "Create reports/artifact-eval.csv with three rows of sample revenue data, reports/artifact-eval.xlsx with the same data, reports/artifact-eval.md summarizing it, and reports/index.html with a tiny HTML preview. Mention all four file paths when done." }
+chrome-devtools_click { uid: <Run task> }
+chrome-devtools_wait_for { text: ["Ready"], timeout: 60000 }
+chrome-devtools_take_snapshot
+chrome-devtools_list_console_messages { types: ["error"] }
+chrome-devtools_take_screenshot
+```
+
+Known regressions this catches:
+- Tool output paths are not extracted from live transcript messages.
+- `.csv`/`.md` targets are classified as unsupported external files.
+- `.xlsx` targets are detected but cannot be read, edited, saved, or downloaded.
+- The client performs one stat call per mentioned file instead of a single
+  server-side artifact resolve call.
+- Rendered paths like `Workspace/32423/reports/artifact-eval.md` are not
+  normalized before reading.
+- Missing files auto-open before the server confirms they exist.
+- The right pane remains browser-only and cannot display artifacts.
+- Browser automation tabs are overwritten by file previews.
+- Generic project search results such as many `package.json` files flood the
+  artifact rail.
+
+---
+
+## Flow 1B — Local preview URLs and socket hints open through browser mode
+
+**Why**: React/UI previews and running local services should use the browser
+pane, not the artifact renderer. WebSocket hints should not break URL parsing.
+
+Steps:
+1. In a new task, ask the agent to create a minimal HTML or React preview and
+   start a local server, then mention both `http://localhost:<port>` and any
+   `ws://localhost:<port>/...` socket endpoint it uses.
+2. Wait until the run completes.
+
+Pass criteria:
+- The `http://localhost:<port>` target opens in a browser tab.
+- Any `ws://localhost:<port>/...` target is extracted without corrupting the
+  artifact list; selecting it opens the sibling HTTP URL in browser mode.
+- No socket URL is routed through markdown/CSV artifact preview.
+- Screenshot evidence shows the native browser content clipped to the right
+  pane content area; it must not overlap the transcript, composer, titlebar, or
+  rail.
+- For this specific containment check, use an OS/window screenshot such as
+  `screencapture`; CDP screenshots only capture the React renderer and can miss
+  Electron `WebContentsView` overlays.
+
+---
+
 ## Flow 2 — Add a new session
 
 Steps:
@@ -107,14 +200,30 @@ Pass criteria:
 - URL changes to `/session/ses_*`.
 - Sidebar shows a new **"New session"** entry above existing sessions.
 - Main area renders the composer with **"No transcript yet."**.
+- Composer is focused so typing starts in **"Describe your task..."** without
+  an extra click.
 - Composer model label is whatever is saved as default (e.g.
   `opencode/minimax-m2.5-free`).
+- No **"Reload required"** toast appears when the new session is created or
+  while the session route polls workspace events.
 
 Known regressions this catches:
 - `onCreateTaskInWorkspace` silently failing because the route has no
   OpenCode client.
 - Created session not landing in the sidebar list (sidebar not refreshed
   after create).
+- Routine workspace resolution rewrites `opencode.jsonc`, causing a stale
+  **"Reload required"** toast after every new session.
+
+Tool recipe add-on for the reload toast regression:
+```
+chrome-devtools_click { uid: <New task button> }
+chrome-devtools_wait_for { text: ["Describe your task"], timeout: 15000 }
+chrome-devtools_evaluate_script { function: "() => new Promise((resolve) => setTimeout(() => resolve(document.body.innerText), 4500))" }
+```
+
+Expected result: the returned body text does not contain `Reload required` or
+`Config 'opencode.jsonc' was updated`.
 
 ---
 
@@ -527,6 +636,194 @@ Pass criteria:
 
 ---
 
+## Flow 20 — Local workspace creation opens a new session
+
+**Why**: Creating a local workspace from the session sidebar is a task-starting
+flow. The user should land in that workspace's session surface, not in settings.
+
+Steps:
+1. From an existing session route, click "Add workspace" in the sidebar.
+2. Click "Local workspace".
+3. Select or inject a disposable test folder path.
+4. Click "Create Workspace".
+5. Expect: the modal closes and the URL changes to
+   `/workspace/<new-workspace-id>/session/<new-session-id>`.
+6. Expect: the new workspace is selected in the sidebar.
+7. Expect: the main area shows a ready empty chat session for that workspace.
+8. Expect: the app does not navigate to `/settings/general`.
+
+Tool recipe:
+```
+chrome-devtools_take_snapshot
+chrome-devtools_click { uid: <Add workspace> }
+chrome-devtools_click { uid: <Local workspace card> }
+-- select a disposable folder, or inject it when the native picker blocks automation --
+chrome-devtools_click { uid: <Create Workspace> }
+chrome-devtools_wait_for { text: ["New session"], timeout: 15000 }
+chrome-devtools_take_snapshot
+```
+
+Pass criteria:
+- URL contains `/workspace/` and `/session/ses_`.
+- The selected sidebar workspace name matches the folder name.
+- Main panel heading is "New session".
+- Composer is visible with the "Run task" action.
+- Composer is focused so typing starts in "Describe your task..." without an
+  extra click.
+- "Select or create a session to get started." is not visible.
+- Settings heading is not visible after creation.
+
+Known regressions this catches:
+- Local workspace creation calling `handleOpenSettings("/settings/general")`.
+- Local workspace creation stopping at the workspace session root instead of
+  creating a ready-to-chat empty session.
+- The selected workspace id being persisted but the route remaining on the
+  previous workspace.
+
+---
+
+## Flow 21 — Streaming survives session and route interruptions
+
+**Why**: Long-running assistant streams must continue when users click away.
+The session runtime filters OpenCode events by tracked session id, and route
+changes can unmount the session surface. This flow catches regressions where
+streaming stops, aborts, or only resumes after a full reload.
+
+Run both subflows against a model/provider that can complete long text output.
+If the model returns an error (for example missing API key), the eval is blocked
+and should be rerun with an authenticated provider.
+
+### Subflow A — Switch to a different session while streaming
+
+Steps:
+1. Create Session A with **New task**.
+2. Send this prompt:
+   ```text
+   Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SESSION_SWITCH_500_DONE. Do not use tools.
+   ```
+3. As soon as **Run task** is clicked, create or open Session B within 1 second.
+4. Wait 2–5 seconds on Session B.
+5. Return to Session A.
+6. Poll the transcript until status is ready/idle or 90 seconds elapse.
+
+Pass criteria:
+- Session A does not show `MessageAbortedError` or an aborted assistant turn.
+- Session A eventually contains `SESSION_SWITCH_500_DONE` in assistant text.
+- The highest numbered line in Session A is `500.`.
+- Returning to Session A does not require a full app reload to show the final
+  text.
+
+Known regressions this catches:
+- Releasing `trackWorkspaceSessionSync()` immediately when a session is no
+  longer selected, causing off-screen deltas to be ignored.
+- Dropping the workspace event subscription during fast session switches.
+
+### Subflow B — Navigate to Settings while streaming
+
+Steps:
+1. Create Session C with **New task**.
+2. Send this prompt:
+   ```text
+   Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SETTINGS_ROUTE_500_DONE. Do not use tools.
+   ```
+3. Within 1 second of clicking **Run task**, click the footer **Settings** gear.
+4. Wait 2–5 seconds on Settings.
+5. Click **Back to app**.
+6. Poll the transcript until status is ready/idle or 90 seconds elapse.
+
+Pass criteria:
+- Session C does not show `MessageAbortedError` or an aborted assistant turn.
+- Session C eventually contains `SETTINGS_ROUTE_500_DONE` in assistant text.
+- The highest numbered line in Session C is `500.`.
+- Returning from Settings must not reload the OpenCode engine for the same
+  already-active workspace.
+
+Known regressions this catches:
+- Disposing the workspace SSE subscription when `SessionRoute` unmounts.
+- Re-activating the already-active workspace when returning from Settings,
+  which reloads the OpenCode engine and aborts the run.
+
+### Browser tool recipe
+
+Use `browser_evaluate` against the Electron CDP target. The snippets below use
+the OpenWork inspector and React Query cache so the eval can assert transcript
+state directly instead of relying on a visual snapshot cadence.
+
+Create a new session:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'New task');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no new task' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Fill and run a prompt:
+```js
+(function() {
+  var editor = document.querySelector('[contenteditable=true]');
+  var text = 'Write exactly 500 short numbered lines about a lighthouse keeper. Each line should be 3 to 7 words. End the final line with the exact marker SETTINGS_ROUTE_500_DONE. Do not use tools.';
+  if (!editor) return JSON.stringify({ ok: false, error: 'no editor' });
+  editor.focus();
+  var p = editor.querySelector('p') || editor;
+  p.textContent = text;
+  p.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Run task' && !b.disabled);
+  if (!btn) return JSON.stringify({ ok: false, error: 'run disabled', editorText: editor.textContent });
+  btn.click();
+  return JSON.stringify({ ok: true, sessionId: window.__openwork.snapshot().route.selectedSessionId });
+})()
+```
+
+Open Settings quickly:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.getAttribute('aria-label') === 'Settings');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no settings button' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Return from Settings:
+```js
+(function() {
+  var btn = [...document.querySelectorAll('button')]
+    .find((b) => b.textContent.trim() === 'Back to app');
+  if (!btn) return JSON.stringify({ ok: false, error: 'no back button' });
+  btn.click();
+  return JSON.stringify({ ok: true, hash: window.location.hash });
+})()
+```
+
+Assert transcript completion for a marker:
+```js
+(async function() {
+  const { getReactQueryClient } = await import('/src/react-app/infra/query-client.ts');
+  const { transcriptKey, statusKey } = await import('/src/react-app/domains/session/sync/session-sync.ts');
+  const route = window.__openwork.snapshot().route;
+  const messages = getReactQueryClient().getQueryData(transcriptKey(route.selectedWorkspaceId, route.selectedSessionId)) || [];
+  const status = getReactQueryClient().getQueryData(statusKey(route.selectedWorkspaceId, route.selectedSessionId));
+  const assistant = [...messages].reverse().find((message) => message.role === 'assistant');
+  const text = (assistant?.parts || []).map((part) => part.text || '').join('\n');
+  const numbers = [...text.matchAll(/(?:^|\n)(\d+)\./g)].map((match) => Number(match[1]));
+  return JSON.stringify({
+    status,
+    hasMarker: text.includes('SETTINGS_ROUTE_500_DONE'),
+    lastNumber: numbers.length ? Math.max(...numbers) : null,
+    hasAbort: /MessageAbortedError|Aborted/.test(document.body.innerText),
+    tail: text.slice(-1000),
+  });
+})()
+```
+
+---
+
 ## Change log
 
 - 2026-04-16 — initial doc after the React port cutover fixed streaming,
@@ -538,3 +835,7 @@ Pass criteria:
 - 2026-04-28 — added Flows 13-19: slash command stability, error recovery
   with model change, paste chip collapse, user message display, single action
   button, skill lifecycle, and workspace button placement.
+- 2026-05-06 — added Flow 20 to ensure local workspace creation opens the
+  new workspace session surface instead of settings.
+- 2026-05-18 — added Flow 21 to verify long streams survive switching to
+  another session and navigating to Settings/back.

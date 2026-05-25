@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -111,7 +111,7 @@ export function StatusToastsProvider({ children }: StatusToastsProviderProps) {
 }
 
 export function useStatusToasts(): StatusToastsStore {
-  const context = useContext(StatusToastsContext);
+  const context = use(StatusToastsContext);
   if (!context) {
     throw new Error("useStatusToasts must be used within a StatusToastsProvider");
   }

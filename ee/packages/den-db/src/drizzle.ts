@@ -1,1 +1,1 @@
-export { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"
+export { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm"

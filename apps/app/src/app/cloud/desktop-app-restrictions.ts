@@ -1,8 +1,8 @@
-import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions";
+import type { DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
 import type { DenDesktopConfig } from "../lib/den";
 import type { ModelRef } from "../types";
 
-export type DesktopAppRestrictionKey = keyof DesktopAppRestrictions;
+export type DesktopAppRestrictionKey = DesktopPolicyKey;
 
 export type DesktopAppRestrictionChecker = (input: {
   restriction: DesktopAppRestrictionKey;
@@ -14,7 +14,7 @@ export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
 }) {
-  return input.config?.[input.restriction] === true;
+  return input.config?.[input.restriction] === false;
 }
 
 export function isDesktopProviderBlocked(input: {
@@ -25,7 +25,7 @@ export function isDesktopProviderBlocked(input: {
   if (!providerId) return false;
 
   if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
-    return input.checkRestriction({ restriction: "blockZenModel" });
+    return input.checkRestriction({ restriction: "allowZenModel" });
   }
 
   return false;
@@ -55,7 +55,7 @@ type DesktopAppRestrictionSyncContext = {
 export async function runDesktopAppRestrictionSyncEffects(
   input: DesktopAppRestrictionSyncContext,
 ) {
-  const shouldDisableOpencodeProvider = input.checkRestriction({ restriction: "blockZenModel" });
+  const shouldDisableOpencodeProvider = input.checkRestriction({ restriction: "allowZenModel" });
 
   input.reconcileRestrictedModels?.();
 
@@ -69,7 +69,7 @@ export async function runDesktopAppRestrictionSyncEffects(
       input.onError?.(
         error instanceof Error ? error : new Error(String(error ?? "Desktop restriction effect failed.")),
         {
-          restriction: "blockZenModel",
+          restriction: "allowZenModel",
           action: "ensureProjectProviderDisabledState",
           providerId: DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
         },

@@ -103,6 +103,8 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   let healthTimeoutId: number | null = null;
   let healthBusy = false;
   let healthDelayMs = 10_000;
+  let consecutiveHealthFailures = 0;
+  let visibilityChangeHandler: (() => void) | null = null;
   let snapshot: OpenworkServerStoreSnapshot;
 
   let state: MutableState = {
@@ -327,13 +329,20 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
   const runHealthCheck = async () => {
     if (disposed || typeof window === "undefined") return;
-    if (!options.documentVisible()) return;
-    if (shouldWaitForLocalHostInfo()) return;
+    if (!options.documentVisible()) {
+      queueHealthCheck(healthDelayMs);
+      return;
+    }
+    if (shouldWaitForLocalHostInfo()) {
+      queueHealthCheck(250);
+      return;
+    }
     if (healthBusy) return;
 
     const url = getBaseUrl().trim();
     const auth = getAuth();
     if (!url) {
+      consecutiveHealthFailures = 0;
       mutateState((current) => ({
         ...current,
         openworkServerStatus: "disconnected",
@@ -352,7 +361,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         if (disposed) return;
 
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
 
           mutateState((current) => ({
@@ -373,15 +382,26 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       }
 
       if (disposed) return;
-      healthDelayMs =
-        result.status === "connected" || result.status === "limited"
-          ? 10_000
-          : Math.min(healthDelayMs * 2, 60_000);
+      const previousStatus = state.openworkServerStatus;
+      const previousCapabilities = state.openworkServerCapabilities;
+      const healthy = result.status === "connected" || result.status === "limited";
+      if (healthy) {
+        consecutiveHealthFailures = 0;
+        healthDelayMs = 10_000;
+      } else {
+        consecutiveHealthFailures += 1;
+        healthDelayMs = Math.min(healthDelayMs * 2, 60_000);
+      }
+
+      const preservePrevious =
+        !healthy &&
+        consecutiveHealthFailures < 3 &&
+        (previousStatus === "connected" || previousStatus === "limited");
 
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: result.status,
-        openworkServerCapabilities: result.capabilities,
+        openworkServerStatus: preservePrevious ? previousStatus : result.status,
+        openworkServerCapabilities: preservePrevious ? previousCapabilities : result.capabilities,
         openworkServerCheckedAt: Date.now(),
       }));
     } catch {
@@ -436,13 +456,19 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
     syncFromOptions();
     queueHealthCheck(0);
+    visibilityChangeHandler = () => {
+      if (!options.documentVisible()) return;
+      consecutiveHealthFailures = 0;
+      queueHealthCheck(0);
+    };
+    window.addEventListener("visibilitychange", visibilityChangeHandler);
 
     const refreshHostInfo = () => {
       if (!isDesktopRuntime()) return;
       if (!options.documentVisible()) return;
       void (async () => {
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
           mutateState((current) => ({
             ...current,
@@ -578,6 +604,10 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     disposed = true;
     started = false;
     clearHealthTimeout();
+    if (visibilityChangeHandler && typeof window !== "undefined") {
+      window.removeEventListener("visibilitychange", visibilityChangeHandler);
+      visibilityChangeHandler = null;
+    }
     for (const key of [...intervals.keys()]) stopInterval(key);
   };
 
@@ -594,6 +624,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     }
 
     const result = await checkOpenworkServer(derived, next.token);
+    consecutiveHealthFailures = result.status === "disconnected" ? consecutiveHealthFailures + 1 : 0;
     mutateState((current) => ({
       ...current,
       openworkServerStatus: result.status,
@@ -628,7 +659,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       let hostInfo = state.openworkServerHostInfo;
       if (isDesktopRuntime()) {
         try {
-          hostInfo = await openworkServerInfo();
+          hostInfo = await openworkServerInfo() as OpenworkServerInfo;
           mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
         } catch {
           hostInfo = null;
@@ -693,7 +724,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     try {
       hostInfo = await openworkServerRestart({
         remoteAccessEnabled: state.openworkServerSettings.remoteAccessEnabled === true,
-      });
+      }) as OpenworkServerInfo;
       mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
     } catch {
       return null;

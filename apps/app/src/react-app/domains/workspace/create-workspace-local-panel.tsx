@@ -1,14 +1,14 @@
 /** @jsxImportSource react */
 import { Check, FolderPlus, Loader2, XCircle } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { DialogClose, DialogFooter } from "@/components/ui/dialog";
 import type { WorkspacePreset } from "../../../app/types";
 import { t } from "../../../i18n";
 import {
   errorBannerClass,
   modalBodyClass,
-  modalFooterClass,
   pillGhostClass,
-  pillPrimaryClass,
   pillSecondaryClass,
   sectionBodyClass,
   sectionTitleClass,
@@ -68,7 +68,16 @@ function stepIcon(status: CreateWorkspaceProgressStep["status"]) {
   if (status === "active")
     return <Loader2 size={16} className="animate-spin text-dls-accent" />;
   if (status === "error") return <XCircle size={16} className="text-red-10" />;
-  return <div className="h-4 w-4 rounded-full border-2 border-dls-border" />;
+  return <div className="size-4 rounded-full border-2 border-dls-border" />;
+}
+
+function toKeyedLines(lines: string[]) {
+  let offset = 0;
+  return lines.map((line) => {
+    const key = `${offset}:${line}`;
+    offset += line.length + 1;
+    return { key, line };
+  });
 }
 
 function stepTextClass(status: CreateWorkspaceProgressStep["status"]) {
@@ -147,7 +156,7 @@ export function CreateWorkspaceLocalPanel(
         </div>
       </div>
 
-      <div className={modalFooterClass}>
+    <DialogFooter className="flex-col gap-3">
         {props.submitting && progress ? (
           <div className={softCardClass}>
             <div className="flex items-start justify-between gap-3">
@@ -183,7 +192,7 @@ export function CreateWorkspaceLocalPanel(
             <div className="mt-4 grid gap-2.5">
               {progress.steps.map((step) => (
                 <div key={step.key} className="flex items-center gap-3">
-                  <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                  <div className="flex size-5 shrink-0 items-center justify-center">
                     {stepIcon(step.status)}
                   </div>
                   <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
@@ -210,9 +219,9 @@ export function CreateWorkspaceLocalPanel(
                   Live logs
                 </div>
                 <div className="max-h-[120px] space-y-0.5 overflow-y-auto">
-                  {progress.logs.slice(-10).map((line, index) => (
+                  {toKeyedLines(progress.logs.slice(-10)).map(({ key, line }) => (
                     <div
-                      key={`${progress.runId}-log-${index}`}
+                      key={`${progress.runId}-log-${key}`}
                       className="break-all font-mono text-[10px] leading-tight text-dls-text"
                     >
                       {line}
@@ -264,8 +273,8 @@ export function CreateWorkspaceLocalPanel(
                   Docker debug details
                 </summary>
                 <div className="mt-2 space-y-1 break-words font-mono">
-                  {props.workerDebugLines.map((line, index) => (
-                    <div key={`docker-line-${index}`}>{line}</div>
+                  {toKeyedLines(props.workerDebugLines).map(({ key, line }) => (
+                    <div key={`docker-line-${key}`}>{line}</div>
                   ))}
                 </div>
               </details>
@@ -280,17 +289,16 @@ export function CreateWorkspaceLocalPanel(
         ) : null}
 
         <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={props.onClose}
+          <DialogClose
             disabled={props.submitting}
-            className={pillGhostClass}
+            render={<Button variant="outline" disabled={props.submitting} />}
           >
             {t("common.cancel")}
-          </button>
+          </DialogClose>
           {props.onConfirmWorker ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() =>
                 props.onConfirmWorker?.(props.preset, props.selectedFolder)
               }
@@ -305,7 +313,6 @@ export function CreateWorkspaceLocalPanel(
                   ? t("dashboard.choose_folder_continue")
                   : props.workerDisabledReason || undefined
               }
-              className={pillSecondaryClass}
             >
               {props.workerSubmitting ? (
                 <span className="inline-flex items-center gap-2">
@@ -316,9 +323,9 @@ export function CreateWorkspaceLocalPanel(
                 (props.workerLabel ??
                   t("dashboard.create_sandbox_confirm"))
               )}
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             type="button"
             onClick={() => void props.onSubmit()}
             disabled={!props.selectedFolder || props.submitting}
@@ -327,7 +334,6 @@ export function CreateWorkspaceLocalPanel(
                 ? t("dashboard.choose_folder_continue")
                 : undefined
             }
-            className={pillPrimaryClass}
           >
             {props.submitting ? (
               <span className="inline-flex items-center gap-2">
@@ -338,9 +344,9 @@ export function CreateWorkspaceLocalPanel(
               (props.confirmLabel ??
                 t("dashboard.create_workspace_confirm"))
             )}
-          </button>
+          </Button>
         </div>
-      </div>
+    </DialogFooter>
     </>
   );
 }

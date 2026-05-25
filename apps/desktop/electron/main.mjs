@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
+import net from "node:net";
 import { existsSync } from "node:fs";
 import {
   cp,
@@ -12,24 +14,173 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
+import {
+  openworkWorkspaceDisplayName,
+  selectOpenworkWorkspaceForConnection,
+} from "./remote-workspace.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
+const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
+const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 const APP_NAME = isDevMode ? "OpenWork - Dev" : "OpenWork";
 const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
+const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const BROWSER_PLUGIN = "opencode-chrome-devtools";
+const COMPUTER_USE_HELPER_APP_NAME = "Computer Use.app";
+const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+
+function computerUseHelperExecutablePath() {
+  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const candidates = [
+    explicitBinary,
+    explicitApp ? path.join(explicitApp, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
+    process.resourcesPath
+      ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE)
+      : null,
+    path.resolve(__dirname, "..", "resources", "helpers", COMPUTER_USE_HELPER_APP_NAME, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function getComputerUseMcpCommand() {
+  const helperExecutable = computerUseHelperExecutablePath();
+  if (helperExecutable) return [helperExecutable, "mcp"];
+
+  if (app.isPackaged) {
+    throw new Error("Computer Use helper app is missing from this OpenWork build.");
+  }
+
+  if (process.env.OPENWORK_DEV_MODE === "1") {
+    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+  }
+  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+}
+
+function callComputerUseMcpTool(name, args = {}) {
+  const [command, ...commandArgs] = getComputerUseMcpCommand();
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+    let stdoutBuffer = "";
+    let stderr = "";
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.kill();
+    };
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const finish = (response) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(response);
+    };
+
+    const timeout = setTimeout(() => {
+      fail(new Error(`Computer Use MCP ${name} timed out.${stderr.trim() ? ` ${stderr.trim()}` : ""}`));
+    }, 45_000);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdoutBuffer += chunk;
+      for (;;) {
+        const newlineIndex = stdoutBuffer.indexOf("\n");
+        if (newlineIndex === -1) break;
+        const line = stdoutBuffer.slice(0, newlineIndex).trim();
+        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+        if (!line) continue;
+        try {
+          const response = JSON.parse(line);
+          if (response.id === 2) {
+            finish(response);
+            return;
+          }
+        } catch {
+          // Package managers can write progress lines; ignore non-JSON stdout.
+        }
+      }
+    });
+
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", fail);
+    child.on("exit", (code) => {
+      if (!settled && code !== 0) {
+        fail(new Error(stderr.trim() || `Computer Use MCP exited with status ${code ?? "unknown"}.`));
+      }
+    });
+
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } })}\n`);
+  });
+}
+
+function computerUseToolText(response) {
+  const content = response?.result?.content;
+  if (!Array.isArray(content)) return "";
+  const textPart = content.find((part) => part?.type === "text" && typeof part.text === "string");
+  return textPart?.text ?? "";
+}
+
+async function checkComputerUsePermissions() {
+  const response = await callComputerUseMcpTool("check_permissions");
+  const text = computerUseToolText(response);
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      ok: parsed?.ok === true,
+      accessibility: parsed?.accessibility === true,
+      screenRecording: parsed?.screenRecording === true,
+    };
+  } catch {
+    return {
+      ok: false,
+      accessibility: false,
+      screenRecording: false,
+      error: text || "Computer Use permission check returned an unreadable response.",
+    };
+  }
+}
+
+function computerUsePermissionSettingsUrl(target) {
+  if (target === "screenRecording") {
+    return "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+  }
+  return "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+}
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
 // so in-place migration is a no-op for almost every file. Dev mode uses the
@@ -77,6 +228,135 @@ function resolveAppIconPath() {
   return null;
 }
 
+function normalizeRuntimeArch(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["arm64", "aarch64", "arm64e"].includes(normalized)) return "arm64";
+  if (["x64", "x86_64", "amd64"].includes(normalized)) return "x64";
+  return normalized || "unknown";
+}
+
+function isMacRunningUnderRosetta() {
+  if (process.platform !== "darwin" || process.arch !== "x64") return false;
+  try {
+    return execFileSync("/usr/sbin/sysctl", ["-in", "sysctl.proc_translated"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+function resolveSystemArch() {
+  if (process.platform === "darwin" && isMacRunningUnderRosetta()) return "arm64";
+  if (process.platform === "win32") {
+    return normalizeRuntimeArch(
+      process.env.PROCESSOR_ARCHITEW6432 || process.env.PROCESSOR_ARCHITECTURE || os.arch(),
+    );
+  }
+  if (typeof os.machine === "function") return normalizeRuntimeArch(os.machine());
+  return normalizeRuntimeArch(os.arch());
+}
+
+function platformDownloadSlug() {
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "win32") return "win";
+  return "linux";
+}
+
+function downloadAssetArch(arch) {
+  if (process.platform === "linux" && arch === "x64") return "x86_64";
+  return arch;
+}
+
+function downloadAssetExtension() {
+  if (process.platform === "darwin") return "dmg";
+  if (process.platform === "win32") return "exe";
+  return "AppImage";
+}
+
+function updaterManifestName(arch) {
+  if (process.platform === "darwin") return "latest-mac.yml";
+  if (process.platform === "win32") return "latest.yml";
+  return arch === "arm64" ? "latest-linux-arm64.yml" : "latest-linux.yml";
+}
+
+function archLabel(arch) {
+  if (arch === "arm64") return "ARM";
+  if (arch === "x64") return "Intel";
+  return arch;
+}
+
+function parseUpdaterManifestFiles(raw) {
+  const files = [];
+  let current = null;
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const start = line.match(/^\s*-\s+url:\s*(.+?)\s*$/);
+    if (start) {
+      current = { url: start[1].trim().replace(/^['"]|['"]$/g, "") };
+      files.push(current);
+      continue;
+    }
+    const prop = line.match(/^\s{4}([A-Za-z][A-Za-z0-9_-]*):\s*(.+?)\s*$/);
+    if (prop && current) {
+      current[prop[1]] = prop[2].trim().replace(/^['"]|['"]$/g, "");
+    }
+  }
+  return files.filter((file) => file.url);
+}
+
+function selectDownloadFile(files, arch) {
+  const assetArch = downloadAssetArch(arch);
+  const expected = `-${assetArch}-`;
+  const extension = downloadAssetExtension();
+  const matchingArch = files.filter((file) => file.url.includes(expected));
+  return (
+    matchingArch.find((file) => file.url.endsWith(`.${extension}`)) ||
+    matchingArch.find((file) => file.url.endsWith(".zip")) ||
+    matchingArch[0] ||
+    null
+  );
+}
+
+async function resolveCorrectArchitectureDownloadUrl(arch) {
+  const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
+  try {
+    const response = await fetch(manifestUrl, {
+      headers: { Accept: "text/yaml, text/plain, */*" },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const selected = selectDownloadFile(parseUpdaterManifestFiles(await response.text()), arch);
+    if (!selected?.url) return null;
+    return /^https?:\/\//i.test(selected.url)
+      ? selected.url
+      : new URL(selected.url, `${RELEASE_DOWNLOAD_BASE_URL}/`).toString();
+  } catch (error) {
+    console.warn("[architecture] failed to resolve latest download URL", error);
+    return null;
+  }
+}
+
+async function resolveArchitectureInfo() {
+  const appArch = normalizeRuntimeArch(process.arch);
+  const systemArch = resolveSystemArch();
+  const version = app.getVersion();
+  const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
+  const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
+  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
+  const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
+  return {
+    appArch,
+    appArchLabel: archLabel(appArch),
+    systemArch,
+    systemArchLabel: archLabel(systemArch),
+    mismatch: appArch !== systemArch && hasCorrectArchitectureDownload,
+    platform: process.platform === "win32" ? "windows" : process.platform,
+    version,
+    downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
+    releaseUrl: RELEASE_PAGE_URL,
+  };
+}
+
 const APP_ICON_PATH = resolveAppIconPath();
 const APP_ICON_IMAGE = APP_ICON_PATH ? nativeImage.createFromPath(APP_ICON_PATH) : null;
 
@@ -84,46 +364,66 @@ if (process.platform === "darwin" && APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty()
   app.dock.setIcon(APP_ICON_IMAGE);
 }
 
-// Optional: expose Chrome DevTools Protocol so external tools (chrome-devtools
-// MCP, raw CDP clients, etc.) can attach to this Electron instance.
-// Enable by setting OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=<port> before launch.
-const remoteDebugPort = Number.parseInt(
+// Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
+// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
+// pin a specific port; otherwise probe for a free one starting at 9223.
+// Must resolve before app.commandLine.appendSwitch (before `ready`).
+function probePort(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen({ port, host: "127.0.0.1" }, () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
+async function findFreeCdpPort(candidates) {
+  for (const port of candidates) {
+    if (await probePort(port)) return port;
+  }
+  return 0;
+}
+
+const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
-if (Number.isFinite(remoteDebugPort) && remoteDebugPort > 0) {
+const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
+  ? explicitCdpPort
+  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
+// Make the resolved port available to the embedded server so it flows into
+// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
+process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+
+// Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
+// Used in headless/Daytona environments to pass e.g. --disable-gpu.
+const extraLaunchArgs = (process.env.ELECTRON_EXTRA_LAUNCH_ARGS ?? "").trim();
+if (extraLaunchArgs) {
+  for (const arg of extraLaunchArgs.split(/\s+/)) {
+    const cleaned = arg.replace(/^--/, "");
+    if (!cleaned) continue;
+    const eqIdx = cleaned.indexOf("=");
+    if (eqIdx > 0) {
+      app.commandLine.appendSwitch(cleaned.slice(0, eqIdx), cleaned.slice(eqIdx + 1));
+    } else {
+      app.commandLine.appendSwitch(cleaned);
+    }
+  }
+}
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
+const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
+let applicationMenuVisible = process.platform === "darwin";
 
-function envFlagDisabled(name) {
+function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
-  return value === "0" || value === "false" || value === "off";
-}
-
-async function installReactDevToolsForDev() {
-  if (app.isPackaged || envFlagDisabled("OPENWORK_REACT_DEVTOOLS")) return;
-  try {
-    const mod = await import("electron-devtools-installer");
-    const installExtension =
-      typeof mod.installExtension === "function"
-        ? mod.installExtension
-        : typeof mod.default === "function"
-          ? mod.default
-          : typeof mod.default?.installExtension === "function"
-            ? mod.default.installExtension
-            : null;
-    const reactDevtools = mod.REACT_DEVELOPER_TOOLS ?? mod.default?.REACT_DEVELOPER_TOOLS;
-    if (typeof installExtension !== "function" || !reactDevtools) {
-      throw new Error("electron-devtools-installer did not expose React DevTools");
-    }
-    const name = await installExtension(reactDevtools);
-    console.info(`[devtools] installed ${name}`);
-  } catch (error) {
-    console.warn("[devtools] failed to install React Developer Tools", error);
-  }
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 const EMPTY_WORKSPACE_LIST = Object.freeze({
@@ -184,6 +484,667 @@ const pendingDeepLinks = [];
 let uiControlServer = null;
 let uiControlDiscoveryPath = null;
 const uiControlToken = randomBytes(32).toString("hex");
+
+// ── Embedded browser panel ─────────────────────────────────────────────
+const browserTabs = new Map();
+let browserTabOrder = [];
+let activeBrowserTabId = null;
+let browserViewVisible = false;
+let lastBrowserBounds = null;
+let browserTabCounter = 0;
+const BROWSER_DEFAULT_URL = "https://www.google.com";
+const MENU_OVERLAY_HTML = "overlay.html";
+const MENU_OVERLAY_WIDTH = 196;
+const MENU_OVERLAY_HEIGHT = 176;
+const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
+let menuOverlayView = null;
+let menuOverlayRequest = null;
+let menuOverlayReady = false;
+let menuOverlayReadyResolvers = [];
+let menuOverlayShowSerial = 0;
+
+function resetMenuOverlayReady({ resolvePending = false } = {}) {
+  menuOverlayReady = false;
+  if (resolvePending) {
+    const resolvers = menuOverlayReadyResolvers.splice(0);
+    for (const resolve of resolvers) resolve(false);
+  }
+}
+
+function markMenuOverlayReady(view) {
+  if (!view || view.webContents.isDestroyed()) return;
+  menuOverlayReady = true;
+  const resolvers = menuOverlayReadyResolvers.splice(0);
+  for (const resolve of resolvers) resolve(true);
+}
+
+function waitForMenuOverlayReady(view) {
+  if (menuOverlayReady) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let timer = null;
+    const done = (ready) => {
+      if (timer) clearTimeout(timer);
+      menuOverlayReadyResolvers = menuOverlayReadyResolvers.filter((candidate) => candidate !== done);
+      resolve(ready);
+    };
+    timer = setTimeout(() => done(false), MENU_OVERLAY_READY_TIMEOUT_MS);
+    menuOverlayReadyResolvers.push(done);
+    if (!view || view.webContents.isDestroyed()) done(false);
+  });
+}
+
+/** Send an IPC message to the main renderer, guarding against disposed frames. */
+function sendToRenderer(channel, payload) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  try { mainWindow.webContents.send(channel, payload); } catch { /* window closing */ }
+}
+
+async function openSettingsFromNativeMenu() {
+  const win = await createMainWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
+}
+
+async function toggleSidebarFromNativeMenu() {
+  const win = await createMainWindow();
+  win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
+}
+
+function installApplicationMenu() {
+  const isMac = process.platform === "darwin";
+  const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
+    ...(isMac
+      ? [
+          {
+            label: APP_NAME,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              {
+                label: "Settings...",
+                accelerator: "Command+,",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        ...(isMac
+          ? [
+              { role: "pasteAndMatchStyle" },
+              { role: "delete" },
+              { role: "selectAll" },
+              { type: "separator" },
+              {
+                label: "Speech",
+                submenu: [
+                  { role: "startSpeaking" },
+                  { role: "stopSpeaking" },
+                ],
+              },
+            ]
+          : [
+              { role: "delete" },
+              { type: "separator" },
+              { role: "selectAll" },
+            ]),
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CommandOrControl+B",
+          click: () => {
+            void toggleSidebarFromNativeMenu();
+          },
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(isMac
+          ? [
+              { type: "separator" },
+              { role: "front" },
+              { type: "separator" },
+              { role: "window" },
+            ]
+          : [
+              { role: "close" },
+            ]),
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Docs",
+          click: async () => {
+            await shell.openExternal(DOCS_PAGE_URL);
+          },
+        },
+      ],
+    },
+  ]);
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function applyApplicationMenuVisibility(window) {
+  if (process.platform === "darwin") return;
+  window.setAutoHideMenuBar(false);
+  window.setMenuBarVisibility(applicationMenuVisible);
+}
+
+function setApplicationMenuVisible(visible) {
+  applicationMenuVisible = visible === true;
+  for (const window of BrowserWindow.getAllWindows()) {
+    applyApplicationMenuVisibility(window);
+  }
+  return applicationMenuVisible;
+}
+
+function createBrowserTabId() {
+  browserTabCounter += 1;
+  return `tab_${Date.now().toString(36)}_${browserTabCounter.toString(36)}`;
+}
+
+function normalizeBrowserUrl(url, fallback = BROWSER_DEFAULT_URL) {
+  const target = typeof url === "string" && url.trim() ? url.trim() : fallback;
+  if (!target || target === "about:blank") return "about:blank";
+  return /^https?:\/\//i.test(target) ? target : `https://${target}`;
+}
+
+function getBrowserTab(tabId = activeBrowserTabId) {
+  return tabId ? browserTabs.get(tabId) ?? null : null;
+}
+
+function getActiveBrowserView() {
+  return getBrowserTab()?.view ?? null;
+}
+
+function getActiveWebContents() {
+  return getActiveBrowserView()?.webContents ?? null;
+}
+
+function listBrowserTabs() {
+  return browserTabOrder
+    .map((tabId) => {
+      const tab = browserTabs.get(tabId);
+      if (!tab || tab.view.webContents.isDestroyed()) return null;
+      return {
+        tabId,
+        url: tab.view.webContents.getURL(),
+        title: tab.view.webContents.getTitle(),
+        favicon: tab.favicon,
+        canGoBack: tab.view.webContents.canGoBack(),
+        canGoForward: tab.view.webContents.canGoForward(),
+        isLoading: tab.view.webContents.isLoading(),
+        isActive: tabId === activeBrowserTabId,
+      };
+    })
+    .filter(Boolean);
+}
+
+function browserStatePayload() {
+  const activeTab = getBrowserTab();
+  const activeWebContents = activeTab?.view.webContents;
+  const activeState = activeWebContents && !activeWebContents.isDestroyed()
+    ? {
+        url: activeWebContents.getURL(),
+        title: activeWebContents.getTitle(),
+        canGoBack: activeWebContents.canGoBack(),
+        canGoForward: activeWebContents.canGoForward(),
+        isLoading: activeWebContents.isLoading(),
+      }
+    : {
+        url: "",
+        title: "",
+        canGoBack: false,
+        canGoForward: false,
+        isLoading: false,
+      };
+  return {
+    ...activeState,
+    activeTabId: activeBrowserTabId,
+    tabs: listBrowserTabs(),
+  };
+}
+
+function browserTabUrl(tab) {
+  const url = tab?.view?.webContents?.getURL?.();
+  return typeof url === "string" && url && url !== "about:blank" ? url : null;
+}
+
+function isHttpUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeMenuOverlayPoint(point) {
+  if (!point || typeof point !== "object") {
+    return { x: 0, y: 0 };
+  }
+  const x = Number(point.x);
+  const y = Number(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { x: 0, y: 0 };
+  }
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+function menuOverlayBounds(point) {
+  const [contentWidth, contentHeight] = mainWindow?.getContentSize?.() ?? [MENU_OVERLAY_WIDTH, MENU_OVERLAY_HEIGHT];
+  return {
+    x: Math.min(Math.max(point.x, 0), Math.max(contentWidth - MENU_OVERLAY_WIDTH - 4, 0)),
+    y: Math.min(Math.max(point.y, 0), Math.max(contentHeight - MENU_OVERLAY_HEIGHT - 4, 0)),
+    width: MENU_OVERLAY_WIDTH,
+    height: MENU_OVERLAY_HEIGHT,
+  };
+}
+
+function menuOverlayUrl() {
+  const currentUrl = mainWindow?.webContents?.getURL?.();
+  if (currentUrl && /^https?:\/\//i.test(currentUrl)) {
+    return new URL(MENU_OVERLAY_HTML, currentUrl).toString();
+  }
+  return null;
+}
+
+async function loadMenuOverlayRenderer(view) {
+  const devUrl = menuOverlayUrl();
+  if (devUrl) {
+    await view.webContents.loadURL(devUrl);
+    return;
+  }
+
+  const packagedOverlayPath = path.join(process.resourcesPath, "app-dist", MENU_OVERLAY_HTML);
+  const devOverlayPath = path.resolve(__dirname, "../../app/dist", MENU_OVERLAY_HTML);
+  await view.webContents.loadFile(app.isPackaged ? packagedOverlayPath : devOverlayPath);
+}
+
+async function ensureMenuOverlayView() {
+  if (menuOverlayView && !menuOverlayView.webContents.isDestroyed()) {
+    return menuOverlayView;
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      // Electron only runs ESM preload scripts reliably with sandbox disabled.
+      // Keep the bridge isolated and node-free for the React overlay document.
+      backgroundThrottling: false,
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, "menu-overlay-preload.mjs"),
+    },
+  });
+  view.setBackgroundColor?.("#00000000");
+  view.setVisible?.(false);
+  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) resetMenuOverlayReady();
+  });
+  view.webContents.once("destroyed", () => {
+    if (menuOverlayView === view) {
+      menuOverlayView = null;
+      menuOverlayRequest = null;
+      resetMenuOverlayReady({ resolvePending: true });
+    }
+  });
+
+  menuOverlayView = view;
+  resetMenuOverlayReady({ resolvePending: true });
+  await loadMenuOverlayRenderer(view);
+  return view;
+}
+
+function hideMenuOverlay() {
+  const view = menuOverlayView;
+  menuOverlayShowSerial += 1;
+  menuOverlayRequest = null;
+  if (!view || !mainWindow) return;
+  view.setVisible?.(false);
+  try {
+    if (mainWindow.contentView.children.includes(view)) {
+      mainWindow.contentView.removeChildView(view);
+    }
+  } catch {
+    // already removed
+  }
+}
+
+function bringMenuOverlayToTop(view) {
+  if (!mainWindow) return;
+  try {
+    if (mainWindow.contentView.children.includes(view)) {
+      mainWindow.contentView.removeChildView(view);
+    }
+  } catch {
+    // already removed
+  }
+  mainWindow.contentView.addChildView(view);
+}
+
+function tabMenuRequest(tab, point) {
+  const url = browserTabUrl(tab);
+  return {
+    id: `tab-menu:${tab.tabId}:${Date.now()}`,
+    source: "tab",
+    tabId: tab.tabId,
+    url,
+    bounds: menuOverlayBounds(normalizeMenuOverlayPoint(point)),
+    items: [
+      { id: "copy-url", label: "Copy URL", iconName: "copy", disabled: !url },
+      { id: "open-external", label: "Open in Browser", iconName: "external", disabled: !(url && isHttpUrl(url)) },
+      { id: "close-tab", label: "Close Tab", iconName: "close", separatorBefore: true },
+      { id: "close-all-tabs", label: "Close All Tabs", iconName: "close" },
+    ],
+  };
+}
+
+async function showBrowserTabContextMenu(tabId, point) {
+  const tab = getBrowserTab(String(tabId ?? ""));
+  if (!mainWindow || !tab || tab.view.webContents.isDestroyed()) return;
+
+  const showSerial = menuOverlayShowSerial + 1;
+  menuOverlayShowSerial = showSerial;
+  const request = tabMenuRequest(tab, point);
+  const view = await ensureMenuOverlayView();
+  if (showSerial !== menuOverlayShowSerial || menuOverlayView !== view) return;
+  menuOverlayRequest = request;
+  view.setBounds(request.bounds);
+  view.setVisible?.(true);
+  bringMenuOverlayToTop(view);
+  const ready = await waitForMenuOverlayReady(view);
+  if (showSerial !== menuOverlayShowSerial || menuOverlayRequest !== request || menuOverlayView !== view) return;
+  if (!ready) {
+    console.warn("[menu-overlay] renderer did not signal readiness before show");
+  }
+  view.webContents.send("openwork:menu-overlay:show", {
+    id: request.id,
+    source: request.source,
+    items: request.items,
+  });
+  view.webContents.focus();
+}
+
+function handleMenuOverlayChoice(payload) {
+  if (!payload || payload.requestId !== menuOverlayRequest?.id) return;
+  const request = menuOverlayRequest;
+  const tab = getBrowserTab(request.tabId);
+  hideMenuOverlay();
+
+  switch (payload.itemId) {
+    case "copy-url":
+      if (request.url) clipboard.writeText(request.url);
+      break;
+    case "open-external":
+      if (request.url && isHttpUrl(request.url)) void shell.openExternal(request.url);
+      break;
+    case "close-tab":
+      if (tab) closeBrowserTab(tab.tabId);
+      break;
+    case "close-all-tabs":
+      closeAllBrowserTabs();
+      break;
+  }
+}
+
+function createBrowserTab(url = "about:blank", { select = true } = {}) {
+  const tabId = createBrowserTabId();
+  const view = new WebContentsView({
+    webPreferences: {
+      backgroundThrottling: false,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, "browser-content-preload.cjs"),
+      partition: "persist:openwork-browser",
+    },
+  });
+  const tab = { tabId, view, favicon: null };
+  browserTabs.set(tabId, tab);
+  browserTabOrder.push(tabId);
+  // Load about:blank immediately to preempt persistent-session restore.
+  // Cookies live on the session object, not the document — they survive this.
+  view.webContents.loadURL("about:blank");
+  view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+    void shell.openExternal(targetUrl);
+    return { action: "deny" };
+  });
+  view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace && targetUrl !== "about:blank") {
+      sendToRenderer("openwork:browser:panel-opened");
+    }
+  });
+  view.webContents.on("did-navigate", () => sendBrowserState());
+  view.webContents.on("did-navigate-in-page", () => sendBrowserState());
+  view.webContents.on("page-title-updated", () => sendBrowserState());
+  view.webContents.on("page-favicon-updated", (_event, favicons) => {
+    tab.favicon = Array.isArray(favicons) ? favicons[0] ?? null : null;
+    sendBrowserState();
+  });
+  view.webContents.on("did-start-loading", () => sendBrowserState());
+  view.webContents.on("did-stop-loading", () => sendBrowserState());
+  view.webContents.once("destroyed", () => {
+    browserTabs.delete(tabId);
+    browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
+    if (activeBrowserTabId === tabId) activeBrowserTabId = browserTabOrder[0] ?? null;
+    sendBrowserState();
+  });
+  if (select || !activeBrowserTabId) {
+    selectBrowserTab(tabId);
+  } else {
+    sendBrowserState();
+  }
+  const finalUrl = normalizeBrowserUrl(url, "about:blank");
+  if (finalUrl !== "about:blank") {
+    view.webContents.loadURL(finalUrl);
+  }
+  return tab;
+}
+
+function detachBrowserView(view) {
+  if (!mainWindow || !view) return;
+  try {
+    if (mainWindow.contentView.children.includes(view)) {
+      mainWindow.contentView.removeChildView(view);
+    }
+  } catch {
+    // already removed
+  }
+}
+
+function attachActiveBrowserView() {
+  if (!mainWindow || !browserViewVisible) return;
+  const view = getActiveBrowserView();
+  if (!view) return;
+  for (const tab of browserTabs.values()) {
+    if (tab.view !== view) detachBrowserView(tab.view);
+  }
+  if (!mainWindow.contentView.children.includes(view)) {
+    mainWindow.contentView.addChildView(view);
+  }
+  if (lastBrowserBounds && lastBrowserBounds.width > 0 && lastBrowserBounds.height > 0) {
+    view.setBounds(lastBrowserBounds);
+  }
+}
+
+function selectBrowserTab(tabId) {
+  if (!browserTabs.has(tabId)) throw new Error(`Unknown browser tab: ${tabId}`);
+  hideMenuOverlay();
+  const previousView = getActiveBrowserView();
+  activeBrowserTabId = tabId;
+  if (previousView && previousView !== getActiveBrowserView()) {
+    detachBrowserView(previousView);
+  }
+    attachActiveBrowserView();
+  sendBrowserState();
+  return getBrowserTab(tabId);
+}
+
+function closeBrowserTab(tabId = activeBrowserTabId) {
+  const tab = getBrowserTab(tabId);
+  if (!tab) return null;
+  if (menuOverlayRequest?.tabId === tabId) hideMenuOverlay();
+  const closingIndex = browserTabOrder.indexOf(tabId);
+  const wasActive = activeBrowserTabId === tabId;
+  detachBrowserView(tab.view);
+  browserTabs.delete(tabId);
+  browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
+  if (wasActive) {
+    const nextTabId =
+      browserTabOrder[Math.min(closingIndex, browserTabOrder.length - 1)] ??
+      browserTabOrder[closingIndex - 1] ??
+      null;
+    activeBrowserTabId = nextTabId;
+    if (nextTabId) {
+      attachActiveBrowserView();
+    } else {
+      hideBrowserView();
+      sendToRenderer("openwork:browser:panel-closed");
+    }
+  }
+  try { tab.view.webContents.close(); } catch { /* already destroyed */ }
+  sendBrowserState();
+  return tabId;
+}
+
+function closeAllBrowserTabs() {
+  const closedTabIds = [...browserTabOrder];
+  if (closedTabIds.length === 0) return [];
+  hideMenuOverlay();
+  const tabsToClose = closedTabIds
+    .map((tabId) => browserTabs.get(tabId))
+    .filter(Boolean);
+  hideBrowserView();
+  browserTabs.clear();
+  browserTabOrder = [];
+  activeBrowserTabId = null;
+  for (const tab of tabsToClose) {
+    try { tab.view.webContents.close(); } catch { /* already destroyed */ }
+  }
+  sendToRenderer("openwork:browser:panel-closed");
+  sendBrowserState();
+  return closedTabIds;
+}
+
+function reorderBrowserTabs(tabIds) {
+  const nextOrder = Array.isArray(tabIds) ? tabIds.map(String) : [];
+  if (nextOrder.length !== browserTabOrder.length) {
+    throw new Error("Tab order must include every open tab.");
+  }
+  if (new Set(nextOrder).size !== nextOrder.length) {
+    throw new Error("Tab order must not contain duplicate tabs.");
+  }
+  const current = new Set(browserTabOrder);
+  if (nextOrder.some((tabId) => !current.has(tabId))) {
+    throw new Error("Tab order contains an unknown tab.");
+  }
+  browserTabOrder = nextOrder;
+  sendBrowserState();
+  return listBrowserTabs();
+}
+
+function sendBrowserState() {
+  sendToRenderer("openwork:browser:state", browserStatePayload());
+}
+
+/**
+ * Attach the browser view to the main window.
+ * @param {object} bounds — { x, y, width, height }
+ * @param {object} [opts]
+ * @param {boolean} [opts.preloadDefault=true] - load default URL if the view has no URL
+ * @param {boolean} [opts.ensureTab=true] - create a blank tab if needed
+ */
+function attachBrowserView(bounds, { preloadDefault = true, ensureTab = true } = {}) {
+  if (!mainWindow) return;
+  lastBrowserBounds = bounds;
+  browserViewVisible = true;
+  if (ensureTab && !activeBrowserTabId) createBrowserTab("about:blank");
+  const view = getActiveBrowserView();
+  attachActiveBrowserView();
+  if (bounds.width > 0 && bounds.height > 0) {
+    view?.setBounds(bounds);
+  }
+  const url = view?.webContents.getURL();
+  if (preloadDefault && (!url || url === "about:blank")) {
+    view?.webContents.loadURL(BROWSER_DEFAULT_URL);
+  }
+  sendBrowserState();
+}
+
+function hideBrowserView() {
+  hideMenuOverlay();
+  browserViewVisible = false;
+  if (!mainWindow) return;
+  for (const tab of browserTabs.values()) {
+    detachBrowserView(tab.view);
+  }
+}
+
+function destroyBrowserView() {
+  hideBrowserView();
+  const overlayView = menuOverlayView;
+  menuOverlayView = null;
+  menuOverlayRequest = null;
+  try { overlayView?.webContents.close(); } catch { /* already destroyed */ }
+  for (const tab of browserTabs.values()) {
+    try { tab.view.webContents.close(); } catch { /* already destroyed */ }
+  }
+  browserTabs.clear();
+  browserTabOrder = [];
+  activeBrowserTabId = null;
+  lastBrowserBounds = null;
+  sendBrowserState();
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -295,10 +1256,72 @@ async function isDirectory(targetPath) {
 async function readJsonFile(targetPath, fallback) {
   try {
     const raw = await readFile(targetPath, "utf8");
-    return JSON.parse(raw);
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      const recovered = parseFirstJsonObject(raw);
+      if (recovered.ok) {
+        console.warn(`[json] recovered ${targetPath} from trailing invalid data`, error);
+        await writeJsonFileAtomic(targetPath, recovered.value);
+        return recovered.value;
+      }
+      throw error;
+    }
   } catch {
     return fallback;
   }
+}
+
+function parseFirstJsonObject(raw) {
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+  let start = -1;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        try {
+          return { ok: true, value: JSON.parse(raw.slice(start, index + 1)) };
+        } catch {
+          return { ok: false, value: null };
+        }
+      }
+    }
+  }
+
+  return { ok: false, value: null };
+}
+
+async function writeJsonFileAtomic(outputPath, value) {
+  const content = `${JSON.stringify(value, null, 2)}\n`;
+  JSON.parse(content);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const tempPath = `${outputPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  await writeFile(tempPath, content, "utf8");
+  await rename(tempPath, outputPath);
 }
 
 function normalizeDesktopBootstrapConfig(input) {
@@ -315,21 +1338,51 @@ function normalizeDesktopBootstrapConfig(input) {
   return {
     baseUrl,
     apiBaseUrl,
-    requireSignin: input?.requireSignin === true,
+    requireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN || input?.requireSignin === true,
   };
 }
 
 async function getDesktopBootstrapConfig() {
+  const configPath = desktopBootstrapPath();
   try {
-    const raw = await readFile(desktopBootstrapPath(), "utf8");
+    const raw = await readFile(configPath, "utf8");
     return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-  } catch {
+  } catch (error) {
+    console.warn("[desktop-bootstrap] falling back to defaults", {
+      path: configPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return {
       baseUrl: DEFAULT_DEN_BASE_URL,
       apiBaseUrl: null,
-      requireSignin: false,
+      requireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
     };
   }
+}
+
+async function debugDesktopBootstrapConfig() {
+  const configPath = desktopBootstrapPath();
+  const result = {
+    path: configPath,
+    home: os.homedir(),
+    envHome: process.env.HOME ?? null,
+    envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
+    exists: existsSync(configPath),
+    raw: null,
+    parsed: null,
+    normalized: null,
+    error: null,
+  };
+
+  try {
+    result.raw = await readFile(configPath, "utf8");
+    result.parsed = JSON.parse(result.raw);
+    result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+
+  return result;
 }
 
 async function setDesktopBootstrapConfig(config) {
@@ -399,6 +1452,30 @@ function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
   };
 }
 
+async function workspaceOpencodeConfigPath(workspacePath) {
+  const candidates = [
+    path.join(workspacePath, "opencode.jsonc"),
+    path.join(workspacePath, "opencode.json"),
+    path.join(workspacePath, ".opencode", "opencode.jsonc"),
+    path.join(workspacePath, ".opencode", "opencode.json"),
+  ];
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+async function ensureDefaultWorkspaceOpencodeConfig(workspacePath) {
+  const configPath = await workspaceOpencodeConfigPath(workspacePath);
+  if (await pathExists(configPath)) return false;
+  await writeJsonFileAtomic(configPath, {
+    $schema: "https://opencode.ai/config.json",
+    default_agent: "openwork",
+    plugin: [BROWSER_PLUGIN],
+  });
+  return true;
+}
+
 async function normalizeLocalWorkspacePath(rawPath) {
   const trimmed = String(rawPath ?? "").trim();
   if (!trimmed) return "";
@@ -431,11 +1508,78 @@ function remoteWorkspaceId(baseUrl, directory) {
   return stableWorkspaceId(key);
 }
 
+function parseOpenworkWorkspaceIdFromUrl(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    return mountIndex >= 0 && segments[mountIndex + 1]
+      ? decodeURIComponent(segments[mountIndex + 1])
+      : null;
+  } catch {
+    const match = raw.match(/\/(?:workspace|w)\/([^/?#]+)/);
+    if (!match?.[1]) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+}
+
+function stripOpenworkWorkspaceMount(input) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/\/(?:workspace|w)\/[^/?#]+.*$/, "").replace(/\/+$/, "") || raw;
+  }
+}
+
 function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
-  const key = String(workspaceId ?? "").trim()
-    ? `openwork::${hostUrl}::${String(workspaceId).trim()}`
-    : `openwork::${hostUrl}`;
-  return stableWorkspaceId(key);
+  const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  if (remoteWorkspaceId) return `rem_${remoteWorkspaceId}`;
+  return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
+}
+
+async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
+  const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const headers = new Headers();
+  const bearerToken = String(token ?? "").trim();
+  const hostAuthToken = String(hostToken ?? "").trim();
+  if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
+  if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
+
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
+  const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
+  return selectOpenworkWorkspaceForConnection(list, directory);
 }
 
 async function readWorkspaceOpenworkConfig(workspacePath) {
@@ -456,24 +1600,88 @@ async function writeWorkspaceOpenworkConfig(workspacePath, config) {
 
 async function readWorkspaceState() {
   const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
-  return {
+  const selectedId =
+    typeof state?.selectedId === "string"
+      ? state.selectedId
+      : typeof state?.selectedWorkspaceId === "string"
+        ? state.selectedWorkspaceId
+        : typeof state?.activeId === "string"
+          ? state.activeId
+          : "";
+  const watchedId =
+    typeof state?.watchedId === "string"
+      ? state.watchedId
+      : typeof state?.watchedWorkspaceId === "string"
+        ? state.watchedWorkspaceId
+        : null;
+  const activeId = typeof state?.activeId === "string" ? state.activeId : null;
+  const workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
+  let changed = false;
+  const idMap = new Map();
+  const migratedWorkspaces = workspaces.map((entry) => {
+    const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});
+    if (workspace.workspaceType !== "remote" || workspace.remoteType !== "openwork") return workspace;
+
+    const remoteWorkspaceId = String(workspace.openworkWorkspaceId ?? "").trim()
+      || parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl)
+      || parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl);
+    if (!remoteWorkspaceId) return workspace;
+
+    const hostUrl = stripOpenworkWorkspaceMount(workspace.openworkHostUrl) || stripOpenworkWorkspaceMount(workspace.baseUrl);
+    const nextId = openworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
+    idMap.set(workspace.id, nextId);
+    const nextWorkspace = {
+      ...workspace,
+      id: nextId,
+      baseUrl: hostUrl,
+      openworkWorkspaceId: remoteWorkspaceId,
+      openworkHostUrl: hostUrl,
+    };
+    if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.openworkWorkspaceId !== nextWorkspace.openworkWorkspaceId || workspace.openworkHostUrl !== nextWorkspace.openworkHostUrl) {
+      changed = true;
+    }
+    return nextWorkspace;
+  });
+  // Older desktop state can contain multiple OpenWork remote entries that
+  // normalize to the same `rem_<workspaceId>` after stripping worker mounts.
+  // Collapse them here so React never receives duplicate workspace keys.
+  const workspaceIndexById = new Map();
+  const dedupedWorkspaces = [];
+  for (const workspace of migratedWorkspaces) {
+    const workspaceId = String(workspace?.id ?? "").trim();
+    if (!workspaceId) {
+      dedupedWorkspaces.push(workspace);
+      continue;
+    }
+    const existingIndex = workspaceIndexById.get(workspaceId);
+    if (existingIndex === undefined) {
+      workspaceIndexById.set(workspaceId, dedupedWorkspaces.length);
+      dedupedWorkspaces.push(workspace);
+      continue;
+    }
+    // Keep the later entry: normal mutations replace-then-push refreshed
+    // remote workspaces, and there is no persisted updatedAt to compare.
+    dedupedWorkspaces[existingIndex] = workspace;
+    changed = true;
+  }
+
+  const migratedSelectedId = idMap.get(selectedId) ?? selectedId;
+  const migratedWatchedId = watchedId ? idMap.get(watchedId) ?? watchedId : null;
+  const migratedActiveId = activeId ? idMap.get(activeId) ?? activeId : null;
+  if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
+
+  const nextState = {
     selectedId:
-      typeof state?.selectedId === "string"
-        ? state.selectedId
-        : typeof state?.selectedWorkspaceId === "string"
-          ? state.selectedWorkspaceId
-          : typeof state?.activeId === "string"
-            ? state.activeId
-            : "",
-    watchedId:
-      typeof state?.watchedId === "string"
-        ? state.watchedId
-        : typeof state?.watchedWorkspaceId === "string"
-          ? state.watchedWorkspaceId
-          : null,
-    activeId: typeof state?.activeId === "string" ? state.activeId : null,
-    workspaces: Array.isArray(state?.workspaces) ? state.workspaces : [],
+      migratedSelectedId,
+    watchedId: migratedWatchedId,
+    activeId: migratedActiveId,
+    workspaces: dedupedWorkspaces,
   };
+
+  if (changed) {
+    return writeWorkspaceState(nextState);
+  }
+  return nextState;
 }
 
 async function writeWorkspaceState(nextState) {
@@ -491,8 +1699,7 @@ async function writeWorkspaceState(nextState) {
     watchedWorkspaceId: watchedId,
     activeId: selectedId || null,
   };
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(outputPath, output);
   return output;
 }
 
@@ -893,6 +2100,23 @@ function activeWindowFromEvent(event) {
   return BrowserWindow.fromWebContents(event.sender) ?? mainWindow ?? undefined;
 }
 
+function macosVibrancyForCurrentTheme() {
+  return nativeTheme.shouldUseDarkColors ? "under-window" : "sidebar";
+}
+
+function applyNativeTheme(mode) {
+  nativeTheme.themeSource = mode;
+
+  if (process.platform !== "darwin") {
+    return true;
+  }
+
+  mainWindow?.setVibrancy(macosVibrancyForCurrentTheme());
+  mainWindow?.setBackgroundColor("#00000001");
+
+  return true;
+}
+
 async function handleDesktopInvoke(event, command, ...args) {
   switch (command) {
     case "workspaceBootstrap":
@@ -925,7 +2149,9 @@ async function handleDesktopInvoke(event, command, ...args) {
         workspaceType: "local",
       });
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
+      await ensureDefaultWorkspaceOpencodeConfig(folderPath);
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+
       return mutateWorkspaceState((state) => {
         const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
         state.workspaces = state.workspaces.filter(
@@ -947,31 +2173,55 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
       const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
-      const openworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
+      const rawOpenworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
         ? input.openworkHostUrl.trim()
         : null;
+      const openworkHostUrl = remoteType === "openwork"
+        ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
+        : rawOpenworkHostUrl;
       const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
         ? input.openworkWorkspaceId.trim()
-        : null;
+        : remoteType === "openwork"
+          ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+          : null;
+      let resolvedOpenworkWorkspaceId = openworkWorkspaceId;
+      let resolvedOpenworkWorkspaceName = input.openworkWorkspaceName ?? null;
+      if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
+        const discovered = await discoverOpenworkWorkspace({
+          hostUrl: openworkHostUrl ?? baseUrl,
+          token: input.openworkToken,
+          hostToken: input.openworkHostToken,
+          directory,
+        });
+        if (!discovered?.id) {
+          throw new Error(
+            directory
+              ? `OpenWork server has no workspace matching ${directory}.`
+              : "OpenWork server returned no workspaces.",
+          );
+        }
+        resolvedOpenworkWorkspaceId = String(discovered.id).trim();
+        resolvedOpenworkWorkspaceName = openworkWorkspaceDisplayName(discovered);
+      }
       const id = remoteType === "openwork"
-        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
+        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, resolvedOpenworkWorkspaceId)
         : remoteWorkspaceId(baseUrl, directory);
       const workspace = normalizeWorkspaceEntry({
         id,
-        name: String(input.displayName ?? input.openworkWorkspaceName ?? "Remote workspace"),
+        name: String(input.displayName ?? resolvedOpenworkWorkspaceName ?? "Remote workspace"),
         displayName: input.displayName ?? null,
         path: directory ?? "",
         preset: "remote",
         workspaceType: "remote",
         remoteType,
-        baseUrl,
+        baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
         directory,
         openworkHostUrl,
         openworkToken: input.openworkToken ?? null,
         openworkClientToken: input.openworkClientToken ?? null,
         openworkHostToken: input.openworkHostToken ?? null,
-        openworkWorkspaceId,
-        openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+        openworkWorkspaceId: resolvedOpenworkWorkspaceId,
+        openworkWorkspaceName: resolvedOpenworkWorkspaceName,
         sandboxBackend: input.sandboxBackend ?? null,
         sandboxRunId: input.sandboxRunId ?? null,
         sandboxContainerName: input.sandboxContainerName ?? null,
@@ -988,9 +2238,66 @@ async function handleDesktopInvoke(event, command, ...args) {
       const input = args[0] ?? {};
       const workspaceId = String(input.workspaceId ?? "").trim();
       if (!workspaceId) throw new Error("workspaceId is required");
-      return mutateWorkspaceState((state) => {
+      const { workspaceId: _workspaceId, ...patch } = input;
+      return mutateWorkspaceState(async (state) => {
+        const existing = state.workspaces.find((entry) => entry.id === workspaceId);
+        if (!existing) return state;
+
+        let nextWorkspace = { ...existing, ...patch };
+        const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "openwork";
+        if (nextRemoteType === "openwork") {
+          const rawHostUrl = typeof nextWorkspace.openworkHostUrl === "string" && nextWorkspace.openworkHostUrl.trim()
+            ? nextWorkspace.openworkHostUrl.trim()
+            : null;
+          const nextBaseUrl = String(nextWorkspace.baseUrl ?? "").trim();
+          const hostUrl = stripOpenworkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
+          const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
+            ? nextWorkspace.directory.trim()
+            : null;
+          const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          let remoteWorkspaceId = parsedWorkspaceId || (
+            typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
+              ? nextWorkspace.openworkWorkspaceId.trim()
+              : null
+          );
+          let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
+          if (!remoteWorkspaceId) {
+            const discovered = await discoverOpenworkWorkspace({
+              hostUrl: hostUrl ?? nextBaseUrl,
+              token: nextWorkspace.openworkToken,
+              hostToken: nextWorkspace.openworkHostToken,
+              directory,
+            });
+            if (!discovered?.id) {
+              throw new Error(
+                directory
+                  ? `OpenWork server has no workspace matching ${directory}.`
+                  : "OpenWork server returned no workspaces.",
+              );
+            }
+            remoteWorkspaceId = String(discovered.id).trim();
+            remoteWorkspaceName = openworkWorkspaceDisplayName(discovered);
+          }
+          const nextId = openworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
+          nextWorkspace = normalizeWorkspaceEntry({
+            ...nextWorkspace,
+            id: nextId,
+            baseUrl: hostUrl ?? nextBaseUrl,
+            openworkHostUrl: hostUrl,
+            directory,
+            remoteType: "openwork",
+            openworkWorkspaceId: remoteWorkspaceId,
+            openworkWorkspaceName: remoteWorkspaceName,
+          });
+          if (nextId !== workspaceId) {
+            if (state.selectedId === workspaceId) state.selectedId = nextId;
+            if (state.activeId === workspaceId) state.activeId = nextId;
+            if (state.watchedId === workspaceId) state.watchedId = nextId;
+          }
+        }
+
         state.workspaces = state.workspaces.map((entry) =>
-          entry.id === workspaceId ? { ...entry, ...input } : entry,
+          entry.id === workspaceId ? nextWorkspace : entry,
         );
         return state;
       });
@@ -1133,8 +2440,39 @@ async function handleDesktopInvoke(event, command, ...args) {
         buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
       };
+    case "getUiControlBridgeInfo":
+      try {
+        const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    case "getOpenworkUiMcpCommand": {
+      if (process.env.OPENWORK_DEV_MODE === "1") {
+        return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
+      }
+      return ["npx", "-y", "openwork-ui-mcp"];
+    }
+    case "getComputerUseMcpCommand": {
+      return getComputerUseMcpCommand();
+    }
+    case "checkComputerUsePermissions": {
+      return checkComputerUsePermissions();
+    }
+    case "openComputerUsePermissionSettings": {
+      const target = String(args[0] ?? "accessibility");
+      await shell.openExternal(computerUsePermissionSettingsUrl(target));
+      return { ok: true };
+    }
+    case "getOpenworkUiMcpEnvironment": {
+      return {
+        OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
+      };
+    }
     case "getDesktopBootstrapConfig":
       return getDesktopBootstrapConfig();
+    case "debugDesktopBootstrapConfig":
+      return debugDesktopBootstrapConfig();
     case "setDesktopBootstrapConfig":
       return setDesktopBootstrapConfig(args[0] ?? {});
     case "nukeOpenworkAndOpencodeConfigAndExit": {
@@ -1305,10 +2643,12 @@ async function handleDesktopInvoke(event, command, ...args) {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
+      const timeoutMs = Number(init.timeoutMs);
       const response = await fetch(url, {
         method: typeof init.method === "string" ? init.method : undefined,
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
         body: typeof init.body === "string" ? init.body : undefined,
+        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
       return {
         status: response.status,
@@ -1330,6 +2670,10 @@ async function handleDesktopInvoke(event, command, ...args) {
       window.webContents.setZoomFactor(factor);
       return true;
     }
+    case "__setNativeTheme":
+      return applyNativeTheme(String(args[0]));
+    case "__setApplicationMenuVisible":
+      return setApplicationMenuVisible(args[0]);
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
@@ -1480,19 +2824,34 @@ async function createMainWindow() {
   if (mainWindow) return mainWindow;
 
   const preloadPath = path.join(__dirname, "preload.mjs");
+  const windowAppearanceOptions = {};
+  if (process.platform === "darwin") {
+    Object.assign(windowAppearanceOptions, {
+      backgroundColor: "#00000001",
+      titleBarStyle: "hiddenInset",
+      vibrancy: macosVibrancyForCurrentTheme(),
+      visualEffectState: "active",
+    });
+  }
+
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
     title: APP_NAME,
     show: false,
+    ...windowAppearanceOptions,
     ...(APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty() ? { icon: APP_ICON_IMAGE } : {}),
     webPreferences: {
+      // The renderer owns session dispatch + event streams; keep it running
+      // while hidden/minimized so background tasks are not interrupted.
+      backgroundThrottling: false,
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
+  applyApplicationMenuVisibility(mainWindow);
 
   if (isDevMode) {
     mainWindow.on("page-title-updated", (event) => {
@@ -1511,6 +2870,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
+    destroyBrowserView();
     mainWindow = null;
   });
 
@@ -1535,6 +2895,10 @@ async function createMainWindow() {
     await mainWindow.loadFile(app.isPackaged ? packagedIndexPath : devIndexPath);
   }
 
+  if (!activeBrowserTabId) {
+    createBrowserTab("about:blank", { select: true });
+  }
+
   return mainWindow;
 }
 
@@ -1547,6 +2911,60 @@ ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.exit(0);
+});
+ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+
+// ── Embedded browser IPC ────────────────────────────────────────────────
+ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
+ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
+ipcMain.handle("openwork:browser:navigate", (_event, url) => {
+  const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
+  view.webContents.loadURL(normalizeBrowserUrl(url));
+});
+ipcMain.handle("openwork:browser:back", () => {
+  const webContents = getActiveWebContents();
+  if (webContents?.canGoBack()) webContents.goBack();
+});
+ipcMain.handle("openwork:browser:forward", () => {
+  const webContents = getActiveWebContents();
+  if (webContents?.canGoForward()) webContents.goForward();
+});
+ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
+ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
+  lastBrowserBounds = bounds;
+  const view = getActiveBrowserView();
+  if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
+    view.setBounds(bounds);
+  }
+});
+ipcMain.handle("openwork:browser:state", () => browserStatePayload());
+ipcMain.handle("openwork:browser:createTab", (_event, url) => {
+  const tab = createBrowserTab(url ?? "about:blank", { select: true });
+  return { tabId: tab.tabId };
+});
+ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
+ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
+ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
+ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
+ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
+ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
+ipcMain.on("openwork:menu-overlay:ready", (event) => {
+  if (event.sender !== menuOverlayView?.webContents) return;
+  markMenuOverlayReady(menuOverlayView);
+});
+ipcMain.on("openwork:menu-overlay:choose", (event, payload) => {
+  if (event.sender !== menuOverlayView?.webContents) return;
+  handleMenuOverlayChoice(payload);
+});
+ipcMain.on("openwork:menu-overlay:close", (event, payload) => {
+  if (event.sender !== menuOverlayView?.webContents) return;
+  if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
+  hideMenuOverlay();
+});
+ipcMain.on("openwork:menu-overlay:dismiss", (event) => {
+  if (event.sender === menuOverlayView?.webContents) return;
+  hideMenuOverlay();
 });
 
 registerMigrationIpc({ app, ipcMain });
@@ -1578,7 +2996,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    await installReactDevToolsForDev();
+    installApplicationMenu();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 
     // Use Tauri's existing workspace state file as canonical so rollback and
@@ -1599,12 +3017,10 @@ if (!app.requestSingleInstanceLock()) {
       flushPendingDeepLinks();
     });
 
-    // Kick the packaged-only updater after the window is up so the user
-    // sees a working app first. This is a no-op in dev.
-    void ensureAutoUpdater().then((updater) => {
-      if (!updater) return;
-      void updater.checkForUpdates().catch(() => undefined);
-    });
+    // Initialize the packaged updater after the window is up so the user sees
+    // a working app first. Renderer-owned checks pass the selected release
+    // channel explicitly, avoiding stale stable-feed results for alpha users.
+    void ensureAutoUpdater();
   });
 
   app.on("activate", async () => {

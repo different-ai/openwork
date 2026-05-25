@@ -2,9 +2,18 @@
 import { Check, ChevronRight, Clock3, HardDrive, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
-import { t } from "../../../../i18n";
-import type { PendingPermission } from "../../../../app/types";
-import { Button } from "../../../design-system/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
+import type { PendingPermission } from "@/app/types";
 
 type PermissionPresentation = {
   title: string;
@@ -112,7 +121,10 @@ function metadataValue(key: string, value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (key === "files" && Array.isArray(value)) {
-    const lines = value.map(fileChangeLine).filter(Boolean);
+    const lines = value.flatMap((item) => {
+      const line = fileChangeLine(item);
+      return line ? [line] : [];
+    });
     return lines.length ? lines.join("\n") : null;
   }
   return null;
@@ -182,7 +194,7 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
 }
 
 export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
-  const dialogRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
   const metadata =
@@ -238,31 +250,28 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[6px]">
-      <section
+    <AlertDialog open>
+      <AlertDialogContent
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="permission-approval-title"
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className="w-full max-w-[560px] overflow-hidden rounded-[28px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)] animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-xl overflow-hidden sm:max-w-xl"
       >
-        <div className="border-b border-dls-border px-6 py-5">
-          <div className="flex items-start gap-4">
+        <AlertDialogHeader>
+          <div className="flex items-start gap-4 text-left">
             <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}>
               <Icon size={23} strokeWidth={1.9} />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 id="permission-approval-title" className="text-[20px] font-semibold tracking-[-0.3px] text-dls-text">
+              <AlertDialogTitle>
                 {presentation.title}
-              </h3>
-              <p className="mt-1.5 text-[14px] leading-6 text-dls-secondary">
+              </AlertDialogTitle>
+              <AlertDialogDescription>
                 {presentation.message}
-              </p>
+              </AlertDialogDescription>
             </div>
           </div>
-        </div>
+        </AlertDialogHeader>
 
         <div className="space-y-3 px-6 py-5">
           <div className="rounded-[20px] border border-dls-border bg-dls-hover/45 p-4">
@@ -324,41 +333,133 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
           ) : null}
         </div>
 
-        <div className="border-t border-dls-border bg-dls-hover/30 px-6 py-5">
+        <AlertDialogFooter className="flex-col gap-4">
           <p className="mb-4 text-[12px] leading-5 text-dls-secondary">
             {t("session.permission_decision_hint")}
           </p>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_auto]">
-            <Button
-              variant="outline"
-              className="justify-center rounded-full border-red-6/35 bg-red-2/20 text-red-11 hover:bg-red-3/30 sm:justify-self-start"
+            <AlertDialogAction
+              variant="destructive"
+              className="justify-center sm:justify-self-start"
               onClick={() => props.respondPermission?.(props.permission.id, "reject")}
               disabled={props.busy || !props.respondPermission}
             >
-              <XCircle size={16} />
+              <XCircle data-icon="inline-start" />
               {t("session.deny")}
-            </Button>
-            <Button
-              variant="primary"
-              className="rounded-full"
+            </AlertDialogAction>
+            <AlertDialogAction
               onClick={() => props.respondPermission?.(props.permission.id, "once")}
               disabled={props.busy || !props.respondPermission}
             >
-              <Clock3 size={16} />
+              <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
-            </Button>
-            <Button
+            </AlertDialogAction>
+            <AlertDialogAction
               variant="outline"
-              className="rounded-full bg-dls-surface"
               onClick={() => props.respondPermission?.(props.permission.id, "always")}
               disabled={props.busy || !props.respondPermission}
             >
-              <Check size={16} />
+              <Check data-icon="inline-start" />
+              {t("session.allow_for_session")}
+            </AlertDialogAction>
+          </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
+  const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
+  const metadata =
+    props.permission.metadata && typeof props.permission.metadata === "object"
+      ? props.permission.metadata
+      : {};
+  const hasMetadata = Object.keys(metadata).length > 0;
+  const Icon = presentation.isDoomLoop ? RefreshCcw : ShieldCheck;
+
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+              <Icon size={16} strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation.title}</div>
+              <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation.message}</div>
+              {presentation.note ? (
+                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="border-red-7/25 text-red-11 hover:bg-red-1/40"
+              onClick={() => props.respondPermission?.(props.permission.id, "reject")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <XCircle data-icon="inline-start" />
+              {t("session.deny")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => props.respondPermission?.(props.permission.id, "once")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Clock3 data-icon="inline-start" />
+              {t("session.allow_once")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => props.respondPermission?.(props.permission.id, "always")}
+              disabled={props.busy || !props.respondPermission}
+            >
+              <Check data-icon="inline-start" />
               {t("session.allow_for_session")}
             </Button>
           </div>
         </div>
-      </section>
+
+        <div className="border-t border-dls-border px-4 py-3">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {t("session.permission_label")}
+              </div>
+              <div className="mt-1 font-mono text-[12px] leading-5 text-dls-text">
+                {presentation.permissionLabel}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {presentation.scopeLabel}
+              </div>
+              <div className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
+                {presentation.scopeValue}
+              </div>
+            </div>
+          </div>
+
+          {hasMetadata ? (
+            <details className="group mt-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[12px] font-medium text-dls-text">
+                <span>{t("session.details_label")}</span>
+                <ChevronRight size={14} className="text-dls-secondary transition-transform group-open:rotate-90" />
+              </summary>
+              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-dls-hover/45 px-3 py-2 text-[11px] leading-5 text-dls-secondary">
+                {stringifyMetadata(metadata, props.safeStringify)}
+              </pre>
+            </details>
+          ) : null}
+        </div>
     </div>
   );
 }

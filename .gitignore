@@ -12,17 +12,15 @@ packages/*/dist/
 apps/*/dist/
 ee/apps/*/dist/
 ee/packages/*/dist/
+ee/apps/inference/models-site/models/api.json
 tmp/
 
 # Local git worktrees
 _worktrees/
 
-# Tauri/Rust
-packages/desktop/src-tauri/target/
-packages/desktop/src-tauri/sidecars/
-apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/sidecars/
+# Desktop sidecars
 apps/desktop/resources/sidecars/
+apps/desktop/server/
 
 # Env
 .env
@@ -36,8 +34,6 @@ apps/desktop/resources/sidecars/
 # Bun build artifacts
 *.bun-build
 apps/server/cli
-apps/server-v2/openapi/openapi.json
-packages/openwork-server-sdk/generated/
 
 # pnpm store (created by Docker volume mounts)
 .pnpm-store/
@@ -57,6 +53,9 @@ vendor/opencode/
 
 # OpenWork workspace-local artifacts
 .opencode/openwork/
+.opencode/agents/openwork.md
+.opencode/openwork.json
+opencode.jsonc
 .vercel
 .env*.local
 .claude/*

@@ -3,14 +3,14 @@ import type * as React from "react";
 import { RefreshCcw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 type SettingsContentProps = {
   children: React.ReactNode;
 };
 
 export function SettingsContent(props: SettingsContentProps) {
-  return <div className="min-w-0 min-h-0 flex-1 overflow-y-auto flex flex-col gap-8 p-8 items-center">{props.children}</div>;
+  return <div className="min-w-0 min-h-0 flex-1 overflow-y-auto flex flex-col gap-6 p-4 md:gap-8 md:p-6 lg:p-8 items-center">{props.children}</div>;
 }
 
 type SettingsPanelProps = {
@@ -104,7 +104,7 @@ export function SettingsPanelToolbarButton(props: SettingsPanelToolbarButtonProp
   return (
     <Button
       variant="outline"
-      className="h-8 rounded-full border-gray-6/60 bg-gray-1/70 px-3 py-0 text-xs hover:bg-gray-2/70"
+      size="sm"
       onClick={props.onClick}
       disabled={props.disabled}
       title={props.title}

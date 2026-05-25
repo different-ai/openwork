@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, use, type ReactNode } from "react";
 
 import type { ModelControlsStore } from "./model-controls-store";
 
@@ -22,7 +22,7 @@ export function ModelControlsProvider({
 }
 
 export function useModelControls(): ModelControlsStore {
-  const context = useContext(ModelControlsContext);
+  const context = use(ModelControlsContext);
   if (!context) {
     throw new Error("useModelControls must be used within a ModelControlsProvider");
   }

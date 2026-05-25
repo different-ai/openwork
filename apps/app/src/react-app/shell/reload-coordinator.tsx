@@ -2,7 +2,7 @@
 import {
   createContext,
   useCallback,
-  useContext,
+  use,
   useEffect,
   useMemo,
   useRef,
@@ -30,14 +30,18 @@ type ReloadCoordinatorContextValue = {
   clearReloadRequired: () => void;
   reloadWorkspaceEngine: () => Promise<void>;
   canReloadWorkspaceEngine: boolean;
+  reloadPending: boolean;
   registerWorkspaceReloadControls: (controls: WorkspaceReloadControls | null) => () => void;
 };
+
+export const orgOnboardingVisibilityEvent = "openwork-org-onboarding-visibility";
 
 const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | null>(null);
 
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
+  const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
 
   const registerWorkspaceReloadControls = useCallback((controls: WorkspaceReloadControls | null) => {
     controlsRef.current = controls;
@@ -75,6 +79,16 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const systemState = useSystemState(systemStateOptions);
 
   useEffect(() => {
+    const update = (event: Event) => {
+      setOrgOnboardingVisible(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
+    };
+    window.addEventListener(orgOnboardingVisibilityEvent, update);
+    return () => {
+      window.removeEventListener(orgOnboardingVisibilityEvent, update);
+    };
+  }, []);
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
       systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
@@ -85,10 +99,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const forceStopActiveSessionsAndReload = useCallback(async () => {
     const controls = controlsRef.current;
-    if (controls?.stopSession) {
-      for (const session of activeSessions) {
-        await Promise.resolve(controls.stopSession(session.id)).catch(() => undefined);
-      }
+    const stopSession = controls?.stopSession;
+    if (stopSession) {
+      await Promise.all(activeSessions.map((session) => Promise.resolve(stopSession(session.id)).catch(() => undefined)));
     }
     await systemState.reloadWorkspaceEngine();
   }, [activeSessions, systemState.reloadWorkspaceEngine]);
@@ -99,6 +112,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       clearReloadRequired: systemState.clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
+      reloadPending: systemState.reload.reloadPending,
       registerWorkspaceReloadControls,
     }),
     [
@@ -106,6 +120,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       systemState.canReloadWorkspaceEngine,
       systemState.clearReloadRequired,
       systemState.markReloadRequired,
+      systemState.reload.reloadPending,
       systemState.reloadWorkspaceEngine,
     ],
   );
@@ -113,29 +128,27 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   return (
     <ReloadCoordinatorContext.Provider value={value}>
       {children}
+      <ReloadWorkspaceToast
+        open={systemState.reload.reloadPending && activeSessions.length === 0 && !orgOnboardingVisible}
+        title={systemState.reloadCopy.title}
+        description={systemState.reloadCopy.body}
+        trigger={systemState.reload.reloadTrigger}
+        error={systemState.reload.reloadError}
+        reloadLabel={
+          activeSessions.length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")
+        }
+        dismissLabel={t("app.reload_later")}
+        busy={systemState.reload.reloadBusy}
+        canReload={systemState.canReloadWorkspaceEngine}
+        hasActiveRuns={activeSessions.length > 0}
+        onReload={() => {
+          void (activeSessions.length > 0
+            ? forceStopActiveSessionsAndReload()
+            : systemState.reloadWorkspaceEngine());
+        }}
+        onDismiss={systemState.clearReloadRequired}
+      />
       <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
-        <div className="pointer-events-auto">
-          <ReloadWorkspaceToast
-            open={systemState.reload.reloadPending && activeSessions.length === 0}
-            title={systemState.reloadCopy.title}
-            description={systemState.reloadCopy.body}
-            trigger={systemState.reload.reloadTrigger}
-            error={systemState.reload.reloadError}
-            reloadLabel={
-              activeSessions.length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")
-            }
-            dismissLabel={t("app.reload_later")}
-            busy={systemState.reload.reloadBusy}
-            canReload={systemState.canReloadWorkspaceEngine}
-            hasActiveRuns={activeSessions.length > 0}
-            onReload={() => {
-              void (activeSessions.length > 0
-                ? forceStopActiveSessionsAndReload()
-                : systemState.reloadWorkspaceEngine());
-            }}
-            onDismiss={systemState.clearReloadRequired}
-          />
-        </div>
         <StatusToastsViewport />
       </div>
     </ReloadCoordinatorContext.Provider>
@@ -143,7 +156,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 }
 
 export function useReloadCoordinator(): ReloadCoordinatorContextValue {
-  const value = useContext(ReloadCoordinatorContext);
+  const value = use(ReloadCoordinatorContext);
   if (!value) {
     throw new Error("useReloadCoordinator must be used inside <ReloadCoordinatorProvider>");
   }

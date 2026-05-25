@@ -1,7 +1,8 @@
 import type { UIMessage } from "ai";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
-import { mergeSnapshotAndLiveMessages, messageListContainsAll } from "../sync/message-merge";
+import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
+import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 
 export function resolveRenderedSessionSnapshot(input: {
@@ -24,23 +25,20 @@ export function resolveRenderedSessionSnapshot(input: {
 export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: OpenworkSessionSnapshot | null | undefined;
-  includeLiveOnlyMessages?: boolean;
 }) {
+  const revertMessageId = (input.snapshot?.session as any)?.revert?.messageID ?? null;
   const liveMessages = input.transcriptState ?? [];
+
   const snapshotMessages = input.snapshot && input.snapshot.messages.length > 0
     ? snapshotToUIMessages(input.snapshot)
     : [];
 
-  if (liveMessages.length > 0 && snapshotMessages.length === 0) return liveMessages;
-  if (liveMessages.length === 0 && snapshotMessages.length > 0) return snapshotMessages;
-  if (liveMessages.length > 0 && snapshotMessages.length > 0) {
-    if (messageListContainsAll(liveMessages, snapshotMessages)) return liveMessages;
-    return mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, {
-      appendLiveOnlyMessages: input.includeLiveOnlyMessages,
-    });
-  }
-  if (input.snapshot && input.snapshot.messages.length > 0) {
-    return snapshotMessages;
-  }
-  return input.transcriptState ?? [];
+  // Render the server snapshot as the history floor and layer live stream
+  // updates on top. During prompt submission the live cache can briefly contain
+  // only the new turn; it must not replace the older persisted transcript.
+  const messages = snapshotMessages.length > 0
+    ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true })
+    : liveMessages;
+
+  return applyRevertCursor(messages, revertMessageId);
 }

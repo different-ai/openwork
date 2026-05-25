@@ -22,7 +22,7 @@ import type {
 } from "../../../../app/types";
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { Button } from "../../../design-system/button";
+import { Button } from "@/components/ui/button";
 
 const sectionHeaderClass = "flex flex-col gap-1 pb-2";
 const sectionTitleClass = "text-[15px] font-semibold tracking-[-0.2px] text-dls-text";
@@ -179,11 +179,18 @@ function formatUptime(ms: number) {
   return `${seconds}s`;
 }
 
-function renderLines(lines: string[]) {
-  return lines.map((line, index) => (
-    <div key={`${line}-${index}`} className="truncate text-[11px] font-mono text-dls-secondary">
-      {line}
-    </div>
+function DebugLines(props: { lines: string[] }) {
+  let offset = 0;
+  return props.lines.map((line) => (
+    (() => {
+      const key = `${offset}:${line}`;
+      offset += line.length + 1;
+      return (
+        <div key={key} className="truncate text-[11px] font-mono text-dls-secondary">
+          {line}
+        </div>
+      );
+    })()
   ));
 }
 
@@ -231,14 +238,13 @@ function ServiceCard(props: ServiceCardProps) {
         </div>
       </div>
 
-      <div className="space-y-1">{renderLines(props.lines)}</div>
+      <div className="space-y-1"><DebugLines lines={props.lines} /></div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          variant="secondary"
           onClick={() => void props.onRestart()}
           disabled={restartDisabled}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
           title={!props.isDesktop ? t("settings.sandbox_requires_desktop") : ""}
         >
           <RefreshCcw className={`mr-1.5 h-3.5 w-3.5 ${props.restarting ? "animate-spin" : ""}`} />
@@ -247,7 +253,7 @@ function ServiceCard(props: ServiceCardProps) {
         <Button
           variant="outline"
           onClick={() => void props.onCopyLogs()}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
         >
           <Copy size={13} className="mr-1.5" />
           {t("settings.copy_logs")}
@@ -255,7 +261,7 @@ function ServiceCard(props: ServiceCardProps) {
         <Button
           variant="outline"
           onClick={() => void props.onExportLogs()}
-          className="h-9 px-3 py-0 text-xs"
+          size="sm"
         >
           <Download size={13} className="mr-1.5" />
           {t("settings.export_log_button")}
@@ -311,7 +317,7 @@ export function DebugView(props: DebugViewProps) {
       : "";
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-6 max-w-3xl w-full">
       {/* Section: Runtime overview */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
@@ -322,15 +328,15 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex shrink-0 items-center gap-2">
             <Button
               variant="outline"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onCopyRuntimeDebugReport()}
             >
               <Copy size={13} className="mr-1.5" />
               {t("settings.copy_json")}
             </Button>
             <Button
-              variant="secondary"
-              className="h-8 px-3 py-0 text-xs"
+              variant="outline"
+              size="sm"
               onClick={() => void props.onExportRuntimeDebugReport()}
             >
               <Download size={13} className="mr-1.5" />
@@ -339,13 +345,13 @@ export function DebugView(props: DebugViewProps) {
           </div>
         </div>
         <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-          <div>{t("settings.debug_desktop_app", undefined, { version: props.runtimeSummary.appVersionLabel })}</div>
-          <div>{t("settings.debug_commit", undefined, { commit: props.runtimeSummary.appCommitLabel })}</div>
+          <div>{t("settings.debug_desktop_app", { version: props.runtimeSummary.appVersionLabel })}</div>
+          <div>{t("settings.debug_commit", { commit: props.runtimeSummary.appCommitLabel })}</div>
           <div>
-            {t("settings.debug_opencode_version", undefined, { version: props.runtimeSummary.opencodeVersionLabel })}
+            {t("settings.debug_opencode_version", { version: props.runtimeSummary.opencodeVersionLabel })}
           </div>
           <div>
-            {t("settings.debug_openwork_server_version", undefined, {
+            {t("settings.debug_openwork_server_version", {
               version: props.runtimeSummary.openworkServerVersionLabel,
             })}
           </div>
@@ -366,7 +372,7 @@ export function DebugView(props: DebugViewProps) {
           <div className={sectionDescClass}>{t("settings.services_section_desc")}</div>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
           <ServiceCard
             title={t("settings.openwork_server_label")}
             description={t("settings.openwork_config_sidecar_desc")}
@@ -416,10 +422,10 @@ export function DebugView(props: DebugViewProps) {
               {props.opencodeConnectCard.label}
             </div>
           </div>
-          <div className="space-y-1">{renderLines(props.opencodeConnectCard.lines)}</div>
+          <div className="space-y-1"><DebugLines lines={props.opencodeConnectCard.lines} /></div>
           {props.opencodeConnectCard.metricsLines.length > 0 ? (
             <div className="space-y-1 border-t border-dls-border/60 pt-1">
-              {renderLines(props.opencodeConnectCard.metricsLines)}
+              <DebugLines lines={props.opencodeConnectCard.metricsLines} />
             </div>
           ) : null}
           {props.opencodeConnectCard.error ? (
@@ -450,41 +456,41 @@ export function DebugView(props: DebugViewProps) {
 
         {props.openworkServerDiagnostics ? (
           <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-            <div>{t("settings.diag_started", undefined, { time: formatUptime(props.openworkServerDiagnostics.uptimeMs) })}</div>
+            <div>{t("settings.diag_started", { time: formatUptime(props.openworkServerDiagnostics.uptimeMs) })}</div>
             <div>
-              {t("settings.diag_read_only", undefined, {
+              {t("settings.diag_read_only", {
                 value: props.openworkServerDiagnostics.readOnly ? "true" : "false",
               })}
             </div>
             <div>
-              {t("settings.diag_approval", undefined, {
+              {t("settings.diag_approval", {
                 mode: props.openworkServerDiagnostics.approval.mode,
                 ms: String(props.openworkServerDiagnostics.approval.timeoutMs),
               })}
             </div>
-            <div>{t("settings.diag_workspaces", undefined, { count: String(props.openworkServerDiagnostics.workspaceCount) })}</div>
+            <div>{t("settings.diag_workspaces", { count: String(props.openworkServerDiagnostics.workspaceCount) })}</div>
             <div>
-              {t("settings.diag_selected_workspace", undefined, {
+              {t("settings.diag_selected_workspace", {
                 id: props.openworkServerDiagnostics.selectedWorkspaceId ?? "—",
               })}
             </div>
             <div>
-              {t("settings.diag_runtime_workspace", undefined, {
+              {t("settings.diag_runtime_workspace", {
                 id: props.openworkServerDiagnostics.activeWorkspaceId ?? "—",
               })}
             </div>
             <div>
-              {t("settings.diag_config_path", undefined, {
+              {t("settings.diag_config_path", {
                 path: props.openworkServerDiagnostics.server.configPath ?? t("settings.diag_default"),
               })}
             </div>
             <div>
-              {t("settings.diag_token_source", undefined, {
+              {t("settings.diag_token_source", {
                 source: props.openworkServerDiagnostics.tokenSource.client,
               })}
             </div>
             <div>
-              {t("settings.diag_host_token_source", undefined, {
+              {t("settings.diag_host_token_source", {
                 source: props.openworkServerDiagnostics.tokenSource.host,
               })}
             </div>
@@ -500,19 +506,19 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <div className="truncate font-mono text-[11px] text-dls-secondary">
               {props.runtimeWorkspaceId
-                ? t("settings.worker_id_label", undefined, { id: props.runtimeWorkspaceId })
+                ? t("settings.worker_id_label", { id: props.runtimeWorkspaceId })
                 : t("settings.worker_unresolved")}
             </div>
           </div>
           {props.openworkServerCapabilities ? (
             <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-              <div>{t("settings.cap_skills", undefined, { value: formatCapability(props.openworkServerCapabilities.skills) })}</div>
-              <div>{t("settings.cap_plugins", undefined, { value: formatCapability(props.openworkServerCapabilities.plugins) })}</div>
-              <div>{t("settings.cap_mcp", undefined, { value: formatCapability(props.openworkServerCapabilities.mcp) })}</div>
-              <div>{t("settings.cap_commands", undefined, { value: formatCapability(props.openworkServerCapabilities.commands) })}</div>
-              <div>{t("settings.cap_config", undefined, { value: formatCapability(props.openworkServerCapabilities.config) })}</div>
+              <div>{t("settings.cap_skills", { value: formatCapability(props.openworkServerCapabilities.skills) })}</div>
+              <div>{t("settings.cap_plugins", { value: formatCapability(props.openworkServerCapabilities.plugins) })}</div>
+              <div>{t("settings.cap_mcp", { value: formatCapability(props.openworkServerCapabilities.mcp) })}</div>
+              <div>{t("settings.cap_commands", { value: formatCapability(props.openworkServerCapabilities.commands) })}</div>
+              <div>{t("settings.cap_config", { value: formatCapability(props.openworkServerCapabilities.config) })}</div>
               <div>
-                {t("settings.cap_browser_tools", undefined, {
+                {t("settings.cap_browser_tools", {
                   value: (() => {
                     const browser = props.openworkServerCapabilities.toolProviders?.browser;
                     if (!browser?.enabled) return t("settings.disabled");
@@ -521,7 +527,7 @@ export function DebugView(props: DebugViewProps) {
                 })}
               </div>
               <div>
-                {t("settings.cap_file_tools", undefined, {
+                {t("settings.cap_file_tools", {
                   value: (() => {
                     const files = props.openworkServerCapabilities.toolProviders?.files;
                     if (!files) return t("config.unavailable");
@@ -533,7 +539,7 @@ export function DebugView(props: DebugViewProps) {
                 })}
               </div>
               <div>
-                {t("settings.cap_sandbox", undefined, {
+                {t("settings.cap_sandbox", {
                   value: props.openworkServerCapabilities.sandbox
                     ? `${props.openworkServerCapabilities.sandbox.backend} (${props.openworkServerCapabilities.sandbox.enabled ? t("settings.on") : t("settings.off")})`
                     : t("config.unavailable"),
@@ -610,7 +616,8 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-7 shrink-0 px-2 py-0 text-xs"
+              size="xs"
+              className="shrink-0"
               onClick={() => void props.onClearWorkspaceDebugEvents()}
               disabled={props.busy}
             >
@@ -634,21 +641,21 @@ export function DebugView(props: DebugViewProps) {
             <div className={sectionDescClass}>{t("settings.developer_log_desc")}</div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onClearDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onClearDeveloperLog()}>
               {t("settings.clear_button")}
             </Button>
-            <Button variant="outline" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onCopyDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onCopyDeveloperLog()}>
               <Copy size={13} className="mr-1.5" />
               {t("settings.copy_log_button")}
             </Button>
-            <Button variant="secondary" className="h-8 px-3 py-0 text-xs" onClick={() => void props.onExportDeveloperLog()}>
+            <Button variant="outline" size="sm" onClick={() => void props.onExportDeveloperLog()}>
               <Download size={13} className="mr-1.5" />
               {t("settings.export_log_button")}
             </Button>
           </div>
         </div>
         <div className="text-[11px] text-dls-secondary">
-          {t("settings.developer_log_count", undefined, { count: String(props.developerLogRecordCount) })}
+          {t("settings.developer_log_count", { count: String(props.developerLogRecordCount) })}
         </div>
         <pre className={monoPreClass}>{props.developerLogText || t("settings.developer_log_empty")}</pre>
         {props.developerLogStatus ? <StatusBanner tone="info" message={props.developerLogStatus} /> : null}
@@ -670,8 +677,7 @@ export function DebugView(props: DebugViewProps) {
               <div className="text-[12px] text-dls-secondary">{t("settings.sandbox_probe_desc")}</div>
             </div>
             <Button
-              variant="secondary"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onRunSandboxDebugProbe()}
               disabled={sandboxProbeDisabled}
               title={sandboxProbeTitle}
@@ -681,9 +687,9 @@ export function DebugView(props: DebugViewProps) {
           </div>
           {props.sandboxProbeResult ? (
             <div className="space-y-1 text-[12px] text-dls-secondary">
-              <div>{t("settings.sandbox_run_id", undefined, { id: props.sandboxProbeResult.runId ?? "—" })}</div>
+              <div>{t("settings.sandbox_run_id", { id: props.sandboxProbeResult.runId ?? "—" })}</div>
               <div>
-                {t("settings.sandbox_result", undefined, {
+                {t("settings.sandbox_result", {
                   status: props.sandboxProbeResult.ready ? t("settings.sandbox_ready") : t("settings.sandbox_error"),
                 })}
               </div>
@@ -749,7 +755,7 @@ export function DebugView(props: DebugViewProps) {
                   </div>
                   <Button
                     variant="outline"
-                    className="h-10 shrink-0 px-3 text-xs"
+                    className="shrink-0"
                     onClick={() => void props.onPickEngineBinary()}
                     disabled={props.busy}
                   >
@@ -757,7 +763,7 @@ export function DebugView(props: DebugViewProps) {
                   </Button>
                   <Button
                     variant="outline"
-                    className="h-10 shrink-0 px-3 text-xs"
+                    className="shrink-0"
                     onClick={props.onClearEngineCustomBinPath}
                     disabled={props.busy || !props.engineCustomBinPath.trim()}
                     title={!props.engineCustomBinPath.trim() ? t("settings.no_custom_path_set") : t("settings.clear")}
@@ -789,7 +795,7 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-8 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onStopHost()}
               disabled={props.busy}
             >
@@ -798,7 +804,7 @@ export function DebugView(props: DebugViewProps) {
           </div>
 
           <Button
-            variant="secondary"
+            variant="outline"
             className="group w-full justify-between"
             onClick={() => void props.onResetStartupPreference()}
           >
@@ -825,7 +831,7 @@ export function DebugView(props: DebugViewProps) {
           </div>
           <Button
             variant="outline"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
+            size="sm" className="shrink-0"
             onClick={() => props.onOpenResetModal("onboarding")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
             title={props.anyActiveRuns ? t("settings.stop_runs_to_reset") : ""}
@@ -840,8 +846,8 @@ export function DebugView(props: DebugViewProps) {
             <div className="text-[12px] text-dls-secondary">{t("settings.reset_app_data_description")}</div>
           </div>
           <Button
-            variant="danger"
-            className="h-8 shrink-0 px-3 py-0 text-xs"
+            variant="destructive"
+            size="sm" className="shrink-0"
             onClick={() => props.onOpenResetModal("all")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
             title={props.anyActiveRuns ? t("settings.stop_runs_to_reset") : ""}
@@ -867,7 +873,7 @@ export function DebugView(props: DebugViewProps) {
             </div>
             <Button
               variant="outline"
-              className="h-8 shrink-0 px-3 py-0 text-xs"
+              size="sm" className="shrink-0"
               onClick={() => void props.onOpenElectronPreviewRelease()}
             >
               <ExternalLink size={13} className="mr-1.5" />
@@ -883,8 +889,7 @@ export function DebugView(props: DebugViewProps) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="secondary"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onResolveElectronAlphaArtifact()}
               disabled={props.electronMigrationBusy}
             >
@@ -939,8 +944,7 @@ export function DebugView(props: DebugViewProps) {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="secondary"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onPrepareElectronMigrationSnapshot()}
               disabled={props.electronMigrationBusy}
             >
@@ -948,7 +952,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 border-amber-7/50 px-3 py-0 text-xs text-amber-11 hover:bg-amber-3/40"
+              size="sm"
               onClick={() => void props.onInstallElectronPreviewFromTauri()}
               disabled={props.electronMigrationBusy || !props.electronMigrationUrl.trim()}
               title="Requires a trusted artifact URL. macOS keeps OpenWork.app.migrate-bak for rollback."
@@ -957,7 +961,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onRevealElectronMigrationBackup()}
               disabled={props.electronMigrationBusy}
             >
@@ -992,7 +996,7 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant={props.electronAlphaUpdaterChannel === "alpha" ? "secondary" : "outline"}
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onSetElectronAlphaUpdaterChannel("alpha")}
               disabled={props.electronAlphaUpdaterBusy}
             >
@@ -1000,7 +1004,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant={props.electronAlphaUpdaterChannel === "stable" ? "secondary" : "outline"}
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onSetElectronAlphaUpdaterChannel("stable")}
               disabled={props.electronAlphaUpdaterBusy}
             >
@@ -1008,7 +1012,7 @@ export function DebugView(props: DebugViewProps) {
             </Button>
             <Button
               variant="outline"
-              className="h-9 px-3 py-0 text-xs"
+              size="sm"
               onClick={() => void props.onCheckElectronAlphaUpdates()}
               disabled={props.electronAlphaUpdaterBusy}
             >
