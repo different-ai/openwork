@@ -1,0 +1,27 @@
+apps/app/src/react-app/domains/session/sync/usechat-adapter.ts
+  s_30d099d055f570::t_273ad59f085b8d 366,369-370,379,385-390,396,402,408,414,420-431,444
+  s_30d099d055f570::t_9e0efb31ed139e 454-455
+  s_30d099d055f570::t_4a57fe5b8a832c 19,282,287,289,297
+  s_30d099d055f570::t_7cc2abb88eae6d 395,407,452-453,459-465
+  s_30d099d055f570::t_b2fc48e2c6a94c 22-26,34,46,61,63,75-84,146,149-151,188,223-271,285,314-320
+  s_30d099d055f570::t_c76148b044b3e1 37-38,191-192
+apps/app/src/react-app/domains/session/sync/session-sync.ts
+  s_30d099d055f570::t_b1506e885d7317 219-230,250,296-302
+  s_30d099d055f570::t_f102f3945a0b9d 561,601-606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "eb0dda3384b0b3b79b81c8fc526c12f82bc1bf08",
+  "prompts": {},
+  "sessions": {
+    "s_30d099d055f570": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4cd7-3850-7e83-b6b8-cdefddd1681c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
