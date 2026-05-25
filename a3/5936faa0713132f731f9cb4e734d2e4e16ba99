@@ -1,0 +1,22 @@
+apps/app/src/react-app/domains/session/sync/session-sync.ts
+  s_ce4897b974d02c::t_bb7b2726cc6847 655-656
+apps/app/src/react-app/domains/session/sync/usechat-adapter.ts
+  s_ce4897b974d02c::t_bb41c8935052cf 39,247,333-338,410-412,466-470,472-475,485-488,556-559
+  s_ce4897b974d02c::t_175da3dc0c3d29 190-201,483,539
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "a35936faa0713132f731f9cb4e734d2e4e16ba99",
+  "prompts": {},
+  "sessions": {
+    "s_ce4897b974d02c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e5fd2-a080-78a1-9e91-cb3bea12fb81",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
