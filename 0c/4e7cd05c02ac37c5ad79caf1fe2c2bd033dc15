@@ -1,0 +1,31 @@
+apps/app/src/react-app/domains/session/sync/session-sync.ts
+  s_30d099d055f570::t_e015ae1c52d311 352
+  s_30d099d055f570::t_36baa43c32b651 223-229,236
+  s_30d099d055f570::t_ecfcc08d5bee55 6
+  s_30d099d055f570::t_1ef629fe8affd1 292-304
+  s_30d099d055f570::t_8517d0edf79786 221-222,268-269
+  s_30d099d055f570::t_4b22ba64533b2b 240-267,349,354,365
+apps/app/src/react-app/domains/session/sync/usechat-adapter.ts
+  s_30d099d055f570::t_de64ba4f60d08a 48-49,122-123,334-338,387-391,393-402,407-413
+  s_30d099d055f570::t_fab3d09babd822 50-56,90,279
+  s_30d099d055f570::t_83dcb9b66975a4 94-121,185,201,281-284
+  s_30d099d055f570::t_81898eae926b02 188,198-199
+  s_30d099d055f570::t_f76383f4e4e86a 189-197,392
+  s_30d099d055f570::t_8fcec9cff75d19 403-406
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "0c4e7cd05c02ac37c5ad79caf1fe2c2bd033dc15",
+  "prompts": {},
+  "sessions": {
+    "s_30d099d055f570": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e4cd7-3850-7e83-b6b8-cdefddd1681c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
