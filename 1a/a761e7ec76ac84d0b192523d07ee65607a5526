@@ -1,0 +1,19 @@
+apps/app/src/react-app/domains/session/sync/session-sync.ts
+  s_12d50bfa1c8422::t_6a136d57bff12a 134-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "1aa761e7ec76ac84d0b192523d07ee65607a5526",
+  "prompts": {},
+  "sessions": {
+    "s_12d50bfa1c8422": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6024-bcab-77b1-8bce-9ceec6987d9f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
