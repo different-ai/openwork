@@ -210,6 +210,13 @@ function extensionContributionLabels(entry: McpDirectoryInfo) {
   return entry.extensionManifest?.contributions?.map((contribution) => contribution.label ?? contribution.ref ?? contribution.type) ?? [];
 }
 
+function isToggleOnlyExtension(entry: McpDirectoryInfo) {
+  if (entry.kind !== "extension") return false;
+  return entry.extensionManifest?.contributions?.some((contribution) =>
+    contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
+  ) === true;
+}
+
 type ExtensionFilter = "all" | "mcp" | "skill" | "plugin";
 
 export function McpView(props: McpViewProps) {
@@ -548,8 +555,10 @@ export function McpView(props: McpViewProps) {
         isConfigured={(entry) =>
           props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
             ? false
+            : isToggleOnlyExtension(entry)
+            ? isOpenWorkExtensionEnabled(entry)
             : entry.kind === "extension" && !isMcpBackedExtension(entry)
-            ? (entry.defaultEnabled ? isOpenWorkExtensionEnabled(entry) : props.isExtensionConnected?.(entry) ?? false)
+            ? props.isExtensionConnected?.(entry) ?? false
             : isQuickConnectConfigured(entry)
         }
         statusForEntry={quickConnectStatus}
@@ -657,8 +666,10 @@ export function McpView(props: McpViewProps) {
           : null;
         const isConnected = disabledReason
           ? false
+          : isToggleOnlyExtension(detailEntry)
+          ? isOpenWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
-          ? (detailEntry.defaultEnabled ? isOpenWorkExtensionEnabled(detailEntry) : props.isExtensionConnected?.(detailEntry) ?? false)
+          ? props.isExtensionConnected?.(detailEntry) ?? false
           : isQuickConnectConfigured(detailEntry);
         return (
           <ExtensionDetailModal
@@ -683,14 +694,14 @@ export function McpView(props: McpViewProps) {
             url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
             oauth={detailEntry.oauth}
             configSlot={disabledReason ? null : extensionConfigSlot}
-            onConnect={disabledReason ? undefined : detailEntry.defaultEnabled && !isMcpBackedExtension(detailEntry) ? () => {
+            onConnect={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) ? () => {
               setOpenWorkExtensionEnabled(detailEntry, true);
               setDetailEntry(null);
             } : hasConfigSlot ? undefined : () => {
               props.connectMcp(detailEntry);
               setDetailEntry(null);
             }}
-            onUninstall={disabledReason ? undefined : detailEntry.defaultEnabled && !isMcpBackedExtension(detailEntry) && isConnected ? () => {
+            onUninstall={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) && isConnected ? () => {
               setOpenWorkExtensionEnabled(detailEntry, false);
             } : isQuickConnectConfigured(detailEntry) ? () => {
               const slug = getMcpIdentityKey(detailEntry);

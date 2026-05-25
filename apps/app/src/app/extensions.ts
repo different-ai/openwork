@@ -247,7 +247,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "composer-prompt", prompt: "Use Voice Mode to ", location: "composer" },
     ],
     lifecycle: { reload: ["config"], detection: ["env:OPENAI_REALTIME_API_KEY", "env:OPENAI_API_KEY"] },
-    defaultEnabled: true,
   },
   {
     schemaVersion: 1,
