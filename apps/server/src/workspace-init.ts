@@ -3,94 +3,12 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
-import { openworkConfigPath, opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
+import { openworkConfigPath, opencodeConfigPath } from "./workspace-files.js";
 import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import type { ReloadReason } from "./types.js";
 
 const BROWSER_PLUGIN = "opencode-chrome-devtools";
-const OPENWORK_EXTENSIONS_PREVIEW_PLUGIN_PATH = "openwork-extensions-preview.ts";
-const OPENCODE_PLUGIN_VERSION = "1.14.38";
 const LEGACY_BROWSER_MCP_KEYS = ["openwork-browser", "chrome", "chrome-devtools", "control-chrome"];
-
-const OPENWORK_EXTENSIONS_PREVIEW_PLUGIN = `import { tool } from "@opencode-ai/plugin"
-
-const serverUrl = () => String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "")
-const serverToken = () => String(process.env.OPENWORK_SERVER_TOKEN || "")
-
-const requireOpenWorkServer = () => {
-  const url = serverUrl()
-  const token = serverToken()
-  if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.")
-  }
-  return { url, token }
-}
-
-const postJson = async (path, body) => {
-  const { url, token } = requireOpenWorkServer()
-  const response = await fetch(url + path, {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + token,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  })
-  const text = await response.text()
-  let payload = null
-  try { payload = text ? JSON.parse(text) : null } catch { payload = { message: text } }
-  if (!response.ok) {
-    throw new Error(payload?.message || payload?.code || "OpenWork extension call failed")
-  }
-  return payload
-}
-
-const contextPayload = (context) => ({
-  agent: context.agent,
-  sessionId: context.sessionID,
-  messageId: context.messageID,
-  directory: context.directory,
-  worktree: context.worktree,
-})
-
-export const OpenWorkExtensionsPreview = async () => ({
-  tool: {
-    openwork_extension_list_actions: tool({
-      description: "List extension actions currently exposed by OpenWork, including Google Workspace preview actions.",
-      args: {
-        extensionId: tool.schema.string().optional().describe("Optional extension id to filter by, such as google-workspace."),
-      },
-      async execute(args, context) {
-        const query = args.extensionId ? "?extensionId=" + encodeURIComponent(String(args.extensionId)) : ""
-        const { url, token } = requireOpenWorkServer()
-        const response = await fetch(url + "/experimental/extensions/actions" + query, {
-          headers: { "Authorization": "Bearer " + token },
-        })
-        const payload = await response.json().catch(() => null)
-        if (!response.ok) throw new Error(payload?.message || payload?.code || "OpenWork extension action listing failed")
-        return JSON.stringify({ ...payload, context: contextPayload(context) }, null, 2)
-      },
-    }),
-    openwork_extension_call: tool({
-      description: "Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas.",
-      args: {
-        extensionId: tool.schema.string().describe("Extension id, such as google-workspace."),
-        action: tool.schema.string().describe("Action id from openwork_extension_list_actions."),
-        args: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe("JSON arguments for the action."),
-      },
-      async execute(args, context) {
-        const payload = await postJson("/experimental/extensions/call", {
-          extensionId: args.extensionId,
-          action: args.action,
-          args: args.args || {},
-          context: contextPayload(context),
-        })
-        return JSON.stringify(payload, null, 2)
-      },
-    }),
-  },
-})
-`;
 
 const OPENWORK_ARTIFACT_GUIDANCE = `<!-- OPENWORK_ARTIFACTS_START -->
 ## OpenWork Artifacts
@@ -268,44 +186,6 @@ async function ensureOpenworkAgent(workspaceRoot: string): Promise<boolean> {
   return false;
 }
 
-async function ensureOpenworkExtensionsPreviewPlugin(workspaceRoot: string): Promise<boolean> {
-  const pluginsDir = projectPluginsDir(workspaceRoot);
-  const pluginPath = join(pluginsDir, OPENWORK_EXTENSIONS_PREVIEW_PLUGIN_PATH);
-  await ensureDir(pluginsDir);
-  const content = OPENWORK_EXTENSIONS_PREVIEW_PLUGIN.endsWith("\n")
-    ? OPENWORK_EXTENSIONS_PREVIEW_PLUGIN
-    : `${OPENWORK_EXTENSIONS_PREVIEW_PLUGIN}\n`;
-  if (await exists(pluginPath)) {
-    const current = await readFile(pluginPath, "utf8");
-    if (current === content) return false;
-  }
-  await writeFile(pluginPath, content, "utf8");
-  return true;
-}
-
-async function ensureOpencodePluginPackage(workspaceRoot: string): Promise<boolean> {
-  const packagePath = join(workspaceRoot, ".opencode", "package.json");
-  await ensureDir(join(workspaceRoot, ".opencode"));
-  let current: Record<string, unknown> = {};
-  if (await exists(packagePath)) {
-    const raw = await readFile(packagePath, "utf8");
-    current = JSON.parse(raw) as Record<string, unknown>;
-  }
-  const dependencies = typeof current.dependencies === "object" && current.dependencies !== null && !Array.isArray(current.dependencies)
-    ? current.dependencies as Record<string, unknown>
-    : {};
-  if (dependencies["@opencode-ai/plugin"] === OPENCODE_PLUGIN_VERSION) return false;
-  const next = {
-    ...current,
-    dependencies: {
-      ...dependencies,
-      "@opencode-ai/plugin": OPENCODE_PLUGIN_VERSION,
-    },
-  };
-  await writeFile(packagePath, JSON.stringify(next, null, 2) + "\n", "utf8");
-  return true;
-}
-
 async function ensureBrowserPlugin(workspaceRoot: string): Promise<boolean> {
   const configPath = opencodeConfigPath(workspaceRoot);
   const { data: config } = await readJsoncFile<Record<string, unknown>>(configPath, {});
@@ -357,8 +237,6 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
   const reloadReasons = new Set<ReloadReason>();
   if (await ensureOpencodeConfig(workspaceRoot)) reloadReasons.add("config");
   if (await ensureBrowserPlugin(workspaceRoot)) reloadReasons.add("config");
-  if (await ensureOpenworkExtensionsPreviewPlugin(workspaceRoot)) reloadReasons.add("plugins");
-  if (await ensureOpencodePluginPackage(workspaceRoot)) reloadReasons.add("plugins");
   if (await ensureOpenworkAgent(workspaceRoot)) reloadReasons.add("agents");
   const openworkConfigChanged = await ensureWorkspaceOpenworkConfig(workspaceRoot, preset);
   return {

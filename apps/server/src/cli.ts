@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { createServerLogger, startServer } from "./server.js";
 import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { openworkExtensionsPreviewPluginPath } from "./openwork-extensions-plugin-path.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -38,7 +38,7 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     const openworkExtensionsPreviewConfig = JSON.stringify({
       plugin: [
         "opencode-chrome-devtools",
-        join(workspace.path, ".opencode", "plugins", "openwork-extensions-preview.ts"),
+        openworkExtensionsPreviewPluginPath(),
       ],
     });
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
