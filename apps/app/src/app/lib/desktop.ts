@@ -432,6 +432,11 @@ const {
   resetOpenworkState,
   resetOpencodeCache,
   opencodeMcpAuth,
+  googleWorkspaceAuthStatus,
+  googleWorkspaceConnect,
+  googleWorkspaceDisconnect,
+  googleWorkspaceTestConnection,
+  googleWorkspaceRunScopeSmokeTest,
   setWindowDecorations,
 } = desktopBridge;
 
@@ -485,5 +490,10 @@ export {
   resetOpenworkState,
   resetOpencodeCache,
   opencodeMcpAuth,
+  googleWorkspaceAuthStatus,
+  googleWorkspaceConnect,
+  googleWorkspaceDisconnect,
+  googleWorkspaceTestConnection,
+  googleWorkspaceRunScopeSmokeTest,
   setWindowDecorations,
 };

@@ -43,6 +43,7 @@ import "../domains/settings/ollama-config";
 import "../domains/settings/computer-use-config";
 import "../domains/settings/browser-extension-config";
 import "../domains/settings/openwork-voice-config";
+import "../domains/settings/google-workspace-config";
 import { getExtensionConfigSlot, type ExtensionConfigContext } from "../domains/settings/extension-registry";
 import { isOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
 import { PreferencesView } from "../domains/settings/pages/preferences-view";
