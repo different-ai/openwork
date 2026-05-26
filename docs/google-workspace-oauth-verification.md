@@ -45,6 +45,42 @@ OpenWork uses this scope to create Gmail drafts for the user to review in Gmail.
 
 OpenWork uses Google Workspace data only to provide user-requested features, such as reading calendar context, reading explicitly selected Drive files, and creating Gmail drafts. OpenWork does not sell Google user data, use Google user data for advertising, or use Google user data to train generalized AI models. Desktop OAuth tokens are stored locally using encrypted OS storage when available.
 
+## Deployment Modes
+
+### Local-first desktop OAuth
+
+The default desktop flow uses a Google Desktop OAuth client with PKCE and a loopback redirect. The desktop app exchanges authorization codes directly with Google and stores user tokens locally in encrypted OS storage. For local dev, pass `OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET` from the Google Cloud desktop client metadata. In production desktop builds, this value is client metadata, not a confidential backend secret.
+
+### Enterprise token broker
+
+Enterprise deployments can keep Google OAuth client metadata on their own server by setting `OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL`. When this is set, OpenWork Desktop still owns the browser OAuth flow and PKCE verifier, but sends token exchange and refresh requests to the configured broker endpoint instead of calling Google's token endpoint directly.
+
+The broker receives JSON `POST` requests shaped like:
+
+```json
+{
+  "provider": "google-workspace",
+  "grantType": "authorization_code",
+  "clientId": "<google-desktop-client-id>",
+  "code": "<authorization-code>",
+  "codeVerifier": "<pkce-verifier>",
+  "redirectUri": "http://127.0.0.1:<port>/"
+}
+```
+
+For refresh:
+
+```json
+{
+  "provider": "google-workspace",
+  "grantType": "refresh_token",
+  "clientId": "<google-desktop-client-id>",
+  "refreshToken": "<refresh-token>"
+}
+```
+
+The broker should return Google's token response shape, including `access_token`, `expires_in`, optional `refresh_token`, and optional `scope`.
+
 ## Demo Video Script
 
 Google's verification video should show the OAuth consent flow and each requested sensitive/restricted scope in use.
