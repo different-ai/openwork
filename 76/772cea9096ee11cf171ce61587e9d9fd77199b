@@ -1,0 +1,21 @@
+apps/app/vite.config.ts
+  s_7147551812e1b9::t_4ed8aed66e5cb0 95-99
+apps/app/package.json
+  s_7147551812e1b9::t_daf4090b88ee12 90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "76772cea9096ee11cf171ce61587e9d9fd77199b",
+  "prompts": {},
+  "sessions": {
+    "s_7147551812e1b9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e641f-45dc-7df3-b5df-e43be9b2a879",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
