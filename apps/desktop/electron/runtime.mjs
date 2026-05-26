@@ -176,6 +176,19 @@ async function readJsonFile(targetPath, fallback) {
   }
 }
 
+function readGoogleWorkspaceOauthBuildConfig() {
+  try {
+    const raw = readFileSync(path.join(__runtimeDir, "google-workspace-oauth.generated.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      clientId: typeof parsed.clientId === "string" ? parsed.clientId.trim() : "",
+      clientSecret: typeof parsed.clientSecret === "string" ? parsed.clientSecret.trim() : "",
+    };
+  } catch {
+    return { clientId: "", clientSecret: "" };
+  }
+}
+
 function selectLanAddress() {
   const interfaces = os.networkInterfaces();
   for (const entries of Object.values(interfaces)) {
@@ -620,6 +633,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
       ...extra,
     };
+    const googleWorkspaceOauth = readGoogleWorkspaceOauthBuildConfig();
+    if (!env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID && googleWorkspaceOauth.clientId) {
+      env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID = googleWorkspaceOauth.clientId;
+    }
+    if (!env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET && googleWorkspaceOauth.clientSecret) {
+      env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = googleWorkspaceOauth.clientSecret;
+    }
     const pathKey =
       Object.prototype.hasOwnProperty.call(env, "PATH") ||
       !Object.prototype.hasOwnProperty.call(env, "Path")

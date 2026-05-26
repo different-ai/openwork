@@ -2,12 +2,18 @@
 import type { ReactNode } from "react";
 import type { McpDirectoryInfo } from "../../../app/constants";
 import { extensionContribution } from "../../../app/extensions";
+import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 
 /**
  * Context bag that the settings route passes to extension config factories.
  * Each extension picks what it needs; unused fields are ignored.
  */
 export type ExtensionConfigContext = {
+  openworkServerClient?: OpenworkServerClient | null;
+  googleWorkspace?: {
+    connected: boolean;
+    onStatusChange: (connected: boolean) => void;
+  };
   computerUse?: {
     connected: boolean;
     connecting: boolean;

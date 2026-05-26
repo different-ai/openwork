@@ -9,6 +9,7 @@ import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { startServer } from "./server.js";
+import { ensureWorkspaceFiles } from "./workspace-init.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
@@ -34,12 +35,20 @@ export type EmbeddedServerHandle = {
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
+  const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
+  const openworkExtensionsPreviewConfig = JSON.stringify({ plugin: ["./.opencode/plugins/openwork-extensions-preview.ts"] });
   const opencodeModelsUrl = process.env.OPENWORK_DEV_MODE === "1"
     ? "http://localhost:8791/models"
     : "https://models.openworklabs.com/";
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
+
+  if (!config.readOnly) {
+    for (const workspace of config.workspaces) {
+      await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
+    }
+  }
 
   if (!config.opencodeBaseUrl && options.manageOpencode) {
     const workspace = config.workspaces[0];
@@ -54,6 +63,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         env: {
           ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+          OPENWORK_SERVER_URL: serverUrl,
+          OPENWORK_SERVER_TOKEN: config.token,
+          OPENCODE_CONFIG_CONTENT: openworkExtensionsPreviewConfig,
           OPENCODE_MODELS_URL: opencodeModelsUrl,
         },
       });

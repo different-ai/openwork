@@ -38,7 +38,7 @@ if (process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim()) {
   writeFileSync(
     googleWorkspaceOauthConfigPath,
     `${JSON.stringify({
-      clientId: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() || "929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com",
+      clientId: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() || "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com",
       clientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET.trim(),
     }, null, 2)}\n`,
     "utf8",

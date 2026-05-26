@@ -525,6 +525,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
   const [imageExtensionInstalled, setImageExtensionInstalled] = useState(false);
+  const [googleWorkspaceConnected, setGoogleWorkspaceConnected] = useState(false);
   const [imageExtensionBusy, setImageExtensionBusy] = useState(false);
   const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
   const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
@@ -923,6 +924,27 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       cancelled = true;
     };
   }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+
+  useEffect(() => {
+    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    if (!client) {
+      setGoogleWorkspaceConnected(false);
+      return;
+    }
+
+    let cancelled = false;
+    void client.googleWorkspaceStatus()
+      .then((result) => {
+        if (!cancelled) setGoogleWorkspaceConnected(result.connected === true);
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleWorkspaceConnected(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openworkClient, selectedWorkspaceEndpoint]);
 
   useEffect(() => {
     if (!openworkClient) {
@@ -2088,6 +2110,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   void connectionsStore.connectMcp(entry);
                 }}
                 configSlotForEntry={(entry) => getExtensionConfigSlot(entry, {
+                  openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
+                  googleWorkspace: {
+                    connected: googleWorkspaceConnected,
+                    onStatusChange: setGoogleWorkspaceConnected,
+                  },
                   computerUse: {
                     connected: connectionsSnapshot.mcpServers.some((server) => server.name === "computer-use"),
                     connecting: connectionsSnapshot.mcpConnectingName === entry.name,
@@ -2123,6 +2150,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 })}
                 isExtensionConnected={(entry) => {
                   const id = entry.serverName ?? entry.name;
+                  if (id === "google-workspace") return googleWorkspaceConnected;
                   if (id === "openai-image-gen") return imageExtensionInstalled;
                   if (id === "ollama") return providerConnectedIds.includes("ollama");
                   return false;

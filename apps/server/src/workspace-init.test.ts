@@ -19,9 +19,11 @@ describe("ensureWorkspaceFiles", () => {
     await withWorkspace(async (root) => {
       const result = await ensureWorkspaceFiles(root, "starter");
       const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
+      const plugin = await readFile(join(root, ".opencode", "plugins", "openwork-extensions-preview.ts"), "utf8");
       expect(agent).toContain("OpenWork Artifacts");
       expect(agent).toContain("reports/artifact-eval.xlsx");
-      expect(result.reloadReasons.sort()).toEqual(["agents", "config"]);
+      expect(plugin).toContain("openwork_extension_call");
+      expect(result.reloadReasons.sort()).toEqual(["agents", "config", "plugins"]);
 
       const secondResult = await ensureWorkspaceFiles(root, "starter");
       expect(secondResult).toEqual({ changed: false, reloadReasons: [] });
@@ -36,7 +38,7 @@ describe("ensureWorkspaceFiles", () => {
       const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
       expect(agent).toContain("Old instructions");
       expect(agent).toContain("OpenWork Artifacts");
-      expect(result.reloadReasons.sort()).toEqual(["agents", "config"]);
+      expect(result.reloadReasons.sort()).toEqual(["agents", "config", "plugins"]);
     });
   });
 

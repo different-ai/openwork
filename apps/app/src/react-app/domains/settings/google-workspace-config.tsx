@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { CalendarDays, CheckCircle2, FileText, Loader2, MailPlus, ShieldCheck, XCircle } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,62 +12,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  googleWorkspaceAuthStatus,
-  googleWorkspaceConnect,
-  googleWorkspaceDisconnect,
-  googleWorkspaceRunScopeSmokeTest,
-  googleWorkspaceTestConnection,
-} from "../../../app/lib/desktop";
+import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
+import { usePlatform } from "../../kernel/platform";
+import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionConfig } from "./extension-registry";
-
-type GoogleWorkspaceAccount = {
-  email: string | null;
-  name: string | null;
-  picture: string | null;
-  sub: string | null;
-};
-
-type GoogleWorkspaceAuthStatus = {
-  configured: boolean;
-  missing: string[];
-  vault: "encrypted" | "plaintext-dev" | "unavailable";
-  connected: boolean;
-  account: GoogleWorkspaceAccount | null;
-  scopes: string[];
-  connectedAt: string | null;
-  error: string | null;
-  testStatus: string | null;
-  smokeTest: {
-    driveFileId: string | null;
-    driveFileName: string | null;
-    gmailDraftId: string | null;
-  } | null;
-};
 
 type BusyAction = "status" | "connect" | "disconnect" | "test" | "smoke-test";
 type GoogleWorkspaceCommand = () => Promise<unknown>;
-
-const PHASE_ONE_SCOPES = [
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
-  "https://www.googleapis.com/auth/drive.file",
-];
-
-const PHASE_ONE_TOOLS = [
-  "google_profile_get",
-  "google_calendar_list_events",
-  "google_calendar_get_event",
-  "google_gmail_create_draft",
-  "google_drive_search_accessible_files",
-  "google_drive_read_file",
-  "google_workspace_prepare_meeting",
-];
-
-const DEV_CLIENT_ID = "929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com";
+const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
+const CONNECT_POLL_INTERVAL_MS = 1_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -78,7 +31,7 @@ function normalizeStringList(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function normalizeGoogleWorkspaceAccount(value: unknown): GoogleWorkspaceAccount | null {
+function normalizeGoogleWorkspaceAccount(value: unknown): GoogleWorkspaceAuthStatus["account"] {
   if (!isRecord(value)) return null;
   return {
     email: typeof value.email === "string" ? value.email : null,
@@ -114,29 +67,39 @@ function normalizeGoogleWorkspaceAuthStatus(value: unknown): GoogleWorkspaceAuth
   };
 }
 
-function Pill(props: { children: ReactNode }) {
-  return (
-    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-      {props.children}
-    </span>
-  );
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function GoogleWorkspaceConfig() {
+async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, flowId: string, expiresAt: number) {
+  while (Date.now() < expiresAt + 5_000) {
+    const result = await client.googleWorkspaceConnectStatus(flowId);
+    if (result.status === "connected" && result.googleWorkspace) return result.googleWorkspace;
+    if (result.status === "failed" || result.status === "expired") {
+      throw new Error(result.error ?? "Google Workspace connection did not complete.");
+    }
+    await sleep(CONNECT_POLL_INTERVAL_MS);
+  }
+  throw new Error("Google Workspace OAuth timed out.");
+}
+
+function GoogleWorkspaceConfig({ openworkServerClient, googleWorkspace }: ExtensionConfigContext) {
+  const platform = usePlatform();
   const [status, setStatus] = useState<GoogleWorkspaceAuthStatus | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const desktopAvailable = typeof window !== "undefined" && Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop);
-  const canConnect = desktopAvailable && status?.configured === true && status.vault !== "unavailable";
-  const canTest = desktopAvailable && status?.connected === true;
+  const serverAvailable = Boolean(openworkServerClient);
+  const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
+  const canTest = serverAvailable && status?.connected === true;
 
-  const loadStatus = async () => {
-    if (!desktopAvailable) return;
+  const loadStatus = async (options: { clearError?: boolean } = {}) => {
+    if (!openworkServerClient) return;
     setBusyAction("status");
-    setError(null);
+    if (options.clearError !== false) setError(null);
     try {
-      const result = await googleWorkspaceAuthStatus();
-      setStatus(normalizeGoogleWorkspaceAuthStatus(result));
+      const result = normalizeGoogleWorkspaceAuthStatus(await openworkServerClient.googleWorkspaceStatus());
+      setStatus(result);
+      googleWorkspace?.onStatusChange(result.connected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to read Google Workspace status.");
     } finally {
@@ -146,32 +109,44 @@ function GoogleWorkspaceConfig() {
 
   useEffect(() => {
     void loadStatus();
-  }, []);
+  }, [openworkServerClient]);
 
   const runDesktopAction = async (action: Exclude<BusyAction, "status">, command: GoogleWorkspaceCommand) => {
-    if (!desktopAvailable) return;
+    if (!openworkServerClient) return;
     setBusyAction(action);
     setError(null);
     try {
-      const result = await command();
-      setStatus(normalizeGoogleWorkspaceAuthStatus(result));
+      const result = await Promise.race([
+        command(),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error("Google Workspace connection is taking too long. Try again, or restart OpenWork if the browser already said authorization was received.")), DESKTOP_ACTION_TIMEOUT_MS);
+        }),
+      ]);
+      const next = normalizeGoogleWorkspaceAuthStatus(result);
+      setStatus(next);
+      googleWorkspace?.onStatusChange(next.connected);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Google Workspace ${action} failed.`);
-      await loadStatus();
+      await loadStatus({ clearError: false });
     } finally {
       setBusyAction(null);
     }
   };
 
+  const connectGoogleWorkspace = async () => {
+    if (!openworkServerClient) return null;
+    const flow = await openworkServerClient.googleWorkspaceConnectStart();
+    platform.openLink(flow.authUrl);
+    return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
+  };
+
   return (
     <div className="space-y-4">
-      {!desktopAvailable ? (
+      {!serverAvailable ? (
         <Alert variant="warning">
           <ShieldCheck />
-          <AlertTitle>Desktop app required</AlertTitle>
-          <AlertDescription>
-            Phase 1 uses a local OAuth callback and encrypted desktop token vault. Open this extension in OpenWork Desktop to connect Google Workspace.
-          </AlertDescription>
+          <AlertTitle>OpenWork server required</AlertTitle>
+          <AlertDescription>Start OpenWork server to connect Google Workspace.</AlertDescription>
         </Alert>
       ) : null}
 
@@ -180,16 +155,16 @@ function GoogleWorkspaceConfig() {
           <CheckCircle2 />
           <AlertTitle>Connected to Google Workspace</AlertTitle>
           <AlertDescription>
-            {status.account?.email ? `Signed in as ${status.account.email}.` : "Google OAuth tokens are stored in the local encrypted vault."}
+            {status.account?.email ? `Signed in as ${status.account.email}.` : "Your Google account is connected."}
             {status.testStatus ? ` ${status.testStatus}` : ""}
           </AlertDescription>
         </Alert>
       ) : (
         <Alert variant="warning">
           <ShieldCheck />
-          <AlertTitle>Phase 1 OAuth setup required</AlertTitle>
+          <AlertTitle>Connect Google Workspace</AlertTitle>
           <AlertDescription>
-            Connect uses an OpenWork-owned Google OAuth desktop client with PKCE and stores tokens in the local encrypted vault.
+            Let OpenWork use your calendar, selected Drive files, and Gmail drafts when you ask it to.
           </AlertDescription>
         </Alert>
       )}
@@ -198,9 +173,7 @@ function GoogleWorkspaceConfig() {
         <Alert variant="warning">
           <XCircle />
           <AlertTitle>Google OAuth client not configured</AlertTitle>
-          <AlertDescription>
-            Set {status.missing.join(" and ")} before testing the local OAuth flow. Desktop OAuth uses PKCE, so no client secret is required.
-          </AlertDescription>
+          <AlertDescription>Google Workspace is not configured in this build.</AlertDescription>
         </Alert>
       ) : null}
 
@@ -208,19 +181,7 @@ function GoogleWorkspaceConfig() {
         <Alert variant="destructive">
           <XCircle />
           <AlertTitle>Encrypted token vault unavailable</AlertTitle>
-          <AlertDescription>
-            OpenWork cannot store Google refresh tokens until Electron safe storage is available on this machine.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {status?.vault === "plaintext-dev" ? (
-        <Alert variant="warning">
-          <ShieldCheck />
-          <AlertTitle>Dev token vault</AlertTitle>
-          <AlertDescription>
-            This dev build is using Electron plaintext safe storage for headless testing. Packaged production builds require encrypted OS storage.
-          </AlertDescription>
+          <AlertDescription>OpenWork cannot securely save your Google connection on this machine right now.</AlertDescription>
         </Alert>
       ) : null}
 
@@ -236,141 +197,64 @@ function GoogleWorkspaceConfig() {
         <Alert>
           <CheckCircle2 />
           <AlertTitle>Scope smoke test complete</AlertTitle>
-          <AlertDescription>
-            Created Drive file {status.smokeTest.driveFileName ?? status.smokeTest.driveFileId} and Gmail draft {status.smokeTest.gmailDraftId}.
-          </AlertDescription>
+          <AlertDescription>Calendar, Drive, and Gmail draft access were verified.</AlertDescription>
         </Alert>
       ) : null}
 
       <Card variant="outline" size="sm">
         <CardHeader>
-          <CardTitle>Phase 1 capabilities</CardTitle>
+          <CardTitle>What OpenWork can do</CardTitle>
           <CardDescription>
-            Start with the smallest useful loop: calendar context, selected Drive files, and Gmail drafts users review themselves.
+            Connect Google Workspace so OpenWork can help with meeting prep, selected files, and draft emails.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-border bg-card p-3">
             <CalendarDays className="mb-2 size-4 text-blue-11" />
             <div className="text-sm font-medium text-card-foreground">Calendar read</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              List upcoming events and provide meeting context.
-            </div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">List upcoming events and provide meeting context.</div>
           </div>
           <div className="rounded-2xl border border-border bg-card p-3">
             <MailPlus className="mb-2 size-4 text-red-11" />
             <div className="text-sm font-medium text-card-foreground">Gmail drafts</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Create draft emails only. No send tool in Phase 1.
-            </div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Create draft emails only. No send tool in Phase 1.</div>
           </div>
           <div className="rounded-2xl border border-border bg-card p-3">
             <FileText className="mb-2 size-4 text-green-11" />
             <div className="text-sm font-medium text-card-foreground">Selected Drive files</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Read files explicitly selected or created through OpenWork.
-            </div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Read files explicitly selected or created through OpenWork.</div>
           </div>
         </CardContent>
       </Card>
 
       <Card variant="outline" size="sm">
-        <CardHeader>
-          <CardTitle>OAuth request</CardTitle>
-          <CardDescription>
-            Configure these scopes in the OpenWork Google Cloud project first, then use the same list in the connector implementation.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="rounded-2xl border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {PHASE_ONE_SCOPES.map((scope) => (
-              <div key={scope}>{scope}</div>
-            ))}
-          </div>
-          <div className="text-xs leading-relaxed text-muted-foreground">
-            Avoid adding Gmail read, broad Drive read, Google Chat, or Contacts until the Phase 1 E2E flow is verified.
-          </div>
-        </CardContent>
-        <CardFooter className="flex-wrap gap-2 border-t border-border justify-between">
+        <CardFooter className="flex-wrap gap-2 justify-between">
           <div className="flex flex-wrap gap-2">
             {status?.connected ? (
-              <Button
-                variant="destructive"
-                disabled={Boolean(busyAction)}
-                onClick={() => void runDesktopAction("disconnect", googleWorkspaceDisconnect)}
-              >
+              <Button variant="destructive" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect() ?? Promise.resolve(null))}>
                 {busyAction === "disconnect" ? <Loader2 className="size-4 animate-spin" /> : null}
                 Disconnect
               </Button>
             ) : (
-              <Button
-                disabled={Boolean(busyAction) || !canConnect}
-                onClick={() => void runDesktopAction("connect", googleWorkspaceConnect)}
-              >
+              <Button disabled={Boolean(busyAction) || !canConnect} onClick={() => void runDesktopAction("connect", connectGoogleWorkspace)}>
                 {busyAction === "connect" ? <Loader2 className="size-4 animate-spin" /> : null}
                 Connect with Google
               </Button>
             )}
-            <Button
-              variant="outline"
-              disabled={Boolean(busyAction) || !canTest}
-              onClick={() => void runDesktopAction("test", googleWorkspaceTestConnection)}
-            >
+            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("test", () => openworkServerClient?.googleWorkspaceTestConnection() ?? Promise.resolve(null))}>
               {busyAction === "test" ? <Loader2 className="size-4 animate-spin" /> : null}
               Test connection
             </Button>
-            <Button
-              variant="outline"
-              disabled={Boolean(busyAction) || !canTest}
-              onClick={() => void runDesktopAction("smoke-test", googleWorkspaceRunScopeSmokeTest)}
-            >
+            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("smoke-test", () => openworkServerClient?.googleWorkspaceRunScopeSmokeTest() ?? Promise.resolve(null))}>
               {busyAction === "smoke-test" ? <Loader2 className="size-4 animate-spin" /> : null}
-              Run scope smoke test
+              Run diagnostic
             </Button>
           </div>
-          <a
-            href="https://console.cloud.google.com/auth/overview"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-          >
-            Open Google Auth Platform
-          </a>
         </CardFooter>
-      </Card>
-
-      <Card variant="outline" size="sm">
-        <CardHeader>
-          <CardTitle>Local dev test</CardTitle>
-          <CardDescription>
-            Run the desktop app with the OpenWork Google Workspace OAuth client ID. Desktop OAuth uses PKCE, so there is no client secret.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-2xl border border-border bg-muted/40 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID=&quot;{DEV_CLIENT_ID}&quot; pnpm dev
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card variant="outline" size="sm">
-        <CardHeader>
-          <CardTitle>Initial tool contract</CardTitle>
-          <CardDescription>
-            These are the agent-facing tools the connector should expose before expanding scopes.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-1.5">
-            {PHASE_ONE_TOOLS.map((tool) => (
-              <Pill key={tool}>{tool}</Pill>
-            ))}
-          </div>
-        </CardContent>
       </Card>
     </div>
   );
 }
 
-registerExtensionConfig("openwork.googleWorkspace.settings", () => <GoogleWorkspaceConfig />);
-registerExtensionConfig("google-workspace", () => <GoogleWorkspaceConfig />);
+registerExtensionConfig("openwork.googleWorkspace.settings", (ctx) => <GoogleWorkspaceConfig {...ctx} />);
+registerExtensionConfig("google-workspace", (ctx) => <GoogleWorkspaceConfig {...ctx} />);
