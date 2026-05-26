@@ -1,0 +1,99 @@
+apps/app/src/react-app/domains/session/panel/unified-side-panel.tsx
+  s_7e3935822b642b::t_94ef48d9603fd8 270-274
+  s_a4a082ff215b53::t_c1132c138ce458 42-43,511
+  s_7e3935822b642b::t_4531444091d176 381
+  s_7e3935822b642b::t_81dc886ed9d44a 1-4,6-33,35-37,40-41,44-203,206-269,275-380,382-510,512-530
+  s_cb0bc3707dd1f7::t_03ceb0767711f6 5,34,38-39,204-205
+apps/app/src/react-app/domains/session/panel/use-electron-browser-sync.ts
+  s_17b02b5da81de5::t_61e321532b1837 96-99,101-104
+  s_17b02b5da81de5::t_36b66a94ef8002 1-95,100,105-146
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_707473ee25375a::t_1c1dce0408bef3 297-298
+  s_707473ee25375a::t_d50bc7f2652ae5 954,959
+  s_707473ee25375a::t_275d3c38b6f4cf 934-935,942
+  s_707473ee25375a::t_e6f07baeec9cf4 985,990
+  s_707473ee25375a::t_3f7b1c122c945b 48-49
+  s_707473ee25375a::t_0290189722556c 346,353-359,361-363
+  s_707473ee25375a::t_9d86088e95935e 368,380
+  s_cb0bc3707dd1f7::t_1ab7f0dde03a5d 61,236
+  s_a4a082ff215b53::t_372b1abe2e817f 933
+  s_707473ee25375a::t_2cff821e364375 232-233,235,237,240-243,245-246
+  s_707473ee25375a::t_1b10f85bdd4de6 308
+  s_707473ee25375a::t_92849a011a4679 371
+  s_a4a082ff215b53::t_1c1c76d6e4cc92 234,372-379,383-396
+  s_707473ee25375a::t_6023ad2f16124a 253
+  s_707473ee25375a::t_b6e965b258b4e8 238
+  s_707473ee25375a::t_cbf2ecc52cb04a 404-411
+apps/app/src/react-app/shell/ui-state-store.ts
+  s_707473ee25375a::t_d1f2e3dde9a5b8 125-136
+  s_707473ee25375a::t_ec3cf829951e29 17,21-38
+apps/app/src/react-app/domains/session/panel/panel-tab-store.ts
+  s_707473ee25375a::t_db425f3d7c36d7 333,335,339,341-355
+  s_707473ee25375a::t_3ffe0ddc9dcd98 4
+  s_17b02b5da81de5::t_2b17bc6bb32449 186
+  s_17b02b5da81de5::t_ca35e029cc50a4 322
+  s_707473ee25375a::t_7f8f29684d4154 359-360,362-366
+  s_707473ee25375a::t_b615b24ae0b88f 222
+  s_707473ee25375a::t_3af3b18beff205 54
+  s_17b02b5da81de5::t_6c22a9451a7dca 160,177-185,187-189
+  s_17b02b5da81de5::t_4cbc0cd6cb451a 157-159,162-163,165-167,169,171-174,176
+  s_17b02b5da81de5::t_7b0efea807a717 1-3,5-43,45-53,56-106,145-155,190-221,223-321,323-332,334,336-338,340,370-371,387-389,394-422
+  s_17b02b5da81de5::t_5449ef52deedf1 156
+  s_707473ee25375a::t_34fa94ea7e042f 107-144
+  s_707473ee25375a::t_fab891f642fbfd 44,55
+  s_707473ee25375a::t_c5197d9ecd0ecd 356-358,361,367-369,372-386,390-393
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_707473ee25375a::t_e73ffee94df3de 668-669
+  s_707473ee25375a::t_b24ffa22b30105 50
+apps/app/src/react-app/domains/session/browser/use-browser-state.ts
+  s_17b02b5da81de5::t_7b342f9fcfa4c8 41
+  s_707473ee25375a::t_386c79671b996b 79-86,118,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "db8064324c3e66f03ec713ca513ce8f5fa5bdcfb",
+  "prompts": {},
+  "sessions": {
+    "s_17b02b5da81de5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8170599e-0a65-45e1-b26e-a4923df91709",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_707473ee25375a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a4d7c035-544f-42c5-be14-b5524e5772b3",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_7e3935822b642b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2c0c58b9-6987-45f3-ab8c-e22e3bbac914",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_a4a082ff215b53": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6496-d03e-7542-9ba7-085879d49954",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_cb0bc3707dd1f7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6499-4768-7590-94df-65252b6d11a3",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
