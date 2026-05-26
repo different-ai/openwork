@@ -228,7 +228,7 @@ First contribution checklist:
 
 ## Supported Languages
 
-Translated READMEs: [`translated_readmes/`](./translated_readmes/README.md), available in English, 简体中文, 繁體中文, 日本語.
+Translated READMEs: [`translated_readmes/`](./translated_readmes/README.md), available in English, 简体中文, 繁體中文, 日本語, Türkçe.
 
 The App is available in the following languages:
 - English (`en`)
@@ -241,6 +241,7 @@ The App is available in the following languages:
 - Thai (`th`)
 - Vietnamese (`vi`)
 - Russian (`ru`)
+- Turkish (`tr`)
 
 ## For Teams & Businesses
 
