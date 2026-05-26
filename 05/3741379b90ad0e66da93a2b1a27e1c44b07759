@@ -1,0 +1,36 @@
+ee/apps/landing/package.json
+  h_2169b0bd9b5c87 23,28-29
+ee/apps/den-web/package.json
+  h_2169b0bd9b5c87 25,30-31
+apps/app/vite.config.ts
+  h_2169b0bd9b5c87 6-7,96-97,106
+scripts/migration/README.md
+  h_2169b0bd9b5c87 120
+ee/apps/landing/postcss.config.js
+  h_2169b0bd9b5c87 3
+apps/ui-demo/package.json
+  h_2169b0bd9b5c87 20,22
+ee/apps/den-web/postcss.config.js
+  h_2169b0bd9b5c87 3
+apps/app/package.json
+  h_2169b0bd9b5c87 85-88,92,94,96
+ee/apps/den-web/app/globals.css
+  h_2169b0bd9b5c87 1-2
+package.json
+  h_2169b0bd9b5c87 64
+ee/apps/landing/app/globals.css
+  h_2169b0bd9b5c87 1-2
+scripts/migration/03-post-migration-cleanup.mjs
+  h_2169b0bd9b5c87 131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "053741379b90ad0e66da93a2b1a27e1c44b07759",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
