@@ -49,10 +49,12 @@ OpenWork uses Google Workspace data only to provide user-requested features, suc
 
 Google's verification video should show the OAuth consent flow and each requested sensitive/restricted scope in use.
 
-1. Start OpenWork Desktop with the Google Workspace client ID:
+1. Start OpenWork Desktop with the Google Workspace desktop OAuth client metadata:
 
    ```bash
-   OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID="929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com" pnpm dev
+   OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID="929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com" \
+   OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET="<desktop-client-secret-from-google-cloud>" \
+   pnpm dev
    ```
 
 2. Open `Settings -> Extensions -> Google Workspace`.
@@ -93,10 +95,12 @@ bash .devcontainer/test-on-daytona.sh feature/google-workspace-phase-1 --record-
 
 Then open the noVNC URL printed by the script, sign in to the Google test account when the OAuth browser opens, and complete the script above while recording.
 
-If the sandbox does not have the Google OAuth client ID in the environment, restart Electron with:
+If the sandbox does not have the Google OAuth client metadata in the environment, restart Electron with:
 
 ```bash
-OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID="929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com" bash /opt/openwork-daytona/start-daytona-electron.sh --detach
+OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID="929071212606-uj6ag13l8llsqrpbo2rked168rjdd98o.apps.googleusercontent.com" \
+OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET="<desktop-client-secret-from-google-cloud>" \
+bash /opt/openwork-daytona/start-daytona-electron.sh --detach
 ```
 
 ## Current Verification Blockers
