@@ -1,0 +1,152 @@
+apps/app/src/components/panel-tabs.tsx
+  s_58767fbaed8072::t_395b81bb87f6c1 8,11-16
+  s_58767fbaed8072::t_8c4179ad633cb2 9-10,18
+apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
+  s_b870ae69d3474d::t_28d15c4f287962 22-23,25-34
+  s_b870ae69d3474d::t_bedbbd64446f90 11-12
+  s_b870ae69d3474d::t_5d11d8b02cda0b 60-81
+apps/app/src/react-app/domains/session/artifacts/open-target.ts
+  s_cfdc967a8934a7::t_0544aaad116c9a 145-146
+  s_cfdc967a8934a7::t_58c448adab43ba 78
+  s_cfdc967a8934a7::t_777f89916e9c44 3
+apps/desktop/electron/main.mjs
+  s_14946a7c77ba44::t_b4e2a391018ffc 746-775,781
+apps/app/src/react-app/domains/session/panel/use-browser-tabs.ts
+  s_21399125d8757a::t_3b0a750e32affb 47,49,51,53,55-59,63,69,80,83,87-88,99,102,106,108,117
+  s_b226b7e313643c::t_bac4a8c9637116 1
+  s_f6551b43451acf::t_57b773149129a5 3,8,19,21,23-26,62,104,116
+  s_b226b7e313643c::t_d43ef6b4d5dbef 29
+  s_1918ddaa3f4a71::t_24f18ab1799fb5 61,67,70-71,73-79,81-82,84-85,90-92,96-98,100-101,103
+  s_b226b7e313643c::t_3409440b076381 22,64,72,86,105
+apps/app/scripts/open-target.test.ts
+  s_cfdc967a8934a7::t_20d6f115d3f636 188,190
+apps/app/src/react-app/domains/session/panel/unified-side-panel.tsx
+  s_b226b7e313643c::t_76a7e4a004499d 133
+  s_b226b7e313643c::t_ce95e43efda86a 246,262
+  s_b226b7e313643c::t_68090c067eeede 164
+  s_b226b7e313643c::t_84c265b35175c1 147
+  s_0b38d27e8f1485::t_4fb8c8c54c1ca5 351
+  s_1918ddaa3f4a71::t_1786dabf5341a5 348
+  s_b226b7e313643c::t_7822e75632b9c9 222,226,230,234,238
+  s_1918ddaa3f4a71::t_f041b43bdb8f6b 482
+  s_f6551b43451acf::t_51516e22a988a6 52-53
+  s_f6551b43451acf::t_de693c785f3617 27-32
+  s_57bbcbc24a8130::t_bc5bb8dec7cc3b 283-287
+  s_1918ddaa3f4a71::t_bb2fc2db1d65d7 33
+  s_14946a7c77ba44::t_35184ddde0891e 178,184
+  s_b226b7e313643c::t_24cf3c99eb0078 2
+  s_f6551b43451acf::t_5beb5c43358e05 207,215,223-224,227-228,231-232,235-236
+  s_0b38d27e8f1485::t_7d49c5430732a6 198,201-202,249,266,347,445-454
+  s_b226b7e313643c::t_19e5c8f456b8af 208-214,216
+  s_1918ddaa3f4a71::t_d9330d57f49da5 217
+  s_0b38d27e8f1485::t_deded6b04dfb5d 349,444
+  s_b870ae69d3474d::t_7605029966c676 509
+  s_0b38d27e8f1485::t_1afbdd8063f55d 200,203,206,350,352-360,362-376,378-394,396-443
+  s_57bbcbc24a8130::t_24c0300fa67a0e 113-119
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_14946a7c77ba44::t_4018433fa87922 49
+  s_14946a7c77ba44::t_2b6f932bb7e54e 239
+  s_14946a7c77ba44::t_bf246e7470689b 374-375
+  s_14946a7c77ba44::t_9d439805cc1015 365
+  s_14946a7c77ba44::t_afc9f3452e095e 397
+  s_14946a7c77ba44::t_9f3c37f25ec01a 238
+apps/app/src/react-app/domains/session/panel/panel-tab-store.ts
+  s_14946a7c77ba44::t_7d8c446d66663c 231
+  s_14946a7c77ba44::t_d9940c935b6a20 149-160
+  s_14946a7c77ba44::t_1128fc30538822 56
+  s_14946a7c77ba44::t_7255e31595d9a4 289,291,303,309
+  s_14946a7c77ba44::t_2b0c7c6db235f3 412-413
+  s_14946a7c77ba44::t_408c9d1fbdb9e1 189-209
+  s_14946a7c77ba44::t_c65393c55b6ded 142
+apps/app/src/app/lib/desktop.ts
+  s_14946a7c77ba44::t_6fbc702783073b 28-33
+  s_14946a7c77ba44::t_579ba28f54f14b 97,102-103,106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "adbc8f61376d1fa3d7e988b62a970351633a9f34",
+  "prompts": {},
+  "sessions": {
+    "s_0b38d27e8f1485": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2eb7c273-8119-4e2d-a8c8-06779f44b591",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_14946a7c77ba44": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "956d099d-4851-4e7e-9a88-5e6693a644b3",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_1918ddaa3f4a71": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3991c10b-8c91-4abf-9142-2a9062095487",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_21399125d8757a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "971d0ea4-0b11-4cbc-81ae-b885769a9488",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_57bbcbc24a8130": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1cdcc4e9-851d-4086-ac37-40321054a4f5",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_58767fbaed8072": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9bf7375b-853d-470c-94a8-d069d0e82b28",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_b226b7e313643c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "32203425-fb7f-427b-9685-f4a31737e397",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_b870ae69d3474d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0ba7bcd8-c5d8-4f3b-ac13-0478497d3ad7",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_cfdc967a8934a7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9c0a1c8a-b686-46c4-8e82-e9e5fce21787",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_f6551b43451acf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6ab40495-a3f2-4802-a004-31365dbb3625",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
