@@ -149,6 +149,11 @@ async function waitForSandboxReady(name, opts = {}) {
   const { timeoutMs = 120_000, pollMs = 4_000, onProgress } = opts;
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
+  // Track the first time we see a "Provisioning" phase so we can detect
+  // sandboxes that are stuck (never transition to Ready).
+  let firstProvisioningAt = null;
+  const STUCK_PROVISIONING_THRESHOLD_MS = 90_000; // 90 s in Provisioning → stuck
+
   while (Date.now() < deadline) {
     attempt += 1;
     // 20 s outer timeout gives 10 s slack after bash's inner 10 s timer
@@ -181,6 +186,25 @@ async function waitForSandboxReady(name, opts = {}) {
           if (/error|failed/i.test(phase)) {
             throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
           }
+          // Detect sandboxes stuck in Provisioning. If the sandbox has been
+          // in a provisioning-like state for longer than the threshold, bail
+          // out early with a clear error so the renderer can offer a
+          // "Delete and start fresh" action rather than spinning forever.
+          if (/provision/i.test(phase)) {
+            if (!firstProvisioningAt) firstProvisioningAt = Date.now();
+            const stuckMs = Date.now() - firstProvisioningAt;
+            if (stuckMs > STUCK_PROVISIONING_THRESHOLD_MS) {
+              throw new Error(
+                `STUCK_PROVISIONING: Sandbox "${name}" has been in "${phase}" state for ` +
+                  `over ${Math.round(stuckMs / 1000)}s and appears stuck. ` +
+                  `Delete the sandbox and reconnect to create a fresh one. ` +
+                  `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+              );
+            }
+          } else {
+            // Phase changed away from Provisioning — reset the timer.
+            firstProvisioningAt = null;
+          }
           onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
         }
       }
@@ -188,7 +212,18 @@ async function waitForSandboxReady(name, opts = {}) {
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  // Timed out — proceed anyway; exec may succeed if setup.sh just finished.
+  // Timed out without confirming Ready — if we last saw a provisioning phase
+  // treat it as stuck rather than proceeding optimistically (the exec would
+  // fail anyway with "phase: Provisioning").
+  if (firstProvisioningAt) {
+    throw new Error(
+      `STUCK_PROVISIONING: Sandbox "${name}" did not reach Ready state within ${Math.round(timeoutMs / 1000)}s ` +
+        `(last observed phase: Provisioning). ` +
+        `Delete the sandbox and reconnect to create a fresh one. ` +
+        `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+    );
+  }
+  // Non-provisioning timeout — proceed; exec may succeed if setup.sh just finished.
   onProgress?.({ phase: "timeout", message: "Sandbox did not confirm Ready state; attempting to connect anyway." });
 }
 

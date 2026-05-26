@@ -581,6 +581,10 @@ function TestLaunchPanel(props: TestLaunchPanelProps) {
               key={`${launchedWorkspaceId}:${props.profile}`}
               workspaceId={launchedWorkspaceId}
               profile={props.profile}
+              onRenameCommit={(newId) => {
+                stop();
+                setWorkspaceId(newId);
+              }}
             />
           </div>
         </div>
