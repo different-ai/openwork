@@ -31,7 +31,7 @@ type GoogleWorkspaceAccount = {
 type GoogleWorkspaceAuthStatus = {
   configured: boolean;
   missing: string[];
-  vault: "encrypted" | "unavailable";
+  vault: "encrypted" | "plaintext-dev" | "unavailable";
   connected: boolean;
   account: GoogleWorkspaceAccount | null;
   scopes: string[];
@@ -99,7 +99,7 @@ function normalizeGoogleWorkspaceSmokeTest(value: unknown): GoogleWorkspaceAuthS
 
 function normalizeGoogleWorkspaceAuthStatus(value: unknown): GoogleWorkspaceAuthStatus {
   const record = isRecord(value) ? value : {};
-  const vault = record.vault === "encrypted" ? "encrypted" : "unavailable";
+  const vault = record.vault === "encrypted" || record.vault === "plaintext-dev" ? record.vault : "unavailable";
   return {
     configured: record.configured === true,
     missing: normalizeStringList(record.missing),
@@ -127,7 +127,7 @@ function GoogleWorkspaceConfig() {
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const desktopAvailable = typeof window !== "undefined" && Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop);
-  const canConnect = desktopAvailable && status?.configured === true && status.vault === "encrypted";
+  const canConnect = desktopAvailable && status?.configured === true && status.vault !== "unavailable";
   const canTest = desktopAvailable && status?.connected === true;
 
   const loadStatus = async () => {
@@ -210,6 +210,16 @@ function GoogleWorkspaceConfig() {
           <AlertTitle>Encrypted token vault unavailable</AlertTitle>
           <AlertDescription>
             OpenWork cannot store Google refresh tokens until Electron safe storage is available on this machine.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {status?.vault === "plaintext-dev" ? (
+        <Alert variant="warning">
+          <ShieldCheck />
+          <AlertTitle>Dev token vault</AlertTitle>
+          <AlertDescription>
+            This dev build is using Electron plaintext safe storage for headless testing. Packaged production builds require encrypted OS storage.
           </AlertDescription>
         </Alert>
       ) : null}
