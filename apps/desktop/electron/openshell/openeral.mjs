@@ -45,7 +45,13 @@ const IMAGE_BY_PROFILE = {
 };
 
 const DEFAULT_PULL_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_CREATE_TIMEOUT_MS = 3 * 60_000;
+// openshell sandbox create provisions the container, uploads the db-url
+// file via SCP, and runs /bin/true via SSH — this can legitimately take
+// 4-5 minutes on first run or when the WSL2 Docker daemon is cold.
+// Inner bash timeout is 5 min (300 s); wslRun timeout is 7 min (420 s)
+// so the outer timer always fires AFTER the inner one, giving us a
+// controlled exit with exitCode === 124 and a friendly message.
+const DEFAULT_CREATE_TIMEOUT_MS = 7 * 60_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 15_000;
 
 // Docker pulls happen under user `banker` inside the distro. If Docker
@@ -410,6 +416,17 @@ export async function createOpenEralSandbox(opts) {
   // call AFTER create, so there is no quoting complexity inside the
   // create command.  setup.sh falls back gracefully if the exec fails
   // (it skips the presign step when ANTHROPIC_API_KEY is a placeholder).
+  // NOTE: do NOT use `exec openshell sandbox create ...` here.
+  // `exec` replaces the bash process, which means the EXIT trap set
+  // below never fires and the temp DB-URL file leaks in /tmp forever.
+  // Running openshell as a regular child (no exec) lets bash honour
+  // the trap on exit — whether the create succeeds, fails, or is killed
+  // by the inner `timeout` guard.
+  //
+  // Inner timeout is 300 s (5 min). The outer wslRun timer
+  // (DEFAULT_CREATE_TIMEOUT_MS = 7 min) fires 2 min later, giving the
+  // inner timer room to produce a clean exitCode=124 before wslRun
+  // tears down the process itself.
   const script = [
     "set -e",
     "umask 077",
@@ -418,7 +435,7 @@ export async function createOpenEralSandbox(opts) {
     `chmod 600 ${dbPath}`,
     // Staging file is removed on exit whether create succeeds or fails.
     `trap 'rm -f ${dbPath}' EXIT`,
-    `exec openshell sandbox create --no-tty ` +
+    `timeout 300 openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
       `--from ${shellQuote(imageRef)} ` +
       `--upload ${dbPath}:/sandbox/db-url ` +
@@ -426,15 +443,30 @@ export async function createOpenEralSandbox(opts) {
       `-- /bin/true`,
   ].join("\n");
 
-  onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
-  const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "bash", "-c", script],
-    {
-      timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
-      env,
-      stdin: databaseUrl,
-    },
-  );
+  onProgress?.({ phase: "create", message: `Creating sandbox ${name}… (this can take up to 5 minutes on first run)` });
+  let r;
+  try {
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", script],
+      {
+        timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
+        env,
+        stdin: databaseUrl,
+      },
+    );
+  } catch (err) {
+    // wslRun throws (does not return r) when its own outer timer fires.
+    // In practice the inner bash `timeout 300` should have exited first,
+    // but on severely loaded machines both timers can race.
+    if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+      throw new Error(
+        `openshell sandbox create timed out (>7 minutes). ` +
+          `The OpenShell gateway or Docker daemon is not responding. ` +
+          `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry.`,
+      );
+    }
+    throw err;
+  }
   if (r.exitCode !== 0) {
     const output = (r.stderr || r.stdout).trim();
     // openshell exits 1 with "already exists" when sandboxExists() returned
@@ -443,6 +475,16 @@ export async function createOpenEralSandbox(opts) {
     if (/already exists/i.test(output)) {
       onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
       return { name, profile, imageRef, existed: true };
+    }
+    // 124 = bash timeout(1) killed openshell after 300 s. Surface as a
+    // friendly "gateway slow" message rather than a raw exit-code dump.
+    if (r.exitCode === 124) {
+      throw new Error(
+        `openshell sandbox create timed out after 5 minutes. ` +
+          `The OpenShell gateway or Docker daemon may be under load. ` +
+          `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry. ` +
+          `${output ? `(CLI output: ${output})` : ""}`.trim(),
+      );
     }
     const cli = await getCliInfo().catch(() => null);
     const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
