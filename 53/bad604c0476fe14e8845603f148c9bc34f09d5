@@ -1,0 +1,21 @@
+apps/server/src/artifact-files.e2e.test.ts
+  s_5057f23c8a3d09::t_6c8ededa8b919e 66,79
+apps/server/src/server.ts
+  s_5057f23c8a3d09::t_ae6f705d5cc768 4,1067,1099-1108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "53bad604c0476fe14e8845603f148c9bc34f09d5",
+  "prompts": {},
+  "sessions": {
+    "s_5057f23c8a3d09": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4eeee61c-094d-44e0-92c4-cc45e8a02045",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
