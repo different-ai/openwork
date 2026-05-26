@@ -112,6 +112,76 @@ export async function pullImage(imageRef, options = {}) {
 }
 
 /**
+ * Parse the raw openshell sandbox list output into a normalised array.
+ * Returns null when the JSON is unparseable or the shape is unrecognised.
+ * Each item is either a plain string (name only) or an object that may
+ * carry phase/status fields depending on the CLI version.
+ */
+function parseSandboxList(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.sandboxes)
+      ? parsed.sandboxes
+      : Array.isArray(parsed?.items)
+        ? parsed.items
+        : Array.isArray(parsed?.data)
+          ? parsed.data
+          : null;
+  return list;
+}
+
+/**
+ * Poll `openshell sandbox list --json` until the named sandbox reports
+ * a Ready/running phase, or until the timeout elapses. If the CLI does
+ * not include phase information in the list (flat string arrays), we
+ * optimistically assume the sandbox is ready and return immediately.
+ *
+ * @param {string} name
+ * @param {{ timeoutMs?: number, pollMs?: number, onProgress?: Function }} [opts]
+ */
+async function waitForSandboxReady(name, opts = {}) {
+  const { timeoutMs = 120_000, pollMs = 4_000, onProgress } = opts;
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    const r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
+      { timeout: 15_000 },
+    );
+    if (r.exitCode === 0) {
+      const list = parseSandboxList(r.stdout);
+      if (list) {
+        const entry = list.find((s) => {
+          if (typeof s === "string") return s === name;
+          return s?.name === name || s?.sandbox_name === name || s?.id === name;
+        });
+        if (entry !== undefined) {
+          // Flat string → no phase info, assume ready.
+          if (typeof entry === "string") return;
+          const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
+          if (!phase || /ready|running/i.test(phase)) return;
+          if (/error|failed/i.test(phase)) {
+            throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
+          }
+          onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
+        }
+      }
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  // Timed out — proceed anyway; exec may succeed if setup.sh just finished.
+  onProgress?.({ phase: "timeout", message: "Sandbox did not confirm Ready state; attempting to connect anyway." });
+}
+
+/**
  * True if a sandbox with this name is registered. Used to short-circuit
  * createOpenEralSandbox when re-opening a workspace.
  *
@@ -136,28 +206,9 @@ export async function sandboxExists(name) {
     );
   }
   if (r.exitCode !== 0) return false;
-  let parsed;
-  try {
-    parsed = JSON.parse(r.stdout);
-  } catch {
-    console.warn("[sandboxExists] openshell sandbox list returned non-JSON:", r.stdout.slice(0, 200));
-    return false;
-  }
-  // Tolerate multiple shapes the CLI has emitted across releases:
-  //   flat array of strings: ["name1", "name2"]
-  //   flat array of objects: [{"name": "name1"}, ...]
-  //   envelope {sandboxes: [...]}, {items: [...]}, {data: [...]}
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.sandboxes)
-      ? parsed.sandboxes
-      : Array.isArray(parsed?.items)
-        ? parsed.items
-        : Array.isArray(parsed?.data)
-          ? parsed.data
-          : null;
+  const list = parseSandboxList(r.stdout);
   if (!list) {
-    console.warn("[sandboxExists] unrecognised sandbox list shape:", JSON.stringify(parsed).slice(0, 200));
+    console.warn("[sandboxExists] unrecognised sandbox list shape:", r.stdout.slice(0, 200));
     return false;
   }
   return list.some((s) => {
@@ -212,8 +263,13 @@ export async function createOpenEralSandbox(opts) {
   const imageRef = imageForProfile(profile);
 
   // Short-circuit if the sandbox already exists (workspace reopen).
+  // Wait for it to reach Ready state before returning so the subsequent
+  // PTY exec doesn't fail with "phase: Provisioning".
   if (await sandboxExists(name)) {
-    onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
+    onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; waiting for it to be ready…` });
+    await waitForSandboxReady(name, {
+      onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
+    });
     return { name, profile, imageRef, existed: true };
   }
 
@@ -244,7 +300,11 @@ export async function createOpenEralSandbox(opts) {
   // auto-create the `claude` provider. For openclaw, also forward
   // OPENERAL_AGENT=openclaw so the openeral wrapper picks the right
   // agent at runtime.
+  const stringcostApiKey = await getCredential("stringcostApiKey");
   const forwarded = { ANTHROPIC_API_KEY: anthropicApiKey };
+  if (stringcostApiKey) {
+    forwarded.STRINGCOST_API_KEY = stringcostApiKey;
+  }
   if (profile === "openeral-openclaw") {
     forwarded.OPENERAL_AGENT = "openclaw";
   }
@@ -272,13 +332,28 @@ export async function createOpenEralSandbox(opts) {
   // "Error: × No such file or directory (os error 2)" from the failed
   // exec.
   const dbPath = `/tmp/openeral-db-url-${randomUUID()}`;
+  // Keep the create command simple — use `-- /bin/true` so openshell
+  // returns as soon as provisioning is done (no trailing command to race
+  // against the --auto-providers setup).
+  //
+  // openshell CLI 0.0.42 has a race: when --auto-providers is combined
+  // with a non-trivial `-- CMD`, the provider finalisation and the CMD
+  // exec both touch the gateway concurrently and one of them returns
+  // gRPC NotFound, aborting the create with exit 1.  Using `-- /bin/true`
+  // (exits in ~0 ms) avoids the window where the race can manifest.
+  //
+  // ANTHROPIC_API_KEY delivery for setup.sh's StringCost presign step:
+  // we write /sandbox/anthropic-api-key via a separate `sandbox exec`
+  // call AFTER create, so there is no quoting complexity inside the
+  // create command.  setup.sh falls back gracefully if the exec fails
+  // (it skips the presign step when ANTHROPIC_API_KEY is a placeholder).
   const script = [
     "set -e",
     "umask 077",
+    // DATABASE_URL is piped via stdin — never touches the command line.
     `cat > ${dbPath}`,
     `chmod 600 ${dbPath}`,
-    // trap cleans up the staging file whether sandbox create succeeds
-    // or fails. EXIT fires once when the bash subshell exits.
+    // Staging file is removed on exit whether create succeeds or fails.
     `trap 'rm -f ${dbPath}' EXIT`,
     `exec openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
@@ -313,6 +388,22 @@ export async function createOpenEralSandbox(opts) {
         `${output || "(no output)"}`,
     );
   }
+  // Write the API key file so setup.sh can create a StringCost presign
+  // with the real key (not the openshell:resolve:env:* placeholder).
+  // This runs as a separate exec AFTER create so there is no interaction
+  // with --auto-providers.  Non-fatal: if the exec fails, setup.sh
+  // skips the presign step and uses the placeholder / env-var fallback.
+  const writeKeyScript =
+    `openshell sandbox exec --name ${shellQuote(name)} -- ` +
+    `sh -c ${shellQuote(`mkdir -p /sandbox && printf %s ${shellQuote(anthropicApiKey)} > /sandbox/anthropic-api-key && chmod 600 /sandbox/anthropic-api-key`)}`;
+  await wslRun(["-d", DISTRO_NAME, "--", "bash", "-c", writeKeyScript], {
+    timeout: 30_000,
+    env,
+  }).catch((e) => {
+    // Non-fatal — setup.sh has an explicit fallback for missing key file.
+    console.warn("[createOpenEralSandbox] key-file write via exec failed (non-fatal):", e.message);
+  });
+
   onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
   return { name, profile, imageRef, existed: false };
 }

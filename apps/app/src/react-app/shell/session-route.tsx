@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
   AgentPartInput,
@@ -212,6 +212,11 @@ function mergeRouteWorkspaces(
             ? workspace.displayName
             : match.displayName,
           name: match.name?.trim() ? match.name : workspace.name,
+          // The server-v2 database does not store sandboxProfile/sandboxBackend
+          // (these are desktop-only fields). Always prefer the desktop value so
+          // that OpenEral workspaces show the terminal instead of the chat UI.
+          sandboxProfile: workspace.sandboxProfile ?? match.sandboxProfile ?? null,
+          sandboxBackend: workspace.sandboxBackend ?? match.sandboxBackend ?? null,
         }
       : workspace;
     return {
@@ -889,6 +894,15 @@ export function SessionRoute() {
     selectedWorkspace?.sandboxProfile === "openeral-openclaw"
       ? selectedWorkspace.sandboxProfile
       : null;
+
+  // Allows switching between the OpenEral terminal and the regular chat UI.
+  // Resets to "terminal" whenever the selected workspace changes.
+  const [openeralView, setOpeneralView] = React.useState<"terminal" | "chat">("terminal");
+  const prevWorkspaceIdRef = React.useRef(selectedWorkspaceId);
+  if (prevWorkspaceIdRef.current !== selectedWorkspaceId) {
+    prevWorkspaceIdRef.current = selectedWorkspaceId;
+    if (openeralView !== "terminal") setOpeneralView("terminal");
+  }
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;
@@ -1695,11 +1709,12 @@ export function SessionRoute() {
       selectedSessionId={selectedSessionId}
       selectedWorkspaceId={selectedWorkspaceId}
       sessionSurfaceOverride={
-        openeralProfile && selectedWorkspaceId ? (
+        openeralProfile && selectedWorkspaceId && openeralView === "terminal" ? (
           <OpenEralTerminal
             workspaceId={selectedWorkspaceId}
             profile={openeralProfile}
             onOpenSettings={() => navigate("/settings/sandbox")}
+            onSwitchToChat={() => setOpeneralView("chat")}
           />
         ) : undefined
       }
@@ -1731,6 +1746,19 @@ export function SessionRoute() {
         );
       }}
       onOpenSettings={() => navigate("/settings/general")}
+      headerActions={
+        openeralProfile && openeralView === "chat" ? (
+          <button
+            type="button"
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+            onClick={() => setOpeneralView("terminal")}
+            title="Switch back to the Claude Code terminal"
+          >
+            <span className="inline-block h-2 w-2 rounded-full bg-green-9" />
+            Terminal
+          </button>
+        ) : null
+      }
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,

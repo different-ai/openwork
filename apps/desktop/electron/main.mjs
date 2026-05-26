@@ -1737,18 +1737,43 @@ async function handleDesktopInvoke(event, command, ...args) {
     }
     case "openeralPtyOpen": {
       // Renderer xterm.js requests a PTY to an existing sandbox. We
-      // spawn `wsl -d openwork-openshell -- openshell sandbox connect <name>`
-      // inside a real PTY (node-pty) and forward stdout bytes via the
-      // openeral:pty-data event channel.
+      // spawn `wsl -d openwork-openshell -- openshell sandbox exec <name>
+      // --tty -- openeral` inside a real PTY (node-pty) and forward stdout
+      // bytes via the openeral:pty-data event channel.
       const input = args[0] ?? {};
       const sandboxName = String(input.sandboxName ?? "").trim();
       if (!sandboxName) throw new Error("sandboxName is required");
       const cols = Number.isFinite(input.cols) ? input.cols : undefined;
       const rows = Number.isFinite(input.rows) ? input.rows : undefined;
+
+      // Read credentials from safeStorage and forward them into the sandbox
+      // via WSLENV. This is essential so the `openeral` entrypoint can
+      // auto-configure Claude Code's Anthropic provider on first run without
+      // showing an interactive "enter API key" prompt that the user can't
+      // see or respond to (especially when the terminal is still sizing up).
+      const extraEnv = {};
+      try {
+        const anthropicApiKey = await openeralCredentials.getCredential("anthropicApiKey");
+        if (anthropicApiKey) extraEnv.ANTHROPIC_API_KEY = anthropicApiKey;
+      } catch { /* safeStorage may be unavailable in some test environments */ }
+      try {
+        const stringcostApiKey = await openeralCredentials.getCredential("stringcostApiKey");
+        if (stringcostApiKey) extraEnv.STRINGCOST_API_KEY = stringcostApiKey;
+      } catch { /* optional — StringCost tracking only */ }
+      // Forward terminal dimensions as COLUMNS/LINES so Claude Code (and any
+      // other program in the container that checks env vars before TIOCGWINSZ)
+      // gets the right width from the start. Belt-and-suspenders alongside the
+      // `stty cols X rows Y` call in openeral-pty.mjs's spawnImpl.
+      const effectiveCols = Number.isFinite(cols) && cols > 0 ? cols : 120;
+      const effectiveRows = Number.isFinite(rows) && rows > 0 ? rows : 32;
+      extraEnv.COLUMNS = String(effectiveCols);
+      extraEnv.LINES = String(effectiveRows);
+
       const result = await openeralPty.openSession({
         sandboxName,
         cols,
         rows,
+        extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
         onData: (data) => emitOpenEralPtyData(result.id, data),
         onExit: (exitCode, signal) => emitOpenEralPtyExit(result.id, exitCode, signal),
       });

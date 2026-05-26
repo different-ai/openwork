@@ -127,6 +127,10 @@ export type SessionPageProps = {
   questionReplyBusy?: boolean;
   respondQuestion?: (requestID: string, answers: string[][]) => void;
   statusBar?: Partial<StatusBarOverrides>;
+  /** Extra actions rendered in the top-right of the session header.
+   *  Used by the OpenEral flow to inject a "Switch to Terminal" button
+   *  when the user has temporarily switched to the chat view. */
+  headerActions?: ReactNode;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
 };
@@ -344,6 +348,7 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             <div className="flex items-center gap-1.5 text-gray-10">
+              {props.headerActions ?? null}
               {props.history ? (
                 <>
                   <button
@@ -427,7 +432,14 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {props.sessionSurfaceOverride ? (
-                props.sessionSurfaceOverride
+                // Wrap in absolute inset-0 so the override fills the parent
+                // (which is a flex item with only an implicitly-derived height).
+                // Without this, h-full in child components resolves to `auto`
+                // in some browsers — causing xterm.js to measure 0px wide
+                // and render with cols=1 (vertical text).
+                <div className="absolute inset-0 overflow-hidden">
+                  {props.sessionSurfaceOverride}
+                </div>
               ) : !showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <SessionSurface
                   client={props.openworkServerClient!}

@@ -59,39 +59,59 @@ const sessions = new Map();
  * @param {{ sandboxName: string; cols: number; rows: number }} opts
  * @returns {Promise<IPtyLike>}
  */
-let spawnImpl = async ({ sandboxName, cols, rows }) => {
+
+/**
+ * Build a WSL-forwarded env object. Any keys in `extra` are added to
+ * the Electron process.env AND appended to WSLENV so wsl.exe passes
+ * them through to the distro (and from there into the sandbox container
+ * via openshell's exec). Without WSLENV, Windows env vars are stripped
+ * by wsl.exe before the linux process sees them.
+ *
+ * @param {Record<string, string>} extra
+ * @returns {Record<string, string>}
+ */
+function buildWslEnv(extra) {
+  const names = Object.keys(extra).filter((k) => extra[k]);
+  if (names.length === 0) return process.env;
+  const existing = process.env.WSLENV ? process.env.WSLENV.split(":") : [];
+  const merged = Array.from(new Set([...existing, ...names]));
+  return {
+    ...process.env,
+    ...Object.fromEntries(names.map((k) => [k, extra[k]])),
+    WSLENV: merged.join(":"),
+  };
+}
+
+let spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
   const pty = await import("node-pty");
-  // wsl.exe is the only executable in the chain. node-pty handles the
-  // TTY allocation and wsl forwards the PTY into the distro, which the
-  // openshell CLI then plumbs into the sandbox container.
+  // Wrap the openshell command in `bash -c` so we can call `stty cols X rows Y`
+  // before openshell's SSH client reads TIOCGWINSZ to allocate the remote PTY.
+  //
+  // Problem: node-pty creates a Windows ConPTY with the correct dimensions, but
+  // the ConPTY → WSL2 linux-PTY dimension propagation is racy. By the time
+  // `openshell sandbox exec --tty` runs SSH and issues TIOCGWINSZ on its
+  // controlling terminal, the WSL-side PTY may not yet reflect the ConPTY's
+  // dimensions — so the container PTY defaults to 1 column and Claude Code
+  // renders its TUI with each character on a separate line ("vertical text").
+  //
+  // Fix: `stty cols X rows Y` explicitly sets the linux-PTY dimensions before
+  // openshell reads them. `2>/dev/null` silences errors if stty fails (e.g.
+  // stdin not a TTY in a test environment); `;` (not `&&`) keeps going either way.
+  const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
+  const shellCmd =
+    `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
+    `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
   return pty.spawn(
     "wsl.exe",
-    // `sandbox connect` doesn't accept a trailing command. Use
-    // `sandbox exec --tty -- openeral` instead — node-pty has already
-    // allocated a real PTY for this wsl child, so Claude Code's
-    // first-run "Use this API key?" prompt gets handled normally and
-    // /home/agent stores the answer for subsequent launches.
-    [
-      "-d",
-      DISTRO_NAME,
-      "--",
-      "openshell",
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--tty",
-      "--",
-      "openeral",
-    ],
+    ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],
     {
       name: "xterm-256color",
       cols,
       rows,
-      // env carried over from the Electron main process. The sandbox
-      // already has its own env (uploaded credential files, OpenShell
-      // provider creds); nothing on the host side affects it.
-      env: process.env,
+      // Forward credentials (ANTHROPIC_API_KEY, STRINGCOST_API_KEY, etc.)
+      // via WSLENV so the `openeral` entrypoint inside the sandbox can
+      // auto-configure Claude Code on first run without prompting the user.
+      env: extraEnv ? buildWslEnv(extraEnv) : process.env,
       // CWD doesn't really matter for wsl.exe, but cleanup-safe default.
       cwd: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(),
     },
@@ -108,6 +128,10 @@ const DEFAULT_ROWS = 32;
  * @param {string} opts.sandboxName
  * @param {number} [opts.cols]
  * @param {number} [opts.rows]
+ * @param {Record<string, string>} [opts.extraEnv]  Extra env vars forwarded
+ *   into WSL via WSLENV (e.g. ANTHROPIC_API_KEY, STRINGCOST_API_KEY). These
+ *   are needed so Claude Code can auto-configure its provider on first run
+ *   inside the sandbox without prompting the user interactively.
  * @param {DataHandler} [opts.onData]   Receives PTY stdout/stderr bytes
  * @param {ExitHandler} [opts.onExit]   Called when the wsl child exits
  * @returns {Promise<{ id: string, sandboxName: string }>}
@@ -118,8 +142,9 @@ export async function openSession(opts) {
   }
   const cols = Number.isFinite(opts.cols) ? opts.cols : DEFAULT_COLS;
   const rows = Number.isFinite(opts.rows) ? opts.rows : DEFAULT_ROWS;
+  const extraEnv = opts.extraEnv ?? null;
 
-  const pty = await spawnImpl({ sandboxName: opts.sandboxName, cols, rows });
+  const pty = await spawnImpl({ sandboxName: opts.sandboxName, cols, rows, extraEnv });
   const id = randomUUID();
 
   /** @type {Session} */
@@ -250,33 +275,20 @@ export const __testing = {
     spawnImpl = fn;
   },
   clearSpawnImpl() {
-    spawnImpl = async ({ sandboxName, cols, rows }) => {
+    spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
       const pty = await import("node-pty");
+      const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
+      const shellCmd =
+        `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
+        `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
       return pty.spawn(
         "wsl.exe",
-        // `sandbox connect` doesn't accept a trailing command. Use
-    // `sandbox exec --tty -- openeral` instead — node-pty has already
-    // allocated a real PTY for this wsl child, so Claude Code's
-    // first-run "Use this API key?" prompt gets handled normally and
-    // /home/agent stores the answer for subsequent launches.
-    [
-      "-d",
-      DISTRO_NAME,
-      "--",
-      "openshell",
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--tty",
-      "--",
-      "openeral",
-    ],
+        ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],
         {
           name: "xterm-256color",
           cols,
           rows,
-          env: process.env,
+          env: extraEnv ? buildWslEnv(extraEnv) : process.env,
           cwd: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(),
         },
       );

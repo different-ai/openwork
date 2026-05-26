@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ExternalLink, Loader2, RotateCcw, Settings, Trash2 } from "lucide-react";
+import { AlertTriangle, ExternalLink, Loader2, MessageSquare, Pencil, RotateCcw, Settings, Trash2 } from "lucide-react";
 
 import type { SandboxProfile } from "../../../../app/lib/desktop";
 import { Button } from "../../../design-system/button";
@@ -36,6 +36,10 @@ export type OpenEralTerminalProps = {
    *  bootstrap fails because DATABASE_URL or ANTHROPIC_API_KEY isn't
    *  configured. Falls back to a window.alert if not provided. */
   onOpenSettings?: () => void;
+  /** When provided, a "Chat" button appears in the toolbar letting the
+   *  user switch back to the regular OpenWork chat UI. The PTY session
+   *  ends but the sandbox persists — switching back to Terminal reconnects. */
+  onSwitchToChat?: () => void;
 };
 
 type Phase =
@@ -64,22 +68,48 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const [popoutBusy, setPopoutBusy] = useState(false);
   const [popoutError, setPopoutError] = useState<string | null>(null);
 
+  // User-editable display name for the sandbox. The actual sandbox name
+  // used by openshell never changes — this is purely cosmetic.
+  const [displayName, setDisplayName] = useState<string>("");
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+
   // Stable callback for "reconnect" so the user can rebuild a dead PTY
   // without rerendering the whole component.
   const [reconnectKey, setReconnectKey] = useState(0);
   const reconnect = useCallback(() => setReconnectKey((k) => k + 1), []);
 
-  // xterm.js is opened while the container is still hidden (phase =
-  // "mounting-terminal"), so its initial fit() call measures 0 px and
-  // sets cols = 1, producing vertical text.  Re-fit once the container
-  // becomes visible so the terminal fills the panel correctly.
+  // Track whether this component has ever reached "connected" phase so we
+  // can show "Launch session" on first open vs "Reconnect" after a drop.
+  const [hasEverConnected, setHasEverConnected] = useState(false);
+
+  // Load/persist the user-facing display name from localStorage.
   useEffect(() => {
-    if (phase !== "connected" && phase !== "exited") return;
+    if (!sandboxName) return;
+    const stored = localStorage.getItem(`openeral-display:${sandboxName}`);
+    setDisplayName(stored ?? sandboxName);
+  }, [sandboxName]);
+
+  const commitRename = useCallback(() => {
+    if (!sandboxName) return;
+    const trimmed = renameValue.trim();
+    const next = trimmed || sandboxName;
+    if (trimmed) localStorage.setItem(`openeral-display:${sandboxName}`, trimmed);
+    else localStorage.removeItem(`openeral-display:${sandboxName}`);
+    setDisplayName(next);
+    setIsRenaming(false);
+  }, [sandboxName, renameValue]);
+
+  // Mark first successful connection and auto-focus the terminal so the
+  // user can type immediately without having to click.
+  useEffect(() => {
+    if (phase !== "connected") return;
+    setHasEverConnected(true);
     const raf = requestAnimationFrame(() => {
       try {
-        fitRef.current?.fit();
+        termRef.current?.focus();
       } catch {
-        // Container not yet measured — ignore.
+        // ignore
       }
     });
     return () => cancelAnimationFrame(raf);
@@ -157,7 +187,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           if (payload.sessionId === sessionIdRef.current) {
             sessionIdRef.current = null;
             writeToTerm(
-              `\r\n\x1b[33m[Session ended (exit ${payload.exitCode ?? "?"}). Click Reconnect to resume.]\x1b[0m\r\n`,
+              `\r\n\x1b[33m[Session ended (exit ${payload.exitCode ?? "?"}). Click Reconnect to start a new session.]\x1b[0m\r\n`,
             );
             setPhase("exited");
           }
@@ -167,6 +197,36 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         setPhase("mounting-terminal");
         const { Terminal } = await import("@xterm/xterm");
         const { FitAddon } = await import("@xterm/addon-fit");
+        if (cancelled || !containerRef.current) return;
+
+        // Wait for the browser to complete layout so fit() can measure
+        // real pixel dimensions. Two RAFs are the minimum: the first fires
+        // before the style-recalc commit, the second fires after it.
+        // This prevents cols=1 (vertical text) on first open.
+        const waitFrames = (n: number) =>
+          new Promise<void>((resolve) => {
+            const step = (remaining: number) =>
+              remaining <= 0 ? resolve() : requestAnimationFrame(() => step(remaining - 1));
+            step(n);
+          });
+        await waitFrames(2);
+        if (cancelled || !containerRef.current) return;
+
+        // If the container still has 0 width after 2 frames (can happen
+        // when the parent's height is derived purely from flexbox), keep
+        // polling up to ~600 ms before giving up and using defaults.
+        // (The absolute-inset-0 wrapper in session-page.tsx should prevent
+        // this, but this guard catches any remaining edge cases.)
+        let pollAttempts = 0;
+        while (
+          containerRef.current &&
+          containerRef.current.clientWidth === 0 &&
+          pollAttempts < 10
+        ) {
+          await waitFrames(2);
+          if (cancelled) return;
+          pollAttempts++;
+        }
         if (cancelled || !containerRef.current) return;
 
         const term = new Terminal({
@@ -186,10 +246,12 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.open(containerRef.current);
+        // Initial fit — may give cols=1 if the browser hasn't committed
+        // layout for the container yet (timing race on first mount).
         try {
           fit.fit();
         } catch {
-          // Container may not be measured yet on first paint.
+          // ignore
         }
         termRef.current = term;
         fitRef.current = fit;
@@ -200,8 +262,51 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           earlyBufferRef.current = [];
         }
 
-        // 4. Open the PTY. Pass the current xterm size so the agent
-        // gets the right window dimensions on first paint.
+        // ── Key fix for the cols=1 / vertical-text bug ──────────────────
+        // Set up the ResizeObserver NOW, before the PTY is opened.
+        // The ResizeObserver fires once on the FIRST frame after observe()
+        // regardless of whether the size changed — this gives fit.fit() a
+        // second chance to measure with fully-committed CSS dimensions.
+        // We then wait two frames so that callback has run and corrected
+        // term.cols before we pass it to openeralPtyOpen.
+        //
+        // Without this, the initial fit() above can race against the browser
+        // layout commit and measure 0px → cols=1. Once cols=1 is set,
+        // a ResizeObserver firing later calls fit.fit() → still cols=1 (no
+        // change) → term.onResize never fires → no SIGWINCH → cols stays 1.
+        if (containerRef.current) {
+          const ro = new ResizeObserver(() => {
+            try {
+              fitRef.current?.fit();
+            } catch {
+              // Container unmounted — ignore.
+            }
+          });
+          ro.observe(containerRef.current);
+          resizeObserverRef.current = ro;
+        }
+
+        // Wait for the ResizeObserver initial callback to complete.
+        // RO fires at the end of each rendering frame (after RAF).
+        // Two frames is sufficient: frame N fires RAF → frame N+1 the
+        // RO callback runs → fit.fit() corrects cols/rows.
+        await waitFrames(2);
+        if (cancelled || !containerRef.current) return;
+
+        // Hard fallback: if fit() still reports cols ≤ 2 the container
+        // genuinely has 0px CSS width.  Force a sane default so Claude
+        // Code TUI at least opens usably; the ResizeObserver will correct
+        // the PTY dimensions once the user resizes or the layout settles.
+        if (term.cols <= 2) {
+          try {
+            term.resize(120, term.rows > 2 ? term.rows : 32);
+          } catch {
+            // ignore
+          }
+        }
+
+        // 4. Open the PTY. Pass the current xterm size — now guaranteed
+        // to be the result of a ResizeObserver-corrected fit() call.
         setPhase("connecting-pty");
         const pty = await invoke<{ id: string }>("openeralPtyOpen", {
           sandboxName: sandbox.sandboxName,
@@ -225,6 +330,8 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         });
 
         // 6. Wire xterm's own resize event → forward to PTY (SIGWINCH).
+        // (ResizeObserver is already wired above; it calls fit.fit() which
+        // triggers this handler whenever the container resizes.)
         term.onResize(({ cols, rows }) => {
           if (!sessionIdRef.current) return;
           void invoke("openeralPtyResize", {
@@ -233,21 +340,6 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
             rows,
           });
         });
-
-        // 7. Resize the terminal whenever the container changes size
-        // (panel toggles, window resizes). fit.fit() recomputes
-        // cols/rows from CSS pixels; that fires term.onResize above.
-        if (containerRef.current) {
-          const ro = new ResizeObserver(() => {
-            try {
-              fit.fit();
-            } catch {
-              // Container still unmounted — bail.
-            }
-          });
-          ro.observe(containerRef.current);
-          resizeObserverRef.current = ro;
-        }
 
         setPhase("connected");
       } catch (err) {
@@ -298,32 +390,59 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-dls-border bg-dls-surface px-4 py-2 text-xs">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${
-                phase === "connected"
-                  ? "bg-green-9"
-                  : phase === "exited" || phase === "error"
-                    ? "bg-red-9"
-                    : "bg-amber-9"
-              }`}
+          <span
+            className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+              phase === "connected"
+                ? "bg-green-9"
+                : phase === "exited" || phase === "error"
+                  ? "bg-red-9"
+                  : "bg-amber-9"
+            }`}
+          />
+          {isRenaming ? (
+            <input
+              autoFocus
+              className="h-6 rounded border border-dls-border bg-dls-hover px-2 font-mono text-xs text-gray-12 outline-none"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") setIsRenaming(false);
+              }}
+              onBlur={commitRename}
             />
-            <span className="font-mono text-gray-12 truncate">
-              {sandboxName ?? "(no sandbox)"}
-            </span>
-          </div>
-          <span className="text-gray-9">·</span>
-          <span className="text-gray-10">{phaseLabel(phase)}</span>
+          ) : (
+            <button
+              className="group flex items-center gap-1 min-w-0 text-left"
+              title="Click to rename display label"
+              onClick={() => {
+                setRenameValue(displayName);
+                setIsRenaming(true);
+              }}
+            >
+              <span className="font-mono text-gray-12 truncate">{displayName || sandboxName || "(no sandbox)"}</span>
+              <Pencil size={10} className="shrink-0 text-gray-8 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+          )}
+          <span className="text-gray-9 shrink-0">·</span>
+          <span className="text-gray-10 shrink-0">{phaseLabel(phase)}</span>
         </div>
         <div className="flex items-center gap-2">
           {phase === "exited" || phase === "error" ? (
+            <Button variant="outline" className="h-7 rounded-full px-3 text-xs" onClick={reconnect}>
+              <RotateCcw size={12} className="mr-1" />
+              {hasEverConnected ? "Reconnect" : "Launch session"}
+            </Button>
+          ) : null}
+          {props.onSwitchToChat ? (
             <Button
               variant="outline"
               className="h-7 rounded-full px-3 text-xs"
-              onClick={reconnect}
+              onClick={props.onSwitchToChat}
+              title="Switch to the regular OpenWork chat UI. The sandbox keeps running."
             >
-              <RotateCcw size={12} className="mr-1" />
-              Reconnect
+              <MessageSquare size={12} className="mr-1" />
+              Chat
             </Button>
           ) : null}
           <Button
@@ -353,29 +472,31 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           Pop out failed: {popoutError}
         </div>
       ) : null}
-      {errorMessage && phase === "error" ? (
-        <BootstrapErrorCard
-          message={errorMessage}
-          profile={props.profile}
-          onRetry={reconnect}
-          onOpenSettings={props.onOpenSettings}
-        />
-      ) : phase !== "connected" && phase !== "exited" ? (
-        <BootstrapProgress
-          phase={phase}
-          bootstrapMessage={bootstrapMessage}
-          existed={false}
-        />
-      ) : null}
-      {/* Keep the xterm container in the DOM at all times so xterm.js has
-          a stable host element to mount into. We just stack the loading /
-          error overlays on top via CSS until the PTY is connected. */}
-      <div
-        ref={containerRef}
-        className={`flex-1 min-h-0 bg-black ${
-          phase === "connected" || phase === "exited" ? "block" : "hidden"
-        }`}
-      />
+      {/* The terminal container is always in the DOM with real CSS dimensions
+          so xterm.js fit() measures correctly on first paint (avoids cols=1
+          vertical-text bug). Loading / error overlays sit on top via absolute
+          positioning rather than hiding the container with display:none. */}
+      <div className="relative flex-1 min-h-0">
+        <div ref={containerRef} className="absolute inset-0 bg-black" />
+        {errorMessage && phase === "error" ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
+            <BootstrapErrorCard
+              message={errorMessage}
+              profile={props.profile}
+              onRetry={reconnect}
+              onOpenSettings={props.onOpenSettings}
+            />
+          </div>
+        ) : phase !== "connected" && phase !== "exited" ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
+            <BootstrapProgress
+              phase={phase}
+              bootstrapMessage={bootstrapMessage}
+              existed={false}
+            />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -395,43 +516,39 @@ function BootstrapProgress(props: BootstrapProgressProps) {
   const phaseOrder: Phase[] = ["starting", "ensuring-sandbox", "mounting-terminal", "connecting-pty", "connected"];
   const currentIdx = phaseOrder.indexOf(props.phase);
   return (
-    <div className="flex flex-1 items-center justify-center bg-dls-surface p-6">
-      <div className="w-full max-w-lg space-y-4 rounded-2xl border border-dls-border bg-dls-surface p-6">
-        <div className="flex items-center gap-3">
-          <Loader2 size={18} className="animate-spin text-gray-10" />
-          <div className="text-sm font-medium text-gray-12">
-            Starting OpenEral session
-          </div>
-        </div>
-        <div className="space-y-2">
-          {steps.map((step) => {
-            const stepIdx = phaseOrder.indexOf(step.id);
-            const state =
-              stepIdx < currentIdx ? "done" : stepIdx === currentIdx ? "active" : "pending";
-            return (
-              <div key={step.id} className="flex items-center gap-3 text-xs">
-                <div
-                  className={`h-2 w-2 rounded-full ${
-                    state === "done"
-                      ? "bg-green-9"
-                      : state === "active"
-                        ? "bg-amber-9 animate-pulse"
-                        : "bg-gray-6"
-                  }`}
-                />
-                <span className={state === "pending" ? "text-gray-8" : "text-gray-11"}>
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        {props.bootstrapMessage ? (
-          <div className="rounded-xl border border-dls-border bg-gray-1/40 p-3 font-mono text-[11px] text-gray-10">
-            {props.bootstrapMessage}
-          </div>
-        ) : null}
+    <div className="w-full max-w-lg space-y-4 rounded-2xl border border-dls-border bg-dls-surface p-6">
+      <div className="flex items-center gap-3">
+        <Loader2 size={18} className="animate-spin text-gray-10" />
+        <div className="text-sm font-medium text-gray-12">Starting OpenEral session</div>
       </div>
+      <div className="space-y-2">
+        {steps.map((step) => {
+          const stepIdx = phaseOrder.indexOf(step.id);
+          const state =
+            stepIdx < currentIdx ? "done" : stepIdx === currentIdx ? "active" : "pending";
+          return (
+            <div key={step.id} className="flex items-center gap-3 text-xs">
+              <div
+                className={`h-2 w-2 rounded-full ${
+                  state === "done"
+                    ? "bg-green-9"
+                    : state === "active"
+                      ? "bg-amber-9 animate-pulse"
+                      : "bg-gray-6"
+                }`}
+              />
+              <span className={state === "pending" ? "text-gray-8" : "text-gray-11"}>
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {props.bootstrapMessage ? (
+        <div className="rounded-xl border border-dls-border bg-gray-1/40 p-3 font-mono text-[11px] text-gray-10">
+          {props.bootstrapMessage}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -478,29 +595,27 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-dls-surface p-6">
-      <div className="max-w-lg space-y-4 rounded-2xl border border-red-7/40 bg-red-2/20 p-5">
-        <div className="flex items-center gap-2 text-red-12">
-          <AlertTriangle size={16} />
-          <span className="text-sm font-medium">{title}</span>
+    <div className="max-w-lg space-y-4 rounded-2xl border border-red-7/40 bg-red-2/20 p-5">
+      <div className="flex items-center gap-2 text-red-12">
+        <AlertTriangle size={16} />
+        <span className="text-sm font-medium">{title}</span>
+      </div>
+      <div className="text-sm text-gray-11">{detail}</div>
+      {!credentialIssue ? (
+        <div className="font-mono text-xs text-red-12 break-words">
+          {props.message}
         </div>
-        <div className="text-sm text-gray-11">{detail}</div>
-        {!credentialIssue ? (
-          <div className="font-mono text-xs text-red-12 break-words">
-            {props.message}
-          </div>
-        ) : null}
-        <div className="flex items-center gap-2">
-          {(credentialIssue || openshellUnready) && props.onOpenSettings ? (
-            <Button variant="primary" onClick={props.onOpenSettings}>
-              <Settings size={14} className="mr-1.5" />
-              Open Settings → Sandbox
-            </Button>
-          ) : null}
-          <Button variant="outline" onClick={props.onRetry}>
-            Retry
+      ) : null}
+      <div className="flex items-center gap-2">
+        {(credentialIssue || openshellUnready) && props.onOpenSettings ? (
+          <Button variant="primary" onClick={props.onOpenSettings}>
+            <Settings size={14} className="mr-1.5" />
+            Open Settings → Sandbox
           </Button>
-        </div>
+        ) : null}
+        <Button variant="outline" onClick={props.onRetry}>
+          Retry
+        </Button>
       </div>
     </div>
   );
