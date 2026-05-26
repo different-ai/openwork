@@ -486,7 +486,13 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         </div>
         <div className="flex items-center gap-1.5">
           {phase === "exited" || phase === "error" ? (
-            <Button variant="outline" className="h-7 rounded-full px-3 text-xs" onClick={reconnect} title={hasEverConnected ? "Reconnect to the sandbox" : "Launch a new session"}>
+            <Button
+              variant="outline"
+              className="h-7 rounded-full px-3 text-xs"
+              onClick={reconnect}
+              onMouseDown={(e) => e.preventDefault()}
+              title={hasEverConnected ? "Reconnect to the sandbox" : "Launch a new session"}
+            >
               <RotateCcw size={12} className="mr-1" />
               {hasEverConnected ? "Reconnect" : "Launch session"}
             </Button>
@@ -496,6 +502,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               variant="outline"
               className="h-7 rounded-full px-3 text-xs"
               onClick={props.onSwitchToChat}
+              onMouseDown={(e) => e.preventDefault()}
               title="Switch to the regular OpenWork chat UI. The sandbox keeps running."
             >
               <MessageSquare size={12} className="mr-1" />
@@ -505,11 +512,14 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           {/* Icon-only buttons — use !p-0 !rounded-full to override the
               Button base class which sets px-4 py-2 rounded-lg and would
               otherwise win in Tailwind's stylesheet ordering, squashing the
-              content area to zero width and hiding the icon. */}
+              content area to zero width and hiding the icon. onMouseDown
+              preventDefault stops the button from stealing keyboard focus
+              from xterm.js so the PTY keeps receiving keystrokes. */}
           <Button
             variant="outline"
             className="h-7 w-7 !rounded-full !p-0 shrink-0"
             onClick={() => void popOut()}
+            onMouseDown={(e) => e.preventDefault()}
             disabled={(!sandboxName && !lastKnownSandboxNameRef.current) || popoutBusy}
             title="Open the same sandbox in a separate OS terminal window"
           >
@@ -519,6 +529,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
             variant="outline"
             className="h-7 w-7 !rounded-full !p-0 shrink-0 border-red-7/50 text-red-12 hover:bg-red-2/30"
             onClick={() => void deleteSandbox()}
+            onMouseDown={(e) => e.preventDefault()}
             disabled={!sandboxName && !lastKnownSandboxNameRef.current}
             title="Delete the sandbox. Postgres-backed /home/agent files persist."
           >
@@ -536,15 +547,18 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           vertical-text bug). Loading / error overlays sit on top via absolute
           positioning rather than hiding the container with display:none. */}
       <div className="relative flex-1 min-h-0">
-        {/* Clicking anywhere in the terminal area (including the black
-            background around the xterm.js canvas) re-focuses the terminal
-            so keystrokes are captured and forwarded to the PTY. Without
-            this, clicking UI chrome outside the canvas loses xterm focus
-            and the next keypress goes nowhere (or echoes in the wrong
-            context when Claude Code's TUI is active). */}
+        {/* Terminal container: always focused when the cursor is over it.
+            focus-on-hover means the user doesn't need to click after
+            interacting with toolbar buttons — moving the mouse back over
+            the terminal instantly restores keystroke capture so Claude
+            Code's TUI (theme selectors, menus, etc.) responds correctly.
+            onClick is a fallback for touch/keyboard navigation. */}
         <div
           ref={containerRef}
           className="absolute inset-0 bg-black"
+          onMouseEnter={() => {
+            try { termRef.current?.focus(); } catch { /* ignore */ }
+          }}
           onClick={() => {
             try { termRef.current?.focus(); } catch { /* ignore */ }
           }}

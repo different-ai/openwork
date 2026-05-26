@@ -473,9 +473,13 @@ export async function createOpenEralSandbox(opts) {
 
 export async function deleteOpenEralSandbox(name) {
   if (!name) throw new Error("deleteOpenEralSandbox: name is required");
+  // `openshell sandbox delete` does NOT support --force; passing it causes
+  // "unexpected argument '--force' found" and exit 1. Use bash timeout for
+  // the same inner-timeout safety net we apply to list/create calls.
+  let r;
   try {
-    return await wslRun(
-      ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "delete", name, "--force"],
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", `timeout 20 openshell sandbox delete ${shellQuote(name)}`],
       { timeout: 30_000 },
     );
   } catch (err) {
@@ -488,6 +492,19 @@ export async function deleteOpenEralSandbox(name) {
     }
     throw err;
   }
+  if (r.exitCode !== 0) {
+    const output = (r.stderr || r.stdout).trim();
+    // 124 = bash timeout(1) hit the inner timer — gateway is unresponsive.
+    if (r.exitCode === 124) {
+      throw new Error(
+        "openshell sandbox delete timed out (gateway unresponsive). " +
+          "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+          "then try again.",
+      );
+    }
+    throw new Error(`openshell sandbox delete failed: ${output || "(no output)"}`);
+  }
+  return r;
 }
 
 /**
