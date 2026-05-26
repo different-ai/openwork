@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   cp,
   mkdir,

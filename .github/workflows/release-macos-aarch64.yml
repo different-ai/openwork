@@ -369,6 +369,7 @@ jobs:
       - name: Build Electron app
         shell: bash
         env:
+          OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${{ secrets.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET }}
           # TARGET tells prepare-sidecar.mjs which architecture's sidecars
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}

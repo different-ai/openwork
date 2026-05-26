@@ -21,6 +21,7 @@ _worktrees/
 # Desktop sidecars
 apps/desktop/resources/sidecars/
 apps/desktop/server/
+apps/desktop/electron/google-workspace-oauth.generated.json
 
 # Env
 .env
