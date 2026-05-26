@@ -49,11 +49,17 @@ OpenWork uses Google Workspace data only to provide user-requested features, suc
 
 ### Local-first desktop OAuth
 
-The default desktop flow uses a Google Desktop OAuth client with PKCE and a loopback redirect. The desktop app exchanges authorization codes directly with Google and stores user tokens locally in encrypted OS storage. For local dev, pass `OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET` from the Google Cloud desktop client metadata. In production desktop builds, this value is client metadata, not a confidential backend secret.
+The default desktop flow uses a Google Desktop OAuth client with PKCE and a loopback redirect. The desktop app exchanges authorization codes directly with Google and stores user tokens locally in encrypted OS storage.
+
+For installed desktop apps, Google may provide both a `client_id` and `client_secret`. In this context, the `client_secret` is client metadata, not a confidential backend secret, because any value shipped in a desktop binary can be extracted. It is acceptable for official OpenWork desktop builds to include the OpenWork-owned Google Desktop OAuth client metadata, while user access tokens and refresh tokens must remain protected and must never be committed.
+
+For local development, pass `OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET` from the Google Cloud desktop client metadata instead of committing it to source. This keeps source checkouts and forks from accidentally reusing the official OpenWork OAuth client metadata unless they opt in explicitly.
 
 ### Enterprise token broker
 
-Enterprise deployments can keep Google OAuth client metadata on their own server by setting `OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL`. When this is set, OpenWork Desktop still owns the browser OAuth flow and PKCE verifier, but sends token exchange and refresh requests to the configured broker endpoint instead of calling Google's token endpoint directly.
+Enterprise deployments can use a hardened token broker by setting `OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL`. When this is set, OpenWork Desktop still owns the browser OAuth flow and PKCE verifier, but sends token exchange and refresh requests to the configured broker endpoint instead of calling Google's token endpoint directly.
+
+This lets an enterprise or self-hosted OpenWork deployment keep Google OAuth client metadata on its own server, enforce organization policy, add audit logging, rotate credentials centrally, and avoid distributing Google OAuth client metadata in desktop builds. The broker is also the right place to add domain allowlists, admin approvals, or additional revocation policy for managed environments.
 
 The broker receives JSON `POST` requests shaped like:
 
