@@ -582,8 +582,14 @@ function TestLaunchPanel(props: TestLaunchPanelProps) {
               workspaceId={launchedWorkspaceId}
               profile={props.profile}
               onRenameCommit={(newId) => {
-                stop();
+                // Update both states so:
+                // 1. launchedWorkspaceId changes → React unmounts old terminal
+                //    and mounts a new one with the new workspaceId immediately
+                //    (no "Launch session" click needed).
+                // 2. workspaceId (input field) stays in sync for when the
+                //    user closes the session and manually relaunches later.
                 setWorkspaceId(newId);
+                setLaunchedWorkspaceId(newId);
               }}
             />
           </div>

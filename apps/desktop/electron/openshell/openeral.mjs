@@ -45,13 +45,7 @@ const IMAGE_BY_PROFILE = {
 };
 
 const DEFAULT_PULL_TIMEOUT_MS = 10 * 60_000;
-// openshell sandbox create provisions the container, uploads the db-url
-// file via SCP, and runs /bin/true via SSH — this can legitimately take
-// 4-5 minutes on first run or when the WSL2 Docker daemon is cold.
-// Inner bash timeout is 5 min (300 s); wslRun timeout is 7 min (420 s)
-// so the outer timer always fires AFTER the inner one, giving us a
-// controlled exit with exitCode === 124 and a friendly message.
-const DEFAULT_CREATE_TIMEOUT_MS = 7 * 60_000;
+const DEFAULT_CREATE_TIMEOUT_MS = 3 * 60_000;
 const DEFAULT_PROBE_TIMEOUT_MS = 15_000;
 
 // Docker pulls happen under user `banker` inside the distro. If Docker
@@ -119,7 +113,20 @@ export async function pullImage(imageRef, options = {}) {
 
 /**
  * Parse the raw openshell sandbox list output into a normalised array.
- * Returns null when the JSON is unparseable or the shape is unrecognised.
+ * Returns null only when the raw text cannot yield any sandbox list at all.
+ *
+ * The openshell CLI has emitted several JSON shapes across releases:
+ *   - Flat array:                  [...sandbox objects...]
+ *   - {sandboxes: [...]}           early releases
+ *   - {items: [...]}               v0.0.3x
+ *   - {data: [...]}                v0.0.4x
+ *   - {results: [...]}             some builds
+ *   - {page: ..., items: [...]}    paginated response
+ *
+ * If none of the known envelope keys match, we fall back to the FIRST
+ * Array-valued key found in the object, so future CLI versions with a
+ * new envelope key still work without a code change.
+ *
  * Each item is either a plain string (name only) or an object that may
  * carry phase/status fields depending on the CLI version.
  */
@@ -128,18 +135,28 @@ function parseSandboxList(stdout) {
   try {
     parsed = JSON.parse(stdout);
   } catch {
+    // Not valid JSON at all — caller falls back to text search.
     return null;
   }
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.sandboxes)
-      ? parsed.sandboxes
-      : Array.isArray(parsed?.items)
-        ? parsed.items
-        : Array.isArray(parsed?.data)
-          ? parsed.data
-          : null;
-  return list;
+
+  // Flat array
+  if (Array.isArray(parsed)) return parsed;
+
+  if (parsed && typeof parsed === "object") {
+    // Known envelope keys (add new ones here as the CLI evolves)
+    for (const key of ["sandboxes", "items", "data", "results", "namespaces"]) {
+      if (Array.isArray(parsed[key])) return parsed[key];
+    }
+    // Generic fallback: return the first array value found
+    for (const key of Object.keys(parsed)) {
+      if (Array.isArray(parsed[key])) {
+        console.warn(`[parseSandboxList] using unknown envelope key "${key}"`);
+        return parsed[key];
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -277,8 +294,19 @@ export async function sandboxExists(name) {
   if (r.exitCode !== 0) return false;
   const list = parseSandboxList(r.stdout);
   if (!list) {
-    console.warn("[sandboxExists] unrecognised sandbox list shape:", r.stdout.slice(0, 200));
-    return false;
+    // parseSandboxList could not find an array in the JSON (completely
+    // unknown format). Fall back to a raw text search: if the sandbox
+    // name appears anywhere in the output it almost certainly exists.
+    // This prevents sandboxExists returning false (triggering an
+    // unnecessary create that then times out) just because the CLI
+    // changed its output format.
+    const found = r.stdout.includes(name);
+    console.warn(
+      `[sandboxExists] unrecognised sandbox list shape — ` +
+        `falling back to text search for "${name}": ${found ? "found" : "not found"}. ` +
+        `Raw output: ${r.stdout.slice(0, 300)}`,
+    );
+    return found;
   }
   return list.some((s) => {
     if (typeof s === "string") return s === name;
@@ -420,13 +448,7 @@ export async function createOpenEralSandbox(opts) {
   // `exec` replaces the bash process, which means the EXIT trap set
   // below never fires and the temp DB-URL file leaks in /tmp forever.
   // Running openshell as a regular child (no exec) lets bash honour
-  // the trap on exit — whether the create succeeds, fails, or is killed
-  // by the inner `timeout` guard.
-  //
-  // Inner timeout is 300 s (5 min). The outer wslRun timer
-  // (DEFAULT_CREATE_TIMEOUT_MS = 7 min) fires 2 min later, giving the
-  // inner timer room to produce a clean exitCode=124 before wslRun
-  // tears down the process itself.
+  // the trap on exit — whether the create succeeds or fails.
   const script = [
     "set -e",
     "umask 077",
@@ -435,7 +457,7 @@ export async function createOpenEralSandbox(opts) {
     `chmod 600 ${dbPath}`,
     // Staging file is removed on exit whether create succeeds or fails.
     `trap 'rm -f ${dbPath}' EXIT`,
-    `timeout 300 openshell sandbox create --no-tty ` +
+    `openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
       `--from ${shellQuote(imageRef)} ` +
       `--upload ${dbPath}:/sandbox/db-url ` +
@@ -443,7 +465,7 @@ export async function createOpenEralSandbox(opts) {
       `-- /bin/true`,
   ].join("\n");
 
-  onProgress?.({ phase: "create", message: `Creating sandbox ${name}… (this can take up to 5 minutes on first run)` });
+  onProgress?.({ phase: "create", message: `Creating sandbox ${name}…` });
   let r;
   try {
     r = await wslRun(
@@ -455,12 +477,9 @@ export async function createOpenEralSandbox(opts) {
       },
     );
   } catch (err) {
-    // wslRun throws (does not return r) when its own outer timer fires.
-    // In practice the inner bash `timeout 300` should have exited first,
-    // but on severely loaded machines both timers can race.
     if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
       throw new Error(
-        `openshell sandbox create timed out (>7 minutes). ` +
+        `openshell sandbox create timed out after 3 minutes. ` +
           `The OpenShell gateway or Docker daemon is not responding. ` +
           `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry.`,
       );
@@ -475,16 +494,6 @@ export async function createOpenEralSandbox(opts) {
     if (/already exists/i.test(output)) {
       onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
       return { name, profile, imageRef, existed: true };
-    }
-    // 124 = bash timeout(1) killed openshell after 300 s. Surface as a
-    // friendly "gateway slow" message rather than a raw exit-code dump.
-    if (r.exitCode === 124) {
-      throw new Error(
-        `openshell sandbox create timed out after 5 minutes. ` +
-          `The OpenShell gateway or Docker daemon may be under load. ` +
-          `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry. ` +
-          `${output ? `(CLI output: ${output})` : ""}`.trim(),
-      );
     }
     const cli = await getCliInfo().catch(() => null);
     const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
