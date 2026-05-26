@@ -57,6 +57,10 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const fitRef = useRef<FitAddonType | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  // Persists the last successfully resolved sandbox name so that the
+  // "Delete sandbox" and "Pop out" buttons remain functional even when
+  // sandboxName state is null (e.g. after an error before first connect).
+  const lastKnownSandboxNameRef = useRef<string | null>(null);
   // Buffer to hold PTY bytes that arrive before xterm.js finishes
   // mounting and the data subscription is set up.
   const earlyBufferRef = useRef<string[]>([]);
@@ -91,13 +95,20 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [sandboxName]);
 
   const commitRename = useCallback(() => {
-    if (!sandboxName) return;
+    const effectiveName = sandboxName ?? lastKnownSandboxNameRef.current;
+    if (!effectiveName) return;
     const trimmed = renameValue.trim();
-    const next = trimmed || sandboxName;
-    if (trimmed) localStorage.setItem(`openeral-display:${sandboxName}`, trimmed);
-    else localStorage.removeItem(`openeral-display:${sandboxName}`);
+    const next = trimmed || effectiveName;
+    if (trimmed) localStorage.setItem(`openeral-display:${effectiveName}`, trimmed);
+    else localStorage.removeItem(`openeral-display:${effectiveName}`);
     setDisplayName(next);
     setIsRenaming(false);
+    // Clear any stale error so the error card doesn't linger after a rename.
+    setErrorMessage(null);
+    // A rename signals a fresh conceptual session — show "Launch session"
+    // instead of "Reconnect" on the next disconnect, and drop the red dot.
+    setHasEverConnected(false);
+    setPhase((prev) => (prev === "error" ? "exited" : prev));
   }, [sandboxName, renameValue]);
 
   // Mark first successful connection and auto-focus the terminal so the
@@ -172,6 +183,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         );
         if (cancelled) return;
         setSandboxName(sandbox.sandboxName);
+        lastKnownSandboxNameRef.current = sandbox.sandboxName;
 
         // 2. Subscribe to PTY events BEFORE opening the PTY so the
         // initial sandbox-connect output (welcome banner, prompt)
@@ -357,11 +369,12 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [props.workspaceId, props.profile, reconnectKey]);
 
   const popOut = useCallback(async () => {
-    if (!sandboxName) return;
+    const name = sandboxName ?? lastKnownSandboxNameRef.current;
+    if (!name) return;
     setPopoutBusy(true);
     setPopoutError(null);
     try {
-      await invoke("openeralPopOutTerminal", sandboxName);
+      await invoke("openeralPopOutTerminal", name);
     } catch (err) {
       setPopoutError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -370,16 +383,17 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [sandboxName]);
 
   const deleteSandbox = useCallback(async () => {
-    if (!sandboxName) return;
+    const nameToDelete = sandboxName ?? lastKnownSandboxNameRef.current;
+    if (!nameToDelete) return;
     const ok = window.confirm(
-      `Delete sandbox "${sandboxName}"?\n\n` +
+      `Delete sandbox "${nameToDelete}"?\n\n` +
         "The Postgres-backed /home/agent will remain, but this sandbox " +
         "instance is gone. Reopening the workspace will create a fresh " +
         "sandbox and restore the home directory from PostgreSQL.",
     );
     if (!ok) return;
     try {
-      await invoke("openeralDeleteSandbox", sandboxName);
+      await invoke("openeralDeleteSandbox", nameToDelete);
       props.onSandboxDeleted?.();
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
@@ -414,7 +428,11 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           ) : (
             <button
               className="group flex items-center gap-1 min-w-0 text-left"
-              title="Click to rename display label"
+              title={
+                sandboxName
+                  ? `Display label (cosmetic only)\nActual sandbox: ${sandboxName}\n\nClick to rename`
+                  : "Click to rename display label"
+              }
               onClick={() => {
                 setRenameValue(displayName);
                 setIsRenaming(true);
@@ -424,12 +442,23 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               <Pencil size={10} className="shrink-0 text-gray-8 opacity-0 group-hover:opacity-100 transition-opacity" />
             </button>
           )}
+          {/* When a custom display label has been set, show the real sandbox
+              name as a small secondary label so the user can see why terminal
+              error messages reference a different (internal) name. */}
+          {sandboxName && displayName && displayName !== sandboxName ? (
+            <span
+              className="hidden sm:block shrink-0 font-mono text-[10px] text-gray-7 truncate max-w-[120px]"
+              title={`Actual openshell sandbox: ${sandboxName}`}
+            >
+              {sandboxName.length > 22 ? `${sandboxName.slice(0, 22)}…` : sandboxName}
+            </span>
+          ) : null}
           <span className="text-gray-9 shrink-0">·</span>
           <span className="text-gray-10 shrink-0">{phaseLabel(phase)}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {phase === "exited" || phase === "error" ? (
-            <Button variant="outline" className="h-7 rounded-full px-3 text-xs" onClick={reconnect}>
+            <Button variant="outline" className="h-7 rounded-full px-3 text-xs" onClick={reconnect} title={hasEverConnected ? "Reconnect to the sandbox" : "Launch a new session"}>
               <RotateCcw size={12} className="mr-1" />
               {hasEverConnected ? "Reconnect" : "Launch session"}
             </Button>
@@ -445,25 +474,27 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               Chat
             </Button>
           ) : null}
+          {/* Icon-only buttons — use !p-0 !rounded-full to override the
+              Button base class which sets px-4 py-2 rounded-lg and would
+              otherwise win in Tailwind's stylesheet ordering, squashing the
+              content area to zero width and hiding the icon. */}
           <Button
             variant="outline"
-            className="h-7 rounded-full px-3 text-xs"
+            className="h-7 w-7 !rounded-full !p-0 shrink-0"
             onClick={() => void popOut()}
-            disabled={!sandboxName || popoutBusy}
+            disabled={(!sandboxName && !lastKnownSandboxNameRef.current) || popoutBusy}
             title="Open the same sandbox in a separate OS terminal window"
           >
-            {popoutBusy ? <Loader2 size={12} className="mr-1 animate-spin" /> : <ExternalLink size={12} className="mr-1" />}
-            Pop out
+            {popoutBusy ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
           </Button>
           <Button
             variant="outline"
-            className="h-7 rounded-full border-red-7/50 px-3 text-xs text-red-12 hover:bg-red-2/30"
+            className="h-7 w-7 !rounded-full !p-0 shrink-0 border-red-7/50 text-red-12 hover:bg-red-2/30"
             onClick={() => void deleteSandbox()}
-            disabled={!sandboxName}
+            disabled={!sandboxName && !lastKnownSandboxNameRef.current}
             title="Delete the sandbox. Postgres-backed /home/agent files persist."
           >
-            <Trash2 size={12} className="mr-1" />
-            Delete sandbox
+            <Trash2 size={13} />
           </Button>
         </div>
       </div>
@@ -487,7 +518,9 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               onOpenSettings={props.onOpenSettings}
             />
           </div>
-        ) : phase !== "connected" && phase !== "exited" ? (
+        ) : phase !== "connected" && phase !== "exited" && phase !== "error" ? (
+          // "error" without an errorMessage (cleared by commitRename) falls
+          // through here — don't show the spinner, just show the terminal.
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
             <BootstrapProgress
               phase={phase}

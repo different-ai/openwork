@@ -576,7 +576,7 @@ function TestLaunchPanel(props: TestLaunchPanelProps) {
               Close session
             </Button>
           </div>
-          <div className="h-[420px] overflow-hidden rounded-xl border border-dls-border">
+          <div className="h-[540px] overflow-hidden rounded-xl border border-dls-border">
             <OpenEralTerminal
               key={`${launchedWorkspaceId}:${props.profile}`}
               workspaceId={launchedWorkspaceId}

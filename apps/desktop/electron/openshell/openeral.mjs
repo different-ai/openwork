@@ -151,10 +151,21 @@ async function waitForSandboxReady(name, opts = {}) {
   let attempt = 0;
   while (Date.now() < deadline) {
     attempt += 1;
-    const r = await wslRun(
-      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
-      { timeout: 15_000 },
-    );
+    // 20 s outer timeout gives 10 s slack after bash's inner 10 s timer
+    // fires, so wsl.exe has time to exit before wslRun's own timer does.
+    let r;
+    try {
+      r = await wslRun(
+        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
+        { timeout: 20_000 },
+      );
+    } catch {
+      // Gateway unreachable during polling — report progress and keep
+      // waiting; the sandbox may still transition to Ready.
+      onProgress?.({ phase: "waiting", message: `Gateway unresponsive (attempt ${attempt}), retrying…` });
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      continue;
+    }
     if (r.exitCode === 0) {
       const list = parseSandboxList(r.stdout);
       if (list) {
@@ -194,10 +205,27 @@ export async function sandboxExists(name) {
   // 15 s if the gateway is unreachable. Without this wrapper the
   // process hangs until wslRun's full timeout fires — making the UI
   // appear frozen. bash exits 124 when it kills the child.
-  const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
-    { timeout: 20_000 },
-  );
+  //
+  // wslRun timeout is set to 25 s (10 s slack after bash's 15 s fires).
+  // Without the extra slack wsl.exe can outlive the bash timeout and
+  // trigger wslRun's own timer — throwing a raw "wsl.exe timed out"
+  // error before the exitCode === 124 check below is ever reached.
+  let r;
+  try {
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+      { timeout: 25_000 },
+    );
+  } catch (err) {
+    // wslRun throws (never returns r) when its own timer fires.
+    // Map any timeout to the user-friendly gateway message so the
+    // renderer can show a clear call-to-action instead of a raw stack.
+    throw new Error(
+      "OpenShell gateway is not responding (sandbox list timed out). " +
+        "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+        "then try again.",
+    );
+  }
   if (r.exitCode === 124) {
     throw new Error(
       "OpenShell gateway is not responding (openshell sandbox list timed out). " +
@@ -410,10 +438,21 @@ export async function createOpenEralSandbox(opts) {
 
 export async function deleteOpenEralSandbox(name) {
   if (!name) throw new Error("deleteOpenEralSandbox: name is required");
-  return wslRun(
-    ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "delete", name, "--force"],
-    { timeout: 30_000 },
-  );
+  try {
+    return await wslRun(
+      ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "delete", name, "--force"],
+      { timeout: 30_000 },
+    );
+  } catch (err) {
+    if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+      throw new Error(
+        "openshell sandbox delete timed out. The OpenShell gateway may be unresponsive. " +
+          "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+          "then try again.",
+      );
+    }
+    throw err;
+  }
 }
 
 /**
