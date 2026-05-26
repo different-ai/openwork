@@ -1,0 +1,23 @@
+packages/ui/package.json
+  s_c72edcb351c7ce::t_e8510db1eb9649 18,25
+package.json
+  s_c72edcb351c7ce::t_e8510db1eb9649 64
+packages/ui/README.md
+  s_c72edcb351c7ce::t_e8510db1eb9649 5,9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "78690fac586bf968236a6af5fdb27e25d91511b8",
+  "prompts": {},
+  "sessions": {
+    "s_c72edcb351c7ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6457-4d24-7ef2-98b1-47d8eec24838",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
