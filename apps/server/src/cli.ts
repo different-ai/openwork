@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
@@ -23,7 +24,6 @@ if (args.version) {
 const config = await resolveServerConfig(args);
 const logger = createServerLogger(config);
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
-const openworkExtensionsPreviewConfig = JSON.stringify({ plugin: ["./.opencode/plugins/openwork-extensions-preview.ts"] });
 let managedOpencode: ManagedOpencodeServer | null = null;
 
 if (!config.readOnly) {
@@ -35,6 +35,12 @@ if (!config.readOnly) {
 if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
   const workspace = config.workspaces[0];
   if (workspace?.path) {
+    const openworkExtensionsPreviewConfig = JSON.stringify({
+      plugin: [
+        "opencode-chrome-devtools",
+        join(workspace.path, ".opencode", "plugins", "openwork-extensions-preview.ts"),
+      ],
+    });
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     managedOpencode = await createManagedOpencodeServer({

@@ -6,6 +6,7 @@
  * of owning the process lifecycle.
  */
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { startServer } from "./server.js";
@@ -36,7 +37,6 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
-  const openworkExtensionsPreviewConfig = JSON.stringify({ plugin: ["./.opencode/plugins/openwork-extensions-preview.ts"] });
   const opencodeModelsUrl = process.env.OPENWORK_DEV_MODE === "1"
     ? "http://localhost:8791/models"
     : "https://models.openworklabs.com/";
@@ -53,6 +53,12 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   if (!config.opencodeBaseUrl && options.manageOpencode) {
     const workspace = config.workspaces[0];
     if (workspace?.path) {
+      const openworkExtensionsPreviewConfig = JSON.stringify({
+        plugin: [
+          "opencode-chrome-devtools",
+          join(workspace.path, ".opencode", "plugins", "openwork-extensions-preview.ts"),
+        ],
+      });
       const cwd = options.opencodeCwd
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
