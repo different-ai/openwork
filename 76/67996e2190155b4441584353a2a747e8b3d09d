@@ -1,0 +1,45 @@
+ee/apps/den-web/app/globals.css
+  s_074ac1af40ea86::t_f627c6efd6cae9 1-2
+apps/app/vite.config.ts
+  s_074ac1af40ea86::t_625be0337bcc79 6-7,96-97
+  s_074ac1af40ea86::t_d52c4987dd5ea0 106
+ee/apps/den-web/postcss.config.js
+  s_074ac1af40ea86::t_f627c6efd6cae9 3
+apps/app/package.json
+  s_074ac1af40ea86::t_2dc973b5397d4e 87,92,96
+  s_074ac1af40ea86::t_55cd1de7a4f555 85
+  s_074ac1af40ea86::t_625be0337bcc79 86,88
+  s_074ac1af40ea86::t_c58aaa8f7ebf17 94
+ee/apps/landing/app/globals.css
+  s_074ac1af40ea86::t_f627c6efd6cae9 1-2
+apps/ui-demo/package.json
+  s_074ac1af40ea86::t_2dc973b5397d4e 20,22
+package.json
+  s_074ac1af40ea86::t_abd401d5b012ae 64
+scripts/migration/README.md
+  s_074ac1af40ea86::t_2748b8657254b4 120
+ee/apps/landing/postcss.config.js
+  s_074ac1af40ea86::t_f627c6efd6cae9 3
+ee/apps/landing/package.json
+  s_074ac1af40ea86::t_f627c6efd6cae9 23,28-29
+scripts/migration/03-post-migration-cleanup.mjs
+  s_074ac1af40ea86::t_2748b8657254b4 131
+ee/apps/den-web/package.json
+  s_074ac1af40ea86::t_f627c6efd6cae9 25,30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "7667996e2190155b4441584353a2a747e8b3d09d",
+  "prompts": {},
+  "sessions": {
+    "s_074ac1af40ea86": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e642d-37ae-7732-840a-6bfa9b262efd",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
