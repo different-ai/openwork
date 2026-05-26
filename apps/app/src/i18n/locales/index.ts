@@ -10,3 +10,4 @@ export { default as fr } from "./fr";
 export { default as ca } from "./ca";
 export { default as es } from "./es";
 export { default as ru } from "./ru";
+export { default as tr } from "./tr";
