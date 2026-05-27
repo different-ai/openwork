@@ -1236,6 +1236,7 @@ function parseOpenWorkExtensionManifest(value: unknown): OpenWorkExtensionManife
     ...(contributions ? { contributions } : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(typeof value.defaultEnabled === "boolean" ? { defaultEnabled: value.defaultEnabled } : {}),
+    ...(typeof value.defaultHidden === "boolean" ? { defaultHidden: value.defaultHidden } : {}),
     ...(platform ? { platform } : {}),
   };
 }

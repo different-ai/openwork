@@ -46,6 +46,8 @@ export type McpDirectoryInfo = {
   composerPrompt?: string;
   /** Whether OpenWork should show this extension as enabled before user setup. */
   defaultEnabled?: boolean;
+  /** Whether OpenWork should hide this extension from the default catalog view. */
+  defaultHidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
   /** Normalized extension manifest backing this catalog entry. */
@@ -67,6 +69,7 @@ function extensionManifestToDirectoryInfo(manifest: OpenWorkExtensionManifest): 
     iconSrc: manifest.icon?.src,
     composerPrompt: extensionContribution(manifest, "composer-prompt")?.prompt ?? manifest.composer?.prompt,
     defaultEnabled: manifest.defaultEnabled,
+    defaultHidden: manifest.defaultHidden,
     preview: manifest.preview,
     extensionManifest: manifest,
   };

@@ -125,6 +125,7 @@ export type OpenWorkExtensionManifest = {
   /** Declarative conditions that must ALL be true for the extension to be "active". */
   enablement?: EnablementCondition[];
   defaultEnabled?: boolean;
+  defaultHidden?: boolean;
   platform?: Array<"darwin" | "linux" | "windows" | "web">;
 };
 
@@ -321,6 +322,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
+    defaultHidden: true,
   },
   {
     schemaVersion: 1,
