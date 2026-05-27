@@ -4,8 +4,8 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-import { ApiError } from "./errors.js";
-import type { ServerConfig } from "./types.js";
+import { ApiError } from "../errors.js";
+import type { ServerConfig } from "../types.js";
 
 export const GOOGLE_WORKSPACE_EXTENSION_ID = "google-workspace";
 
