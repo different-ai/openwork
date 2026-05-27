@@ -1,0 +1,19 @@
+apps/app/src/react-app/domains/session/panel/use-browser-tabs.ts
+  s_3b16eb63d14a16::t_eeb38d899f6c0f 79-80,82-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e7036a3ee2599ba99921da78230c8a5bbf9eb29e",
+  "prompts": {},
+  "sessions": {
+    "s_3b16eb63d14a16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6663-84cf-7cd0-90c6-379e5f38f09c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
