@@ -32,7 +32,7 @@ import {
   filterProviderList,
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
-import { ensureProviderListQuery } from "../provider-list-query";
+import { ensureProviderListQuery, refreshProviderListQueries } from "../provider-list-query";
 import type { OpenworkServerStore } from "../openwork-server-store";
 import {
   denSessionUpdatedEvent,
@@ -1593,6 +1593,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     await den.syncWorkerManagedProviders(target.orgId, target.workerId);
     await rememberRemoteManagedProviderSync(liveProviders);
     await refreshProviders({ dispose: true }).catch(() => null);
+    await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
     const newlyImported = liveProviders.filter((provider) => !importedProviders[provider.id]);
     if (newlyImported.length > 0) {
       dispatchNewProviders({
@@ -1686,6 +1687,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     if (configChanged) {
       await refreshProviders({ dispose: true }).catch(() => null);
+      await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
     }
 
     // Notify the UI about newly imported providers so the global toast

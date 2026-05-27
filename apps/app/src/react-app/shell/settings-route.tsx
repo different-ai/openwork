@@ -123,6 +123,7 @@ import { abortSessionSafe } from "../../app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "../../app/lib/feedback";
 import { getDenInferenceUrl } from "../../app/lib/den";
+import { buildCloudManagedModelIdsByProvider } from "../../app/cloud/managed-provider-models";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "../infra/query-client";
@@ -786,6 +787,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       providerAuthSnapshot.cloudOrgProviders.some(isOpenWorkCloudProvider) ||
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
+  );
+
+  const cloudManagedModelIdsByProvider = useMemo(
+    () => buildCloudManagedModelIdsByProvider(providerAuthSnapshot.importedCloudProviders),
+    [providerAuthSnapshot.importedCloudProviders],
   );
   const showOpenWorkModelsSubscribe = !cloudSession.isSignedIn || !hasOpenWorkCloudProvider;
 
