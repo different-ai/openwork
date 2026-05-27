@@ -61,8 +61,8 @@ async function assertOpenShellReady() {
   // Distro is registered — make sure it is actually running before any
   // sandbox commands are issued. A stopped distro needs WSL to boot it
   // first, which can take 30–60 s on a cold machine; without this step
-  // the subsequent `openshell sandbox list --json` (10 s timeout) races
-  // against the boot and times out.
+  // the subsequent `openshell sandbox list` races against the boot and
+  // times out.
   try {
     await ensureDistroRunning();
   } catch (err) {
@@ -70,6 +70,26 @@ async function assertOpenShellReady() {
       `OpenShell is not ready: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  // After the distro starts, the openshell-gateway systemd user service
+  // may still be initialising (cold boot: systemd user manager for
+  // `banker` needs 10–30 s to start after WSL reports Running).  Without
+  // this nudge, sandboxExists races against the 15 s bash timeout and
+  // returns "gateway not responding" on the very first workspace open.
+  //
+  // We run a single non-fatal command as banker that:
+  //   1. Sets XDG_RUNTIME_DIR so systemctl --user can find the socket
+  //      (wsl.exe --user banker does NOT set it automatically).
+  //   2. Checks if the service is already active (fast path — no restart).
+  //   3. If not, starts it.
+  //   4. Always exits 0 so wslRun never throws here.
+  await wslRun(
+    [
+      "-d", OPENSHELL_DISTRO_NAME, "--user", "banker", "--", "bash", "-c",
+      "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active openshell-gateway.service 2>/dev/null || " +
+      "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start openshell-gateway.service 2>/dev/null; true",
+    ],
+    { timeout: 25_000 },
+  ).catch(() => {}); // Non-fatal — sandboxExists surfaces the error if still down.
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1471,10 +1491,19 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
 
       // Path 2 — systemd user service (the current shape per install.sh).
+      // Running `wsl.exe --user banker` does NOT populate XDG_RUNTIME_DIR,
+      // so a bare `systemctl --user` can't find the D-Bus socket and hangs
+      // for the full 60 s timeout.  We set XDG_RUNTIME_DIR explicitly and
+      // ensure linger is enabled first so the user manager is running even
+      // when no interactive banker session exists.
       if (await tryWsl(
         "systemctl --user restart openshell-gateway",
-        ["systemctl", "--user", "restart", "openshell-gateway"],
-        { user: "banker", timeout: 60_000 },
+        [
+          "bash", "-c",
+          "loginctl enable-linger banker 2>/dev/null || true; " +
+          "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart openshell-gateway",
+        ],
+        { user: "banker", timeout: 45_000 },
       )) {
         return { ok: true, recoveredVia: "systemctl --user restart openshell-gateway" };
       }
@@ -1736,21 +1765,19 @@ async function handleDesktopInvoke(event, command, ...args) {
       return deriveOpenEralSandboxName(workspaceId);
     }
     case "openeralPtyOpen": {
-      // Renderer xterm.js requests a PTY to an existing sandbox. We
-      // spawn `wsl -d openwork-openshell -- openshell sandbox exec <name>
-      // --tty -- openeral` inside a real PTY (node-pty) and forward stdout
-      // bytes via the openeral:pty-data event channel.
+      // Renderer xterm.js requests a PTY session. The sandbox has already been
+      // provisioned by openeralEnsureSandbox (createOpenEralSandbox runs the
+      // two-step `create --no-tty -- /bin/true` + waitForSandboxReady). We
+      // always use the SSH-first connect path here.
       const input = args[0] ?? {};
       const sandboxName = String(input.sandboxName ?? "").trim();
       if (!sandboxName) throw new Error("sandboxName is required");
       const cols = Number.isFinite(input.cols) ? input.cols : undefined;
       const rows = Number.isFinite(input.rows) ? input.rows : undefined;
 
-      // Read credentials from safeStorage and forward them into the sandbox
-      // via WSLENV. This is essential so the `openeral` entrypoint can
-      // auto-configure Claude Code's Anthropic provider on first run without
-      // showing an interactive "enter API key" prompt that the user can't
-      // see or respond to (especially when the terminal is still sizing up).
+      // Forward credentials via WSLENV so the `openeral` entrypoint can
+      // auto-configure Claude Code's Anthropic provider on first run inside
+      // the sandbox without an interactive "enter API key" prompt.
       const extraEnv = {};
       try {
         const anthropicApiKey = await openeralCredentials.getCredential("anthropicApiKey");
@@ -1762,8 +1789,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       } catch { /* optional — StringCost tracking only */ }
       // Forward terminal dimensions as COLUMNS/LINES so Claude Code (and any
       // other program in the container that checks env vars before TIOCGWINSZ)
-      // gets the right width from the start. Belt-and-suspenders alongside the
-      // `stty cols X rows Y` call in openeral-pty.mjs's spawnImpl.
+      // gets the right width from the start.
       const effectiveCols = Number.isFinite(cols) && cols > 0 ? cols : 120;
       const effectiveRows = Number.isFinite(rows) && rows > 0 ? rows : 32;
       extraEnv.COLUMNS = String(effectiveCols);

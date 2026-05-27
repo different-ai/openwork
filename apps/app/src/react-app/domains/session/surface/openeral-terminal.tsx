@@ -77,6 +77,9 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [popoutBusy, setPopoutBusy] = useState(false);
   const [popoutError, setPopoutError] = useState<string | null>(null);
+  // Track whether the xterm.js textarea has keyboard focus so we can show
+  // a "Click to type" hint when the terminal is connected but not active.
+  const [isFocused, setIsFocused] = useState(false);
 
   // User-editable display name for the sandbox. The actual sandbox name
   // used by openshell never changes — this is purely cosmetic.
@@ -125,17 +128,23 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
 
   // Mark first successful connection and auto-focus the terminal so the
   // user can type immediately without having to click.
+  // Two-layer approach: RAF fires one frame after render (fast but can
+  // race with other elements); setTimeout(200) fires after the UI settles
+  // and is a reliable fallback for when Settings sidebar items steal focus
+  // during the transition.
   useEffect(() => {
     if (phase !== "connected") return;
     setHasEverConnected(true);
     const raf = requestAnimationFrame(() => {
-      try {
-        termRef.current?.focus();
-      } catch {
-        // ignore
-      }
+      try { termRef.current?.focus(); } catch { /* ignore */ }
     });
-    return () => cancelAnimationFrame(raf);
+    const t = setTimeout(() => {
+      try { termRef.current?.focus(); } catch { /* ignore */ }
+    }, 200);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(t);
+    };
   }, [phase]);
 
   useEffect(() => {
@@ -336,6 +345,8 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           sandboxName: sandbox.sandboxName,
           cols: term.cols,
           rows: term.rows,
+          existed: sandbox.existed,
+          profile: props.profile,
         });
         if (cancelled) {
           await invoke("openeralPtyClose", pty.id).catch(() => {});
@@ -552,7 +563,9 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
             interacting with toolbar buttons — moving the mouse back over
             the terminal instantly restores keystroke capture so Claude
             Code's TUI (theme selectors, menus, etc.) responds correctly.
-            onClick is a fallback for touch/keyboard navigation. */}
+            onClick is a fallback for touch/keyboard navigation.
+            onFocusCapture/onBlurCapture bubble up from xterm's internal
+            textarea so we can track focus state for the hint badge. */}
         <div
           ref={containerRef}
           className="absolute inset-0 bg-black"
@@ -562,7 +575,20 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           onClick={() => {
             try { termRef.current?.focus(); } catch { /* ignore */ }
           }}
+          onFocusCapture={() => setIsFocused(true)}
+          onBlurCapture={() => setIsFocused(false)}
         />
+        {/* "Click to type" hint — shown whenever the terminal is fully
+            connected but xterm's textarea doesn't have keyboard focus.
+            This guides users who clicked a toolbar button or the Settings
+            sidebar and then tried to type without moving back to the
+            terminal. The badge is pointer-events-none so it doesn't
+            interfere with the click-to-focus handler above. */}
+        {phase === "connected" && !isFocused ? (
+          <div className="absolute bottom-3 right-3 z-20 pointer-events-none select-none rounded-full bg-gray-12/60 px-2.5 py-1 text-[10px] font-medium text-gray-1">
+            Click to type
+          </div>
+        ) : null}
         {errorMessage && phase === "error" ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
             <BootstrapErrorCard

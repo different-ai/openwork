@@ -33,10 +33,13 @@
 //     to ssh/scp for upload, connect, exec, download.
 
 import { randomUUID } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { getCliInfo } from "./cli.mjs";
 import { getCredential } from "./openeral-credentials.mjs";
-import { DISTRO_NAME, wslRun, wslSpawn } from "./wsl.mjs";
+import { DISTRO_NAME, toWslPath, wslRun, wslSpawn } from "./wsl.mjs";
 
 const SANDBOX_IMAGE = "ghcr.io/sandys/openeral/sandbox:just-bash";
 const IMAGE_BY_PROFILE = {
@@ -112,6 +115,81 @@ export async function pullImage(imageRef, options = {}) {
 }
 
 /**
+ * Write `databaseUrl` to a Windows temp file and return its WSL mount path
+ * (e.g. `/mnt/c/Users/.../AppData/Local/Temp/.ow-db-<uuid>`).
+ *
+ * WHY Windows-side rather than WSL bash:
+ *   The openwork-openshell distro is minimal. We found that bash file I/O
+ *   inside both node-pty PTY sessions AND wslRun piped sessions consistently
+ *   fails with `bash: line 1: : No such file or directory` — /tmp may not
+ *   be mounted on first boot, `mktemp` may be absent, and `$$`/redirect
+ *   behaviour is unreliable in this specific distro build.
+ *
+ *   Creating the file on the Windows side (Node.js `fs.writeFile`) avoids
+ *   WSL entirely. WSL exposes the Windows filesystem at /mnt/<drive>/...,
+ *   so openshell's `--upload /mnt/c/.../file:/sandbox/db-url` works
+ *   identically to a Linux-side path.
+ *
+ * @param {string} databaseUrl
+ * @returns {Promise<string>} WSL-accessible path to the staged file
+ */
+export async function stageDbUrlFile(databaseUrl) {
+  if (!databaseUrl) throw new Error("stageDbUrlFile: databaseUrl is required");
+  const winPath = join(tmpdir(), `.ow-db-${randomUUID()}`);
+  await writeFile(winPath, databaseUrl, { encoding: "utf8" });
+  return toWslPath(winPath);
+}
+
+/**
+ * Delete a file previously created by stageDbUrlFile. Silently ignores
+ * ENOENT (already deleted by the bash trap inside the PTY).
+ *
+ * @param {string} wslPath  The path returned by stageDbUrlFile
+ */
+export async function removeDbUrlFile(wslPath) {
+  // Convert the WSL mount path back to a Windows path so Node.js can unlink it.
+  // Pattern: /mnt/<drive>/rest  →  <DRIVE>:\rest
+  const m = wslPath?.match(/^\/mnt\/([a-z])\/(.+)$/);
+  if (!m) return; // Not a /mnt/... path — nothing to do on the Windows side.
+  const winPath = `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, "\\")}`;
+  try {
+    await unlink(winPath);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.warn("[removeDbUrlFile] failed to delete staged credential file:", err.message);
+    }
+  }
+}
+
+/**
+ * Parse the ANSI-colored text table output of `openshell sandbox list`
+ * (no --json flag) and return the phase string for a specific sandbox name.
+ * Returns null if the sandbox is not found or the format is unrecognised.
+ *
+ * Expected format (after ANSI stripping):
+ *   NAME                            CREATED              PHASE
+ *   my-sandbox                      2026-05-26 15:05:38  Ready
+ *
+ * openshell 0.0.42 does not support `--json` for `sandbox list`; the plain
+ * text table is the only machine-readable output available.
+ */
+function parseListTextPhase(stdout, name) {
+  // Strip ANSI SGR and erase codes (colours, bold, etc.)
+  const clean = stdout.replace(/\x1B\[[0-9;]*[mK]/g, "");
+  for (const line of clean.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const fields = trimmed.split(/\s+/);
+    // First field must exactly match the sandbox name; this also skips the
+    // header row (whose first field is "NAME").
+    if (fields[0] !== name) continue;
+    // Last whitespace-separated field is the phase (Ready/Provisioning/Error…).
+    return fields[fields.length - 1].toLowerCase();
+  }
+  return null;
+}
+
+/**
  * Parse the raw openshell sandbox list output into a normalised array.
  * Returns null only when the raw text cannot yield any sandbox list at all.
  *
@@ -160,10 +238,14 @@ function parseSandboxList(stdout) {
 }
 
 /**
- * Poll `openshell sandbox list --json` until the named sandbox reports
- * a Ready/running phase, or until the timeout elapses. If the CLI does
- * not include phase information in the list (flat string arrays), we
- * optimistically assume the sandbox is ready and return immediately.
+ * Poll `openshell sandbox list` until the named sandbox reports a Ready/running
+ * phase, or until the timeout elapses.
+ *
+ * openshell 0.0.42 does NOT support `--json` for `sandbox list` (exits 0 but
+ * outputs an error message) and has no `sandbox status` subcommand. We use the
+ * plain text table output and parse the PHASE column via parseListTextPhase.
+ * The JSON path via parseSandboxList is kept for future CLI versions that may
+ * re-introduce JSON support.
  *
  * @param {string} name
  * @param {{ timeoutMs?: number, pollMs?: number, onProgress?: Function }} [opts]
@@ -172,19 +254,25 @@ async function waitForSandboxReady(name, opts = {}) {
   const { timeoutMs = 120_000, pollMs = 4_000, onProgress } = opts;
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
-  // Track the first time we see a "Provisioning" phase so we can detect
-  // sandboxes that are stuck (never transition to Ready).
-  let firstProvisioningAt = null;
-  const STUCK_PROVISIONING_THRESHOLD_MS = 90_000; // 90 s in Provisioning → stuck
+  // Track the first time we see ANY non-Ready phase. This covers openshell
+  // phases like "Provisioning", "Pulling", "Starting", "Downloading", and any
+  // future phase string the CLI may emit. The old code only set this for
+  // "Provisioning" and RESET it for everything else — so a sandbox that spent
+  // >90 s in "Pulling" would have its stuck timer continuously reset and the
+  // function would silently give up after 120 s with "connecting anyway".
+  let firstNonReadyAt = null;
+  const STUCK_THRESHOLD_MS = 90_000; // 90 s in any non-Ready state → stuck
 
   while (Date.now() < deadline) {
     attempt += 1;
     // 20 s outer timeout gives 10 s slack after bash's inner 10 s timer
     // fires, so wsl.exe has time to exit before wslRun's own timer does.
+    // NOTE: do NOT pass --json — openshell 0.0.42 does not support that flag
+    // for sandbox list and exits 0 with an error message, not usable data.
     let r;
     try {
       r = await wslRun(
-        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
+        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list 2>/dev/null"],
         { timeout: 20_000 },
       );
     } catch {
@@ -195,59 +283,67 @@ async function waitForSandboxReady(name, opts = {}) {
       continue;
     }
     if (r.exitCode === 0) {
+      let phase = null;
+
+      // ── JSON path (future CLI versions that support --json) ──────────────
       const list = parseSandboxList(r.stdout);
       if (list) {
         const entry = list.find((s) => {
           if (typeof s === "string") return s === name;
           return s?.name === name || s?.sandbox_name === name || s?.id === name;
         });
-        if (entry !== undefined) {
-          // Flat string → no phase info, assume ready.
-          if (typeof entry === "string") return;
-          const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
-          if (!phase || /ready|running/i.test(phase)) return;
-          if (/error|failed/i.test(phase)) {
-            throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
-          }
-          // Detect sandboxes stuck in Provisioning. If the sandbox has been
-          // in a provisioning-like state for longer than the threshold, bail
-          // out early with a clear error so the renderer can offer a
-          // "Delete and start fresh" action rather than spinning forever.
-          if (/provision/i.test(phase)) {
-            if (!firstProvisioningAt) firstProvisioningAt = Date.now();
-            const stuckMs = Date.now() - firstProvisioningAt;
-            if (stuckMs > STUCK_PROVISIONING_THRESHOLD_MS) {
-              throw new Error(
-                `STUCK_PROVISIONING: Sandbox "${name}" has been in "${phase}" state for ` +
-                  `over ${Math.round(stuckMs / 1000)}s and appears stuck. ` +
-                  `Delete the sandbox and reconnect to create a fresh one. ` +
-                  `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
-              );
-            }
-          } else {
-            // Phase changed away from Provisioning — reset the timer.
-            firstProvisioningAt = null;
-          }
-          onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
+        if (entry !== undefined && typeof entry !== "string") {
+          phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase() || null;
         }
+        // Flat-string entries carry no phase info — fall through to text parse.
+      }
+
+      // ── Text table path (openshell 0.0.42, current version) ─────────────
+      // parseListTextPhase strips ANSI codes and reads the PHASE column.
+      if (phase === null) {
+        phase = parseListTextPhase(r.stdout, name);
+      }
+
+      if (phase !== null) {
+        if (/ready|running/i.test(phase)) return;
+        if (/error|failed/i.test(phase)) {
+          throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
+        }
+        // Any non-Ready, non-Error phase starts (or continues) the stuck timer.
+        // We no longer distinguish "Provisioning" from "Pulling"/"Starting"/etc.
+        // so a sandbox that stays in ANY non-ready phase for too long is caught.
+        if (!firstNonReadyAt) firstNonReadyAt = Date.now();
+        const stuckMs = Date.now() - firstNonReadyAt;
+        if (stuckMs > STUCK_THRESHOLD_MS) {
+          throw new Error(
+            `STUCK_PROVISIONING: Sandbox "${name}" has not reached Ready state after ` +
+              `${Math.round(stuckMs / 1000)}s (last observed phase: "${phase}"). ` +
+              `Delete the sandbox and reconnect to create a fresh one. ` +
+              `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+          );
+        }
+        onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
+      } else {
+        // Sandbox not yet visible in the list — keep polling.
+        onProgress?.({ phase: "waiting", message: `Waiting for sandbox to appear (attempt ${attempt})…` });
       }
     }
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  // Timed out without confirming Ready — if we last saw a provisioning phase
-  // treat it as stuck rather than proceeding optimistically (the exec would
-  // fail anyway with "phase: Provisioning").
-  if (firstProvisioningAt) {
+  // Timed out without confirming Ready. If we ever saw a non-Ready phase,
+  // treat the sandbox as stuck — connecting anyway would just fail with
+  // "phase: Provisioning" in the PTY and confuse the user.
+  if (firstNonReadyAt) {
     throw new Error(
-      `STUCK_PROVISIONING: Sandbox "${name}" did not reach Ready state within ${Math.round(timeoutMs / 1000)}s ` +
-        `(last observed phase: Provisioning). ` +
+      `STUCK_PROVISIONING: Sandbox "${name}" did not reach Ready state within ${Math.round(timeoutMs / 1000)}s. ` +
         `Delete the sandbox and reconnect to create a fresh one. ` +
         `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
     );
   }
-  // Non-provisioning timeout — proceed; exec may succeed if setup.sh just finished.
-  onProgress?.({ phase: "timeout", message: "Sandbox did not confirm Ready state; attempting to connect anyway." });
+  // Sandbox was never visible in the list during polling — could be a very
+  // slow gateway; proceed optimistically so the PTY can try to connect.
+  onProgress?.({ phase: "timeout", message: "Sandbox did not appear in list; attempting to connect anyway." });
 }
 
 /**
@@ -268,10 +364,16 @@ export async function sandboxExists(name) {
   // Without the extra slack wsl.exe can outlive the bash timeout and
   // trigger wslRun's own timer — throwing a raw "wsl.exe timed out"
   // error before the exitCode === 124 check below is ever reached.
+  //
+  // NOTE: do NOT use --names or --json. openshell 0.0.42 does not support
+  // either flag for sandbox list — both exit 0 but output an error message
+  // rather than useful data. Use the plain text table output (same as
+  // waitForSandboxReady and getSandboxPhaseOnce) and parse it with
+  // parseListTextPhase, which strips ANSI codes and checks the NAME column.
   let r;
   try {
     r = await wslRun(
-      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list 2>/dev/null"],
       { timeout: 25_000 },
     );
   } catch (err) {
@@ -292,27 +394,30 @@ export async function sandboxExists(name) {
     );
   }
   if (r.exitCode !== 0) return false;
+
+  // Dual-parse strategy, same as waitForSandboxReady:
+  //   1. Try JSON first (for future CLI versions that emit proper JSON).
+  //   2. ALWAYS also try the text-table parser as a fallback.
+  //
+  // The original code used `if (!list)` which only fell back to text when
+  // parseSandboxList returned null. But `!list` is false for an empty array
+  // `[]`, so when openshell 0.0.42 emits a stale/empty JSON envelope the
+  // text parser was silently skipped and sandboxExists returned false for
+  // sandboxes that are clearly visible in the text table output.
   const list = parseSandboxList(r.stdout);
-  if (!list) {
-    // parseSandboxList could not find an array in the JSON (completely
-    // unknown format). Fall back to a raw text search: if the sandbox
-    // name appears anywhere in the output it almost certainly exists.
-    // This prevents sandboxExists returning false (triggering an
-    // unnecessary create that then times out) just because the CLI
-    // changed its output format.
-    const found = r.stdout.includes(name);
-    console.warn(
-      `[sandboxExists] unrecognised sandbox list shape — ` +
-        `falling back to text search for "${name}": ${found ? "found" : "not found"}. ` +
-        `Raw output: ${r.stdout.slice(0, 300)}`,
-    );
-    return found;
+  if (list) {
+    const found = list.some((s) => {
+      if (typeof s === "string") return s === name;
+      // Try every plausible name key the CLI might use
+      return s?.name === name || s?.sandbox_name === name || s?.id === name;
+    });
+    if (found) return true;
+    // JSON parsed but sandbox not in it — still try the text parser.
+    // Some CLI builds output an empty JSON envelope alongside the text table.
   }
-  return list.some((s) => {
-    if (typeof s === "string") return s === name;
-    // Try every plausible name key the CLI might use
-    return s?.name === name || s?.sandbox_name === name || s?.id === name;
-  });
+  // Text table path (openshell 0.0.42, current version). parseListTextPhase
+  // strips ANSI codes and checks the NAME column exactly.
+  return parseListTextPhase(r.stdout, name) !== null;
 }
 
 /**
@@ -341,50 +446,136 @@ function shellQuote(value) {
 }
 
 /**
- * Create (or resume into) an OpenEral sandbox. Sandbox naming is stable
- * per-workspace — re-running with the same name on the same Postgres
- * is OpenEral's whole portability story.
+ * Single-poll snapshot of a sandbox's current phase string (lowercased).
+ * Returns null when the sandbox is not found or the gateway is unreachable.
+ * Used for a fast pre-flight state check — does NOT loop or wait.
+ */
+async function getSandboxPhaseOnce(name) {
+  try {
+    const r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list 2>/dev/null"],
+      { timeout: 15_000 },
+    );
+    if (r.exitCode !== 0) return null;
+    const list = parseSandboxList(r.stdout);
+    if (list) {
+      const entry = list.find((s) => {
+        if (typeof s === "string") return s === name;
+        return s?.name === name || s?.sandbox_name === name || s?.id === name;
+      });
+      if (entry !== undefined && typeof entry !== "string") {
+        return String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase() || null;
+      }
+    }
+    return parseListTextPhase(r.stdout, name);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pre-flight check before opening a PTY session to an OpenEral sandbox.
+ *
+ * WHY this no longer runs `openshell sandbox create` itself:
+ *
+ * The previous two-step pattern — (1) `create --no-tty -- /bin/true` via wslRun,
+ * then (2) `sandbox exec --tty -- openeral` or `sandbox connect` via node-pty —
+ * had an unfixable race:
+ *
+ *   • `create -- /bin/true` exits 0 the instant /bin/true exits (before the
+ *     gateway finishes provisioning), so the sandbox is still "Provisioning"
+ *     when step 2 tries to exec.
+ *   • Polling `sandbox list` to detect Ready is unreliable: the gateway can be
+ *     transiently unresponsive during container startup, unknown phase strings
+ *     ("Pulling", "Starting") confused the regex, and even when "Ready" is
+ *     observed there is a window before exec where the phase can regress.
+ *
+ * The canonical single-step pattern (per openeral-js/cli.test.ts) is:
+ *
+ *   openshell sandbox create --tty --name X --from Y \
+ *     --upload /tmp/db-url:/sandbox/db-url \
+ *     --provider claude --auto-providers -- openeral
+ *
+ * This blocks until Claude exits; provisioning + setup.sh + Claude Code all
+ * happen inside one TTY-attached process — no window, no poll, no exec race.
+ *
+ * This function therefore only:
+ *   1. Checks if the sandbox already exists (reconnect vs fresh-create).
+ *   2. For stuck/errored existing sandboxes: auto-deletes so the PTY falls
+ *      back to the single-step create path.
+ *   3. Validates credentials and pre-pulls the Docker image.
+ *
+ * The caller (openeral-pty.mjs openSession) receives { existed } and picks
+ * the right PTY command:
+ *   existed=false → single-step `openshell sandbox create --tty ... -- openeral`
+ *   existed=true  → `openshell sandbox connect NAME` (SSH/gRPC reconnect)
  *
  * @param {Object} opts
  * @param {string} opts.name
  * @param {"openeral-claude"|"openeral-openclaw"} opts.profile
  * @param {(evt: {phase: string, message: string}) => void} [opts.onProgress]
- * @param {boolean} [opts.skipImagePull]  Skip the docker pull (testing)
- * @param {number} [opts.createTimeoutMs]
+ * @param {boolean} [opts.skipImagePull]
  */
 export async function createOpenEralSandbox(opts) {
-  const { name, profile, onProgress, skipImagePull = false } = opts;
+  const { name, profile, onProgress, skipImagePull = false, _retryCount = 0 } = opts;
   if (!name) throw new Error("createOpenEralSandbox: name is required");
   if (!profile) throw new Error("createOpenEralSandbox: profile is required");
 
   const imageRef = imageForProfile(profile);
 
-  // Short-circuit if the sandbox already exists (workspace reopen).
-  // Wait for it to reach Ready state before returning so the subsequent
-  // PTY exec doesn't fail with "phase: Provisioning".
+  // ── Reconnect path ─────────────────────────────────────────────────────────
   if (await sandboxExists(name)) {
-    onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; waiting for it to be ready…` });
-    await waitForSandboxReady(name, {
-      onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
+    onProgress?.({ phase: "exists", message: `Sandbox ${name} found; checking state…` });
+    const phase = await getSandboxPhaseOnce(name);
+
+    if (phase === null || /ready|running/i.test(phase)) {
+      // Ready or state unknown — proceed as reconnect (PTY will connect path).
+      return { name, profile, imageRef, existed: true };
+    }
+
+    // Sandbox is in an unusable state (error, stuck provisioning, etc.).
+    // Auto-delete it so the PTY falls through to the single-step create path.
+    const stateDesc = /error|failed/i.test(phase)
+      ? `in error state (${phase})`
+      : `stuck in non-ready state (${phase})`;
+    onProgress?.({
+      phase: "recovery",
+      message: `Sandbox ${stateDesc}. Auto-deleting and creating fresh…`,
     });
-    return { name, profile, imageRef, existed: true };
+    try {
+      await deleteOpenEralSandbox(name);
+    } catch (deleteErr) {
+      // Delete failed — try reconnect anyway; the connect may still succeed
+      // or the PTY session error will be more informative than this one.
+      console.warn(
+        `[createOpenEralSandbox] auto-delete of ${stateDesc} sandbox failed (non-fatal):`,
+        deleteErr.message,
+      );
+      return { name, profile, imageRef, existed: true };
+    }
+    // Sandbox deleted — fall through to pre-flight for fresh create below.
   }
 
-  // Validate credentials.
+  // ── Fresh-create pre-flight ─────────────────────────────────────────────────
+  // Validate credentials. databaseUrl is staged as a temp file and uploaded
+  // via --upload at create time. anthropicApiKey is forwarded via WSLENV so
+  // --auto-providers can configure the claude provider without an interactive
+  // prompt.
   const databaseUrl = await getCredential("databaseUrl");
   if (!databaseUrl) {
     throw new Error(
-      "DATABASE_URL is not configured. Set it in Settings → Sandbox → OpenEral configuration.",
+      "DATABASE_URL is not configured. Set it in Settings \u2192 Sandbox \u2192 OpenEral configuration.",
     );
   }
   const anthropicApiKey = await getCredential("anthropicApiKey");
   if (!anthropicApiKey) {
     throw new Error(
-      "ANTHROPIC_API_KEY is not configured. Set it in Settings → Sandbox → OpenEral configuration.",
+      "ANTHROPIC_API_KEY is not configured. Set it in Settings \u2192 Sandbox \u2192 OpenEral configuration.",
     );
   }
 
-  // Image pull (~1.5 GB on first run for :just-bash).
+  // Pre-pull the image so the create command doesn't hit Docker Hub cold.
+  // Uses a managed Docker config dir to avoid the credsStore:desktop issue.
   if (!skipImagePull) {
     onProgress?.({ phase: "pull", message: `Pulling ${imageRef}...` });
     await pullImage(imageRef, {
@@ -392,134 +583,161 @@ export async function createOpenEralSandbox(opts) {
     });
   }
 
-  // Forward credentials into the Linux side of WSL via WSLENV.
-  // ANTHROPIC_API_KEY is always forwarded so --auto-providers can
-  // auto-create the `claude` provider. For openclaw, also forward
-  // OPENERAL_AGENT=openclaw so the openeral wrapper picks the right
-  // agent at runtime.
-  const stringcostApiKey = await getCredential("stringcostApiKey");
-  const forwarded = { ANTHROPIC_API_KEY: anthropicApiKey };
-  if (stringcostApiKey) {
-    forwarded.STRINGCOST_API_KEY = stringcostApiKey;
-  }
-  if (profile === "openeral-openclaw") {
-    forwarded.OPENERAL_AGENT = "openclaw";
-  }
-  const env = buildWslEnvForwarding(forwarded);
+  // Stage DATABASE_URL as a Windows temp file accessible from WSL via /mnt/c/...
+  // Node.js writes the file on the Windows side; WSL exposes it at the /mnt mount
+  // point. This avoids bash file I/O inside the distro (mktemp/redirect proved
+  // unreliable in the openwork-openshell minimal build).
+  onProgress?.({ phase: "staging", message: "Staging credentials…" });
+  const dbUrlWslPath = await stageDbUrlFile(databaseUrl);
 
-  // Staging the DATABASE_URL file AND running `openshell sandbox
-  // create` happen in ONE bash session — two separate wsl.exe calls
-  // can land in different /tmp namespaces on some banker distros, so
-  // openshell would see ENOENT trying to upload a file that "existed"
-  // from our staging call's perspective. One bash subshell keeps /tmp
-  // consistent for both the cat write and the --upload read.
-  //
-  // We deliberately do NOT pass `-- openeral` as the trailing command:
-  // `openshell sandbox create` BLOCKS until the trailing command exits,
-  // but `openeral` launches Claude Code (an interactive REPL that
-  // never exits), and we have no TTY here (wslRun is piped). That used
-  // to deadlock until ssh timed out with `exit status 1`. Instead we
-  // run `-- /bin/true` to provision the sandbox, return immediately,
-  // and rely on `sandbox exec --tty -- openeral` from openeral-pty.mjs
-  // / openeral-terminal.mjs to launch the REPL inside a real PTY.
-  //
-  // Note: openshell's --upload (and connect/exec/download) shells out
-  // to `ssh`/`scp` locally. The rootfs Dockerfile MUST include
-  // openssh-client or every sandbox operation fails with a cryptic
-  // "Error: × No such file or directory (os error 2)" from the failed
-  // exec.
-  const dbPath = `/tmp/openeral-db-url-${randomUUID()}`;
-  // Keep the create command simple — use `-- /bin/true` so openshell
-  // returns as soon as provisioning is done (no trailing command to race
-  // against the --auto-providers setup).
-  //
-  // openshell CLI 0.0.42 has a race: when --auto-providers is combined
-  // with a non-trivial `-- CMD`, the provider finalisation and the CMD
-  // exec both touch the gateway concurrently and one of them returns
-  // gRPC NotFound, aborting the create with exit 1.  Using `-- /bin/true`
-  // (exits in ~0 ms) avoids the window where the race can manifest.
-  //
-  // ANTHROPIC_API_KEY delivery for setup.sh's StringCost presign step:
-  // we write /sandbox/anthropic-api-key via a separate `sandbox exec`
-  // call AFTER create, so there is no quoting complexity inside the
-  // create command.  setup.sh falls back gracefully if the exec fails
-  // (it skips the presign step when ANTHROPIC_API_KEY is a placeholder).
-  // NOTE: do NOT use `exec openshell sandbox create ...` here.
-  // `exec` replaces the bash process, which means the EXIT trap set
-  // below never fires and the temp DB-URL file leaks in /tmp forever.
-  // Running openshell as a regular child (no exec) lets bash honour
-  // the trap on exit — whether the create succeeds or fails.
-  const script = [
-    "set -e",
-    "umask 077",
-    // DATABASE_URL is piped via stdin — never touches the command line.
-    `cat > ${dbPath}`,
-    `chmod 600 ${dbPath}`,
-    // Staging file is removed on exit whether create succeeds or fails.
-    `trap 'rm -f ${dbPath}' EXIT`,
-    `openshell sandbox create --no-tty ` +
+  // alreadyExisted is set to true when create fails with "already exists". We
+  // still call waitForSandboxReady in that case (the sandbox might still be
+  // provisioning from a previous attempt) so the connect always has a Ready
+  // sandbox to attach to. Using a flag rather than an early return keeps the
+  // try/finally cleanup reliable.
+  let alreadyExisted = false;
+  try {
+    onProgress?.({ phase: "creating", message: `Creating sandbox ${name}…` });
+
+    // Inner timeout is 10 s shorter than wslRun's outer so bash kills openshell
+    // first and wslRun sees exit 124 rather than throwing "wsl.exe timed out".
+    const innerTimeoutS = Math.floor((DEFAULT_CREATE_TIMEOUT_MS - 10_000) / 1000);
+    const uploadArg = `${dbUrlWslPath}:/sandbox/db-url`;
+    const createCmd =
+      `timeout ${innerTimeoutS} ` +
+      `openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
       `--from ${shellQuote(imageRef)} ` +
-      `--upload ${dbPath}:/sandbox/db-url ` +
+      `--upload ${shellQuote(uploadArg)} ` +
       `--provider claude --auto-providers ` +
-      `-- /bin/true`,
-  ].join("\n");
+      `-- /bin/true`;
 
-  onProgress?.({ phase: "create", message: `Creating sandbox ${name}…` });
-  let r;
-  try {
-    r = await wslRun(
-      ["-d", DISTRO_NAME, "--", "bash", "-c", script],
-      {
-        timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
-        env,
-        stdin: databaseUrl,
-      },
-    );
-  } catch (err) {
-    if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+    // Forward ANTHROPIC_API_KEY so --auto-providers configures the claude
+    // provider at creation time without an interactive prompt.
+    const createEnv = buildWslEnvForwarding({ ANTHROPIC_API_KEY: anthropicApiKey });
+
+    let r;
+    try {
+      r = await wslRun(
+        ["-d", DISTRO_NAME, "--", "bash", "-c", createCmd],
+        { timeout: DEFAULT_CREATE_TIMEOUT_MS, env: createEnv },
+      );
+    } catch (err) {
+      if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+        throw new Error(
+          "openshell sandbox create timed out. The OpenShell gateway may be unresponsive. " +
+            "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+            "then try again.",
+        );
+      }
+      throw err;
+    }
+    if (r.exitCode === 124) {
       throw new Error(
-        `openshell sandbox create timed out after 3 minutes. ` +
-          `The OpenShell gateway or Docker daemon is not responding. ` +
-          `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry.`,
+        `openshell sandbox create timed out (${innerTimeoutS}s). ` +
+          "The OpenShell gateway may be unresponsive. " +
+          "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+          "then try again.",
       );
     }
-    throw err;
-  }
-  if (r.exitCode !== 0) {
-    const output = (r.stderr || r.stdout).trim();
-    // openshell exits 1 with "already exists" when sandboxExists() returned
-    // a false-negative (e.g. unexpected JSON shape from sandbox list). Treat
-    // this as a successful reconnect instead of a hard failure.
-    if (/already exists/i.test(output)) {
-      onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; reconnecting.` });
-      return { name, profile, imageRef, existed: true };
+    if (r.exitCode !== 0) {
+      const errText = (r.stderr || r.stdout).trim();
+      // "already exists": sandboxExists returned false but the sandbox was
+      // already registered with the gateway. Treat as reconnect and poll.
+      if (/already exists/i.test(errText)) {
+        console.warn(
+          `[createOpenEralSandbox] sandbox ${name} already exists (detected at create time); treating as reconnect.`,
+        );
+        alreadyExisted = true;
+      } else if (/stream closed|cancelled/i.test(errText)) {
+        // openshell 0.0.42 sometimes closes the gRPC stream with
+        // status=Cancelled after the gateway has already registered and
+        // started provisioning the sandbox — even though the CLI exits 1.
+        // Check immediately whether the sandbox appears in the list.
+        console.warn(
+          `[createOpenEralSandbox] create stream closed (exit ${r.exitCode}); checking if sandbox was registered…`,
+        );
+        const checkPhase = await getSandboxPhaseOnce(name);
+        if (checkPhase !== null) {
+          console.warn(
+            `[createOpenEralSandbox] sandbox ${name} found after stream close (phase: ${checkPhase}); will poll for Ready.`,
+          );
+          alreadyExisted = true;
+        } else {
+          // Sandbox was not created — surface the error.
+          throw new Error(
+            `openshell sandbox create failed: gateway cancelled the stream and the sandbox was not registered. ` +
+              `Wait a moment and retry, or restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+          );
+        }
+      } else {
+        throw new Error(
+          `openshell sandbox create failed (exit ${r.exitCode}): ` +
+            `${errText || "(no output)"}`,
+        );
+      }
     }
-    const cli = await getCliInfo().catch(() => null);
-    const versionTag = cli?.version ? ` [CLI ${cli.version}]` : "";
-    throw new Error(
-      `openshell sandbox create failed (exit ${r.exitCode})${versionTag}: ` +
-        `${output || "(no output)"}`,
-    );
+  } finally {
+    await removeDbUrlFile(dbUrlWslPath).catch(() => {});
   }
-  // Write the API key file so setup.sh can create a StringCost presign
-  // with the real key (not the openshell:resolve:env:* placeholder).
-  // This runs as a separate exec AFTER create so there is no interaction
-  // with --auto-providers.  Non-fatal: if the exec fails, setup.sh
-  // skips the presign step and uses the placeholder / env-var fallback.
-  const writeKeyScript =
-    `openshell sandbox exec --name ${shellQuote(name)} -- ` +
-    `sh -c ${shellQuote(`mkdir -p /sandbox && printf %s ${shellQuote(anthropicApiKey)} > /sandbox/anthropic-api-key && chmod 600 /sandbox/anthropic-api-key`)}`;
-  await wslRun(["-d", DISTRO_NAME, "--", "bash", "-c", writeKeyScript], {
-    timeout: 30_000,
-    env,
-  }).catch((e) => {
-    // Non-fatal — setup.sh has an explicit fallback for missing key file.
-    console.warn("[createOpenEralSandbox] key-file write via exec failed (non-fatal):", e.message);
+
+  // When the sandbox already existed (create said "already exists"), check its
+  // phase before waiting. If it's stuck or errored from a previous attempt,
+  // auto-delete it and start fresh so the user doesn't have to intervene.
+  if (alreadyExisted) {
+    const existingPhase = await getSandboxPhaseOnce(name);
+    if (existingPhase !== null && !/ready|running/i.test(existingPhase)) {
+      const stateDesc = /error|failed/i.test(existingPhase)
+        ? `error state (${existingPhase})`
+        : `non-ready state (${existingPhase})`;
+      onProgress?.({
+        phase: "recovery",
+        message: `Existing sandbox is in ${stateDesc}; auto-deleting for fresh start…`,
+      });
+      if (_retryCount >= 2) {
+        throw new Error(
+          `Sandbox "${name}" could not be created after ${_retryCount} recovery attempt(s). ` +
+            `Restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway and try again.`,
+        );
+      }
+      try {
+        await deleteOpenEralSandbox(name);
+        // Give the gateway a moment to finish cleanup before we re-register
+        // the same name. Without a small pause the fresh create can race the
+        // gateway's own delete bookkeeping and get another "already exists".
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        // Deleted successfully — recurse to create a fresh sandbox.
+        // skipImagePull=true because we already pulled the image above.
+        return createOpenEralSandbox({
+          name,
+          profile,
+          onProgress,
+          skipImagePull: true,
+          _retryCount: _retryCount + 1,
+        });
+      } catch (deleteErr) {
+        console.warn(
+          `[createOpenEralSandbox] auto-delete of ${stateDesc} sandbox failed (non-fatal):`,
+          deleteErr.message,
+        );
+        // Delete failed — waitForSandboxReady below will surface a clear error.
+      }
+    }
+  }
+
+  // Poll until the sandbox reaches Ready state. The create command exits as
+  // soon as /bin/true exits, which can be before the gateway finishes
+  // provisioning the container. Also needed for the alreadyExisted path —
+  // the sandbox might still be mid-provisioning from a prior attempt.
+  onProgress?.({ phase: "waiting", message: "Waiting for sandbox to be ready…" });
+  await waitForSandboxReady(name, {
+    timeoutMs: 120_000,
+    pollMs: 4_000,
+    onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
   });
 
-  onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
-  return { name, profile, imageRef, existed: false };
+  onProgress?.({ phase: "ready", message: `Sandbox ${name} is ready.` });
+  return { name, profile, imageRef, existed: alreadyExisted };
 }
 
 export async function deleteOpenEralSandbox(name) {
