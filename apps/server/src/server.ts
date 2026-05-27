@@ -529,7 +529,99 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
+  if (workspace && isProviderListProxyRequest(method, proxyPath)) {
+    return filterManagedProviderListResponse(workspace.path, response);
+  }
+
   return sanitizeProxyResponse(response);
+}
+
+function isProviderListProxyRequest(method: string, proxyPath: string) {
+  return method === "GET" && normalizeOpencodeProxyPath(proxyPath) === "/config/providers";
+}
+
+async function filterManagedProviderListResponse(workspaceRoot: string, response: Response): Promise<Response> {
+  if (!response.ok) return sanitizeProxyResponse(response);
+
+  const text = await response.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text) as unknown;
+  } catch {
+    return proxyTextResponse(response, text);
+  }
+
+  let allowedModelsByProvider: Map<string, Set<string>>;
+  try {
+    allowedModelsByProvider = await readManagedProviderModelAllowlist(workspaceRoot);
+  } catch {
+    return proxyJsonResponse(response, data);
+  }
+  if (allowedModelsByProvider.size === 0) return proxyJsonResponse(response, data);
+
+  return proxyJsonResponse(response, filterProviderListModels(data, allowedModelsByProvider));
+}
+
+async function readManagedProviderModelAllowlist(workspaceRoot: string): Promise<Map<string, Set<string>>> {
+  const openwork = await readOpenworkConfig(workspaceRoot);
+  const managedProviders = openwork.managedProviders;
+  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") return new Map();
+
+  const opencode = await readOpencodeConfig(workspaceRoot);
+  const providers = opencode.provider;
+  if (!isRecordValue(providers)) return new Map();
+
+  const allowlist = new Map<string, Set<string>>();
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (!isRecordValue(providerConfig) || !isRecordValue(providerConfig.models)) continue;
+    const modelIds = Object.keys(providerConfig.models);
+    if (modelIds.length > 0) allowlist.set(providerId, new Set(modelIds));
+  }
+  return allowlist;
+}
+
+function filterProviderListModels(data: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
+  if (!isRecordValue(data) || !Array.isArray(data.all)) return data;
+  return {
+    ...data,
+    all: data.all.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
+  };
+}
+
+function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
+  if (!isRecordValue(provider) || typeof provider.id !== "string") return provider;
+  const allowed = allowedModelsByProvider.get(provider.id);
+  if (!allowed || !isRecordValue(provider.models)) return provider;
+  return {
+    ...provider,
+    models: Object.fromEntries(Object.entries(provider.models).filter(([modelId]) => allowed.has(modelId))),
+  };
+}
+
+function proxyJsonResponse(upstream: Response, data: unknown): Response {
+  const headers = sanitizedProxyHeaders(upstream.headers);
+  headers.set("Content-Type", "application/json");
+  return new Response(JSON.stringify(data), {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
+}
+
+function proxyTextResponse(upstream: Response, text: string): Response {
+  return new Response(text, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: sanitizedProxyHeaders(upstream.headers),
+  });
+}
+
+function sanitizedProxyHeaders(input: Headers): Headers {
+  const headers = new Headers(input);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return headers;
 }
 
 /**
@@ -540,14 +632,10 @@ async function proxyOpencodeRequest(input: {
  * code that reaches through /opencode/* (including session.create).
  */
 function sanitizeProxyResponse(response: Response): Response {
-  const headers = new Headers(response.headers);
-  headers.delete("content-encoding");
-  headers.delete("transfer-encoding");
-  headers.delete("content-length");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers,
+    headers: sanitizedProxyHeaders(response.headers),
   });
 }
 

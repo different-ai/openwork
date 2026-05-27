@@ -11,6 +11,11 @@ type Served = {
   stop: (closeActiveConnections?: boolean) => void | Promise<void>;
 };
 
+type ProviderListTestItem = {
+  id: string;
+  models?: Record<string, unknown>;
+};
+
 const HOST_TOKEN = "owt_provider_sync_host_token";
 const CLIENT_TOKEN = "owt_provider_sync_client_token";
 const stops: Array<() => void | Promise<void>> = [];
@@ -25,13 +30,16 @@ function providerPayload() {
     revision: "sync-rev-1",
     providers: [
       {
-        id: "llmProvider_den_anthropic",
-        providerId: "anthropic",
-        name: "Anthropic",
+        id: "lpr_den_nvidia",
+        providerId: "nvidia",
+        name: "NVIDIA",
         source: "models_dev",
         credentialKind: "api_key",
-        providerConfig: { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic" },
-        models: [{ id: "claude", name: "Claude", config: { id: "claude", limit: { context: 200000 }, experimental: true } }],
+        providerConfig: { id: "nvidia", name: "NVIDIA", env: ["NVIDIA_API_KEY"], npm: "@ai-sdk/openai-compatible" },
+        models: [
+          { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash", config: { id: "deepseek-ai/deepseek-v4-flash", limit: { context: 128000 }, experimental: true } },
+          { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT", config: { id: "google/gemma-4-31b-it" } },
+        ],
         apiKey: "plain-server-secret",
         revision: "provider-rev-1",
       },
@@ -42,7 +50,10 @@ function providerPayload() {
         source: "models_dev",
         credentialKind: "opencode_oauth",
         providerConfig: { id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], npm: "@ai-sdk/openai" },
-        models: [{ id: "gpt-5", name: "GPT-5", config: { id: "gpt-5", experimental: { modes: { chat: true } }, knowledge: "2026-01" } }],
+        models: [
+          { id: "gpt-5.4", name: "GPT-5.4", config: { id: "gpt-5.4", experimental: { modes: { chat: true } }, knowledge: "2026-01" } },
+          { id: "gpt-5.5", name: "GPT-5.5", config: { id: "gpt-5.5" } },
+        ],
         opencodeAuth: JSON.stringify({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 }),
         revision: "provider-rev-2",
       },
@@ -65,6 +76,35 @@ async function boot(options: { failAuth?: boolean } = {}) {
         authCalls.push(await request.json());
         if (options.failAuth) return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
         return Response.json({ ok: true });
+      }
+      if (url.pathname === "/config/providers") {
+        return Response.json({
+          all: [
+            {
+              id: "lpr_den_nvidia",
+              name: "NVIDIA",
+              source: "custom",
+              models: {
+                "deepseek-ai/deepseek-v4-flash": { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+                "google/gemma-4-31b-it": { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
+              },
+            },
+            {
+              id: "openai",
+              name: "OpenAI",
+              source: "config",
+              models: {
+                "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" },
+                "gpt-5.5": { id: "gpt-5.5", name: "GPT-5.5" },
+                "gpt-4o": { id: "gpt-4o", name: "GPT-4o" },
+                "gpt-5.4-fast": { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
+                "o4-mini": { id: "o4-mini", name: "o4-mini" },
+              },
+            },
+          ],
+          connected: ["lpr_den_nvidia", "openai"],
+          default: { "lpr_den_nvidia": "deepseek-ai/deepseek-v4-flash", openai: "gpt-5.4" },
+        });
       }
       return Response.json({ ok: true });
     },
@@ -134,8 +174,15 @@ describe("managed provider sync runtime route", () => {
     }
 
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
-    expect(config.match(/llmProvider_den_anthropic/g)?.length).toBe(1);
+    expect(config.match(/lpr_den_nvidia/g)?.length).toBe(1);
     expect(config.match(/"openai"/g)?.length).toBeGreaterThanOrEqual(1);
+    expect(config).toContain("gpt-5.4");
+    expect(config).toContain("gpt-5.5");
+    expect(config).toContain("deepseek-ai/deepseek-v4-flash");
+    expect(config).toContain("google/gemma-4-31b-it");
+    expect(config).not.toContain("gpt-4o");
+    expect(config).not.toContain("gpt-5.4-fast");
+    expect(config).not.toContain("o4-mini");
     expect(config).toContain('"experimental": true');
     expect(config).not.toContain('"modes"');
     expect(config).not.toContain('"knowledge"');
@@ -143,6 +190,31 @@ describe("managed provider sync runtime route", () => {
     expect(authCalls).toHaveLength(4);
     expect(JSON.stringify(authCalls[0])).toContain("plain-server-secret");
     expect(JSON.stringify(authCalls[1])).toContain("refresh-secret");
+  });
+
+  test("filters managed OAuth provider-list models to Den-selected config models", async () => {
+    const { base } = await boot();
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { all?: ProviderListTestItem[] };
+    const providers = Array.isArray(body.all) ? body.all : [];
+    const openai = providers.find((provider) => provider?.id === "openai");
+    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+
+    expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-5.4-fast");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("o4-mini");
+    expect(Object.keys(nvidia?.models ?? {}).sort()).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
+    expect(JSON.stringify(body)).not.toContain("plain-server-secret");
+    expect(JSON.stringify(body)).not.toContain("refresh-secret");
   });
 
   test("sanitizes OpenCode auth apply failures", async () => {
