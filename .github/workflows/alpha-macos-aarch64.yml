@@ -149,7 +149,6 @@ jobs:
         if: env.MACOS_NOTARIZE == 'true'
         shell: bash
         env:
-          OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${{ secrets.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET }}
           TARGET: aarch64-apple-darwin
         run: pnpm --filter @openwork/desktop build:electron
 

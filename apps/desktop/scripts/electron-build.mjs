@@ -9,7 +9,6 @@ const repoRoot = resolve(desktopRoot, "../..");
 const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
-const googleWorkspaceOauthConfigPath = resolve(electronRoot, "google-workspace-oauth.generated.json");
 const packagedServerRoot = resolve(desktopRoot, "server");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -33,17 +32,6 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
-rmSync(googleWorkspaceOauthConfigPath, { force: true });
-if (process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim()) {
-  writeFileSync(
-    googleWorkspaceOauthConfigPath,
-    `${JSON.stringify({
-      clientId: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() || "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com",
-      clientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET.trim(),
-    }, null, 2)}\n`,
-    "utf8",
-  );
-}
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
 // OPENWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so

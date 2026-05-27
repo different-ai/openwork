@@ -54,8 +54,6 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Package Electron desktop (unpacked)
-        env:
-          OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${{ secrets.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET }}
         run: pnpm --filter @openwork/desktop package:electron:dir
 
       - name: Upload Electron artifacts
@@ -104,7 +102,6 @@ jobs:
 
       - name: Package Electron desktop (signed + notarized, no publish)
         env:
-          OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${{ secrets.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET }}
           CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
           MACOS_NOTARIZE: true

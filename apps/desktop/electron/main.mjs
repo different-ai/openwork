@@ -45,6 +45,7 @@ const DOCS_PAGE_URL = "https://openworklabs.com/docs";
 const BROWSER_PLUGIN = "opencode-chrome-devtools";
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+
 function computerUseHelperExecutablePath() {
   const appPath = computerUseHelperAppPath();
   const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
