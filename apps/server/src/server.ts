@@ -3731,7 +3731,7 @@ export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncPr
 }
 
 export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncProvider) {
-  const models = Object.fromEntries(provider.models.map((model) => [model.id, { ...model.config, id: model.id, name: model.name }]));
+  const models = Object.fromEntries(provider.models.map((model) => [model.id, buildManagedProviderModelRuntimeConfig(model)]));
   const next: Record<string, unknown> = {
     id: provider.providerId,
     name: provider.name,
@@ -3742,6 +3742,28 @@ export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncP
     const value = provider.providerConfig[key];
     if (value !== undefined) next[key] = value;
   }
+  return next;
+}
+
+function buildManagedProviderModelRuntimeConfig(model: ManagedProviderSyncProvider["models"][number]) {
+  const raw = model.config;
+  const next: Record<string, unknown> = { id: model.id, name: model.name };
+
+  for (const key of ["family", "release_date", "status"] as const) {
+    const value = raw[key];
+    if (typeof value === "string") next[key] = value;
+  }
+
+  for (const key of ["attachment", "reasoning", "temperature", "tool_call", "interleaved", "experimental"] as const) {
+    const value = raw[key];
+    if (typeof value === "boolean") next[key] = value;
+  }
+
+  for (const key of ["cost", "limit", "modalities", "options", "headers", "provider", "variants"] as const) {
+    const value = raw[key];
+    if (isRecordValue(value)) next[key] = value;
+  }
+
   return next;
 }
 

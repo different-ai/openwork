@@ -31,7 +31,7 @@ function providerPayload() {
         source: "models_dev",
         credentialKind: "api_key",
         providerConfig: { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic" },
-        models: [{ id: "claude", name: "Claude", config: { id: "claude", limit: { context: 200000 } } }],
+        models: [{ id: "claude", name: "Claude", config: { id: "claude", limit: { context: 200000 }, experimental: true } }],
         apiKey: "plain-server-secret",
         revision: "provider-rev-1",
       },
@@ -42,7 +42,7 @@ function providerPayload() {
         source: "models_dev",
         credentialKind: "opencode_oauth",
         providerConfig: { id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], npm: "@ai-sdk/openai" },
-        models: [{ id: "gpt-5", name: "GPT-5", config: { id: "gpt-5" } }],
+        models: [{ id: "gpt-5", name: "GPT-5", config: { id: "gpt-5", experimental: { modes: { chat: true } }, knowledge: "2026-01" } }],
         opencodeAuth: JSON.stringify({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 }),
         revision: "provider-rev-2",
       },
@@ -136,6 +136,9 @@ describe("managed provider sync runtime route", () => {
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
     expect(config.match(/llmProvider_den_anthropic/g)?.length).toBe(1);
     expect(config.match(/"openai"/g)?.length).toBeGreaterThanOrEqual(1);
+    expect(config).toContain('"experimental": true');
+    expect(config).not.toContain('"modes"');
+    expect(config).not.toContain('"knowledge"');
     expect(config).not.toContain("plain-server-secret");
     expect(authCalls).toHaveLength(4);
     expect(JSON.stringify(authCalls[0])).toContain("plain-server-secret");
