@@ -44,7 +44,7 @@ import "../domains/settings/computer-use-config";
 import "../domains/settings/browser-extension-config";
 import "../domains/settings/openwork-voice-config";
 import "../domains/settings/google-workspace-config";
-import { getExtensionConfigSlot, type ExtensionConfigContext } from "../domains/settings/extension-registry";
+import { getExtensionConfigSlot, getExtensionConnected, type ExtensionConfigContext } from "../domains/settings/extension-registry";
 import { isOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
 import { PreferencesView } from "../domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
@@ -2111,9 +2111,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 }}
                 configSlotForEntry={(entry) => getExtensionConfigSlot(entry, {
                   openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
-                  googleWorkspace: {
-                    connected: googleWorkspaceConnected,
-                    onStatusChange: setGoogleWorkspaceConnected,
+                  extensionConnections: {
+                    "google-workspace": googleWorkspaceConnected,
+                  },
+                  onExtensionConnectionChange: (extensionId, connected) => {
+                    if (extensionId === "google-workspace") setGoogleWorkspaceConnected(connected);
                   },
                   computerUse: {
                     connected: connectionsSnapshot.mcpServers.some((server) => server.name === "computer-use"),
@@ -2149,8 +2151,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   },
                 })}
                 isExtensionConnected={(entry) => {
+                  const runtimeConnected = getExtensionConnected(entry, {
+                    openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
+                    extensionConnections: {
+                      "google-workspace": googleWorkspaceConnected,
+                    },
+                  });
+                  if (runtimeConnected !== null) return runtimeConnected;
                   const id = entry.serverName ?? entry.name;
-                  if (id === "google-workspace") return googleWorkspaceConnected;
                   if (id === "openai-image-gen") return imageExtensionInstalled;
                   if (id === "ollama") return providerConnectedIds.includes("ollama");
                   return false;

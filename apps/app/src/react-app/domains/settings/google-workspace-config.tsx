@@ -15,7 +15,7 @@ import {
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
-import { registerExtensionConfig } from "./extension-registry";
+import { registerExtensionRuntime } from "./extension-registry";
 
 type BusyAction = "status" | "connect" | "disconnect" | "test" | "smoke-test";
 type GoogleWorkspaceCommand = () => Promise<unknown>;
@@ -83,7 +83,7 @@ async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, fl
   throw new Error("Google Workspace OAuth timed out.");
 }
 
-function GoogleWorkspaceConfig({ openworkServerClient, googleWorkspace }: ExtensionConfigContext) {
+function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChange }: ExtensionConfigContext) {
   const platform = usePlatform();
   const [status, setStatus] = useState<GoogleWorkspaceAuthStatus | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
@@ -99,7 +99,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, googleWorkspace }: Extens
     try {
       const result = normalizeGoogleWorkspaceAuthStatus(await openworkServerClient.googleWorkspaceStatus());
       setStatus(result);
-      googleWorkspace?.onStatusChange(result.connected);
+      onExtensionConnectionChange?.("google-workspace", result.connected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to read Google Workspace status.");
     } finally {
@@ -124,7 +124,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, googleWorkspace }: Extens
       ]);
       const next = normalizeGoogleWorkspaceAuthStatus(result);
       setStatus(next);
-      googleWorkspace?.onStatusChange(next.connected);
+      onExtensionConnectionChange?.("google-workspace", next.connected);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Google Workspace ${action} failed.`);
       await loadStatus({ clearError: false });
@@ -256,5 +256,9 @@ function GoogleWorkspaceConfig({ openworkServerClient, googleWorkspace }: Extens
   );
 }
 
-registerExtensionConfig("openwork.googleWorkspace.settings", (ctx) => <GoogleWorkspaceConfig {...ctx} />);
-registerExtensionConfig("google-workspace", (ctx) => <GoogleWorkspaceConfig {...ctx} />);
+registerExtensionRuntime({
+  id: "google-workspace",
+  settingsPanelRefs: ["openwork.googleWorkspace.settings"],
+  settingsPanel: (ctx) => <GoogleWorkspaceConfig {...ctx} />,
+  isConnected: (_entry, ctx) => ctx.extensionConnections?.["google-workspace"] === true,
+});
