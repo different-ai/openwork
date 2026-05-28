@@ -1,0 +1,24 @@
+apps/app/scripts/artifacts.test.ts
+  s_e3e666f7ac54b3::t_9b5d706531a27f 1-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b1dd453eb79701c659317c0d1a3de26f7615f626",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_e3e666f7ac54b3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7044-c363-7721-9ccf-ffc5d3c29d04",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
