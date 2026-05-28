@@ -66,7 +66,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; providerListShape?: "all" | "providers-array" | "providers-object" } = {}) {
+async function boot(options: { failAuth?: boolean; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[] } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -120,7 +120,7 @@ async function boot(options: { failAuth?: boolean; providerListShape?: "all" | "
         }
         return Response.json({
           all: providers,
-          connected: ["lpr_den_nvidia", "openai"],
+          connected: options.connected ?? ["lpr_den_nvidia", "openai"],
           default: { "lpr_den_nvidia": "deepseek-ai/deepseek-v4-flash", openai: "gpt-5.4" },
         });
       }
@@ -233,6 +233,22 @@ describe("managed provider sync runtime route", () => {
     expect(Object.keys(nvidia?.models ?? {}).sort()).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
     expect(JSON.stringify(body)).not.toContain("plain-server-secret");
     expect(JSON.stringify(body)).not.toContain("refresh-secret");
+  });
+
+  test("keeps Den-managed config providers visible when OpenCode connected list is empty", async () => {
+    const { base } = await boot({ connected: [] });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody & { connected?: string[] };
+
+    expect(body.connected?.sort()).toEqual(["lpr_den_nvidia", "openai"]);
   });
 
   test("filters managed OAuth provider-list models for live providers-array responses", async () => {

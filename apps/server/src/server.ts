@@ -769,16 +769,19 @@ async function readManagedProviderModelAllowlist(workspaceRoot: string): Promise
 
 function filterProviderListModels(data: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
   if (!isRecordValue(data)) return data;
+  const managedProviderIds = new Set(allowedModelsByProvider.keys());
   if (Array.isArray(data.all)) {
     return {
       ...data,
       all: data.all.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
+      connected: mergeManagedConnectedProviderIds(data.connected, data.all, managedProviderIds),
     };
   }
   if (Array.isArray(data.providers)) {
     return {
       ...data,
       providers: data.providers.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
+      connected: mergeManagedConnectedProviderIds(data.connected, data.providers, managedProviderIds),
     };
   }
   if (isRecordValue(data.providers)) {
@@ -787,9 +790,26 @@ function filterProviderListModels(data: unknown, allowedModelsByProvider: Map<st
       providers: Object.fromEntries(
         Object.entries(data.providers).map(([providerId, provider]) => [providerId, filterProviderListItem(provider, allowedModelsByProvider, providerId)]),
       ),
+      connected: mergeManagedConnectedProviderIds(data.connected, Object.keys(data.providers), managedProviderIds),
     };
   }
   return data;
+}
+
+function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>): string[] | undefined {
+  if (!Array.isArray(connected)) return undefined;
+  const providerIds = new Set(
+    providers.map((provider) => {
+      if (typeof provider === "string") return provider;
+      if (isRecordValue(provider) && typeof provider.id === "string") return provider.id;
+      return "";
+    }).filter(Boolean),
+  );
+  const next = new Set(connected.filter((id): id is string => typeof id === "string"));
+  for (const providerId of managedProviderIds) {
+    if (providerIds.has(providerId)) next.add(providerId);
+  }
+  return [...next];
 }
 
 function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
