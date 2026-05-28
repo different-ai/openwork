@@ -2177,7 +2177,12 @@ function createRoutes(
       ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
       : rawOpenworkHostUrl;
     const openworkToken = readStringField(body, "openworkToken");
+    const openworkClientToken = readStringField(body, "openworkClientToken");
     const openworkHostToken = readStringField(body, "openworkHostToken");
+    const openworkDenBaseUrl = readStringField(body, "openworkDenBaseUrl");
+    const openworkDenApiBaseUrl = readStringField(body, "openworkDenApiBaseUrl");
+    const openworkDenOrgId = readStringField(body, "openworkDenOrgId");
+    const openworkDenWorkerId = readStringField(body, "openworkDenWorkerId");
     const sandboxBackend = readStringField(body, "sandboxBackend");
     const sandboxRunId = readStringField(body, "sandboxRunId");
     const sandboxContainerName = readStringField(body, "sandboxContainerName");
@@ -2222,6 +2227,12 @@ function createRoutes(
       ...(displayName ? { displayName } : {}),
       ...(remoteType === "openwork" && openworkHostUrl ? { openworkHostUrl } : {}),
       ...(openworkToken ? { openworkToken } : {}),
+      ...(remoteType === "openwork" && openworkClientToken ? { openworkClientToken } : {}),
+      ...(remoteType === "openwork" && openworkHostToken ? { openworkHostToken } : {}),
+      ...(remoteType === "openwork" && openworkDenBaseUrl ? { openworkDenBaseUrl } : {}),
+      ...(remoteType === "openwork" && openworkDenApiBaseUrl ? { openworkDenApiBaseUrl } : {}),
+      ...(remoteType === "openwork" && openworkDenOrgId ? { openworkDenOrgId } : {}),
+      ...(remoteType === "openwork" && openworkDenWorkerId ? { openworkDenWorkerId } : {}),
       ...(remoteType === "openwork" && openworkWorkspaceId ? { openworkWorkspaceId } : {}),
       ...(remoteType === "openwork" && openworkWorkspaceName ? { openworkWorkspaceName } : {}),
       ...(sandboxBackend ? { sandboxBackend } : {}),
@@ -4217,6 +4228,12 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     ...(workspace.displayName ? { displayName: workspace.displayName } : {}),
     ...(workspace.openworkHostUrl ? { openworkHostUrl: workspace.openworkHostUrl } : {}),
     ...(workspace.openworkToken ? { openworkToken: workspace.openworkToken } : {}),
+    ...(workspace.openworkClientToken ? { openworkClientToken: workspace.openworkClientToken } : {}),
+    ...(workspace.openworkHostToken ? { openworkHostToken: workspace.openworkHostToken } : {}),
+    ...(workspace.openworkDenBaseUrl ? { openworkDenBaseUrl: workspace.openworkDenBaseUrl } : {}),
+    ...(workspace.openworkDenApiBaseUrl ? { openworkDenApiBaseUrl: workspace.openworkDenApiBaseUrl } : {}),
+    ...(workspace.openworkDenOrgId ? { openworkDenOrgId: workspace.openworkDenOrgId } : {}),
+    ...(workspace.openworkDenWorkerId ? { openworkDenWorkerId: workspace.openworkDenWorkerId } : {}),
     ...(workspace.openworkWorkspaceId ? { openworkWorkspaceId: workspace.openworkWorkspaceId } : {}),
     ...(workspace.openworkWorkspaceName ? { openworkWorkspaceName: workspace.openworkWorkspaceName } : {}),
     ...(workspace.sandboxBackend ? { sandboxBackend: workspace.sandboxBackend } : {}),
