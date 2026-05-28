@@ -40,12 +40,6 @@ export type OpenEralTerminalProps = {
    *  user switch back to the regular OpenWork chat UI. The PTY session
    *  ends but the sandbox persists — switching back to Terminal reconnects. */
   onSwitchToChat?: () => void;
-  /** When provided, called after the user commits a display-label rename.
-   *  The settings TestLaunchPanel uses this to stop the current session and
-   *  update the workspace ID so the next "Launch session" connects to a
-   *  fresh sandbox with the new name. In the main session view this prop is
-   *  NOT passed — the rename is cosmetic (localStorage) only. */
-  onRenameCommit?: (newName: string) => void;
 };
 
 type Phase =
@@ -63,10 +57,6 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const fitRef = useRef<FitAddonType | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
-  // Persists the last successfully resolved sandbox name so that the
-  // "Delete sandbox" and "Pop out" buttons remain functional even when
-  // sandboxName state is null (e.g. after an error before first connect).
-  const lastKnownSandboxNameRef = useRef<string | null>(null);
   // Buffer to hold PTY bytes that arrive before xterm.js finishes
   // mounting and the data subscription is set up.
   const earlyBufferRef = useRef<string[]>([]);
@@ -77,9 +67,6 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [popoutBusy, setPopoutBusy] = useState(false);
   const [popoutError, setPopoutError] = useState<string | null>(null);
-  // Track whether the xterm.js textarea has keyboard focus so we can show
-  // a "Click to type" hint when the terminal is connected but not active.
-  const [isFocused, setIsFocused] = useState(false);
 
   // User-editable display name for the sandbox. The actual sandbox name
   // used by openshell never changes — this is purely cosmetic.
@@ -104,47 +91,28 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [sandboxName]);
 
   const commitRename = useCallback(() => {
-    const effectiveName = sandboxName ?? lastKnownSandboxNameRef.current;
-    if (!effectiveName) return;
+    if (!sandboxName) return;
     const trimmed = renameValue.trim();
-    const next = trimmed || effectiveName;
-    if (trimmed) localStorage.setItem(`openeral-display:${effectiveName}`, trimmed);
-    else localStorage.removeItem(`openeral-display:${effectiveName}`);
+    const next = trimmed || sandboxName;
+    if (trimmed) localStorage.setItem(`openeral-display:${sandboxName}`, trimmed);
+    else localStorage.removeItem(`openeral-display:${sandboxName}`);
     setDisplayName(next);
     setIsRenaming(false);
-    // Clear any stale error so the error card doesn't linger after a rename.
-    setErrorMessage(null);
-    setPhase((prev) => (prev === "error" ? "exited" : prev));
-    // If onRenameCommit is provided (settings TestLaunchPanel), calling it
-    // will stop the current session and swap the workspace ID — reset
-    // hasEverConnected so the button reads "Launch session" for the new
-    // workspace. In the main session view (no prop), the rename is cosmetic
-    // only and the button correctly stays "Reconnect" for the same sandbox.
-    if (trimmed && props.onRenameCommit) {
-      setHasEverConnected(false);
-      props.onRenameCommit(trimmed);
-    }
-  }, [sandboxName, renameValue, props.onRenameCommit]);
+  }, [sandboxName, renameValue]);
 
   // Mark first successful connection and auto-focus the terminal so the
   // user can type immediately without having to click.
-  // Two-layer approach: RAF fires one frame after render (fast but can
-  // race with other elements); setTimeout(200) fires after the UI settles
-  // and is a reliable fallback for when Settings sidebar items steal focus
-  // during the transition.
   useEffect(() => {
     if (phase !== "connected") return;
     setHasEverConnected(true);
     const raf = requestAnimationFrame(() => {
-      try { termRef.current?.focus(); } catch { /* ignore */ }
+      try {
+        termRef.current?.focus();
+      } catch {
+        // ignore
+      }
     });
-    const t = setTimeout(() => {
-      try { termRef.current?.focus(); } catch { /* ignore */ }
-    }, 200);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(t);
-    };
+    return () => cancelAnimationFrame(raf);
   }, [phase]);
 
   useEffect(() => {
@@ -204,7 +172,6 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         );
         if (cancelled) return;
         setSandboxName(sandbox.sandboxName);
-        lastKnownSandboxNameRef.current = sandbox.sandboxName;
 
         // 2. Subscribe to PTY events BEFORE opening the PTY so the
         // initial sandbox-connect output (welcome banner, prompt)
@@ -345,8 +312,6 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           sandboxName: sandbox.sandboxName,
           cols: term.cols,
           rows: term.rows,
-          existed: sandbox.existed,
-          profile: props.profile,
         });
         if (cancelled) {
           await invoke("openeralPtyClose", pty.id).catch(() => {});
@@ -392,12 +357,11 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [props.workspaceId, props.profile, reconnectKey]);
 
   const popOut = useCallback(async () => {
-    const name = sandboxName ?? lastKnownSandboxNameRef.current;
-    if (!name) return;
+    if (!sandboxName) return;
     setPopoutBusy(true);
     setPopoutError(null);
     try {
-      await invoke("openeralPopOutTerminal", name);
+      await invoke("openeralPopOutTerminal", sandboxName);
     } catch (err) {
       setPopoutError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -406,38 +370,21 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   }, [sandboxName]);
 
   const deleteSandbox = useCallback(async () => {
-    const nameToDelete = sandboxName ?? lastKnownSandboxNameRef.current;
-    if (!nameToDelete) return;
+    if (!sandboxName) return;
     const ok = window.confirm(
-      `Delete sandbox "${nameToDelete}"?\n\n` +
+      `Delete sandbox "${sandboxName}"?\n\n` +
         "The Postgres-backed /home/agent will remain, but this sandbox " +
         "instance is gone. Reopening the workspace will create a fresh " +
         "sandbox and restore the home directory from PostgreSQL.",
     );
     if (!ok) return;
     try {
-      await invoke("openeralDeleteSandbox", nameToDelete);
+      await invoke("openeralDeleteSandbox", sandboxName);
       props.onSandboxDeleted?.();
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
     }
   }, [sandboxName, props.onSandboxDeleted, props]);
-
-  /** Delete the stuck sandbox silently then immediately reconnect so
-   *  openeralEnsureSandbox creates a brand-new one. Used from the
-   *  BootstrapErrorCard when the sandbox is stuck in Provisioning. */
-  const deleteAndReconnect = useCallback(async () => {
-    const nameToDelete = sandboxName ?? lastKnownSandboxNameRef.current;
-    if (nameToDelete) {
-      try {
-        await invoke("openeralDeleteSandbox", nameToDelete);
-      } catch {
-        // Best-effort — even if delete fails, attempt a reconnect; the
-        // "already exists" guard in createOpenEralSandbox handles partial state.
-      }
-    }
-    reconnect();
-  }, [sandboxName, reconnect]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -467,11 +414,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           ) : (
             <button
               className="group flex items-center gap-1 min-w-0 text-left"
-              title={
-                sandboxName
-                  ? `Display label (cosmetic only)\nActual sandbox: ${sandboxName}\n\nClick to rename`
-                  : "Click to rename display label"
-              }
+              title="Click to rename display label"
               onClick={() => {
                 setRenameValue(displayName);
                 setIsRenaming(true);
@@ -481,29 +424,12 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               <Pencil size={10} className="shrink-0 text-gray-8 opacity-0 group-hover:opacity-100 transition-opacity" />
             </button>
           )}
-          {/* When a custom display label has been set, show the real sandbox
-              name as a small secondary label so the user can see why terminal
-              error messages reference a different (internal) name. */}
-          {sandboxName && displayName && displayName !== sandboxName ? (
-            <span
-              className="hidden sm:block shrink-0 font-mono text-[10px] text-gray-7 truncate max-w-[120px]"
-              title={`Actual openshell sandbox: ${sandboxName}`}
-            >
-              {sandboxName.length > 22 ? `${sandboxName.slice(0, 22)}…` : sandboxName}
-            </span>
-          ) : null}
           <span className="text-gray-9 shrink-0">·</span>
           <span className="text-gray-10 shrink-0">{phaseLabel(phase)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {phase === "exited" || phase === "error" ? (
-            <Button
-              variant="outline"
-              className="h-7 rounded-full px-3 text-xs"
-              onClick={reconnect}
-              onMouseDown={(e) => e.preventDefault()}
-              title={hasEverConnected ? "Reconnect to the sandbox" : "Launch a new session"}
-            >
+            <Button variant="outline" className="h-7 rounded-full px-3 text-xs" onClick={reconnect}>
               <RotateCcw size={12} className="mr-1" />
               {hasEverConnected ? "Reconnect" : "Launch session"}
             </Button>
@@ -513,38 +439,31 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               variant="outline"
               className="h-7 rounded-full px-3 text-xs"
               onClick={props.onSwitchToChat}
-              onMouseDown={(e) => e.preventDefault()}
               title="Switch to the regular OpenWork chat UI. The sandbox keeps running."
             >
               <MessageSquare size={12} className="mr-1" />
               Chat
             </Button>
           ) : null}
-          {/* Icon-only buttons — use !p-0 !rounded-full to override the
-              Button base class which sets px-4 py-2 rounded-lg and would
-              otherwise win in Tailwind's stylesheet ordering, squashing the
-              content area to zero width and hiding the icon. onMouseDown
-              preventDefault stops the button from stealing keyboard focus
-              from xterm.js so the PTY keeps receiving keystrokes. */}
           <Button
             variant="outline"
-            className="h-7 w-7 !rounded-full !p-0 shrink-0"
+            className="h-7 rounded-full px-3 text-xs"
             onClick={() => void popOut()}
-            onMouseDown={(e) => e.preventDefault()}
-            disabled={(!sandboxName && !lastKnownSandboxNameRef.current) || popoutBusy}
+            disabled={!sandboxName || popoutBusy}
             title="Open the same sandbox in a separate OS terminal window"
           >
-            {popoutBusy ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+            {popoutBusy ? <Loader2 size={12} className="mr-1 animate-spin" /> : <ExternalLink size={12} className="mr-1" />}
+            Pop out
           </Button>
           <Button
             variant="outline"
-            className="h-7 w-7 !rounded-full !p-0 shrink-0 border-red-7/50 text-red-12 hover:bg-red-2/30"
+            className="h-7 rounded-full border-red-7/50 px-3 text-xs text-red-12 hover:bg-red-2/30"
             onClick={() => void deleteSandbox()}
-            onMouseDown={(e) => e.preventDefault()}
-            disabled={!sandboxName && !lastKnownSandboxNameRef.current}
+            disabled={!sandboxName}
             title="Delete the sandbox. Postgres-backed /home/agent files persist."
           >
-            <Trash2 size={13} />
+            <Trash2 size={12} className="mr-1" />
+            Delete sandbox
           </Button>
         </div>
       </div>
@@ -558,50 +477,17 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           vertical-text bug). Loading / error overlays sit on top via absolute
           positioning rather than hiding the container with display:none. */}
       <div className="relative flex-1 min-h-0">
-        {/* Terminal container: always focused when the cursor is over it.
-            focus-on-hover means the user doesn't need to click after
-            interacting with toolbar buttons — moving the mouse back over
-            the terminal instantly restores keystroke capture so Claude
-            Code's TUI (theme selectors, menus, etc.) responds correctly.
-            onClick is a fallback for touch/keyboard navigation.
-            onFocusCapture/onBlurCapture bubble up from xterm's internal
-            textarea so we can track focus state for the hint badge. */}
-        <div
-          ref={containerRef}
-          className="absolute inset-0 bg-black"
-          onMouseEnter={() => {
-            try { termRef.current?.focus(); } catch { /* ignore */ }
-          }}
-          onClick={() => {
-            try { termRef.current?.focus(); } catch { /* ignore */ }
-          }}
-          onFocusCapture={() => setIsFocused(true)}
-          onBlurCapture={() => setIsFocused(false)}
-        />
-        {/* "Click to type" hint — shown whenever the terminal is fully
-            connected but xterm's textarea doesn't have keyboard focus.
-            This guides users who clicked a toolbar button or the Settings
-            sidebar and then tried to type without moving back to the
-            terminal. The badge is pointer-events-none so it doesn't
-            interfere with the click-to-focus handler above. */}
-        {phase === "connected" && !isFocused ? (
-          <div className="absolute bottom-3 right-3 z-20 pointer-events-none select-none rounded-full bg-gray-12/60 px-2.5 py-1 text-[10px] font-medium text-gray-1">
-            Click to type
-          </div>
-        ) : null}
+        <div ref={containerRef} className="absolute inset-0 bg-black" />
         {errorMessage && phase === "error" ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
             <BootstrapErrorCard
               message={errorMessage}
               profile={props.profile}
               onRetry={reconnect}
-              onDeleteAndReconnect={deleteAndReconnect}
               onOpenSettings={props.onOpenSettings}
             />
           </div>
-        ) : phase !== "connected" && phase !== "exited" && phase !== "error" ? (
-          // "error" without an errorMessage (cleared by commitRename) falls
-          // through here — don't show the spinner, just show the terminal.
+        ) : phase !== "connected" && phase !== "exited" ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-dls-surface p-6">
             <BootstrapProgress
               phase={phase}
@@ -671,14 +557,12 @@ type BootstrapErrorCardProps = {
   message: string;
   profile: SandboxProfile;
   onRetry: () => void;
-  onDeleteAndReconnect?: () => void;
   onOpenSettings?: () => void;
 };
 
 function BootstrapErrorCard(props: BootstrapErrorCardProps) {
   // Detect actionable errors so the founder sees a clear next step
   // instead of a raw stderr dump.
-  const stuckProvisioning = props.message.startsWith("STUCK_PROVISIONING:");
   const missingDatabase = /DATABASE_URL is not configured/i.test(props.message);
   // Backend throws "ANTHROPIC_API_KEY is not configured" (not "is required")
   const missingApiKey = /ANTHROPIC_API_KEY is not configured/i.test(props.message);
@@ -688,13 +572,7 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
 
   let title = "Could not start OpenEral session.";
   let detail = props.message;
-  if (stuckProvisioning) {
-    title = "Sandbox is stuck in Provisioning.";
-    detail =
-      "The sandbox has been provisioning for over 90 seconds and hasn't become ready. " +
-      "This usually means the OpenShell gateway lost track of the container. " +
-      "Click \"Delete & start fresh\" to remove the stuck sandbox and create a new one.";
-  } else if (missingDatabase) {
+  if (missingDatabase) {
     title = "DATABASE_URL is not configured.";
     detail =
       "OpenEral stores workspace state in PostgreSQL. Open Settings → Sandbox → " +
@@ -723,25 +601,13 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
         <span className="text-sm font-medium">{title}</span>
       </div>
       <div className="text-sm text-gray-11">{detail}</div>
-      {!credentialIssue && !stuckProvisioning ? (
+      {!credentialIssue ? (
         <div className="font-mono text-xs text-red-12 break-words">
           {props.message}
         </div>
       ) : null}
       <div className="flex items-center gap-2">
-        {stuckProvisioning && props.onDeleteAndReconnect ? (
-          <Button variant="primary" onClick={props.onDeleteAndReconnect}>
-            <RotateCcw size={14} className="mr-1.5" />
-            Delete &amp; start fresh
-          </Button>
-        ) : null}
         {(credentialIssue || openshellUnready) && props.onOpenSettings ? (
-          <Button variant="primary" onClick={props.onOpenSettings}>
-            <Settings size={14} className="mr-1.5" />
-            Open Settings → Sandbox
-          </Button>
-        ) : null}
-        {gatewayUnresponsive && props.onOpenSettings ? (
           <Button variant="primary" onClick={props.onOpenSettings}>
             <Settings size={14} className="mr-1.5" />
             Open Settings → Sandbox

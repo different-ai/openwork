@@ -84,92 +84,23 @@ function buildWslEnv(extra) {
 
 let spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
   const pty = await import("node-pty");
+  // Wrap the openshell command in `bash -c` so we can call `stty cols X rows Y`
+  // before openshell's SSH client reads TIOCGWINSZ to allocate the remote PTY.
+  //
+  // Problem: node-pty creates a Windows ConPTY with the correct dimensions, but
+  // the ConPTY → WSL2 linux-PTY dimension propagation is racy. By the time
+  // `openshell sandbox exec --tty` runs SSH and issues TIOCGWINSZ on its
+  // controlling terminal, the WSL-side PTY may not yet reflect the ConPTY's
+  // dimensions — so the container PTY defaults to 1 column and Claude Code
+  // renders its TUI with each character on a separate line ("vertical text").
+  //
+  // Fix: `stty cols X rows Y` explicitly sets the linux-PTY dimensions before
+  // openshell reads them. `2>/dev/null` silences errors if stty fails (e.g.
+  // stdin not a TTY in a test environment); `;` (not `&&`) keeps going either way.
   const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
-
-  // WHY gRPC exec breaks interactive TUIs (Claude Code theme selector, etc.)
-  // ─────────────────────────────────────────────────────────────────────────
-  // `openshell sandbox exec` uses the gRPC exec endpoint, which is explicitly
-  // NOT designed for interactive sessions (see `openshell sandbox exec --help`:
-  // "For interactive shell sessions, use sandbox connect instead").  When
-  // --tty is forced the gRPC server allocates a container PTY, but the gRPC
-  // streaming layer does not forward ioctl/tcsetattr operations from inside the
-  // container back to the wire protocol.  The PTY stays in ICANON+ECHO
-  // (cooked mode) regardless of `stty -icanon -echo` or
-  // `process.stdin.setRawMode(true)` calls inside the container — any key the
-  // user presses is echoed back and line-buffered until Enter, so Claude Code's
-  // TUI never receives individual keystrokes.
-  //
-  // WHY SSH fixes it
-  // ─────────────────
-  // `openshell sandbox connect` (and direct SSH via sandbox ssh-config) use a
-  // real SSH PTY request.  SSH calls cfmakeraw on the local (WSL) PTY slave,
-  // negotiates a container PTY via pty-request, and the Linux kernel's PTY line
-  // discipline on both ends handles ECHO/ICANON correctly.
-  // `process.stdin.setRawMode(true)` inside Claude Code then works end-to-end.
-  //
-  // STRATEGY
-  // ─────────
-  // 1. SSH-first: ask openshell for the sandbox SSH config, write it to a
-  //    temp file, extract the Host alias, then exec ssh with `openeral` as
-  //    the remote command.  The API key is already baked into the container at
-  //    creation time (--auto-providers), so no extra env forwarding is needed
-  //    for subsequent connections.
-  //
-  // 2. gRPC-exec fallback: if the gateway is offline, the sandbox isn't ready,
-  //    or ssh-config is otherwise unavailable, fall through to the original
-  //    `sandbox exec --tty -- bash -c 'stty ...; exec openeral'` path.  This
-  //    preserves connectivity during gateway downtime even if the TUI won't be
-  //    fully interactive.
-  //
-  // DIMENSIONS
-  // ──────────
-  // The outer `stty cols X rows Y` sets TIOCGWINSZ on the WSL PTY BEFORE ssh
-  // starts.  ssh reads TIOCGWINSZ from its stdin (WSL PTY slave) when building
-  // the pty-request, so the correct dimensions are sent to the container PTY.
-  // ── Connect path: SSH-first with gRPC exec fallback ─────────────────────────
-  // The sandbox is always provisioned before the PTY opens (createOpenEralSandbox
-  // in openeral.mjs runs `create --no-tty -- /bin/true` + waitForSandboxReady).
-  // We therefore always connect — never create — from the PTY layer.
   const shellCmd =
-    // Set WSL PTY dimensions AND raw mode before SSH / gRPC exec starts.
-    // -icanon -echo prevents the WSL bash layer from line-buffering or
-    // echoing keystrokes (which caused stray `)` characters in the terminal).
-    // SSH reads TIOCGWINSZ from the PTY slave for its pty-request, so the
-    // correct cols/rows reach the container PTY automatically.
-    `stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; ` +
-    // ── SSH path ──────────────────────────────────────────────────────────
-    // mktemp + ssh-config + awk extract the Host alias; command -v guards
-    // against missing ssh binary.  exec ssh replaces the bash process so the
-    // gRPC fallback below is never reached on success.
-    //
-    // NOTE: _cfg=$(mktemp) uses ; not && because variable assignments always
-    // exit 0 in bash — even when mktemp fails.  Using && here would not guard
-    // against mktemp failure; _cfg would be empty and > "$_cfg" would try to
-    // redirect stdout to an empty filename, printing a bash error to the
-    // terminal.  The explicit [ -n "$_cfg" ] guard below is the correct check.
-    //
-    // The trap removes the temp config file whether bash exits normally or is
-    // killed (e.g. user closes the terminal tab). This prevents /tmp leaks
-    // in the WSL distro on repeated session open/close cycles.
-    //
-    // awk 2>/dev/null: suppresses "cannot open" noise that some awk builds
-    // print to stderr when the ssh-config file is empty or malformed (e.g.
-    // when openshell returns an error line to stdout for a not-yet-ready
-    // sandbox). The awk exit code is still captured via $() command
-    // substitution — only the stderr error text is silenced.
-    `_cfg=$(mktemp /tmp/ow-ssh-XXXXXX.conf 2>/dev/null); ` +
-    `trap 'rm -f "$_cfg"' EXIT; ` +
-    `[ -n "$_cfg" ] && ` +
-    `openshell sandbox ssh-config ${quotedName} > "$_cfg" 2>/dev/null && ` +
-    `_host=$(awk '/^Host /{print $2; exit}' "$_cfg" 2>/dev/null) && ` +
-    `[ -n "$_host" ] && command -v ssh > /dev/null 2>&1 && ` +
-    `exec ssh -t -F "$_cfg" -o StrictHostKeyChecking=no "$_host" openeral; ` +
-    // ── gRPC exec fallback ────────────────────────────────────────────────
-    // Used when SSH is not available.  Sets raw mode inside the container
-    // bash before exec'ing openeral so the container PTY at least starts in
-    // raw mode (may be reset by setup.sh before Claude Code runs).
-    `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
-    `bash -c 'stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; exec openeral'`;
+    `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
+    `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
   return pty.spawn(
     "wsl.exe",
     ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],
@@ -177,11 +108,11 @@ let spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
       name: "xterm-256color",
       cols,
       rows,
-      // Forward credentials via WSLENV for both paths. Create path needs
-      // DATABASE_URL (written to temp file for --upload). Connect path needs
-      // ANTHROPIC_API_KEY / STRINGCOST_API_KEY (SSH path bakes them in at
-      // creation time; gRPC fallback needs them forwarded on first run).
+      // Forward credentials (ANTHROPIC_API_KEY, STRINGCOST_API_KEY, etc.)
+      // via WSLENV so the `openeral` entrypoint inside the sandbox can
+      // auto-configure Claude Code on first run without prompting the user.
       env: extraEnv ? buildWslEnv(extraEnv) : process.env,
+      // CWD doesn't really matter for wsl.exe, but cleanup-safe default.
       cwd: process.env.HOME ?? process.env.USERPROFILE ?? process.cwd(),
     },
   );
@@ -348,16 +279,8 @@ export const __testing = {
       const pty = await import("node-pty");
       const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
       const shellCmd =
-        `stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; ` +
-        `_cfg=$(mktemp /tmp/ow-ssh-XXXXXX.conf 2>/dev/null); ` +
-        `trap 'rm -f "$_cfg"' EXIT; ` +
-        `[ -n "$_cfg" ] && ` +
-        `openshell sandbox ssh-config ${quotedName} > "$_cfg" 2>/dev/null && ` +
-        `_host=$(awk '/^Host /{print $2; exit}' "$_cfg" 2>/dev/null) && ` +
-        `[ -n "$_host" ] && command -v ssh > /dev/null 2>&1 && ` +
-        `exec ssh -t -F "$_cfg" -o StrictHostKeyChecking=no "$_host" openeral; ` +
-        `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
-        `bash -c 'stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; exec openeral'`;
+        `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
+        `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
       return pty.spawn(
         "wsl.exe",
         ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],

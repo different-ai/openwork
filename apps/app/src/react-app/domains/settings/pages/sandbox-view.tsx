@@ -576,21 +576,11 @@ function TestLaunchPanel(props: TestLaunchPanelProps) {
               Close session
             </Button>
           </div>
-          <div className="h-[540px] overflow-hidden rounded-xl border border-dls-border">
+          <div className="h-[420px] overflow-hidden rounded-xl border border-dls-border">
             <OpenEralTerminal
               key={`${launchedWorkspaceId}:${props.profile}`}
               workspaceId={launchedWorkspaceId}
               profile={props.profile}
-              onRenameCommit={(newId) => {
-                // Update both states so:
-                // 1. launchedWorkspaceId changes → React unmounts old terminal
-                //    and mounts a new one with the new workspaceId immediately
-                //    (no "Launch session" click needed).
-                // 2. workspaceId (input field) stays in sync for when the
-                //    user closes the session and manually relaunches later.
-                setWorkspaceId(newId);
-                setLaunchedWorkspaceId(newId);
-              }}
             />
           </div>
         </div>
