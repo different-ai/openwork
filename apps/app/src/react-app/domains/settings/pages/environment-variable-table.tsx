@@ -27,7 +27,8 @@ import { Spinner } from "../settings-section";
 
 export type EnvironmentVariableItem = {
   key: string;
-  value: string;
+  value?: string;
+  hasValue: boolean;
   updatedAt: number;
 };
 
@@ -78,6 +79,7 @@ export function EnvironmentVariableTableBody({ children }: EnvironmentVariableTa
 
 export type EnvironmentVariableTableRevealButtonProps = {
   isRevealed: boolean;
+  disabled?: boolean;
   onToggleReveal: () => void;
 };
 
@@ -92,6 +94,7 @@ export function EnvironmentVariableTableRevealButton(props: EnvironmentVariableT
             variant="ghost"
             size="icon-sm"
             pressed={props.isRevealed}
+            disabled={props.disabled}
             onPressedChange={() => props.onToggleReveal()}
             aria-label={label}
           >
@@ -161,6 +164,7 @@ export type EnvironmentVariableTableItemProps = {
   isRevealed: boolean;
   canEdit: boolean;
   deleting: boolean;
+  revealing: boolean;
   onEdit: (item: EnvironmentVariableItem) => void;
   onToggleReveal: (key: string) => void;
   onDelete: (item: EnvironmentVariableItem) => void;
@@ -196,6 +200,7 @@ export function EnvironmentVariableTableItem(props: EnvironmentVariableTableItem
           <div className="flex h-lh shrink-0 items-center justify-center">
             <EnvironmentVariableTableRevealButton
               isRevealed={props.isRevealed}
+              disabled={props.revealing}
               onToggleReveal={() => props.onToggleReveal(props.item.key)}
             />
           </div>
@@ -203,7 +208,7 @@ export function EnvironmentVariableTableItem(props: EnvironmentVariableTableItem
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
               {props.item.value || t("settings.environment.empty_value")}
             </code>
-          ) : props.item.value ? (
+          ) : props.item.hasValue ? (
             <span className="font-mono text-xs text-muted-foreground">{MASKED_VALUE_DISPLAY}</span>
           ) : (
             <span className="text-xs text-muted-foreground">{t("settings.environment.empty_value")}</span>

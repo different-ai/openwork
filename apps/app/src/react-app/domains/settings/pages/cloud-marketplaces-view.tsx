@@ -77,7 +77,8 @@ function pluginComposition(plugin: DenOrgPlugin) {
 
 function pluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgPlugin): MarketplacePackageStatus {
   if (!imported) return "available";
-  if (imported.updatedAt !== plugin.updatedAt || imported.files.length !== plugin.memberCount) return "update_available";
+  const importedObjectCount = new Set(imported.files.map((file) => file.configObjectId)).size;
+  if (imported.updatedAt !== plugin.updatedAt || importedObjectCount !== plugin.memberCount) return "update_available";
   return "installed";
 }
 

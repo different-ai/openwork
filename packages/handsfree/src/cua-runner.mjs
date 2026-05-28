@@ -59,7 +59,12 @@ export async function runCuaLoop({
       if (signal?.aborted) return { ok: true, messages, turns: turn + 1, aborted: true };
       if (action.type === "screenshot") continue;
       onProgress?.({ kind: "action", ...summarizeAction(action) });
-      await executeCuaAction(callTool, action);
+      const actionResult = await executeCuaAction(callTool, action);
+      const actionPayload = parseToolText(actionResult);
+      if (actionPayload?.ok === false) {
+        if (actionPayload.requiredNextAction === "snapshot") break;
+        throw new Error(actionPayload.error || `Computer action failed: ${action.type}`);
+      }
       await delay(150);
     }
 

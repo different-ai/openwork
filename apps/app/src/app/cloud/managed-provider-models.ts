@@ -10,7 +10,9 @@ export function buildCloudManagedModelIdsByProvider(
     if (!providerId) continue;
     const modelIds = imported.modelIds.map((id) => id.trim()).filter(Boolean);
     if (!modelIds.length) continue;
-    next.set(providerId, new Set(modelIds));
+    const merged = next.get(providerId) ?? new Set<string>();
+    for (const modelId of modelIds) merged.add(modelId);
+    next.set(providerId, merged);
   }
   return next;
 }

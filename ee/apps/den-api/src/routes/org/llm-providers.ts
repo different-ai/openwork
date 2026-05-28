@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   LlmProviderAccessTable,
@@ -107,7 +107,7 @@ const llmProviderWriteSchema = z.object({
   }
 
   if (value.credentialKind === "opencode_oauth") {
-    if (value.source === "models_dev" && !isOpencodeOauthProviderAllowed(value.providerId)) {
+    if (value.source !== "models_dev" || !isOpencodeOauthProviderAllowed(value.providerId)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["credentialKind"],
@@ -443,7 +443,7 @@ async function resolveMemberIds(input: {
   const rows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, memberIds)))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, memberIds), isNull(MemberTable.removedAt)))
 
   if (rows.length !== memberIds.length) {
     throw createFailure(404, "member_not_found")
@@ -622,7 +622,7 @@ async function loadLlmProviders(input: {
     .from(LlmProviderAccessTable)
     .innerJoin(MemberTable, eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id))
     .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-    .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId)))
+    .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId), isNull(MemberTable.removedAt)))
 
   const teamAccessRows = await db
     .select({

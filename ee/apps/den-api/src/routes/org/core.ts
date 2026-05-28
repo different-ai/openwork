@@ -1,11 +1,12 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { OrganizationTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -29,9 +30,21 @@ const updateOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
-}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined, {
+  requireSso: z.boolean().optional(),
+}).refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined, {
   message: "Provide at least one organization field to update.",
 })
+
+const resolveSsoByEmailQuerySchema = z.object({
+  email: z.string().trim().email(),
+})
+
+const resolveSsoByEmailResponseSchema = z.object({
+  requireSso: z.boolean(),
+  organizationSlug: z.string(),
+  signInPath: z.string(),
+  signInUrl: z.string().url(),
+}).meta({ ref: "ResolveOrganizationSsoByEmailResponse" })
 
 const invitationPreviewQuerySchema = z.object({
   id: z.string().trim().min(1).max(255),
@@ -306,6 +319,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         name: input.name,
         allowedEmailDomains: normalizedDomains.domains,
         allowedDesktopVersions: input.allowedDesktopVersions,
+        requireSso: input.requireSso,
       })
 
       if (!updated) {
@@ -313,6 +327,52 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       return c.json({ organization: updated })
+    },
+  )
+
+  app.get(
+    "/v1/orgs/sso/resolve",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "Resolve organization SSO by email",
+      description: "Returns the org SSO entry URL for an email address when the matching organization requires SSO.",
+      responses: {
+        200: jsonResponse("Organization SSO resolution returned successfully.", resolveSsoByEmailResponseSchema),
+        204: { description: "No enforced organization SSO route matched this email." },
+        400: jsonResponse("The SSO resolution query parameters were invalid.", invalidRequestSchema),
+      },
+    }),
+    queryValidator(resolveSsoByEmailQuerySchema),
+    async (c) => {
+      const query = c.req.valid("query")
+      const domain = query.email.slice(query.email.lastIndexOf("@") + 1).toLowerCase()
+      const matches = await db
+        .select({
+          slug: OrganizationTable.slug,
+          metadata: OrganizationTable.metadata,
+          signInPath: SsoConnectionTable.signInPath,
+          domain: SsoConnectionTable.domain,
+        })
+        .from(OrganizationTable)
+        .innerJoin(SsoConnectionTable, eq(OrganizationTable.id, SsoConnectionTable.organizationId))
+        .where(eq(SsoConnectionTable.domain, domain))
+
+      const match = matches.find((row) => {
+        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {}
+        return metadata.requireSso === true
+      })
+
+      if (!match) {
+        return c.body(null, 204)
+      }
+
+      return c.json({
+        requireSso: true,
+        organizationSlug: match.slug,
+        signInPath: match.signInPath,
+        signInUrl: new URL(match.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+      })
     },
   )
 

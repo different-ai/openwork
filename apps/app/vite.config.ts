@@ -92,7 +92,11 @@ export default defineConfig({
       },
     },
     tailwindcss(),
-    react(),
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+      },
+    }),
   ],
   server: {
     port: devPort,

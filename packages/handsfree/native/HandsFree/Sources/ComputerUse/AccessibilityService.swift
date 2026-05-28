@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import ScreenCaptureKit
 
 final class AccessibilityService: @unchecked Sendable {
     private let screenshotImageWidth: CGFloat = 768
@@ -15,12 +16,16 @@ final class AccessibilityService: @unchecked Sendable {
     ]
 
     func resolveTarget(appName: String?) throws -> WindowTarget {
+        try resolveTarget(appName: appName, windowTitle: nil)
+    }
+
+    func resolveTarget(appName: String?, windowTitle: String?) throws -> WindowTarget {
         guard AXIsProcessTrusted() else { throw ComputerUseError.accessibilityDenied }
 
         let app = try resolveApp(appName: appName)
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
-        let axWindow = firstAXWindow(axApp: axApp)
+        let axWindow = firstAXWindow(axApp: axApp, title: windowTitle)
         let title = axWindow.flatMap { axString($0, kAXTitleAttribute) }
         let info = firstCGWindowInfo(pid: pid, title: title)
         let bounds = axWindow.flatMap(axFrame) ?? info?.bounds
@@ -41,10 +46,12 @@ final class AccessibilityService: @unchecked Sendable {
     }
 
     func snapshot(target: WindowTarget, strictMode: Bool, backgroundActivated: Bool) async throws -> AppSnapshot {
-        let records = target.axWindow.map(semanticRecords(window:)) ?? []
-        let (data, meta) = try captureScreenshot(target: target)
+        let records = records(target: target)
+        let (data, meta) = try await captureScreenshot(target: target)
 
         return AppSnapshot(
+            id: "",
+            observation: 0,
             appName: target.appName,
             pid: target.pid,
             windowNumber: target.windowNumber,
@@ -54,8 +61,15 @@ final class AccessibilityService: @unchecked Sendable {
             screenshotMeta: meta,
             records: records,
             strictMode: strictMode,
-            backgroundActivated: backgroundActivated
+            backgroundActivated: backgroundActivated,
+            recentActions: [],
+            addedLabels: [],
+            removedLabels: []
         )
+    }
+
+    func records(target: WindowTarget) -> [AXElementRecord] {
+        target.axWindow.map(semanticRecords(window:)) ?? []
     }
 
     func press(record: AXElementRecord) -> Bool {
@@ -98,16 +112,20 @@ final class AccessibilityService: @unchecked Sendable {
         throw ComputerUseError.appNotFound(rawName)
     }
 
-    private func firstAXWindow(axApp: AXUIElement) -> AXUIElement? {
+    private func firstAXWindow(axApp: AXUIElement, title preferredTitle: String?) -> AXUIElement? {
         var windowValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowValue) == .success,
               let windows = windowValue as? [AXUIElement] else {
             return nil
         }
-        return windows.first { window in
+        let usable = windows.filter { window in
             guard let frame = axFrame(window) else { return false }
             return frame.width > 20 && frame.height > 20
         }
+        if let preferredTitle, let match = usable.first(where: { axString($0, kAXTitleAttribute) == preferredTitle }) {
+            return match
+        }
+        return usable.first
     }
 
     private func semanticRecords(window: AXUIElement) -> [AXElementRecord] {
@@ -321,21 +339,50 @@ final class AccessibilityService: @unchecked Sendable {
         return candidates.first
     }
 
-    private func captureScreenshot(target: WindowTarget) throws -> (Data, ScreenshotMetadata) {
-        let cgImage: CGImage?
+    private func captureScreenshot(target: WindowTarget) async throws -> (Data, ScreenshotMetadata) {
+        let cgImage = await screenCaptureKitImage(target: target) ?? legacyCaptureImage(target: target)
+        guard let cgImage else { throw ComputerUseError.screenshotFailed }
+
+        return try encodeScreenshot(cgImage, capturedBounds: target.bounds)
+    }
+
+    private func legacyCaptureImage(target: WindowTarget) -> CGImage? {
         if let windowNumber = target.windowNumber {
-            cgImage = CGWindowListCreateImage(
+            return CGWindowListCreateImage(
                 CGRect.null,
                 .optionIncludingWindow,
                 CGWindowID(windowNumber),
                 [.bestResolution, .boundsIgnoreFraming]
             )
-        } else {
-            cgImage = CGWindowListCreateImage(target.bounds, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
         }
 
-        guard let cgImage else { throw ComputerUseError.screenshotFailed }
+        return CGWindowListCreateImage(target.bounds, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
+    }
 
+    private func screenCaptureKitImage(target: WindowTarget) async -> CGImage? {
+        guard let windowNumber = target.windowNumber else { return nil }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let window = content.windows.first(where: { Int($0.windowID) == windowNumber }) else { return nil }
+            let configuration = SCStreamConfiguration()
+            let scale = screenScale(for: target.bounds)
+            configuration.width = max(1, Int(target.bounds.width * scale))
+            configuration.height = max(1, Int(target.bounds.height * scale))
+            configuration.showsCursor = false
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        } catch {
+            return nil
+        }
+    }
+
+    private func screenScale(for bounds: CGRect) -> CGFloat {
+        NSScreen.screens.first(where: { $0.frame.intersects(bounds) })?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2
+    }
+
+    private func encodeScreenshot(_ cgImage: CGImage, capturedBounds: CGRect) throws -> (Data, ScreenshotMetadata) {
         let rawWidth = CGFloat(cgImage.width)
         let rawHeight = CGFloat(cgImage.height)
         let targetWidth = min(screenshotImageWidth, rawWidth)
@@ -358,7 +405,7 @@ final class AccessibilityService: @unchecked Sendable {
             ScreenshotMetadata(
                 imageWidth: Int(targetWidth),
                 imageHeight: Int(targetHeight),
-                capturedBounds: target.bounds
+                capturedBounds: capturedBounds
             )
         )
     }

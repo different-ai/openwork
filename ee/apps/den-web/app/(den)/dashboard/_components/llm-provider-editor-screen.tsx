@@ -187,6 +187,15 @@ export function LlmProviderEditorScreen({
         setOpenAiOauthSession(null);
     }, [credentialKind, selectedProviderId, source]);
 
+    const canUseOpenCodeOAuth =
+        source === "models_dev" && selectedProviderId.trim().toLowerCase() === "openai";
+
+    useEffect(() => {
+        if (credentialKind === "opencode_oauth" && !canUseOpenCodeOAuth) {
+            setCredentialKind("api_key");
+        }
+    }, [canUseOpenCodeOAuth, credentialKind]);
+
     async function startOpenAiOauth() {
         setOpenAiOauthBusy(true);
         setOpenAiOauthError(null);
@@ -383,7 +392,7 @@ export function LlmProviderEditorScreen({
             }
         }
 
-        if (credentialKind === "opencode_oauth" && source === "models_dev" && selectedProviderId !== "openai") {
+        if (credentialKind === "opencode_oauth" && !canUseOpenCodeOAuth) {
             setSaveError("OpenCode OAuth credentials are only available for the OpenAI catalog provider.");
             return;
         }
@@ -731,8 +740,13 @@ export function LlmProviderEditorScreen({
                     <DenSelectableRow
                         selected={credentialKind === "opencode_oauth"}
                         title="OpenCode OAuth"
-                        description="Store the native OpenCode OAuth auth JSON for the OpenAI provider."
-                        onClick={() => setCredentialKind("opencode_oauth")}
+                        description={canUseOpenCodeOAuth
+                            ? "Store the native OpenCode OAuth auth JSON for the OpenAI provider."
+                            : "Only available for the OpenAI catalog provider."}
+                        disabled={!canUseOpenCodeOAuth}
+                        onClick={() => {
+                            if (canUseOpenCodeOAuth) setCredentialKind("opencode_oauth");
+                        }}
                     />
                 </div>
 

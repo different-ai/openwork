@@ -5,6 +5,7 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
+  openworkServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
@@ -30,12 +31,21 @@ import { useBootState } from "./boot-state";
 // keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
-function isOpenworkServerReady(info?: {
+type BootOpenworkServerInfo = {
   running?: boolean | null;
   baseUrl?: string | null;
   ownerToken?: string | null;
   clientToken?: string | null;
-}) {
+  hostToken?: string | null;
+  port?: number | null;
+  remoteAccessEnabled?: boolean;
+};
+
+function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo {
+  return typeof info === "object" && info !== null;
+}
+
+function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
@@ -83,11 +93,45 @@ export function useDesktopRuntimeBoot() {
           }
         }
         hydrateOpenworkServerSettingsFromEnv();
+        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
+
+        const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
+          if (!serverInfo?.baseUrl) return;
+          writeOpenworkServerSettings({
+            urlOverride: serverInfo.baseUrl,
+            token:
+              serverInfo.ownerToken?.trim() ||
+              serverInfo.clientToken?.trim() ||
+              undefined,
+            hostToken: serverInfo.hostToken?.trim() || undefined,
+            portOverride: serverInfo.port ?? undefined,
+            remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+          });
+          try {
+            window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+          } catch {
+            /* ignore */
+          }
+        };
+
+        const startServerWithoutDesktopWorkspace = async () => {
+          setPhase("starting-engine", "Starting OpenWork server");
+          const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
+            console.warn("[desktop-boot] openworkServerRestart failed:", error);
+            return null;
+          });
+          if (!isOpenworkServerInfoLike(serverInfo) || !isOpenworkServerReady(serverInfo)) {
+            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+            return;
+          }
+          publishOpenworkServerInfo(serverInfo);
+          markReady();
+        };
 
         setPhase("bootstrapping-workspaces");
         const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
         if (!list) {
-          markReady();
+          await startServerWithoutDesktopWorkspace();
           return;
         }
 
@@ -96,13 +140,13 @@ export function useDesktopRuntimeBoot() {
           ? list.workspaces.find((w) => w.id === selectedId)
           : undefined;
         if (!workspace || workspace.workspaceType === "remote") {
-          markReady();
+          await startServerWithoutDesktopWorkspace();
           return;
         }
 
         const workspaceRoot = workspace.path?.trim();
         if (!workspaceRoot) {
-          markReady();
+          await startServerWithoutDesktopWorkspace();
           return;
         }
 
@@ -116,15 +160,7 @@ export function useDesktopRuntimeBoot() {
             skipped?: boolean;
             error?: string;
             engine?: { baseUrl?: string | null };
-            openworkServer?: {
-              running?: boolean | null;
-              baseUrl?: string | null;
-              ownerToken?: string | null;
-              clientToken?: string | null;
-              hostToken?: string | null;
-              port?: number | null;
-              remoteAccessEnabled?: boolean;
-            };
+            openworkServer?: BootOpenworkServerInfo;
           };
 
           if (boot.ok === false) {
@@ -140,24 +176,15 @@ export function useDesktopRuntimeBoot() {
           if (boot.engine?.baseUrl) {
             setActive(boot.engine.baseUrl);
           }
-          const serverInfo = boot.openworkServer;
-          if (serverInfo?.baseUrl) {
-            writeOpenworkServerSettings({
-              urlOverride: serverInfo.baseUrl,
-              token:
-                serverInfo.ownerToken?.trim() ||
-                serverInfo.clientToken?.trim() ||
-                undefined,
-              hostToken: serverInfo.hostToken?.trim() || undefined,
-              portOverride: serverInfo.port ?? undefined,
-              remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
+          let serverInfo = boot.openworkServer;
+          if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
+            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+              console.warn("[desktop-boot] openworkServerRestart failed:", error);
+              return null;
             });
-            try {
-              window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
-            } catch {
-              /* ignore */
-            }
+            if (isOpenworkServerInfoLike(restarted)) serverInfo = restarted;
           }
+          publishOpenworkServerInfo(serverInfo);
           markReady();
           return;
         }

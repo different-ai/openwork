@@ -21,8 +21,18 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { isDesktopRuntime } from "../utils";
-import type { DenOrgSkillCard } from "../types";
-import type { OpenWorkExtensionManifest, OpenWorkExtensionSourceFormat } from "../extensions";
+import type { DenOrgSkillCard, ReloadReason } from "../types";
+import type {
+  OpenWorkExtensionContribution,
+  OpenWorkExtensionContributionType,
+  OpenWorkExtensionLifecycle,
+  OpenWorkExtensionManifest,
+  OpenWorkExtensionResource,
+  OpenWorkExtensionResourceType,
+  OpenWorkExtensionSetup,
+  OpenWorkExtensionSource,
+  OpenWorkExtensionSourceFormat,
+} from "../extensions";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
 const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
@@ -1003,6 +1013,275 @@ function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
   };
 }
 
+function parseExtensionSourceFormat(value: unknown): OpenWorkExtensionSourceFormat | null {
+  switch (value) {
+    case "openwork-builtin":
+    case "openwork-extension-manifest":
+    case "claude-plugin":
+    case "opencode-plugin":
+    case "mcp-directory":
+    case "manual":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionSourceOrigin(value: unknown): OpenWorkExtensionSource["origin"] | undefined {
+  switch (value) {
+    case "builtin":
+    case "den":
+    case "workspace":
+    case "local":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionSource(value: unknown): OpenWorkExtensionSource | null {
+  if (!isRecord(value) || typeof value.trusted !== "boolean") return null;
+  const format = parseExtensionSourceFormat(value.format);
+  if (!format) return null;
+  const origin = parseExtensionSourceOrigin(value.origin);
+  return {
+    format,
+    trusted: value.trusted,
+    ...(origin ? { origin } : {}),
+    ...(typeof value.reference === "string" ? { reference: value.reference } : {}),
+  };
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return undefined;
+  return value;
+}
+
+function parseExtensionResourceType(value: unknown): OpenWorkExtensionResourceType | null {
+  switch (value) {
+    case "skill":
+    case "agent":
+    case "command":
+    case "tool":
+    case "mcp":
+    case "opencode-plugin":
+    case "provider":
+    case "hook":
+    case "context":
+    case "secret":
+    case "file":
+    case "local-service":
+    case "native-binary":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionLocalCommandRef(value: unknown): OpenWorkExtensionResource["localCommandRef"] | undefined {
+  switch (value) {
+    case "openwork.computerUseMcp":
+    case "openwork.uiMcp":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionResource(value: unknown): OpenWorkExtensionResource | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  const type = parseExtensionResourceType(value.type);
+  if (!type) return null;
+  const command = parseStringList(value.command);
+  const localCommandRef = parseExtensionLocalCommandRef(value.localCommandRef);
+  return {
+    type,
+    id: value.id,
+    ...(typeof value.label === "string" ? { label: value.label } : {}),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(typeof value.path === "string" ? { path: value.path } : {}),
+    ...(command ? { command } : {}),
+    ...(typeof value.envKey === "string" ? { envKey: value.envKey } : {}),
+    ...(typeof value.packageName === "string" ? { packageName: value.packageName } : {}),
+    ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
+    ...(typeof value.mcpServerName === "string" ? { mcpServerName: value.mcpServerName } : {}),
+    ...(localCommandRef ? { localCommandRef } : {}),
+    ...(typeof value.required === "boolean" ? { required: value.required } : {}),
+  };
+}
+
+function parseExtensionContributionType(value: unknown): OpenWorkExtensionContributionType | null {
+  switch (value) {
+    case "settings-panel":
+    case "setup-instructions":
+    case "composer-prompt":
+    case "session-side-panel":
+    case "session-rail-item":
+    case "control-actions":
+    case "server-route":
+    case "native-capability":
+    case "test-action":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionContributionLocation(value: unknown): OpenWorkExtensionContribution["location"] | undefined {
+  switch (value) {
+    case "settings-detail":
+    case "composer":
+    case "session-right-pane":
+    case "session-rail":
+    case "server":
+    case "native":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionContribution(value: unknown): OpenWorkExtensionContribution | null {
+  if (!isRecord(value)) return null;
+  const type = parseExtensionContributionType(value.type);
+  if (!type) return null;
+  const location = parseExtensionContributionLocation(value.location);
+  return {
+    type,
+    ...(typeof value.ref === "string" ? { ref: value.ref } : {}),
+    ...(typeof value.label === "string" ? { label: value.label } : {}),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(typeof value.prompt === "string" ? { prompt: value.prompt } : {}),
+    ...(location ? { location } : {}),
+  };
+}
+
+function parseExtensionSetup(value: unknown): OpenWorkExtensionSetup | undefined {
+  if (!isRecord(value)) return undefined;
+  const requiredEnv = parseStringList(value.requiredEnv);
+  return {
+    ...(typeof value.instructions === "string" ? { instructions: value.instructions } : {}),
+    ...(typeof value.primaryCta === "string" ? { primaryCta: value.primaryCta } : {}),
+    ...(typeof value.secondaryCta === "string" ? { secondaryCta: value.secondaryCta } : {}),
+    ...(requiredEnv ? { requiredEnv } : {}),
+    ...(typeof value.testActionRef === "string" ? { testActionRef: value.testActionRef } : {}),
+  };
+}
+
+function parseReloadReason(value: unknown): ReloadReason | null {
+  switch (value) {
+    case "plugins":
+    case "skills":
+    case "mcp":
+    case "config":
+    case "agents":
+    case "commands":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseReloadReasons(value: unknown): ReloadReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.flatMap((item) => {
+    const reason = parseReloadReason(item);
+    return reason ? [reason] : [];
+  });
+  return reasons.length === value.length ? reasons : undefined;
+}
+
+function parseExtensionLifecycle(value: unknown): OpenWorkExtensionLifecycle | undefined {
+  if (!isRecord(value)) return undefined;
+  const reload = parseReloadReasons(value.reload);
+  const detection = parseStringList(value.detection);
+  return {
+    ...(reload ? { reload } : {}),
+    ...(detection ? { detection } : {}),
+  };
+}
+
+function parseExtensionPlatform(value: unknown): OpenWorkExtensionManifest["platform"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const platforms = value.flatMap((item) => {
+    switch (item) {
+      case "darwin":
+      case "linux":
+      case "windows":
+      case "web":
+        return [item];
+      default:
+        return [];
+    }
+  });
+  return platforms.length === value.length ? platforms : undefined;
+}
+
+function parseOpenWorkExtensionManifest(value: unknown): OpenWorkExtensionManifest | null {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.description !== "string" ||
+    !Array.isArray(value.resources)
+  ) {
+    return null;
+  }
+  const source = parseExtensionSource(value.source);
+  if (!source) return null;
+  const resources = value.resources.flatMap((entry) => {
+    const resource = parseExtensionResource(entry);
+    return resource ? [resource] : [];
+  });
+  if (resources.length !== value.resources.length) return null;
+  const contributions = Array.isArray(value.contributions)
+    ? value.contributions.flatMap((entry) => {
+        const contribution = parseExtensionContribution(entry);
+        return contribution ? [contribution] : [];
+      })
+    : undefined;
+  if (Array.isArray(value.contributions) && contributions?.length !== value.contributions.length) return null;
+  const setup = parseExtensionSetup(value.setup);
+  const lifecycle = parseExtensionLifecycle(value.lifecycle);
+  const platform = parseExtensionPlatform(value.platform);
+  if (Array.isArray(value.platform) && !platform) return null;
+  return {
+    schemaVersion: 1,
+    id: value.id,
+    name: value.name,
+    description: value.description,
+    source,
+    ...(isRecord(value.icon)
+      ? { icon: {
+          ...(typeof value.icon.src === "string" ? { src: value.icon.src } : {}),
+          ...(typeof value.icon.simpleIconSlug === "string" ? { simpleIconSlug: value.icon.simpleIconSlug } : {}),
+        } }
+      : {}),
+    ...(isRecord(value.composer) && typeof value.composer.prompt === "string" ? { composer: { prompt: value.composer.prompt } } : {}),
+    ...(setup ? { setup } : {}),
+    resources,
+    ...(contributions ? { contributions } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
+    ...(typeof value.defaultEnabled === "boolean" ? { defaultEnabled: value.defaultEnabled } : {}),
+    ...(typeof value.defaultHidden === "boolean" ? { defaultHidden: value.defaultHidden } : {}),
+    ...(platform ? { platform } : {}),
+  };
+}
+
+function parseDenExtensionProjection(value: unknown): DenOrgExtensionProjection | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
+  const sourceFormat = parseExtensionSourceFormat(value.sourceFormat);
+  if (!sourceFormat) return null;
+  return {
+    id: value.id,
+    name: value.name,
+    description: typeof value.description === "string" ? value.description : null,
+    sourceFormat,
+    manifest: parseOpenWorkExtensionManifest(value.manifest),
+  };
+}
+
 function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
   const counts = isRecord(value.componentCounts)
@@ -1020,6 +1299,7 @@ function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
     memberCount: typeof value.memberCount === "number" && Number.isFinite(value.memberCount) ? value.memberCount : 0,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     componentCounts: counts,
+    extension: parseDenExtensionProjection(value.extension),
   };
 }
 

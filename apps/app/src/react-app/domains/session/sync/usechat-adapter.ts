@@ -16,113 +16,213 @@ type TransportOptions = {
 
 type ToolStreamState = {
   inputSent: boolean;
+  inputText: string;
   outputSent: boolean;
   errorSent: boolean;
-  stepStarted: boolean;
-  stepFinished: boolean;
+  attachmentIds: Set<string>;
+};
+
+type PendingDelta = {
+  delta: string;
 };
 
 type InternalPartState = {
   textStarted: Set<string>;
   reasoningStarted: Set<string>;
+  textValues: Map<string, string>;
+  reasoningValues: Map<string, string>;
+  pendingDeltas: Map<string, PendingDelta[]>;
   partKinds: Map<string, Part["type"]>;
   partSessions: Map<string, string>;
+  ignoredParts: Set<string>;
+  messageRoles: Map<string, string>;
+  pendingRoleEvents: Map<string, OpencodeEvent[]>;
   tools: Map<string, ToolStreamState>;
   assistantMessageId: string | null;
   streamFinished: boolean;
 };
 
+type ToolPart = Extract<Part, { type: "tool" }>;
+type TextPart = Extract<Part, { type: "text" | "reasoning" }>;
+type FilePart = Extract<Part, { type: "file" }>;
+
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
+function fileProviderMetadata(part: FilePart) {
+  if (part.source) {
+    return { opencode: { partId: part.id, source: part.source } };
+  }
+  return { opencode: { partId: part.id } };
+}
+
 function getTextPartValue(part: Part) {
   if (part.type === "text") {
-    return typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "";
+    return part.text;
   }
   if (part.type === "reasoning") {
-    return typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "";
+    return part.text;
   }
   return "";
 }
 
-function mapToolPart(part: Part): DynamicToolUIPart {
-  const record = part as Part & { tool?: string; state?: Record<string, unknown> };
-  const state = (record.state ?? {}) as Record<string, unknown>;
-  const toolName = typeof record.tool === "string" ? record.tool : "tool";
-  const input = state.input;
-  const output = state.output;
-  const errorText = typeof state.error === "string" ? state.error : undefined;
+function getTextPartDelta(part: TextPart, delta: string, values: Map<string, string>) {
+  const nextText = part.text;
+  if (delta) {
+    const previous = values.get(part.id);
+    values.set(part.id, nextText);
+    if (previous && nextText.startsWith(previous)) return nextText.slice(previous.length);
+    return delta;
+  }
 
-  if (errorText) {
+  const previous = values.get(part.id);
+  values.set(part.id, nextText);
+  if (previous === undefined) return nextText;
+  if (nextText.startsWith(previous)) return nextText.slice(previous.length);
+  if (nextText !== previous) return nextText;
+  return "";
+}
+
+function mapFilePart(part: FilePart): UIMessage["parts"][number] {
+  return {
+    type: "file",
+    url: part.url,
+    filename: part.filename,
+    mediaType: part.mime,
+    providerMetadata: fileProviderMetadata(part),
+  };
+}
+
+function mapFileSourcePart(part: FilePart): UIMessage["parts"][number] | null {
+  const source = part.source;
+  if (!source) return null;
+
+  const sourceId = `${part.id}:source`;
+  const providerMetadata = { opencode: { partId: sourceId, sourcePartId: part.id, source } };
+
+  if (source.type === "resource") {
+    if (source.uri.startsWith("http://")) {
+      return { type: "source-url", sourceId, url: source.uri, title: source.uri, providerMetadata };
+    }
+    if (source.uri.startsWith("https://")) {
+      return { type: "source-url", sourceId, url: source.uri, title: source.uri, providerMetadata };
+    }
+    return { type: "source-document", sourceId, mediaType: part.mime, title: source.uri, providerMetadata };
+  }
+
+  if (source.type === "symbol") {
+    return { type: "source-document", sourceId, mediaType: part.mime, title: source.name, filename: source.path, providerMetadata };
+  }
+
+  return { type: "source-document", sourceId, mediaType: part.mime, title: source.path, filename: source.path, providerMetadata };
+}
+
+function mapFileParts(part: FilePart): UIMessage["parts"] {
+  const sourcePart = mapFileSourcePart(part);
+  if (sourcePart) return [mapFilePart(part), sourcePart];
+  return [mapFilePart(part)];
+}
+
+function mapToolPart(part: ToolPart): DynamicToolUIPart {
+  const toolName = part.tool;
+  const input = part.state.input;
+
+  if (part.state.status === "error") {
     return {
       type: "dynamic-tool",
       toolName,
-      toolCallId: part.id,
+      toolCallId: part.callID,
       state: "output-error",
       input,
-      errorText,
+      callProviderMetadata: { opencode: { partId: part.id } },
+      errorText: part.state.error,
     };
   }
 
-  if (output !== undefined) {
+  if (part.state.status === "completed") {
     return {
       type: "dynamic-tool",
       toolName,
-      toolCallId: part.id,
+      toolCallId: part.callID,
       state: "output-available",
       input,
-      output,
+      callProviderMetadata: { opencode: { partId: part.id } },
+      output: part.state.output,
     };
   }
 
   return {
     type: "dynamic-tool",
     toolName,
-    toolCallId: part.id,
+    toolCallId: part.callID,
     state: "input-available",
     input,
+    callProviderMetadata: { opencode: { partId: part.id } },
   };
 }
 
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
-  return snapshot.messages.map((message) => ({
-    id: message.info.id,
-    role: message.info.role,
-    parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
-      if (part.type === "text") {
-        return [{
-          type: "text",
-          text: getTextPartValue(part),
-          state: "done" as const,
-          providerMetadata: { opencode: { partId: part.id } },
-        }];
-      }
-      if (part.type === "reasoning") {
-        return [{
-          type: "reasoning",
-          text: getTextPartValue(part),
-          state: "done" as const,
-          providerMetadata: { opencode: { partId: part.id } },
-        }];
-      }
-      if (part.type === "file") {
-        const record = part as Part & { url?: string; filename?: string; mime?: string };
-        return record.url
-          ? [{
-              type: "file",
-              url: record.url,
-              filename: record.filename,
-              mediaType: record.mime ?? "application/octet-stream",
-              providerMetadata: { opencode: { partId: part.id } },
-            }]
-          : [];
-      }
-      if (part.type === "tool") {
-        return [{ ...mapToolPart(part), providerMetadata: { opencode: { partId: part.id } } }];
-      }
-      if (part.type === "step-start") {
-        return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
-      }
-      return [];
-    }),
-  }));
+  return snapshot.messages.map((message) => {
+    const created = message.info.time?.created;
+    return {
+      id: message.info.id,
+      role: message.info.role,
+      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
+        if (part.type === "text") {
+          if (part.synthetic || part.ignored) return [];
+          return [{
+            type: "text",
+            text: getTextPartValue(part),
+            state: "done" as const,
+            providerMetadata: { opencode: { partId: part.id } },
+          }];
+        }
+        if (part.type === "reasoning") {
+          return [{
+            type: "reasoning",
+            text: getTextPartValue(part),
+            state: "done" as const,
+            providerMetadata: { opencode: { partId: part.id } },
+          }];
+        }
+        if (part.type === "file") {
+          return mapFileParts(part);
+        }
+        if (part.type === "tool") {
+          if (part.tool === STRUCTURED_OUTPUT_TOOL) {
+            if (part.state.status === "error") return [];
+            const text = safeStringify(part.state.input);
+            if (text === "{}" && part.state.status !== "completed") return [];
+            const partId = `structured-output-${part.callID}`;
+            let state: "done" | "streaming" = "streaming";
+            if (part.state.status === "completed") state = "done";
+            return [{
+              type: "text",
+              text,
+              state,
+              providerMetadata: { opencode: { partId, toolPartId: part.id } },
+            }];
+          }
+          if (part.state.status === "completed" && part.state.attachments) {
+            return [mapToolPart(part), ...part.state.attachments.flatMap(mapFileParts)];
+          }
+          return [mapToolPart(part)];
+        }
+        if (part.type === "agent") {
+          return [{
+            type: "text",
+            text: part.name ? `@${part.name}` : "@agent",
+            state: "done",
+            providerMetadata: { opencode: { partId: part.id } },
+          }];
+        }
+        if (part.type === "step-start") {
+          return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
+        }
+        return [];
+      }),
+    };
+  });
 }
 
 function extractLastUserText(messages: UIMessage[]) {
@@ -141,8 +241,14 @@ function createPartState(): InternalPartState {
   return {
     textStarted: new Set<string>(),
     reasoningStarted: new Set<string>(),
+    textValues: new Map<string, string>(),
+    reasoningValues: new Map<string, string>(),
+    pendingDeltas: new Map<string, PendingDelta[]>(),
     partKinds: new Map<string, Part["type"]>(),
     partSessions: new Map<string, string>(),
+    ignoredParts: new Set<string>(),
+    messageRoles: new Map<string, string>(),
+    pendingRoleEvents: new Map<string, OpencodeEvent[]>(),
     tools: new Map<string, ToolStreamState>(),
     assistantMessageId: null,
     streamFinished: false,
@@ -173,62 +279,149 @@ function finalizeOpenParts(
   state.reasoningStarted.clear();
 }
 
+function enqueueFilePart(controller: ReadableStreamDefaultController<UIMessageChunk>, part: FilePart) {
+  controller.enqueue({
+    type: "file",
+    url: part.url,
+    mediaType: part.mime,
+    providerMetadata: fileProviderMetadata(part),
+  });
+  const sourcePart = mapFileSourcePart(part);
+  if (!sourcePart) return;
+  if (sourcePart.type === "source-url") controller.enqueue(sourcePart);
+  if (sourcePart.type === "source-document") controller.enqueue(sourcePart);
+}
+
+function enqueueTextDelta(
+  controller: ReadableStreamDefaultController<UIMessageChunk>,
+  state: InternalPartState,
+  partId: string,
+  delta: string,
+  reasoning: boolean,
+) {
+  const values = reasoning ? state.reasoningValues : state.textValues;
+  const previous = values.get(partId);
+  if (previous) values.set(partId, `${previous}${delta}`);
+  else values.set(partId, delta);
+
+  if (reasoning) {
+    if (!state.reasoningStarted.has(partId)) {
+      state.reasoningStarted.add(partId);
+      controller.enqueue({ type: "reasoning-start", id: partId });
+    }
+    controller.enqueue({ type: "reasoning-delta", id: partId, delta });
+    return;
+  }
+
+  if (!state.textStarted.has(partId)) {
+    state.textStarted.add(partId);
+    controller.enqueue({ type: "text-start", id: partId });
+  }
+  controller.enqueue({ type: "text-delta", id: partId, delta });
+}
+
+function flushPendingDeltas(
+  controller: ReadableStreamDefaultController<UIMessageChunk>,
+  state: InternalPartState,
+  part: TextPart,
+) {
+  const pending = state.pendingDeltas.get(part.id);
+  if (!pending) return;
+  const reasoning = part.type === "reasoning";
+  for (const item of pending) {
+    enqueueTextDelta(controller, state, part.id, item.delta, reasoning);
+  }
+  state.pendingDeltas.delete(part.id);
+}
+
+function queuePendingRoleEvent(state: InternalPartState, messageId: string, event: OpencodeEvent) {
+  const pending = state.pendingRoleEvents.get(messageId);
+  if (pending) pending.push(event);
+  else state.pendingRoleEvents.set(messageId, [event]);
+}
+
 function handleToolPart(
   controller: ReadableStreamDefaultController<UIMessageChunk>,
   state: InternalPartState,
-  part: Part,
+  part: ToolPart,
 ) {
-  const record = part as Part & { tool?: string; state?: Record<string, unknown> };
-  const toolName = typeof record.tool === "string" ? record.tool : "tool";
-  const toolState = state.tools.get(part.id) ?? {
+  if (part.tool === STRUCTURED_OUTPUT_TOOL) {
+    handleStructuredOutputPart(controller, state, part);
+    return;
+  }
+
+  const toolName = part.tool;
+  const toolState = state.tools.get(part.callID) ?? {
     inputSent: false,
+    inputText: "",
     outputSent: false,
     errorSent: false,
-    stepStarted: false,
-    stepFinished: false,
+    attachmentIds: new Set<string>(),
   };
-  const current = (record.state ?? {}) as Record<string, unknown>;
+  const inputText = safeStringify(part.state.input);
 
-  if (!toolState.stepStarted) {
-    controller.enqueue({ type: "start-step" });
-    toolState.stepStarted = true;
-  }
-
-  if (!toolState.inputSent) {
+  if (!toolState.inputSent || inputText !== toolState.inputText) {
     controller.enqueue({
       type: "tool-input-available",
-      toolCallId: part.id,
+      toolCallId: part.callID,
       toolName,
-      input: current.input,
+      input: part.state.input,
     });
     toolState.inputSent = true;
+    toolState.inputText = inputText;
   }
 
-  if (!toolState.errorSent && typeof current.error === "string" && current.error.trim()) {
+  if (!toolState.errorSent && part.state.status === "error") {
     controller.enqueue({
       type: "tool-output-error",
-      toolCallId: part.id,
-      errorText: current.error,
+      toolCallId: part.callID,
+      errorText: part.state.error,
     });
     toolState.errorSent = true;
-    if (!toolState.stepFinished) {
-      controller.enqueue({ type: "finish-step" });
-      toolState.stepFinished = true;
-    }
-  } else if (!toolState.outputSent && current.output !== undefined) {
+  } else if (!toolState.outputSent && part.state.status === "completed") {
     controller.enqueue({
       type: "tool-output-available",
-      toolCallId: part.id,
-      output: current.output,
+      toolCallId: part.callID,
+      output: part.state.output,
     });
     toolState.outputSent = true;
-    if (!toolState.stepFinished) {
-      controller.enqueue({ type: "finish-step" });
-      toolState.stepFinished = true;
+    if (part.state.attachments) {
+      for (const attachment of part.state.attachments) {
+        const attachmentId = attachment.id;
+        if (toolState.attachmentIds.has(attachmentId)) continue;
+        enqueueFilePart(controller, attachment);
+        toolState.attachmentIds.add(attachmentId);
+      }
     }
   }
 
-  state.tools.set(part.id, toolState);
+  state.tools.set(part.callID, toolState);
+}
+
+function handleStructuredOutputPart(
+  controller: ReadableStreamDefaultController<UIMessageChunk>,
+  state: InternalPartState,
+  part: ToolPart,
+) {
+  const partId = `structured-output-${part.callID}`;
+  const toolState = state.tools.get(part.callID) ?? {
+    inputSent: false,
+    inputText: "",
+    outputSent: false,
+    errorSent: false,
+    attachmentIds: new Set<string>(),
+  };
+  if (part.state.status === "completed" && !toolState.outputSent) {
+    enqueueTextDelta(controller, state, partId, safeStringify(part.state.input), false);
+    toolState.outputSent = true;
+  }
+
+  if ((part.state.status === "completed" || part.state.status === "error") && state.textStarted.has(partId)) {
+    controller.enqueue({ type: "text-end", id: partId });
+    state.textStarted.delete(partId);
+  }
+
+  state.tools.set(part.callID, toolState);
 }
 
 function handleEventChunk(
@@ -270,53 +463,85 @@ function handleEventChunk(
   if (event.type === "message.updated") {
     const record = (event.properties ?? {}) as Record<string, unknown>;
     const info = record.info as { id?: string; role?: string; sessionID?: string } | undefined;
-    if (!info || info.sessionID !== sessionId || info.role !== "assistant" || typeof info.id !== "string") {
+    if (!info || info.sessionID !== sessionId || typeof info.id !== "string" || typeof info.role !== "string") {
+      return;
+    }
+    state.messageRoles.set(info.id, info.role);
+    const pending = state.pendingRoleEvents.get(info.id);
+    if (info.role !== "assistant") {
+      if (pending) state.pendingRoleEvents.delete(info.id);
       return;
     }
     ensureAssistantStart(controller, state, info.id);
+    if (pending) {
+      state.pendingRoleEvents.delete(info.id);
+      for (const pendingEvent of pending) handleEventChunk(controller, state, pendingEvent, sessionId);
+    }
     return;
   }
 
   if (event.type === "message.part.updated") {
     const record = (event.properties ?? {}) as Record<string, unknown>;
     const part = record.part as Part | undefined;
-    const delta = typeof record.delta === "string" ? record.delta : "";
     if (!part || part.sessionID !== sessionId) return;
+    state.partSessions.set(part.id, part.sessionID);
+    if (state.messageRoles.get(part.messageID) === "user") return;
+    if (!state.messageRoles.get(part.messageID)) {
+      queuePendingRoleEvent(state, part.messageID, event);
+      return;
+    }
 
     ensureAssistantStart(controller, state, part.messageID);
-    state.partKinds.set(part.id, part.type);
-    state.partSessions.set(part.id, part.sessionID);
 
     if (part.type === "text") {
+      if (part.synthetic || part.ignored) {
+        state.ignoredParts.add(part.id);
+        state.pendingDeltas.delete(part.id);
+        return;
+      }
+      state.partKinds.set(part.id, part.type);
       if (!state.textStarted.has(part.id)) {
         state.textStarted.add(part.id);
         controller.enqueue({ type: "text-start", id: part.id });
-        const initial = delta || getTextPartValue(part);
-        if (initial) controller.enqueue({ type: "text-delta", id: part.id, delta: initial });
       }
+      flushPendingDeltas(controller, state, part);
+      const textDelta = getTextPartDelta(part, "", state.textValues);
+      if (textDelta) controller.enqueue({ type: "text-delta", id: part.id, delta: textDelta });
       return;
     }
 
     if (part.type === "reasoning") {
+      state.partKinds.set(part.id, part.type);
       if (!state.reasoningStarted.has(part.id)) {
         state.reasoningStarted.add(part.id);
         controller.enqueue({ type: "reasoning-start", id: part.id });
-        const initial = delta || getTextPartValue(part);
-        if (initial) controller.enqueue({ type: "reasoning-delta", id: part.id, delta: initial });
       }
+      flushPendingDeltas(controller, state, part);
+      const reasoningDelta = getTextPartDelta(part, "", state.reasoningValues);
+      if (reasoningDelta) controller.enqueue({ type: "reasoning-delta", id: part.id, delta: reasoningDelta });
       return;
     }
 
     if (part.type === "tool") {
+      state.partKinds.set(part.id, part.type);
       handleToolPart(controller, state, part);
       return;
     }
 
     if (part.type === "file") {
-      const file = part as Part & { url?: string; mime?: string };
-      if (file.url && file.mime) {
-        controller.enqueue({ type: "file", url: file.url, mediaType: file.mime });
-      }
+      state.partKinds.set(part.id, part.type);
+      enqueueFilePart(controller, part);
+      return;
+    }
+
+    if (part.type === "step-start") {
+      controller.enqueue({ type: "start-step" });
+      return;
+    }
+
+    if (part.type === "step-finish") {
+      finalizeOpenParts(controller, state);
+      controller.enqueue({ type: "finish-step" });
     }
     return;
   }
@@ -329,28 +554,31 @@ function handleEventChunk(
     const field = typeof record.field === "string" ? record.field : null;
     const delta = typeof record.delta === "string" ? record.delta : "";
     if (!messageID || !partID || !field || !delta) return;
-
     const ownerSessionID = recordSessionID ?? state.partSessions.get(partID) ?? null;
     if (ownerSessionID !== sessionId) return;
+    if (state.messageRoles.get(messageID) === "user" || state.ignoredParts.has(partID)) return;
+    if (!state.messageRoles.get(messageID)) {
+      queuePendingRoleEvent(state, messageID, event);
+      return;
+    }
 
     ensureAssistantStart(controller, state, messageID);
 
     const kind = state.partKinds.get(partID);
-    if (field === "text" && kind === "reasoning") {
-      if (!state.reasoningStarted.has(partID)) {
-        state.reasoningStarted.add(partID);
-        controller.enqueue({ type: "reasoning-start", id: partID });
-      }
-      controller.enqueue({ type: "reasoning-delta", id: partID, delta });
+    if (!kind) {
+      const pending = state.pendingDeltas.get(partID);
+      if (pending) pending.push({ delta });
+      else state.pendingDeltas.set(partID, [{ delta }]);
       return;
     }
 
-    if (field === "text") {
-      if (!state.textStarted.has(partID)) {
-        state.textStarted.add(partID);
-        controller.enqueue({ type: "text-start", id: partID });
-      }
-      controller.enqueue({ type: "text-delta", id: partID, delta });
+    if (kind === "reasoning") {
+      enqueueTextDelta(controller, state, partID, delta, true);
+      return;
+    }
+
+    if (kind === "text" && field === "text") {
+      enqueueTextDelta(controller, state, partID, delta, false);
       return;
     }
 

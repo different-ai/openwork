@@ -95,6 +95,7 @@ type CreateProviderAuthStoreOptions = {
   selectedWorkspaceDisplay: () => WorkspaceDisplay;
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceId: () => string | null;
+  ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
   openworkServer: OpenworkServerStore;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
@@ -199,6 +200,27 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     return Array.from(merged.values()).toSorted(compareProviders);
+  };
+
+  const resolveOpenworkConfigTarget = async (mode: "read" | "write") => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+    }
+    const hasOpenworkTarget =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient && openworkWorkspaceId);
+    const canUseOpenworkServer =
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+    return {
+      openworkClient,
+      openworkWorkspaceId,
+      hasOpenworkTarget,
+      canUseOpenworkServer,
+    };
   };
 
   const refreshSnapshot = () => {
@@ -326,19 +348,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("read");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       const config = await openworkClient.getConfig(openworkWorkspaceId);
       return config.openwork ?? {};
+    }
+
+    if (hasOpenworkTarget) {
+      return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -356,19 +375,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
       return true;
+    }
+
+    if (hasOpenworkTarget) {
+      return false;
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -422,19 +438,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.read &&
-      typeof openworkClient.readOpencodeConfigFile === "function";
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("read");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       return await openworkClient.readOpencodeConfigFile(openworkWorkspaceId, "project");
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -448,18 +460,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.config?.write &&
-      typeof openworkClient.writeOpencodeConfigFile === "function";
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveOpenworkConfigTarget("write");
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       const result = await openworkClient.writeOpencodeConfigFile(
         openworkWorkspaceId,
         "project",
@@ -469,6 +473,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
       return true;
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -1507,6 +1515,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return message;
   };
 
+  const shouldSurfaceCloudProviderSyncError = (reason: CloudProviderSyncReason) =>
+    reason === "settings_cloud_opened";
+
   const getCloudProviderSyncContextKey = () => {
     const settings = readDenSettings();
     return [
@@ -1713,7 +1724,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const request = performCloudProviderSync(reason)
       .catch((error) => {
         const message = logCloudProviderSyncError(reason, error);
-        setStateField("providerAuthError", message);
+        if (shouldSurfaceCloudProviderSyncError(reason)) {
+          setStateField("providerAuthError", message);
+        }
       })
       .finally(() => {
         cloudProviderSyncInFlight = null;

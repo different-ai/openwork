@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ExternalLink, Loader2, Plug2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   Card,
@@ -45,6 +45,8 @@ export type ExtensionDetailModalProps = {
   connecting?: boolean;
   /** Whether this item is hidden from the normal extensions catalog. */
   hidden?: boolean;
+  /** Whether this extension is still in preview. */
+  preview?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
   /** Remote URL if applicable. */
@@ -184,13 +186,13 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
     description,
     iconSlug,
     iconSrc,
-    fallbackIcon: FallbackIcon = Plug2,
     kind = "mcp",
     connected = false,
     connectedLabel,
     disconnectedLabel,
     connecting = false,
     hidden = false,
+    preview = false,
     disabledReason = null,
     url,
     setupInstructions,
@@ -244,9 +246,11 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                     <img src={`https://cdn.simpleicons.org/${iconSlug}`} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
                   </div>
                 ) : (
-                  kind === "plugin" || kind === "skill" ? (
-                    <ExtensionMeshAvatar name={name} className="size-9 rounded-lg text-xs font-bold shadow-inner" />
-                  ) : <FallbackIcon size={24} className="text-muted-foreground" />
+                  <ExtensionMeshAvatar
+                    name={name}
+                    category={kind}
+                    className="size-9 rounded-lg shadow-inner"
+                  />
                 )}
               </div>
               {connected ? (
@@ -258,7 +262,14 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
 
             <div className="min-w-0 flex flex-col gap-1 justify-center self-stretch">
               <DialogTitle>{name}</DialogTitle>
-              <DialogDescription>{kindLabel[kind]}</DialogDescription>
+              <DialogDescription className="flex flex-wrap items-center gap-2">
+                <span>{kindLabel[kind]}</span>
+                {preview ? (
+                  <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
+                    Preview
+                  </span>
+                ) : null}
+              </DialogDescription>
             </div>
           </div>
         </DialogHeader>
@@ -381,6 +392,13 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
                     <span className="text-muted-foreground">Visibility</span>
                     <span className="font-medium text-card-foreground">{hidden ? "Hidden" : "Shown"}</span>
                   </div>
+
+                  {preview ? (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Release stage</span>
+                      <span className="font-medium text-blue-11">Preview</span>
+                    </div>
+                  ) : null}
 
                   {disabledReason ? (
                     <div className="flex items-center justify-between gap-4 text-sm">

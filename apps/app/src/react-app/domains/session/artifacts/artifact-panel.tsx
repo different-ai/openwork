@@ -5,12 +5,11 @@ import { Download, ExternalLink, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { openDesktopPath } from "@/app/lib/desktop";
-import { PanelTab, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatFileSize } from "@/lib/utils";
-import { ArtifactIcon } from "./artifact-icon";
-import type { BinaryData, Data, OpenTarget, TextData } from "./open-target";
+import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
+import { isCollectibleArtifactTarget, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
 import { HTMLPreview, ImagePreview, MarkdownPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 
 const ArtifactTextEditor = lazy(() =>
@@ -20,14 +19,24 @@ const ArtifactSpreadsheetEditor = lazy(() =>
   import("./artifact-spreadsheet-editor").then((module) => ({ default: module.ArtifactSpreadsheetEditor })),
 );
 
+const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
+
 type ArtifactPanelProps = {
+  sessionId: string;
+  tab: ArtifactPanelTab;
+  client: OpenworkServerClient | null;
+  workspaceId: string | null;
+  workspaceRoot: string;
+  isRemoteWorkspace?: boolean;
+  onClose: () => void;
+};
+
+type ArtifactPanelViewProps = {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;
   target: OpenTarget;
-  targets?: OpenTarget[];
-  onSelectTarget?: (target: OpenTarget) => void;
   onClose: () => void;
 };
 
@@ -48,7 +57,28 @@ function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
 
-export function ArtifactPanel({ client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, targets = [], onSelectTarget, onClose }: ArtifactPanelProps) {
+export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, onClose }: ArtifactPanelProps) {
+  const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
+  const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
+  const target = artifactTargets.find((item) => item.id === tab.id) ?? null;
+
+  if (!target || !client || !workspaceId) {
+    return null;
+  }
+
+  return (
+    <ArtifactPanelView
+      client={client}
+      workspaceId={workspaceId}
+      workspaceRoot={workspaceRoot}
+      isRemoteWorkspace={isRemoteWorkspace}
+      target={target}
+      onClose={onClose}
+    />
+  );
+}
+
+function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -193,29 +223,6 @@ export function ArtifactPanel({ client, workspaceId, workspaceRoot, isRemoteWork
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-        {targets.length > 0 ? (
-          <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
-            <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
-              <PanelTabList values={targets.map((item) => item.id)} onReorder={() => {}}>
-                {targets.map((item) => (
-                  <PanelTabItem
-                    key={item.id}
-                    value={item.id}
-                  >
-                    <PanelTab
-                      active={item.id === target.id}
-                      title={`${item.value}${item.exists === false ? " (missing)" : ""}`}
-                      onClick={() => onSelectTarget?.(item)}
-                    >
-                      <ArtifactIcon type={item.preview} />
-                      <span className="truncate">{item.name}{item.exists === false ? " · missing" : ""}</span>
-                    </PanelTab>
-                  </PanelTabItem>
-                ))}
-              </PanelTabList>
-            </div>
-          </div>
-        ) : null}
         <div className="flex h-10 items-center gap-2 pe-2 ps-4">
           <div className="min-w-0 flex-1 flex items-center gap-1.5">
             <h3 className="text-sm font-medium text-foreground">

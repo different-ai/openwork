@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync } from "node:fs";
@@ -19,7 +19,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
+import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -43,6 +44,126 @@ const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/rele
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
 const BROWSER_PLUGIN = "opencode-chrome-devtools";
+const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
+const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+
+function computerUseHelperExecutablePath() {
+  const appPath = computerUseHelperAppPath();
+  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const candidates = [
+    explicitBinary,
+    appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function computerUseHelperAppPath() {
+  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const candidates = [
+    explicitApp,
+    process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
+    path.resolve(__dirname, "..", "resources", "helpers", COMPUTER_USE_HELPER_APP_NAME),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function getComputerUseMcpCommand() {
+  const helperExecutable = computerUseHelperExecutablePath();
+  if (helperExecutable) return [helperExecutable, "mcp"];
+
+  if (app.isPackaged) {
+    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
+  }
+
+  if (process.env.OPENWORK_DEV_MODE === "1") {
+    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+  }
+  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+}
+
+// ---------------------------------------------------------------------------
+// Permission checks — spawn the binary with --check, read stdout, done.
+// Fresh process = fresh TCC read = always accurate. No HTTP server needed.
+// ---------------------------------------------------------------------------
+
+function resolveComputerUseExecutable() {
+  // 1. Explicit env override.
+  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  if (explicit && existsSync(explicit)) return explicit;
+
+  // 2. .app bundle (packaged builds + pnpm dev).
+  const appPath = computerUseHelperAppPath();
+  if (appPath) {
+    const bin = path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE);
+    if (existsSync(bin)) return bin;
+  }
+
+  // 3. Dev fallback — raw Swift build output.
+  if (!app.isPackaged) {
+    const swiftPkg = path.resolve(__dirname, "../../..", "packages/handsfree/native/HandsFree");
+    const devCandidates = [
+      path.join(swiftPkg, ".build", "release", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "debug", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "HandsFreeComputerUse"),
+    ];
+    for (const c of devCandidates) {
+      if (existsSync(c)) return c;
+    }
+  }
+
+  return null;
+}
+
+async function checkComputerUsePermissions() {
+  // Spawn binary --check → read JSON from stdout → exit. Always fresh.
+  const bin = resolveComputerUseExecutable();
+  if (!bin) {
+    return { ok: false, accessibility: false, screenRecording: false, error: "Helper binary not found. Run pnpm dev to build it." };
+  }
+  return spawnCheckPermissions(bin);
+}
+
+function spawnCheckPermissions(bin) {
+  return new Promise((resolve) => {
+    let stdout = "";
+    const child = spawn(bin, ["--check"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.on("error", () => resolve({ ok: false, accessibility: false, screenRecording: false, error: "Failed to run permission check." }));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        resolve({
+          ok: parsed?.ok === true,
+          accessibility: parsed?.accessibility === true,
+          screenRecording: parsed?.screenRecording === true,
+        });
+      } catch {
+        resolve({ ok: false, accessibility: false, screenRecording: false, error: "Permission check returned invalid output." });
+      }
+    });
+  });
+}
+
+async function openComputerUseSetupApp() {
+  // Open the GUI. Use the .app bundle if available so macOS shows it as
+  // a real app with its own dock icon and permission identity.
+  const appPath = computerUseHelperAppPath();
+  if (appPath) {
+    const result = await shell.openPath(appPath);
+    if (result) console.error("[ComputerUse] shell.openPath error:", result);
+    return;
+  }
+
+  // Fallback: spawn the raw binary (opens the same GUI).
+  const bin = resolveComputerUseExecutable();
+  if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
+  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
 // so in-place migration is a no-op for almost every file. Dev mode uses the
@@ -277,6 +398,7 @@ if (extraLaunchArgs) {
     }
   }
 }
+configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
@@ -354,7 +476,7 @@ let activeBrowserTabId = null;
 let browserViewVisible = false;
 let lastBrowserBounds = null;
 let browserTabCounter = 0;
-const BROWSER_DEFAULT_URL = "https://www.google.com";
+const BROWSER_DEFAULT_URL = "about:blank";
 const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
@@ -571,45 +693,48 @@ function getActiveWebContents() {
   return getActiveBrowserView()?.webContents ?? null;
 }
 
+function getBrowserTabLabel(title, url) {
+  if (title) {
+    return title;
+  }
+
+  if (url && url !== "about:blank") {
+    return url;
+  }
+
+  return "New tab";
+}
+
+function browserTabToPanelTab(tabId, tab) {
+  const webContents = tab.view.webContents;
+  const url = webContents.getURL();
+  const title = webContents.getTitle();
+  const isLoading = webContents.isLoading();
+
+  return {
+    id: tabId,
+    type: "browser",
+    label: getBrowserTabLabel(title, url),
+    url,
+    favicon: tab.favicon ?? null,
+    status: isLoading ? "loading" : "ready",
+    canGoBack: webContents.canGoBack(),
+    canGoForward: webContents.canGoForward(),
+  };
+}
+
 function listBrowserTabs() {
   return browserTabOrder
     .map((tabId) => {
       const tab = browserTabs.get(tabId);
       if (!tab || tab.view.webContents.isDestroyed()) return null;
-      return {
-        tabId,
-        url: tab.view.webContents.getURL(),
-        title: tab.view.webContents.getTitle(),
-        favicon: tab.favicon,
-        canGoBack: tab.view.webContents.canGoBack(),
-        canGoForward: tab.view.webContents.canGoForward(),
-        isLoading: tab.view.webContents.isLoading(),
-        isActive: tabId === activeBrowserTabId,
-      };
+      return browserTabToPanelTab(tabId, tab);
     })
     .filter(Boolean);
 }
 
 function browserStatePayload() {
-  const activeTab = getBrowserTab();
-  const activeWebContents = activeTab?.view.webContents;
-  const activeState = activeWebContents && !activeWebContents.isDestroyed()
-    ? {
-        url: activeWebContents.getURL(),
-        title: activeWebContents.getTitle(),
-        canGoBack: activeWebContents.canGoBack(),
-        canGoForward: activeWebContents.canGoForward(),
-        isLoading: activeWebContents.isLoading(),
-      }
-    : {
-        url: "",
-        title: "",
-        canGoBack: false,
-        canGoForward: false,
-        isLoading: false,
-      };
   return {
-    ...activeState,
     activeTabId: activeBrowserTabId,
     tabs: listBrowserTabs(),
   };
@@ -963,10 +1088,10 @@ function sendBrowserState() {
  * Attach the browser view to the main window.
  * @param {object} bounds — { x, y, width, height }
  * @param {object} [opts]
- * @param {boolean} [opts.preloadDefault=true] - load default URL if the view has no URL
- * @param {boolean} [opts.ensureTab=true] - create a blank tab if needed
+ * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
+ * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
  */
-function attachBrowserView(bounds, { preloadDefault = true, ensureTab = true } = {}) {
+function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false } = {}) {
   if (!mainWindow) return;
   lastBrowserBounds = bounds;
   browserViewVisible = true;
@@ -1577,12 +1702,50 @@ const runtimeManager = createRuntimeManager({
 });
 
 let runtimeDisposedForQuit = false;
+let runtimeDisposeInProgress = false;
 let runtimeBootstrapPromise = null;
 
+function showShutdownScreen() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.show();
+    win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { height: 100%; margin: 0; background: #0b0b0f; color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { display: grid; place-items: center; }
+      main { display: grid; gap: 10px; justify-items: center; }
+      .spinner { width: 22px; height: 22px; border: 2px solid rgba(244,244,245,.25); border-top-color: #f4f4f5; border-radius: 50%; animation: spin .9s linear infinite; }
+      .title { font-size: 15px; font-weight: 600; }
+      .body { font-size: 13px; color: #a1a1aa; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="title">Stopping OpenWork services</div>
+      <div class="body">Closing local workers and background services...</div>
+    </main>
+  </body>
+</html>`)}`);
+  } catch {
+    // Ignore renderer teardown races during quit.
+  }
+}
+
 async function disposeRuntimeBeforeQuit() {
-  if (runtimeDisposedForQuit) return;
-  runtimeDisposedForQuit = true;
-  await runtimeManager.dispose().catch(() => undefined);
+  if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
+  runtimeDisposeInProgress = true;
+  try {
+    await runtimeManager.dispose().catch(() => undefined);
+    runtimeDisposedForQuit = true;
+  } finally {
+    runtimeDisposeInProgress = false;
+  }
 }
 
 function assertOpenworkServerReady(info) {
@@ -2116,9 +2279,12 @@ async function handleDesktopInvoke(event, command, ...args) {
           const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
             ? nextWorkspace.directory.trim()
             : null;
-          let remoteWorkspaceId = typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
-            ? nextWorkspace.openworkWorkspaceId.trim()
-            : parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          let remoteWorkspaceId = parsedWorkspaceId || (
+            typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
+              ? nextWorkspace.openworkWorkspaceId.trim()
+              : null
+          );
           let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
           if (!remoteWorkspaceId) {
             const discovered = await discoverOpenworkWorkspace({
@@ -2312,11 +2478,23 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       return ["npx", "-y", "openwork-ui-mcp"];
     }
-    case "getHandsFreeMcpCommand": {
-      if (process.env.OPENWORK_DEV_MODE === "1") {
-        return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
-      }
-      return ["npx", "-y", "@openwork/handsfree", "mcp"];
+    case "getComputerUseMcpCommand": {
+      return getComputerUseMcpCommand();
+    }
+    case "checkComputerUsePermissions": {
+      // Spawn --check → fresh TCC read → always accurate.
+      return checkComputerUsePermissions();
+    }
+    case "openComputerUsePermissionSetup": {
+      // Open the GUI app. Returns immediately — React shows "verify" CTA.
+      await openComputerUseSetupApp();
+      // Return a fresh check so the UI shows the current state.
+      return checkComputerUsePermissions();
+    }
+    case "openComputerUsePermissionSettings": {
+      // Legacy: open the setup app (same as above).
+      await openComputerUseSetupApp();
+      return checkComputerUsePermissions();
     }
     case "getOpenworkUiMcpEnvironment": {
       return {
@@ -2749,10 +2927,6 @@ async function createMainWindow() {
     await mainWindow.loadFile(app.isPackaged ? packagedIndexPath : devIndexPath);
   }
 
-  if (!activeBrowserTabId) {
-    createBrowserTab("about:blank", { select: true });
-  }
-
   return mainWindow;
 }
 
@@ -2767,6 +2941,17 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.exit(0);
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+ipcMain.handle("openwork:system:microphoneStatus", async () => {
+  if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
+  return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
+});
+ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
+  if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
+  const before = systemPreferences.getMediaAccessStatus("microphone");
+  const granted = await systemPreferences.askForMediaAccess("microphone");
+  const after = systemPreferences.getMediaAccessStatus("microphone");
+  return { platform: process.platform, before, after, granted };
+});
 
 // ── Embedded browser IPC ────────────────────────────────────────────────
 ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
@@ -2830,6 +3015,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     if (runtimeDisposedForQuit) return;
     event.preventDefault();
+    if (runtimeDisposeInProgress) return;
+    showShutdownScreen();
     void Promise.all([disposeRuntimeBeforeQuit(), stopUiControlServer()]).finally(() => app.quit());
   });
 
@@ -2850,6 +3037,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    installMediaPermissionHandlers(session, () => mainWindow);
     installApplicationMenu();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 

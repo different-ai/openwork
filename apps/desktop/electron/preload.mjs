@@ -62,6 +62,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     getArchitectureInfo() {
       return ipcRenderer.invoke("openwork:system:architecture");
     },
+    getMicrophoneStatus() {
+      return ipcRenderer.invoke("openwork:system:microphoneStatus");
+    },
+    askMicrophoneAccess() {
+      return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
+    },
   },
   migration: {
     readSnapshot() {

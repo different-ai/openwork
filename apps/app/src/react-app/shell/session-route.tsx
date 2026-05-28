@@ -13,7 +13,6 @@ import type {
   AgentPartInput,
   FilePartInput,
   ProviderListResponse,
-  SessionStatus,
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
@@ -28,6 +27,7 @@ import {
 } from "../../app/lib/openwork-server";
 import {
   resolveWorkspaceEndpoint,
+  workspaceServerId,
   type ResolvedWorkspaceEndpoint,
 } from "../../app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
@@ -37,13 +37,9 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
-  workspaceCreate,
-  workspaceCreateRemote,
-  workspaceExportConfig,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
-  workspaceUpdateDisplayName,
   type EngineInfo,
   type OpenworkServerInfo,
   type WorkspaceInfo,
@@ -84,6 +80,7 @@ import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictio
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "../domains/session/sync/runtime-sync";
+import { useSessionActivityStore } from "../domains/session/status/session-activity-store";
 import { buildOpenworkEnvSystemContext } from "../domains/session/sync/env-context";
 import {
   permissionKey as reactPermissionKey,
@@ -213,6 +210,24 @@ function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
+}
+
+function workspaceExportFilename(workspace: OpenworkWorkspaceInfo) {
+  const slug = workspaceLabel(workspace).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${slug || "workspace"}-openwork-export.json`;
+}
+
+function downloadWorkspaceJson(filename: string, payload: unknown) {
+  if (typeof document === "undefined") return;
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
@@ -494,7 +509,6 @@ export function SessionRoute() {
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, any[]>>({});
-  const [runtimeSessionStatusById, setRuntimeSessionStatusById] = useState<Record<string, string>>({});
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -669,20 +683,6 @@ export function SessionRoute() {
       }),
     [selectedWorkspaceId, sessionsByWorkspaceId],
   );
-  const listedSessionStatusById = useMemo(() => {
-    const next: Record<string, string> = {};
-    for (const session of Object.values(sessionsByWorkspaceId).flat()) {
-      const id = String(session?.id ?? "").trim();
-      if (!id) continue;
-      next[id] = getSessionStatus(session);
-    }
-    return next;
-  }, [sessionsByWorkspaceId]);
-  const sidebarSessionStatusById = useMemo(
-    () => ({ ...listedSessionStatusById, ...runtimeSessionStatusById }),
-    [listedSessionStatusById, runtimeSessionStatusById],
-  );
-
   const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
   const rememberPendingCreatedSession = useCallback((workspaceId: string, sessionId: string) => {
     const id = sessionId.trim();
@@ -730,20 +730,49 @@ export function SessionRoute() {
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
       const fetchOnce = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
+        const isRemoteOpenworkWorkspace = workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
         const endpoint = endpointForWorkspace(workspace);
-        if (!endpoint) return;
+        if (!endpoint) {
+          if (workspace.workspaceType === "remote") {
+            const message = "Remote worker URL is missing. Edit connection and add a server URL.";
+            setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: message }));
+            setWorkspaceConnectionOverrides((current) => ({
+              ...current,
+              [workspace.id]: {
+                status: "error",
+                message,
+                checkedAt: Date.now(),
+              },
+            }));
+            setRetryingWorkspaceIds((current) =>
+              current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
+            );
+          }
+          return;
+        }
         const startedAt = backgroundSessionLoadInFlight.current.get(workspace.id) ?? 0;
         if (startedAt && Date.now() - startedAt < 5_000) return;
         const requestStartedAt = Date.now();
         backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
+        if (isRemoteOpenworkWorkspace) {
+          setWorkspaceConnectionOverrides((current) => ({
+            ...current,
+            [workspace.id]: {
+              status: "connecting",
+              message: t("workspace_list.loading_remote_tasks"),
+              checkedAt: null,
+            },
+          }));
+        }
         try {
           const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
+          const fetchedItems = response.items ?? [];
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-          const items = workspaceRoot
-            ? (response.items ?? []).filter((session: any) =>
+          const items = workspaceRoot && !isRemoteOpenworkWorkspace
+            ? fetchedItems.filter((session: any) =>
                 normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
               )
-            : (response.items ?? []);
+            : fetchedItems;
           setSessionsByWorkspaceId((current) => {
             const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
             const next = { ...current, [workspace.id]: nextItems };
@@ -752,6 +781,18 @@ export function SessionRoute() {
           });
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setWorkspaceConnectionOverrides((current) => {
+            if (isRemoteOpenworkWorkspace) {
+              return {
+                ...current,
+                [workspace.id]: {
+                  status: "connected",
+                  message: items.length > 0
+                    ? t("workspace_list.connected_loaded_tasks", { count: items.length })
+                    : t("workspace.connected_no_tasks"),
+                  checkedAt: Date.now(),
+                },
+              };
+            }
             if (current[workspace.id]?.status !== "error") return current;
             const next = { ...current };
             delete next[workspace.id];
@@ -796,7 +837,6 @@ export function SessionRoute() {
               [workspace.id]: connectionState.message ?? "Remote worker connection failed.",
             }));
             setWorkspaceConnectionOverrides((current) => {
-              if (current[workspace.id]?.status === "connecting") return current;
               return {
                 ...current,
                 [workspace.id]: connectionState,
@@ -1113,16 +1153,6 @@ export function SessionRoute() {
     });
   }, [selectedWorkspaceId]);
 
-  const handleRuntimeSessionStatus = useCallback((update: { sessionId: string; status: SessionStatus }) => {
-    const sessionId = update.sessionId;
-    if (!sessionId) return;
-    const status = normalizeSessionStatus(update.status);
-    setRuntimeSessionStatusById((current) => {
-      if (current[sessionId] === status) return current;
-      return { ...current, [sessionId]: status };
-    });
-  }, []);
-
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
@@ -1340,6 +1370,34 @@ export function SessionRoute() {
     () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
     [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
   );
+  const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
+  const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
+
+  useEffect(() => {
+    for (const group of workspaceSessionGroups) {
+      seedWorkspaceActivitySessions(group.workspace.id, group.sessions);
+      const serverId = workspaceServerId(group.workspace);
+      if (serverId && serverId !== group.workspace.id) {
+        seedWorkspaceActivitySessions(serverId, group.sessions);
+      }
+    }
+  }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
+
+  const sidebarSessionStatusById = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const group of workspaceSessionGroups) {
+      const serverId = workspaceServerId(group.workspace);
+      const workspaceStatuses = {
+        ...(sessionActivityByWorkspaceId[group.workspace.id] ?? {}),
+        ...(serverId ? sessionActivityByWorkspaceId[serverId] ?? {} : {}),
+      };
+      for (const session of group.sessions) {
+        const status = workspaceStatuses[session.id];
+        if (status) next[session.id] = status;
+      }
+    }
+    return next;
+  }, [sessionActivityByWorkspaceId, workspaceSessionGroups]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -2134,29 +2192,27 @@ export function SessionRoute() {
     if (!trimmed) return;
     setRenameWorkspaceBusy(true);
     try {
-      // Rename on both ends so the sidebar reflects the change regardless of
-      // which list wins the next refresh (server-provided routeWorkspaces or
-      // desktop-provided workspaceBootstrap results). Either call failing on
-      // its own should NOT block the other — the user's intent was "rename
-      // this workspace" and a soft failure in one store is recoverable.
-      if (isDesktopRuntime()) {
-        await workspaceUpdateDisplayName({
-          workspaceId: renameWorkspaceId,
-          displayName: trimmed,
-        }).catch(() => undefined);
+      if (!client) {
+        showToast({
+          title: "OpenWork server is unavailable. Reconnect the server before renaming workspaces.",
+          tone: "error",
+        });
+        return;
       }
-      if (client) {
-        await client
-          .updateWorkspaceDisplayName(renameWorkspaceId, trimmed)
-          .catch(() => undefined);
-      }
+      await client.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
       setRenameWorkspaceId(null);
       setRenameWorkspaceTitle("");
       await refreshRouteState();
+    } catch (error) {
+      showToast({
+        title: "Workspace rename failed",
+        description: describeRouteError(error),
+        tone: "error",
+      });
     } finally {
       setRenameWorkspaceBusy(false);
     }
-  }, [client, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
+  }, [client, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle, showToast]);
 
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2183,22 +2239,17 @@ export function SessionRoute() {
 
   const handleExportWorkspaceConfig = useCallback(
     async (workspaceId: string) => {
-      if (!isDesktopRuntime()) return;
       const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
       if (!workspace) return;
-      const outputPath = await pickDirectory({
-        title: `Choose where to export ${workspaceLabel(workspace)}`,
-      });
-      const targetPath = Array.isArray(outputPath) ? outputPath[0] : outputPath;
-      if (!targetPath) return;
-      await workspaceExportConfig({ workspaceId, outputPath: targetPath });
-      try {
-        await revealDesktopItemInDir(targetPath);
-      } catch {
-        // ignore reveal failures
+      const endpoint = endpointForWorkspace(workspace);
+      if (endpoint) {
+        const payload = await endpoint.client.exportWorkspace(endpoint.workspaceId);
+        downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
+        return;
       }
+      throw new Error("OpenWork server is unavailable. Reconnect the server before exporting workspace config.");
     },
-    [workspaces],
+    [endpointForWorkspace, workspaces],
   );
 
   const handleForgetWorkspace = useCallback(
@@ -2211,11 +2262,11 @@ export function SessionRoute() {
       }
       // Remove from both stores so the next refresh can't resurrect the row
       // from whichever list wins the merge.
-      if (isDesktopRuntime()) {
-        await workspaceForget(workspaceId).catch(() => undefined);
-      }
       if (client) {
         await client.deleteWorkspace(workspaceId).catch(() => undefined);
+      }
+      if (isDesktopRuntime()) {
+        await workspaceForget(workspaceId).catch(() => undefined);
       }
       if (selectedWorkspaceId === workspaceId) {
         setLegacySelectedWorkspaceId("");
@@ -2495,11 +2546,20 @@ export function SessionRoute() {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      const list = await workspaceCreate({
-        folderPath: folder,
-        name: workspaceName,
-        preset,
-      }) as WorkspaceList;
+      let list: WorkspaceList | null = null;
+      let createdOnServer = false;
+      if (client) {
+        list = await client
+          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
+          .then((serverList) => {
+            createdOnServer = true;
+            return serverList;
+          })
+          .catch(() => null);
+      }
+      if (!list) {
+        throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
+      }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       let targetWorkspaceId = createdId;
       let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
@@ -2507,27 +2567,13 @@ export function SessionRoute() {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
       }
-      // Register the workspace with the running openwork-server so
-      // listWorkspaces() reflects it immediately. Without this the UI only
-      // picks up the new workspace after an app restart (because the server
-      // is launched with a fixed --workspace list at boot and the bridge
-      // write only updates desktop-side state).
-      if (client) {
-        const serverList = await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .catch(() => null);
-        targetWorkspaceId = serverList
-          ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
-          : targetWorkspaceId;
-        targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
-      }
       setCreateWorkspaceOpen(false);
       // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (targetWorkspaceId) {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
-        const session = baseUrl && token
+        const session = createdOnServer && baseUrl && token
           ? unwrap(await createClient(
               `${(buildOpenworkWorkspaceBaseUrl(baseUrl, targetWorkspaceId) ?? baseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,
@@ -2556,7 +2602,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession]);
+  }, [baseUrl, client, local, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, token]);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
@@ -2569,14 +2615,22 @@ export function SessionRoute() {
     setCreateWorkspaceRemoteBusy(true);
     setCreateWorkspaceRemoteError(null);
     try {
-      const list = await workspaceCreateRemote({
+      const remoteType: "openwork" = "openwork";
+      const payload = {
         baseUrl: baseUrlValue,
         openworkHostUrl: baseUrlValue,
         openworkToken: input.openworkToken?.trim() || null,
         displayName: input.displayName?.trim() || null,
         directory: input.directory?.trim() || null,
-        remoteType: "openwork",
-      }) as WorkspaceList;
+        remoteType,
+      };
+      let list: WorkspaceList | null = null;
+      if (client) {
+        list = await client.createRemoteWorkspace(payload).catch(() => null);
+      }
+      if (!list) {
+        throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+      }
       const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
       if (createdId) {
         await workspaceSetSelected(createdId).catch(() => undefined);
@@ -2593,7 +2647,7 @@ export function SessionRoute() {
     } finally {
       setCreateWorkspaceRemoteBusy(false);
     }
-  }, [local, refreshRouteState]);
+  }, [client, local, refreshRouteState]);
 
   return (
     <WorkspaceProvider
@@ -2614,7 +2668,6 @@ export function SessionRoute() {
         opencodeBaseUrl={opencodeBaseUrl}
         openworkToken={selectedWorkspaceServerToken}
         onSessionUpdated={handleRuntimeSessionUpdated}
-        onSessionStatus={handleRuntimeSessionStatus}
       />
     ) : null}
     <SessionPage
@@ -2719,11 +2772,11 @@ export function SessionRoute() {
           // Without this, the permissions from opencode.jsonc are never
           // applied on the workspace the user is already on at launch. See
           // issue #870.
-          if (workspaceId && client) {
+          if (workspaceId) {
             const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
             const endpoint = endpointForWorkspace(workspace);
             if (endpoint) {
-              void endpoint.client.activateWorkspace(endpoint.workspaceId).catch(() => undefined);
+              void endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true }).catch(() => undefined);
             }
           }
           // If we remember what the user last opened here and that session

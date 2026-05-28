@@ -41,7 +41,7 @@ export type OpenWorkExtensionResource = {
   packageName?: string;
   providerId?: string;
   mcpServerName?: string;
-  localCommandRef?: "openwork.handsfreeMcp" | "openwork.uiMcp";
+  localCommandRef?: "openwork.computerUseMcp" | "openwork.uiMcp";
   required?: boolean;
 };
 
@@ -78,11 +78,38 @@ export type OpenWorkExtensionLifecycle = {
   detection?: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Enablement — declarative conditions for extension "active" state
+// ---------------------------------------------------------------------------
+
+export type EnablementConditionType =
+  | "mcp-connected"
+  | "plugin-loaded"
+  | "provider-connected"
+  | "env-set"
+  | "permission-granted"
+  | "toggle-enabled";
+
+export type EnablementCondition = {
+  type: EnablementConditionType;
+  /** What to check — MCP server name, plugin id, env key, etc. */
+  ref: string;
+  /** Human-readable label shown in the UI. */
+  label: string;
+};
+
+/** Result of evaluating a single enablement condition at runtime. */
+export type EnablementResult = {
+  condition: EnablementCondition;
+  met: boolean;
+};
+
 export type OpenWorkExtensionManifest = {
   schemaVersion: 1;
   id: string;
   name: string;
   description: string;
+  preview?: boolean;
   source: OpenWorkExtensionSource;
   icon?: {
     src?: string;
@@ -95,7 +122,10 @@ export type OpenWorkExtensionManifest = {
   resources: OpenWorkExtensionResource[];
   contributions?: OpenWorkExtensionContribution[];
   lifecycle?: OpenWorkExtensionLifecycle;
+  /** Declarative conditions that must ALL be true for the extension to be "active". */
+  enablement?: EnablementCondition[];
   defaultEnabled?: boolean;
+  defaultHidden?: boolean;
   platform?: Array<"darwin" | "linux" | "windows" | "web">;
 };
 
@@ -143,48 +173,58 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
       { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
     ],
+    enablement: [
+      { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
+      { type: "plugin-loaded", ref: "opencode-chrome-devtools", label: "Browser plugin loaded" },
+    ],
     lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
     defaultEnabled: true,
   },
   {
     schemaVersion: 1,
-    id: "handsfree-computer-use",
-    name: "HandsFree Computer Use",
+    id: "computer-use",
+    name: "Computer Use",
     description: "Control macOS apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
+    preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
     icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use HandsFree Computer Use to " },
+    composer: { prompt: "Use Computer Use to " },
     setup: {
-      instructions: "HandsFree runs as a local MCP server backed by a macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
-      primaryCta: "Connect HandsFree MCP",
+      instructions: "Computer Use runs as a local MCP server backed by a macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
+      primaryCta: "Connect Computer Use MCP",
       secondaryCta: "Check macOS permissions",
-      testActionRef: "openwork.handsfree.healthCheck",
+      testActionRef: "openwork.computerUse.healthCheck",
     },
     resources: [
       {
         type: "mcp",
-        id: "handsfree-computer-use-mcp",
-        label: "HandsFree MCP",
-        mcpServerName: "handsfree-computer-use",
+        id: "computer-use-mcp",
+        label: "Computer Use MCP",
+        mcpServerName: "computer-use",
         command: ["npx", "-y", "@openwork/handsfree", "mcp"],
-        localCommandRef: "openwork.handsfreeMcp",
+        localCommandRef: "openwork.computerUseMcp",
         required: true,
       },
       {
         type: "native-binary",
-        id: "handsfree-computer-use-native",
+        id: "computer-use-native",
         label: "macOS accessibility runtime",
         packageName: "@openwork/handsfree",
         required: true,
       },
     ],
     contributions: [
-      { type: "setup-instructions", ref: "openwork.handsfree.setup", location: "settings-detail" },
-      { type: "native-capability", ref: "openwork.handsfree.axPermissions", label: "Accessibility and Screen Recording" },
-      { type: "test-action", ref: "openwork.handsfree.healthCheck", label: "Verify HandsFree MCP" },
-      { type: "composer-prompt", prompt: "Use HandsFree Computer Use to ", location: "composer" },
+      { type: "setup-instructions", ref: "openwork.computerUse.setup", location: "settings-detail" },
+      { type: "native-capability", ref: "openwork.computerUse.axPermissions", label: "Accessibility and Screen Recording" },
+      { type: "test-action", ref: "openwork.computerUse.healthCheck", label: "Verify Computer Use MCP" },
+      { type: "composer-prompt", prompt: "Use Computer Use to ", location: "composer" },
     ],
-    lifecycle: { reload: ["mcp"], detection: ["mcp:handsfree-computer-use"] },
+    enablement: [
+      { type: "mcp-connected", ref: "computer-use", label: "MCP server connected" },
+      { type: "permission-granted", ref: "accessibility", label: "Accessibility permission" },
+      { type: "permission-granted", ref: "screenRecording", label: "Screen Recording permission" },
+    ],
+    lifecycle: { reload: ["mcp"], detection: ["mcp:computer-use"] },
     platform: ["darwin"],
   },
   {
@@ -212,7 +252,77 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "test-action", ref: "openwork.imageGen.testGenerate", label: "Generate test image" },
       { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
     ],
+    enablement: [
+      { type: "plugin-loaded", ref: "openwork-image-generation", label: "Image plugin installed" },
+      { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
+    ],
     lifecycle: { reload: ["plugins"], detection: ["plugin:openwork-image-generation"] },
+  },
+  {
+    schemaVersion: 1,
+    id: "openwork-voice",
+    name: "Voice Mode",
+    description: "Talk to OpenWork through a Realtime voice panel that drives the same semantic UI controls as OpenWork UI MCP.",
+    preview: true,
+    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    icon: { src: "/openwork-mark.svg" },
+    composer: { prompt: "Use Voice Mode to " },
+    setup: {
+      instructions: "Voice Mode uses OpenAI Realtime. Save an OpenAI API key in OpenWork env vars, then open the session rail panel and speak or send a typed voice command.",
+      primaryCta: "Save OpenAI key",
+      secondaryCta: "Test Realtime",
+      requiredEnv: ["OPENAI_REALTIME_API_KEY", "OPENAI_API_KEY"],
+      testActionRef: "openwork.voice.testRealtime",
+    },
+    resources: [
+      { type: "secret", id: "openai-realtime-api-key", envKey: "OPENAI_REALTIME_API_KEY", required: false },
+      { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
+      { type: "local-service", id: "openwork-voice-realtime-session", label: "Realtime client-secret minting", required: true },
+    ],
+    contributions: [
+      { type: "settings-panel", ref: "openwork.voice.settings", location: "settings-detail" },
+      { type: "session-side-panel", ref: "openwork.voice.panel", location: "session-right-pane" },
+      { type: "session-rail-item", ref: "openwork.voice.rail", label: "Voice Mode", location: "session-rail" },
+      { type: "server-route", ref: "POST /voice/realtime/session", location: "server" },
+      { type: "control-actions", ref: "openwork.voice.controlActions" },
+      { type: "test-action", ref: "openwork.voice.testRealtime", label: "Test Realtime" },
+      { type: "composer-prompt", prompt: "Use Voice Mode to ", location: "composer" },
+    ],
+    enablement: [
+      { type: "toggle-enabled", ref: "openwork-voice", label: "Enabled" },
+      { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
+    ],
+    lifecycle: { reload: ["config"], detection: ["env:OPENAI_REALTIME_API_KEY", "env:OPENAI_API_KEY"] },
+  },
+  {
+    schemaVersion: 1,
+    id: "google-workspace",
+    name: "Google Workspace",
+    description: "Let OpenWork help with meetings, selected Drive files, and Gmail drafts.",
+    preview: true,
+    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    icon: { simpleIconSlug: "google" },
+    composer: { prompt: "Use Google Workspace to " },
+    setup: {
+      instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in OpenWork.",
+      primaryCta: "Connect Google Workspace",
+      secondaryCta: "Test connection",
+      testActionRef: "openwork.googleWorkspace.testConnection",
+    },
+    resources: [
+      { type: "provider", id: "google-oauth", label: "Google account", providerId: "google-workspace", required: true },
+      { type: "local-service", id: "google-workspace-connector", label: "Secure local connection", required: true },
+      { type: "tool", id: "google-calendar-read", label: "Calendar", required: true },
+      { type: "tool", id: "google-gmail-drafts", label: "Gmail drafts", required: true },
+      { type: "tool", id: "google-drive-selected-files", label: "Selected Drive files", required: true },
+    ],
+    contributions: [
+      { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },
+      { type: "test-action", ref: "openwork.googleWorkspace.testConnection", label: "Test Google Workspace" },
+      { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
+    ],
+    lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
+    defaultHidden: true,
   },
   {
     schemaVersion: 1,
@@ -235,6 +345,9 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "settings-panel", ref: "openwork.ollama.settings", location: "settings-detail" },
       { type: "test-action", ref: "openwork.ollama.listModels", label: "Check local models" },
       { type: "composer-prompt", prompt: "Use the Ollama extension to ", location: "composer" },
+    ],
+    enablement: [
+      { type: "provider-connected", ref: "ollama", label: "Ollama provider" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
