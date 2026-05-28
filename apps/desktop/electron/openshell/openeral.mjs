@@ -149,6 +149,7 @@ async function waitForSandboxReady(name, opts = {}) {
   const { timeoutMs = 120_000, pollMs = 4_000, onProgress } = opts;
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
+  let flatStringStreak = 0; // consecutive polls returning flat-string (no phase info)
   while (Date.now() < deadline) {
     attempt += 1;
     const r = await wslRun(
@@ -163,14 +164,24 @@ async function waitForSandboxReady(name, opts = {}) {
           return s?.name === name || s?.sandbox_name === name || s?.id === name;
         });
         if (entry !== undefined) {
-          // Flat string → no phase info, assume ready.
-          if (typeof entry === "string") return;
-          const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
-          if (!phase || /ready|running/i.test(phase)) return;
-          if (/error|failed/i.test(phase)) {
-            throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
+          if (typeof entry === "string") {
+            // Flat string — CLI doesn't include phase info in this build.
+            // Wait for 2 consecutive flat-string polls before assuming ready,
+            // so we don't connect to a sandbox that just registered but hasn't
+            // finished provisioning (the gateway takes a moment to write phase
+            // info after initial registration).
+            flatStringStreak += 1;
+            if (flatStringStreak >= 2) return; // assume ready
+            onProgress?.({ phase: "waiting", message: `Sandbox ${name} registered; confirming Ready state…` });
+          } else {
+            flatStringStreak = 0;
+            const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
+            if (!phase || /ready|running/i.test(phase)) return;
+            if (/error|failed/i.test(phase)) {
+              throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
+            }
+            onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting… (this can take a few minutes on first run)` });
           }
-          onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
         }
       }
     }
@@ -178,7 +189,7 @@ async function waitForSandboxReady(name, opts = {}) {
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   // Timed out — proceed anyway; exec may succeed if setup.sh just finished.
-  onProgress?.({ phase: "timeout", message: "Sandbox did not confirm Ready state; attempting to connect anyway." });
+  onProgress?.({ phase: "timeout", message: "Sandbox is taking longer than expected. Attempting to connect anyway…" });
 }
 
 /**
@@ -393,6 +404,7 @@ export async function createOpenEralSandbox(opts) {
         );
         onProgress?.({ phase: "waiting", message: `Sandbox ${name} is provisioning; waiting for Ready state…` });
         await waitForSandboxReady(name, {
+          timeoutMs: 5 * 60_000,
           onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
         });
         return { name, profile, imageRef, existed: false };
@@ -426,8 +438,11 @@ export async function createOpenEralSandbox(opts) {
   // but setup.sh inside the container may still be running. If the PTY
   // exec starts while still Provisioning, openshell returns "not ready"
   // and the terminal shows [Session ended (exit 1)] immediately.
+  // Use a 5-minute timeout — Docker image pull + container start can take
+  // several minutes on the first run or on a slow connection.
   onProgress?.({ phase: "waiting", message: `Sandbox ${name} created; waiting for Ready state…` });
   await waitForSandboxReady(name, {
+    timeoutMs: 5 * 60_000,
     onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
   });
   onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });

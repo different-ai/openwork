@@ -158,6 +158,10 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         // create phases stream in. The session-progress channel is the
         // same one Phase O4's TestLaunchPanel uses.
         const bridge = getBridge();
+        // Clear any stale message from a previous run so polling messages
+        // ("Sandbox is Provisioning, waiting…") are immediately visible
+        // instead of being hidden behind a stale "ready" message.
+        setBootstrapMessage(null);
         unsubProgress = bridge?.openeral?.onSessionProgress?.((evt) => {
           if (cancelled) return;
           if (evt.message) setBootstrapMessage(evt.message);
