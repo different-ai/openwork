@@ -111,4 +111,25 @@ describe("managed cloud provider model allowlists", () => {
       "claude-opus",
     ]);
   });
+
+  test("merges duplicate imported provider model allowlists by provider ID", () => {
+    const allowlist = buildCloudManagedModelIdsByProvider({
+      llmProvider_openai_one: importedProvider({
+        cloudProviderId: "llmProvider_openai_one",
+        providerId: "openai",
+        sourceProviderId: "openai",
+        name: "OpenAI one",
+        modelIds: ["gpt-5.4"],
+      }),
+      llmProvider_openai_two: importedProvider({
+        cloudProviderId: "llmProvider_openai_two",
+        providerId: "openai",
+        sourceProviderId: "openai",
+        name: "OpenAI two",
+        modelIds: ["gpt-5.5"],
+      }),
+    });
+
+    expect(visibleModelIds("openai", ["gpt-5.4", "gpt-5.5", "gpt-4o"], allowlist)).toEqual(["gpt-5.4", "gpt-5.5"]);
+  });
 });
