@@ -16,6 +16,11 @@ type ProviderListTestItem = {
   models?: Record<string, unknown>;
 };
 
+type ProviderListTestBody = {
+  all?: ProviderListTestItem[];
+  providers?: ProviderListTestItem[] | Record<string, ProviderListTestItem>;
+};
+
 const HOST_TOKEN = "owt_provider_sync_host_token";
 const CLIENT_TOKEN = "owt_provider_sync_client_token";
 const stops: Array<() => void | Promise<void>> = [];
@@ -61,7 +66,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean } = {}) {
+async function boot(options: { failAuth?: boolean; providerListShape?: "all" | "providers-array" | "providers-object" } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -78,30 +83,43 @@ async function boot(options: { failAuth?: boolean } = {}) {
         return Response.json({ ok: true });
       }
       if (url.pathname === "/config/providers") {
+        const providers = [
+          {
+            id: "lpr_den_nvidia",
+            name: "NVIDIA",
+            source: "custom",
+            models: {
+              "deepseek-ai/deepseek-v4-flash": { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+              "google/gemma-4-31b-it": { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
+            },
+          },
+          {
+            id: "openai",
+            name: "OpenAI",
+            source: "config",
+            models: {
+              "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" },
+              "gpt-5.5": { id: "gpt-5.5", name: "GPT-5.5" },
+              "gpt-4o": { id: "gpt-4o", name: "GPT-4o" },
+              "gpt-5.4-fast": { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
+              "o4-mini": { id: "o4-mini", name: "o4-mini" },
+            },
+          },
+        ];
+        if (options.providerListShape === "providers-array") {
+          return Response.json({
+            default: "openai",
+            providers,
+          });
+        }
+        if (options.providerListShape === "providers-object") {
+          return Response.json({
+            default: "openai",
+            providers: Object.fromEntries(providers.map((provider) => [provider.id, provider])),
+          });
+        }
         return Response.json({
-          all: [
-            {
-              id: "lpr_den_nvidia",
-              name: "NVIDIA",
-              source: "custom",
-              models: {
-                "deepseek-ai/deepseek-v4-flash": { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
-                "google/gemma-4-31b-it": { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
-              },
-            },
-            {
-              id: "openai",
-              name: "OpenAI",
-              source: "config",
-              models: {
-                "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" },
-                "gpt-5.5": { id: "gpt-5.5", name: "GPT-5.5" },
-                "gpt-4o": { id: "gpt-4o", name: "GPT-4o" },
-                "gpt-5.4-fast": { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
-                "o4-mini": { id: "o4-mini", name: "o4-mini" },
-              },
-            },
-          ],
+          all: providers,
           connected: ["lpr_den_nvidia", "openai"],
           default: { "lpr_den_nvidia": "deepseek-ai/deepseek-v4-flash", openai: "gpt-5.4" },
         });
@@ -203,10 +221,60 @@ describe("managed provider sync runtime route", () => {
 
     const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
     expect(response.status).toBe(200);
-    const body = await response.json() as { all?: ProviderListTestItem[] };
+    const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.all) ? body.all : [];
     const openai = providers.find((provider) => provider?.id === "openai");
     const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+
+    expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-5.4-fast");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("o4-mini");
+    expect(Object.keys(nvidia?.models ?? {}).sort()).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
+    expect(JSON.stringify(body)).not.toContain("plain-server-secret");
+    expect(JSON.stringify(body)).not.toContain("refresh-secret");
+  });
+
+  test("filters managed OAuth provider-list models for live providers-array responses", async () => {
+    const { base } = await boot({ providerListShape: "providers-array" });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody;
+    const providers = Array.isArray(body.providers) ? body.providers : [];
+    const openai = providers.find((provider) => provider?.id === "openai");
+    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+
+    expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-5.4-fast");
+    expect(Object.keys(openai?.models ?? {})).not.toContain("o4-mini");
+    expect(Object.keys(nvidia?.models ?? {}).sort()).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
+    expect(JSON.stringify(body)).not.toContain("plain-server-secret");
+    expect(JSON.stringify(body)).not.toContain("refresh-secret");
+  });
+
+  test("filters managed OAuth provider-list models for providers-object responses", async () => {
+    const { base } = await boot({ providerListShape: "providers-object" });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody;
+    const providers = !Array.isArray(body.providers) && body.providers ? body.providers : {};
+    const openai = providers.openai;
+    const nvidia = providers.lpr_den_nvidia;
 
     expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");

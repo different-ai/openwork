@@ -581,16 +581,35 @@ async function readManagedProviderModelAllowlist(workspaceRoot: string): Promise
 }
 
 function filterProviderListModels(data: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
-  if (!isRecordValue(data) || !Array.isArray(data.all)) return data;
-  return {
-    ...data,
-    all: data.all.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
-  };
+  if (!isRecordValue(data)) return data;
+  if (Array.isArray(data.all)) {
+    return {
+      ...data,
+      all: data.all.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
+    };
+  }
+  if (Array.isArray(data.providers)) {
+    return {
+      ...data,
+      providers: data.providers.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
+    };
+  }
+  if (isRecordValue(data.providers)) {
+    return {
+      ...data,
+      providers: Object.fromEntries(
+        Object.entries(data.providers).map(([providerId, provider]) => [providerId, filterProviderListItem(provider, allowedModelsByProvider, providerId)]),
+      ),
+    };
+  }
+  return data;
 }
 
-function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
-  if (!isRecordValue(provider) || typeof provider.id !== "string") return provider;
-  const allowed = allowedModelsByProvider.get(provider.id);
+function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
+  if (!isRecordValue(provider)) return provider;
+  const providerId = typeof provider.id === "string" ? provider.id : fallbackProviderId;
+  if (!providerId) return provider;
+  const allowed = allowedModelsByProvider.get(providerId);
   if (!allowed || !isRecordValue(provider.models)) return provider;
   return {
     ...provider,
