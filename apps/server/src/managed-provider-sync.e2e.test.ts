@@ -72,13 +72,13 @@ async function boot(options: { failAuth?: boolean; providerListShape?: "all" | "
   dirs.push(workspace, stores);
   process.env.OPENWORK_TOKEN_STORE = join(stores, "tokens.json");
 
-  const authCalls: unknown[] = [];
+  const authCalls: Array<{ method: string; path: string; body: unknown }> = [];
   const opencode = Bun.serve({
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/auth/")) {
-        authCalls.push(await request.json());
+        authCalls.push({ method: request.method, path: url.pathname, body: await request.json() });
         if (options.failAuth) return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
         return Response.json({ ok: true });
       }
@@ -206,8 +206,12 @@ describe("managed provider sync runtime route", () => {
     expect(config).not.toContain('"knowledge"');
     expect(config).not.toContain("plain-server-secret");
     expect(authCalls).toHaveLength(4);
-    expect(JSON.stringify(authCalls[0])).toContain("plain-server-secret");
-    expect(JSON.stringify(authCalls[1])).toContain("refresh-secret");
+    expect(authCalls[0]?.method).toBe("PUT");
+    expect(authCalls[0]?.path).toBe("/auth/lpr_den_nvidia");
+    expect(authCalls[0]?.body).toEqual({ type: "api", key: "plain-server-secret" });
+    expect(authCalls[1]?.method).toBe("PUT");
+    expect(authCalls[1]?.path).toBe("/auth/openai");
+    expect(authCalls[1]?.body).toEqual({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 });
   });
 
   test("filters managed OAuth provider-list models to Den-selected config models", async () => {

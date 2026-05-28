@@ -4139,8 +4139,8 @@ function parseManagedOpencodeAuth(provider: ManagedProviderSyncProvider): unknow
 async function applyManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, provider: ManagedProviderSyncProvider) {
   const providerId = getManagedProviderRuntimeId(provider);
   await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
-    method: "POST",
-    body: { providerID: providerId, auth: parseManagedOpencodeAuth(provider) },
+    method: "PUT",
+    body: parseManagedOpencodeAuth(provider),
   });
 }
 
