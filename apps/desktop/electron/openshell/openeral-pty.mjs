@@ -84,23 +84,27 @@ function buildWslEnv(extra) {
 
 let spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
   const pty = await import("node-pty");
-  // Wrap the openshell command in `bash -c` so we can call `stty cols X rows Y`
-  // before openshell's SSH client reads TIOCGWINSZ to allocate the remote PTY.
-  //
-  // Problem: node-pty creates a Windows ConPTY with the correct dimensions, but
-  // the ConPTY → WSL2 linux-PTY dimension propagation is racy. By the time
-  // `openshell sandbox exec --tty` runs SSH and issues TIOCGWINSZ on its
-  // controlling terminal, the WSL-side PTY may not yet reflect the ConPTY's
-  // dimensions — so the container PTY defaults to 1 column and Claude Code
-  // renders its TUI with each character on a separate line ("vertical text").
-  //
-  // Fix: `stty cols X rows Y` explicitly sets the linux-PTY dimensions before
-  // openshell reads them. `2>/dev/null` silences errors if stty fails (e.g.
-  // stdin not a TTY in a test environment); `;` (not `&&`) keeps going either way.
   const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
+  // Two-layer stty strategy:
+  //
+  // Layer 1 (WSL PTY): `stty cols X rows Y` on the WSL bash PTY BEFORE
+  // `openshell sandbox exec` runs. This ensures SSH's RequestPTY reads the
+  // correct TIOCGWINSZ when negotiating the container PTY. Fixes the racy
+  // ConPTY → WSL2 dimension propagation that can leave the linux-PTY at
+  // cols=1 at connection time.
+  //
+  // Layer 2 (container PTY): wrap the remote command in `bash -c 'stty ...; exec openeral'`
+  // so that stty is also run INSIDE the container immediately after the SSH
+  // session starts, BEFORE openeral (and therefore setup.sh and Claude Code)
+  // reads TIOCGWINSZ. This is the critical layer: even if openshell's SSH
+  // RequestPTY allocated the container PTY with default/wrong dimensions
+  // (because it does not read from the controlling TTY, or because the
+  // dimension negotiation used a different source), the inner stty corrects
+  // the container PTY's stored size so Claude Code sees the right cols/rows.
   const shellCmd =
     `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
-    `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
+    `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
+    `bash -c 'stty cols ${cols} rows ${rows} 2>/dev/null; exec openeral'`;
   return pty.spawn(
     "wsl.exe",
     ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],
@@ -280,7 +284,8 @@ export const __testing = {
       const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
       const shellCmd =
         `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
-        `exec openshell sandbox exec --name ${quotedName} --tty -- openeral`;
+        `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
+        `bash -c 'stty cols ${cols} rows ${rows} 2>/dev/null; exec openeral'`;
       return pty.spawn(
         "wsl.exe",
         ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],

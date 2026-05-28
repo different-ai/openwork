@@ -113,7 +113,20 @@ export async function pullImage(imageRef, options = {}) {
 
 /**
  * Parse the raw openshell sandbox list output into a normalised array.
- * Returns null when the JSON is unparseable or the shape is unrecognised.
+ * Returns null only when the raw text cannot yield any sandbox list at all.
+ *
+ * The openshell CLI has emitted several JSON shapes across releases:
+ *   - Flat array:                  [...sandbox objects...]
+ *   - {sandboxes: [...]}           early releases
+ *   - {items: [...]}               v0.0.3x
+ *   - {data: [...]}                v0.0.4x
+ *   - {results: [...]}             some builds
+ *   - {page: ..., items: [...]}    paginated response
+ *
+ * If none of the known envelope keys match, we fall back to the FIRST
+ * Array-valued key found in the object, so future CLI versions with a
+ * new envelope key still work without a code change.
+ *
  * Each item is either a plain string (name only) or an object that may
  * carry phase/status fields depending on the CLI version.
  */
@@ -122,18 +135,28 @@ function parseSandboxList(stdout) {
   try {
     parsed = JSON.parse(stdout);
   } catch {
+    // Not valid JSON at all — caller falls back to text search.
     return null;
   }
-  const list = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.sandboxes)
-      ? parsed.sandboxes
-      : Array.isArray(parsed?.items)
-        ? parsed.items
-        : Array.isArray(parsed?.data)
-          ? parsed.data
-          : null;
-  return list;
+
+  // Flat array
+  if (Array.isArray(parsed)) return parsed;
+
+  if (parsed && typeof parsed === "object") {
+    // Known envelope keys (add new ones here as the CLI evolves)
+    for (const key of ["sandboxes", "items", "data", "results", "namespaces"]) {
+      if (Array.isArray(parsed[key])) return parsed[key];
+    }
+    // Generic fallback: return the first array value found
+    for (const key of Object.keys(parsed)) {
+      if (Array.isArray(parsed[key])) {
+        console.warn(`[parseSandboxList] using unknown envelope key "${key}"`);
+        return parsed[key];
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -149,13 +172,28 @@ async function waitForSandboxReady(name, opts = {}) {
   const { timeoutMs = 120_000, pollMs = 4_000, onProgress } = opts;
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
-  let flatStringStreak = 0; // consecutive polls returning flat-string (no phase info)
+  // Track the first time we see a "Provisioning" phase so we can detect
+  // sandboxes that are stuck (never transition to Ready).
+  let firstProvisioningAt = null;
+  const STUCK_PROVISIONING_THRESHOLD_MS = 90_000; // 90 s in Provisioning → stuck
+
   while (Date.now() < deadline) {
     attempt += 1;
-    const r = await wslRun(
-      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
-      { timeout: 15_000 },
-    );
+    // 20 s outer timeout gives 10 s slack after bash's inner 10 s timer
+    // fires, so wsl.exe has time to exit before wslRun's own timer does.
+    let r;
+    try {
+      r = await wslRun(
+        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
+        { timeout: 20_000 },
+      );
+    } catch {
+      // Gateway unreachable during polling — report progress and keep
+      // waiting; the sandbox may still transition to Ready.
+      onProgress?.({ phase: "waiting", message: `Gateway unresponsive (attempt ${attempt}), retrying…` });
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      continue;
+    }
     if (r.exitCode === 0) {
       const list = parseSandboxList(r.stdout);
       if (list) {
@@ -164,32 +202,52 @@ async function waitForSandboxReady(name, opts = {}) {
           return s?.name === name || s?.sandbox_name === name || s?.id === name;
         });
         if (entry !== undefined) {
-          if (typeof entry === "string") {
-            // Flat string — CLI doesn't include phase info in this build.
-            // Wait for 2 consecutive flat-string polls before assuming ready,
-            // so we don't connect to a sandbox that just registered but hasn't
-            // finished provisioning (the gateway takes a moment to write phase
-            // info after initial registration).
-            flatStringStreak += 1;
-            if (flatStringStreak >= 2) return; // assume ready
-            onProgress?.({ phase: "waiting", message: `Sandbox ${name} registered; confirming Ready state…` });
-          } else {
-            flatStringStreak = 0;
-            const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
-            if (!phase || /ready|running/i.test(phase)) return;
-            if (/error|failed/i.test(phase)) {
-              throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
-            }
-            onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting… (this can take a few minutes on first run)` });
+          // Flat string → no phase info, assume ready.
+          if (typeof entry === "string") return;
+          const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
+          if (!phase || /ready|running/i.test(phase)) return;
+          if (/error|failed/i.test(phase)) {
+            throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
           }
+          // Detect sandboxes stuck in Provisioning. If the sandbox has been
+          // in a provisioning-like state for longer than the threshold, bail
+          // out early with a clear error so the renderer can offer a
+          // "Delete and start fresh" action rather than spinning forever.
+          if (/provision/i.test(phase)) {
+            if (!firstProvisioningAt) firstProvisioningAt = Date.now();
+            const stuckMs = Date.now() - firstProvisioningAt;
+            if (stuckMs > STUCK_PROVISIONING_THRESHOLD_MS) {
+              throw new Error(
+                `STUCK_PROVISIONING: Sandbox "${name}" has been in "${phase}" state for ` +
+                  `over ${Math.round(stuckMs / 1000)}s and appears stuck. ` +
+                  `Delete the sandbox and reconnect to create a fresh one. ` +
+                  `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+              );
+            }
+          } else {
+            // Phase changed away from Provisioning — reset the timer.
+            firstProvisioningAt = null;
+          }
+          onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
         }
       }
     }
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  // Timed out — proceed anyway; exec may succeed if setup.sh just finished.
-  onProgress?.({ phase: "timeout", message: "Sandbox is taking longer than expected. Attempting to connect anyway…" });
+  // Timed out without confirming Ready — if we last saw a provisioning phase
+  // treat it as stuck rather than proceeding optimistically (the exec would
+  // fail anyway with "phase: Provisioning").
+  if (firstProvisioningAt) {
+    throw new Error(
+      `STUCK_PROVISIONING: Sandbox "${name}" did not reach Ready state within ${Math.round(timeoutMs / 1000)}s ` +
+        `(last observed phase: Provisioning). ` +
+        `Delete the sandbox and reconnect to create a fresh one. ` +
+        `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+    );
+  }
+  // Non-provisioning timeout — proceed; exec may succeed if setup.sh just finished.
+  onProgress?.({ phase: "timeout", message: "Sandbox did not confirm Ready state; attempting to connect anyway." });
 }
 
 /**
@@ -205,10 +263,27 @@ export async function sandboxExists(name) {
   // 15 s if the gateway is unreachable. Without this wrapper the
   // process hangs until wslRun's full timeout fires — making the UI
   // appear frozen. bash exits 124 when it kills the child.
-  const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
-    { timeout: 20_000 },
-  );
+  //
+  // wslRun timeout is set to 25 s (10 s slack after bash's 15 s fires).
+  // Without the extra slack wsl.exe can outlive the bash timeout and
+  // trigger wslRun's own timer — throwing a raw "wsl.exe timed out"
+  // error before the exitCode === 124 check below is ever reached.
+  let r;
+  try {
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+      { timeout: 25_000 },
+    );
+  } catch (err) {
+    // wslRun throws (never returns r) when its own timer fires.
+    // Map any timeout to the user-friendly gateway message so the
+    // renderer can show a clear call-to-action instead of a raw stack.
+    throw new Error(
+      "OpenShell gateway is not responding (sandbox list timed out). " +
+        "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+        "then try again.",
+    );
+  }
   if (r.exitCode === 124) {
     throw new Error(
       "OpenShell gateway is not responding (openshell sandbox list timed out). " +
@@ -219,8 +294,19 @@ export async function sandboxExists(name) {
   if (r.exitCode !== 0) return false;
   const list = parseSandboxList(r.stdout);
   if (!list) {
-    console.warn("[sandboxExists] unrecognised sandbox list shape:", r.stdout.slice(0, 200));
-    return false;
+    // parseSandboxList could not find an array in the JSON (completely
+    // unknown format). Fall back to a raw text search: if the sandbox
+    // name appears anywhere in the output it almost certainly exists.
+    // This prevents sandboxExists returning false (triggering an
+    // unnecessary create that then times out) just because the CLI
+    // changed its output format.
+    const found = r.stdout.includes(name);
+    console.warn(
+      `[sandboxExists] unrecognised sandbox list shape — ` +
+        `falling back to text search for "${name}": ${found ? "found" : "not found"}. ` +
+        `Raw output: ${r.stdout.slice(0, 300)}`,
+    );
+    return found;
   }
   return list.some((s) => {
     if (typeof s === "string") return s === name;
@@ -358,6 +444,11 @@ export async function createOpenEralSandbox(opts) {
   // call AFTER create, so there is no quoting complexity inside the
   // create command.  setup.sh falls back gracefully if the exec fails
   // (it skips the presign step when ANTHROPIC_API_KEY is a placeholder).
+  // NOTE: do NOT use `exec openshell sandbox create ...` here.
+  // `exec` replaces the bash process, which means the EXIT trap set
+  // below never fires and the temp DB-URL file leaks in /tmp forever.
+  // Running openshell as a regular child (no exec) lets bash honour
+  // the trap on exit — whether the create succeeds or fails.
   const script = [
     "set -e",
     "umask 077",
@@ -366,7 +457,7 @@ export async function createOpenEralSandbox(opts) {
     `chmod 600 ${dbPath}`,
     // Staging file is removed on exit whether create succeeds or fails.
     `trap 'rm -f ${dbPath}' EXIT`,
-    `exec openshell sandbox create --no-tty ` +
+    `openshell sandbox create --no-tty ` +
       `--name ${shellQuote(name)} ` +
       `--from ${shellQuote(imageRef)} ` +
       `--upload ${dbPath}:/sandbox/db-url ` +
@@ -374,15 +465,27 @@ export async function createOpenEralSandbox(opts) {
       `-- /bin/true`,
   ].join("\n");
 
-  onProgress?.({ phase: "create", message: `Creating sandbox ${name}...` });
-  const r = await wslRun(
-    ["-d", DISTRO_NAME, "--", "bash", "-c", script],
-    {
-      timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
-      env,
-      stdin: databaseUrl,
-    },
-  );
+  onProgress?.({ phase: "create", message: `Creating sandbox ${name}…` });
+  let r;
+  try {
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", script],
+      {
+        timeout: opts.createTimeoutMs ?? DEFAULT_CREATE_TIMEOUT_MS,
+        env,
+        stdin: databaseUrl,
+      },
+    );
+  } catch (err) {
+    if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+      throw new Error(
+        `openshell sandbox create timed out after 3 minutes. ` +
+          `The OpenShell gateway or Docker daemon is not responding. ` +
+          `Open Settings \u2192 Sandbox \u2192 OpenShell health and click Restart Gateway, then retry.`,
+      );
+    }
+    throw err;
+  }
   if (r.exitCode !== 0) {
     const output = (r.stderr || r.stdout).trim();
     // openshell exits 1 with "already exists" when sandboxExists() returned
@@ -394,13 +497,13 @@ export async function createOpenEralSandbox(opts) {
     }
     // openshell CLI 0.0.42 race: the gRPC stream sometimes closes with
     // "NotFound: sandbox not found" even though the gateway already registered
-    // the sandbox and started provisioning it. Check the list before treating
+    // the sandbox and started provisioning. Check the list before treating
     // this as a hard failure — if the sandbox is there, wait for Ready.
     if (/not.?found|sandbox not found/i.test(output)) {
       const checkExists = await sandboxExists(name).catch(() => false);
       if (checkExists) {
         console.warn(
-          `[createOpenEralSandbox] create exited 1 with NotFound but sandbox ${name} found in list; treating as provisioning.`,
+          `[createOpenEralSandbox] create exited 1 with NotFound but ${name} found in list; treating as provisioning.`,
         );
         onProgress?.({ phase: "waiting", message: `Sandbox ${name} is provisioning; waiting for Ready state…` });
         await waitForSandboxReady(name, {
@@ -433,13 +536,12 @@ export async function createOpenEralSandbox(opts) {
     console.warn("[createOpenEralSandbox] key-file write via exec failed (non-fatal):", e.message);
   });
 
-  // Wait for the sandbox to reach Ready before returning. `sandbox create
-  // -- /bin/true` exits 0 as soon as the gateway REGISTERS the sandbox,
-  // but setup.sh inside the container may still be running. If the PTY
-  // exec starts while still Provisioning, openshell returns "not ready"
-  // and the terminal shows [Session ended (exit 1)] immediately.
-  // Use a 5-minute timeout — Docker image pull + container start can take
-  // several minutes on the first run or on a slow connection.
+  // `sandbox create -- /bin/true` exits 0 as soon as the gateway REGISTERS
+  // the sandbox, but setup.sh inside the container may still be running.
+  // Wait for Ready before returning so the PTY never connects to a
+  // still-Provisioning sandbox. Uses a 5-minute timeout; the 90-second
+  // stuck-Provisioning detection inside waitForSandboxReady will fire and
+  // show the "Delete & start fresh" button if the gateway is truly stuck.
   onProgress?.({ phase: "waiting", message: `Sandbox ${name} created; waiting for Ready state…` });
   await waitForSandboxReady(name, {
     timeoutMs: 5 * 60_000,
@@ -451,10 +553,38 @@ export async function createOpenEralSandbox(opts) {
 
 export async function deleteOpenEralSandbox(name) {
   if (!name) throw new Error("deleteOpenEralSandbox: name is required");
-  return wslRun(
-    ["-d", DISTRO_NAME, "--", "openshell", "sandbox", "delete", name, "--force"],
-    { timeout: 30_000 },
-  );
+  // `openshell sandbox delete` does NOT support --force; passing it causes
+  // "unexpected argument '--force' found" and exit 1. Use bash timeout for
+  // the same inner-timeout safety net we apply to list/create calls.
+  let r;
+  try {
+    r = await wslRun(
+      ["-d", DISTRO_NAME, "--", "bash", "-c", `timeout 20 openshell sandbox delete ${shellQuote(name)}`],
+      { timeout: 30_000 },
+    );
+  } catch (err) {
+    if (/wsl\.exe timed out/i.test(err?.message ?? "")) {
+      throw new Error(
+        "openshell sandbox delete timed out. The OpenShell gateway may be unresponsive. " +
+          "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+          "then try again.",
+      );
+    }
+    throw err;
+  }
+  if (r.exitCode !== 0) {
+    const output = (r.stderr || r.stdout).trim();
+    // 124 = bash timeout(1) hit the inner timer — gateway is unresponsive.
+    if (r.exitCode === 124) {
+      throw new Error(
+        "openshell sandbox delete timed out (gateway unresponsive). " +
+          "Restart the gateway from Settings \u2192 Sandbox \u2192 OpenShell health \u2192 Restart Gateway, " +
+          "then try again.",
+      );
+    }
+    throw new Error(`openshell sandbox delete failed: ${output || "(no output)"}`);
+  }
+  return r;
 }
 
 /**
