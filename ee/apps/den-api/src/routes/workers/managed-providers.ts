@@ -122,6 +122,7 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
         401: jsonResponse("The caller must be signed in to sync providers.", unauthorizedSchema),
         403: jsonResponse("Only organization owners and admins can sync providers.", forbiddenSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
+        502: jsonResponse("The worker runtime failed to apply managed providers.", managedProviderSyncResponseSchema),
       },
     }),
     ...(routeMiddlewares as never[]),

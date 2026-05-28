@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -306,7 +306,7 @@ describe("managed provider sync runtime route", () => {
   });
 
   test("sanitizes OpenCode auth apply failures", async () => {
-    const { base } = await boot({ failAuth: true });
+    const { base, workspace } = await boot({ failAuth: true });
     const response = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
       headers: hostAuth(),
@@ -319,5 +319,7 @@ describe("managed provider sync runtime route", () => {
     expect(JSON.stringify(body)).not.toContain("access-secret");
     expect(JSON.stringify(body)).not.toContain("refresh-secret");
     expect(body.reason).toBe("Managed provider sync failed");
+    const configPath = join(workspace, "opencode.jsonc");
+    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
   });
 });

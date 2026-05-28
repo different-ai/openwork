@@ -1968,6 +1968,10 @@ function createRoutes(
     }
 
     const configFingerprintBefore = await computeReloadFingerprint(workspace.path, "config");
+    const opencodeConfigFile = opencodeConfigPath(workspace.path);
+    const opencodeConfigBefore = existsSync(opencodeConfigFile)
+      ? await readFile(opencodeConfigFile, "utf8")
+      : null;
     const applied: string[] = [];
     try {
       for (const provider of payload.providers) {
@@ -1976,6 +1980,11 @@ function createRoutes(
         applied.push(provider.id);
       }
     } catch (error) {
+      if (opencodeConfigBefore === null) {
+        await rm(opencodeConfigFile, { force: true });
+      } else {
+        await writeFile(opencodeConfigFile, opencodeConfigBefore, "utf8");
+      }
       return jsonResponse({
         status: "failed",
         providerCount: applied.length,

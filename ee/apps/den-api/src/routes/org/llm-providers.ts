@@ -946,7 +946,10 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             credentialKind: provider.credentialKind,
             hasApiKey: input.apiKey === undefined ? Boolean(provider.apiKey) : Boolean(normalized.apiKey),
             hasOpencodeAuth: Boolean(provider.opencodeAuth),
-            hasCredential: input.apiKey === undefined ? getCredentialFlags(provider).hasCredential : Boolean(normalized.apiKey),
+            hasCredential: getCredentialFlags({
+              ...provider,
+              apiKey: input.apiKey === undefined ? provider.apiKey : normalized.apiKey,
+            }).hasCredential,
             updatedAt,
           },
         })
