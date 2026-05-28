@@ -1,0 +1,132 @@
+apps/app/src/components/chat/utils.ts
+  ai_agent 1-130
+apps/app/scripts/artifacts.test.ts
+  ai_agent 1-36
+apps/app/src/components/tools/question.tsx
+  ai_agent 1-67
+apps/app/src/components/ui/chain-of-thought.tsx
+  ai_agent 1-148
+apps/app/src/components/ui/source.tsx
+  ai_agent 1-119
+apps/app/src/components/ui/response-stream.tsx
+  ai_agent 1-392
+apps/app/src/react-app/domains/session/surface/scroll-store.ts
+  ai_agent 91-104
+apps/app/src/react-app/domains/session/sync/session-sync.ts
+  ai_agent 2,6,9-13,16-19,343,345,546-552
+apps/app/src/lib/artifacts.ts
+  ai_agent 1-278
+apps/app/src/components/ui/avatar.tsx
+  ai_agent 1-107
+apps/app/src/react-app/domains/session/sync/parse-tool-parts.ts
+  ai_agent 1-78
+pnpm-lock.yaml
+  ai_agent 81-83,108-110,144-146,153-158,165-167,392,395,398,401,443,504,615,624,742,840-842,1334-1339,2112-2117,2556-2558,4144-4236,4240-4242,4249-4251,4323-4328,4347-4349,4581-4583,4878-4883,5016-5023,5085-5090,5131-5286,5291-5293,5311-5313,5364-5366,5431-5433,5665-5667,5707-5710,5716-5718,5777-5779,6099-6101,6124-6135,6139-6144,6148-6150,6197-6199,6277-6279,6301-6310,6319-6324,6340-6342,6363-6365,6545-6548,6552-6554,6567-6572,6687-6689,6733-6735,6782-6784,6801-6805,6819-6857,6861-6866,6885-6926,6930-6944,6948-6956,6960-6962,6969-6971,7440-7442,7459-7461,7487-7489,7614-7619,7821-7826,7942-7968,8054-8056,8065-8067,8079-8081,8322-8327,8409-8414,8441-8443,8594-8596,8600-8603,8696-8698,8809-8811,8904-8906,9157-9161,9990,9994,10033,10038,10048,10052,10056,10061,10081-10084,10697-10705,11252-11255,12078,12081,12785-12901,12906-12909,12916-12917,12995-12999,13018-13022,13318-13319,13332,13354,13357,13418,13420,13617-13620,13733-13736,13793-13800,13839-14022,14025-14026,14037-14040,14082-14085,14157-14160,14358-14359,14489-14490,14493-14494,14586-14587,14958-14959,14979-15015,15030-15059,15064-15071,15113-15114,15212-15213,15229-15234,15239-15245,15260-15261,15274-15275,15430-15433,15438-15439,15446-15449,15530-15531,15567-15568,15627-15628,15640-15641,15651,15654-15656,15658,15660-15668,15671-15673,15675,15677-15997,16001-16007,16012-16033,16233,16259,16285,16509-16510,16526-16535,16560-16561,16663-16669,16886-16903,17026-17082,17159-17160,17194-17200,17217-17218,17563-17585,17662-17669,17680-17681,17859-17860,17865-17866,17965-17974,18074-18078,18127
+apps/app/src/components/tools/apply-patch.tsx
+  ai_agent 1-29
+apps/app/src/react-app/domains/session/status/session-activity-store.ts
+  ai_agent 15,34,42,48-69,75,162-177,199,223,242,297,304,317,328
+apps/app/package.json
+  ai_agent 58,67,79,82-83,86
+apps/app/src/components/ui/hover-card.tsx
+  ai_agent 1-49
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  ai_agent 47,65-68,424,575-589,795,1055-1072,1204-1210,1214-1232,1250-1251,1257-1262
+apps/app/src/components/ui/markdown.tsx
+  ai_agent 1-110
+apps/app/src/components/chat/artifact-icon.tsx
+  ai_agent 1-54
+apps/app/src/components/ui/code-block.tsx
+  ai_agent 1-92
+apps/app/src/components/markdown/text-highlights.ts
+  ai_agent 1-99
+apps/app/src/components/tools/path.ts
+  ai_agent 1-22
+apps/app/src/components/chat/artifact.tsx
+  ai_agent 1-67
+apps/app/src/components/ui/tool.tsx
+  ai_agent 1-196
+apps/app/tests/session-sync-tool-parts.test.ts
+  ai_agent 1-165
+apps/app/src/components/tools/websearch.tsx
+  ai_agent 1-56
+apps/app/src/components/ai-elements/chain-of-thought.tsx
+  ai_agent 1-222
+apps/app/src/lib/websearch-results.ts
+  ai_agent 1-33
+apps/app/components.json
+  ai_agent 15-16,24-26
+apps/app/scripts/open-target.test.ts
+  ai_agent 78-95
+apps/app/src/components/chat/message-list.tsx
+  ai_agent 1-541
+apps/app/src/components/ui/badge.tsx
+  ai_agent 1-52
+apps/app/src/components/descriptive-button.tsx
+  ai_agent 1-58
+apps/app/src/components/markdown/markdown.tsx
+  ai_agent 1-335
+apps/app/src/components/tools/collapsible-tool.tsx
+  ai_agent 1-144
+apps/app/src/lib/build-in-tools.ts
+  ai_agent 1-370
+.gitignore
+  h_2169b0bd9b5c87 62-63
+apps/app/src/components/ui/reasoning.tsx
+  ai_agent 1-174
+apps/app/src/components/tools/skill.tsx
+  ai_agent 1-26
+apps/app/src/components/chat/message-list-provider.tsx
+  ai_agent 1-97
+apps/app/src/components/tools/edit.tsx
+  ai_agent 1-27
+apps/app/src/components/ui/steps.tsx
+  ai_agent 1-120
+apps/app/src/components/chat/message-sources.tsx
+  ai_agent 1-121
+apps/app/src/lib/messages.ts
+  ai_agent 1
+apps/app/src/lib/target-provider.ts
+  ai_agent 1-43
+apps/app/src/components/tools/grep.tsx
+  ai_agent 1-47
+apps/app/src/components/tools/file.tsx
+  ai_agent 1-228
+apps/app/src/react-app/domains/session/artifacts/open-target.ts
+  ai_agent 246-254
+apps/app/src/react-app/domains/session/surface/scroll-overlay.tsx
+  ai_agent 1-93
+apps/app/src/components/tools/bash.tsx
+  ai_agent 1-39
+apps/app/src/components/ui/message.tsx
+  ai_agent 1-127
+apps/app/src/components/tools/todowrite.tsx
+  ai_agent 1-28
+apps/app/src/react-app/domains/session/surface/scroll-controller.ts
+  ai_agent 3-11,99-100,242,249,252,257,279,289
+apps/app/src/components/tools/lsp.tsx
+  ai_agent 1-62
+apps/app/src/components/chat/task-suggestions.tsx
+  ai_agent 1-76
+apps/app/src/react-app/domains/session/sync/usechat-adapter.ts
+  ai_agent 2-3,6,10-15,68,125-128,131-135,138,170,287,324
+apps/app/src/app/index.css
+  ai_agent 412
+apps/app/src/components/tools/glob.tsx
+  ai_agent 1-47
+apps/app/src/components/tools/webfetch.tsx
+  ai_agent 1-68
+apps/app/src/components/ui/image.tsx
+  ai_agent 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1b91488d31fc8ef537720381cfd315da0a083fa4",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
