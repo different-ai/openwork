@@ -1,0 +1,26 @@
+apps/app/src/lib/target-provider.ts
+  s_08502f172d302b::t_dd988448eb629a 35
+  s_08502f172d302b::t_063a989f7ec279 20-23,42
+  s_08502f172d302b::t_24c1376f84cb9a 1-19,24-34,36-41,43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7736e5ea13d27f2b86e0f47c01675e8d07e3e1d8",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_08502f172d302b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4d099ec2-13d7-4813-bd8e-0e8b65a84642",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
