@@ -17,7 +17,7 @@ export type ServeOptions = {
 
 export type ServeResult = {
   port: number;
-  stop: () => void;
+  stop: () => void | Promise<void>;
 };
 
 function isResponseWritable(nodeRes: ServerResponse): boolean {
@@ -182,11 +182,26 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       if (addr && typeof addr === "object") {
         boundPort = addr.port;
       }
+      let stopPromise: Promise<void> | null = null;
       resolve({
         port: boundPort,
         stop: () => {
-          server.close();
-          server.closeAllConnections();
+          if (stopPromise) return stopPromise;
+          stopPromise = new Promise<void>((stopResolve, stopReject) => {
+            server.close((error) => {
+              if (error) {
+                if (String(error).includes("ERR_SERVER_NOT_RUNNING") || String(error).includes("Server is not running")) {
+                  stopResolve();
+                  return;
+                }
+                stopReject(error);
+                return;
+              }
+              stopResolve();
+            });
+            server.closeAllConnections();
+          });
+          return stopPromise;
         },
       });
     });

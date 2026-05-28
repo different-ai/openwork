@@ -31,6 +31,22 @@ function normalizeWorkspaceKey(value) {
   return path.resolve(trimmed).replace(/\\/g, "/").toLowerCase();
 }
 
+export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
+  const preferred = String(preferredPath ?? "").trim();
+  const paths = [];
+  const seen = new Set();
+  const add = (value) => {
+    const workspacePath = String(value ?? "").trim();
+    const key = normalizeWorkspaceKey(workspacePath);
+    if (!workspacePath || !key || seen.has(key)) return;
+    paths.push(workspacePath);
+    seen.add(key);
+  };
+  add(preferred);
+  for (const workspacePath of workspacePaths) add(workspacePath);
+  return paths;
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -981,7 +997,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function startOpenworkServer(options) {
     // Stop any previously running in-process server
     if (inProcessServer) {
-      try { inProcessServer.stop(); } catch { /* ignore */ }
+      try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
     await stopChild(openworkServerState);
@@ -1339,7 +1355,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function openworkServerRestart(options = {}) {
-    const workspacePaths = (await listLocalWorkspacePaths()).filter(Boolean);
+    const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
       openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath,
     );

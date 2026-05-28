@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { SUGGESTED_PLUGINS } from "../../app/constants";
+import type { EnablementContext } from "../../app/enablement";
 import { createClient } from "../../app/lib/opencode";
 import {
   createOpenworkServerClient,
@@ -39,8 +40,12 @@ import { AiSettingsView } from "../domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import "../domains/settings/openai-image-gen-config";
 import "../domains/settings/ollama-config";
+import "../domains/settings/computer-use-config";
 import "../domains/settings/browser-extension-config";
-import { getExtensionConfigSlot, type ExtensionConfigContext } from "../domains/settings/extension-registry";
+import "../domains/settings/openwork-voice-config";
+import "../domains/settings/google-workspace-config";
+import { getExtensionConfigSlot, getExtensionConnected, type ExtensionConfigContext } from "../domains/settings/extension-registry";
+import { isOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
 import { PreferencesView } from "../domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
@@ -520,12 +525,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
   const [imageExtensionInstalled, setImageExtensionInstalled] = useState(false);
+  const [googleWorkspaceConnected, setGoogleWorkspaceConnected] = useState(false);
   const [imageExtensionBusy, setImageExtensionBusy] = useState(false);
   const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
   const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
   const [imageGenerationBusy, setImageGenerationBusy] = useState(false);
   const [imageGenerationStatus, setImageGenerationStatus] = useState<string | null>(null);
   const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [userEnvKeys, setUserEnvKeys] = useState<string[]>([]);
   const emptyWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () => ({
       id: "",
@@ -915,6 +925,39 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
 
+  useEffect(() => {
+    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    if (!client) {
+      setGoogleWorkspaceConnected(false);
+      return;
+    }
+
+    let cancelled = false;
+    void client.googleWorkspaceStatus()
+      .then((result) => {
+        if (!cancelled) setGoogleWorkspaceConnected(result.connected === true);
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleWorkspaceConnected(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [openworkClient, selectedWorkspaceEndpoint]);
+
+  useEffect(() => {
+    if (!openworkClient) {
+      setUserEnvKeys([]);
+      return;
+    }
+    let cancelled = false;
+    void openworkClient.listUserEnvKeys()
+      .then((response) => { if (!cancelled) setUserEnvKeys(response.keys); })
+      .catch(() => { if (!cancelled) setUserEnvKeys([]); });
+    return () => { cancelled = true; };
+  }, [openworkClient]);
+
   const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
     const workspaceClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
@@ -958,6 +1001,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       // upsertUserEnv requires the host token; use openworkClient which carries it.
       if (openworkClient) {
         await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
+        setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
       }
       reloadCoordinator.markReloadRequired("plugins", { type: "plugin", name: "openwork-image-generation", action: "added" });
       setImageExtensionInstalled(true);
@@ -1002,6 +1046,44 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setImageGenerationBusy(false);
     }
   }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+
+  const saveVoiceApiKey = useCallback(async (apiKey: string) => {
+    const resolvedApiKey = apiKey.trim();
+    if (!openworkClient || !resolvedApiKey) {
+      setVoiceError("OpenAI API key is required.");
+      return;
+    }
+    setVoiceBusy(true);
+    setVoiceStatus(null);
+    setVoiceError(null);
+    try {
+      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
+      setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
+      setVoiceStatus("Saved OPENAI_API_KEY for Voice Mode.");
+    } catch (error) {
+      setVoiceError(describeRouteError(error));
+    } finally {
+      setVoiceBusy(false);
+    }
+  }, [openworkClient]);
+
+  const testVoiceSession = useCallback(async () => {
+    if (!openworkClient) {
+      setVoiceError("OpenWork server is not connected.");
+      return;
+    }
+    setVoiceBusy(true);
+    setVoiceStatus(null);
+    setVoiceError(null);
+    try {
+      const session = await openworkClient.createVoiceRealtimeSession();
+      setVoiceStatus(`Realtime ready with ${session.model} (${session.tools.length} OpenWork tools).`);
+    } catch (error) {
+      setVoiceError(describeRouteError(error));
+    } finally {
+      setVoiceBusy(false);
+    }
+  }, [openworkClient]);
 
   const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
@@ -1577,6 +1659,37 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       : [],
   );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
+
+  // Build enablement context from all available runtime state.
+  const enablementContext = useMemo<EnablementContext>(() => {
+    const mcpConfigured = new Set(connectionsSnapshot.mcpServers.map((s) => s.name));
+    const connectedProviders = new Set(providerConnectedIds);
+    const configuredEnvKeys = new Set(userEnvKeys);
+    const loadedPlugins = new Set<string>();
+    // imageExtensionInstalled is derived from listPlugins — add it to the set.
+    if (imageExtensionInstalled) loadedPlugins.add("openwork-image-generation");
+    // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
+    // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
+    // be refined when we add a real plugin-loaded signal from the engine.
+    const browserPluginConfigured = connectionsSnapshot.mcpServers.some(
+      (s) => s.name === "opencode-chrome-devtools" || s.config.command?.some((c: string) => c.includes("chrome-devtools")),
+    );
+    if (browserPluginConfigured) loadedPlugins.add("opencode-chrome-devtools");
+
+    return {
+      mcpStatuses: connectionsSnapshot.mcpStatuses,
+      mcpConfigured,
+      loadedPlugins,
+      connectedProviders,
+      configuredEnvKeys,
+      // Toggle state reader for extensions with defaultEnabled / explicit toggle.
+      isToggleEnabled: (ref: string) => {
+        const catalog = connectionsStore.quickConnect;
+        const match = catalog.find((e: { id?: string; serverName?: string }) => (e.id ?? e.serverName) === ref);
+        return match ? isOpenWorkExtensionEnabled(match) : false;
+      },
+    };
+  }, [connectionsSnapshot, providerConnectedIds, userEnvKeys, imageExtensionInstalled]);
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
@@ -1991,11 +2104,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 selectedMcp={connectionsSnapshot.selectedMcp}
                 setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
                 quickConnect={connectionsStore.quickConnect}
+                enablementContext={enablementContext}
                 builtInExtensionsDisabled={checkDesktopRestriction({ restriction: "allowBuiltInExtensions" })}
                 connectMcp={(entry) => {
                   void connectionsStore.connectMcp(entry);
                 }}
                 configSlotForEntry={(entry) => getExtensionConfigSlot(entry, {
+                  openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
+                  extensionConnections: {
+                    "google-workspace": googleWorkspaceConnected,
+                  },
+                  onExtensionConnectionChange: (extensionId, connected) => {
+                    if (extensionId === "google-workspace") setGoogleWorkspaceConnected(connected);
+                  },
+                  computerUse: {
+                    connected: connectionsSnapshot.mcpServers.some((server) => server.name === "computer-use"),
+                    connecting: connectionsSnapshot.mcpConnectingName === entry.name,
+                    onConnect: () => connectionsStore.connectMcp(entry),
+                    onRefresh: () => connectionsStore.refreshMcpServers(),
+                  },
                   imageExtension: {
                     busy: imageExtensionBusy || imageGenerationBusy,
                     status: imageExtensionStatus ?? imageGenerationStatus,
@@ -2003,6 +2130,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                     envKeyDetected: providers.some((p) => p.id === "openai" && p.source === "env") || providerConnectedIds.includes("openai"),
                     onInstall: installOpenAiImageExtension,
                     onTestGenerate: generateOpenAiTestImage,
+                  },
+                  voiceExtension: {
+                    busy: voiceBusy,
+                    status: voiceStatus,
+                    error: voiceError,
+                    envKeyDetected:
+                      userEnvKeys.includes("OPENAI_REALTIME_API_KEY") ||
+                      userEnvKeys.includes("OPENAI_API_KEY") ||
+                      providers.some((p) => p.id === "openai" && p.source === "env") ||
+                      providerConnectedIds.includes("openai"),
+                    onSaveApiKey: saveVoiceApiKey,
+                    onTestSession: testVoiceSession,
                   },
                   localProvider: {
                     busy: localProviderBusy,
@@ -2012,6 +2151,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   },
                 })}
                 isExtensionConnected={(entry) => {
+                  const runtimeConnected = getExtensionConnected(entry, {
+                    openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
+                    extensionConnections: {
+                      "google-workspace": googleWorkspaceConnected,
+                    },
+                  });
+                  if (runtimeConnected !== null) return runtimeConnected;
                   const id = entry.serverName ?? entry.name;
                   if (id === "openai-image-gen") return imageExtensionInstalled;
                   if (id === "ollama") return providerConnectedIds.includes("ollama");

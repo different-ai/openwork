@@ -92,16 +92,16 @@ function ShowcasePanel() {
           </div>
         ))}
         <div className="flex flex-col items-start gap-2.5 rounded-xl border border-border p-3">
-          <ShareIcon className="size-4 shrink-0 text-muted-foreground" />
-          <div className="flex flex-col gap-1.5">
-            <div className="text-sm font-medium text-foreground">
-              Share in one link
-            </div>
-            <div className="text-xs leading-snug text-muted-foreground">
-              Package skills, MCPs, and configs for your team.
+            <ShareIcon className="size-4 shrink-0 text-muted-foreground" />
+            <div className="flex flex-col gap-1.5">
+              <div className="text-sm font-medium text-foreground">
+              Team skill hubs
+              </div>
+              <div className="text-xs leading-snug text-muted-foreground">
+              Save approved skills for your organization.
+              </div>
             </div>
           </div>
-        </div>
         <div className="flex flex-col items-start gap-2.5 rounded-xl border border-border p-3">
           <UserGroupIcon className="size-4 shrink-0 text-muted-foreground" />
           <div className="flex flex-col gap-1.5">

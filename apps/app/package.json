@@ -1,7 +1,7 @@
 {
   "name": "@openwork/app",
   "private": true,
-  "version": "0.13.12",
+  "version": "0.14.0",
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 vite",
@@ -21,6 +21,7 @@
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
+    "test:voice-cdp": "node scripts/voice-cdp.mjs",
     "test:remote-diagnostics": "bun test scripts/remote-workspace-diagnostics.test.ts",
     "test:open-target": "bun test scripts/open-target.test.ts",
     "test:artifact-spreadsheet": "bun test scripts/artifact-spreadsheet.test.ts",
@@ -58,6 +59,7 @@
     "@tanstack/react-query": "^5.90.3",
     "@tanstack/react-virtual": "^3.13.23",
     "ai": "^6.0.146",
+    "boring-avatars": "^2.0.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -87,6 +89,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.4",
+    "babel-plugin-react-compiler": "^1.0.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.6.3",
     "vite": "^6.0.1"

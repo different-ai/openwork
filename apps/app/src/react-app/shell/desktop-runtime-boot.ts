@@ -5,6 +5,7 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
+  openworkServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
@@ -30,12 +31,21 @@ import { useBootState } from "./boot-state";
 // keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
-function isOpenworkServerReady(info?: {
+type BootOpenworkServerInfo = {
   running?: boolean | null;
   baseUrl?: string | null;
   ownerToken?: string | null;
   clientToken?: string | null;
-}) {
+  hostToken?: string | null;
+  port?: number | null;
+  remoteAccessEnabled?: boolean;
+};
+
+function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo {
+  return typeof info === "object" && info !== null;
+}
+
+function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
@@ -83,6 +93,7 @@ export function useDesktopRuntimeBoot() {
           }
         }
         hydrateOpenworkServerSettingsFromEnv();
+        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
 
         setPhase("bootstrapping-workspaces");
         const list = await workspaceBootstrap().catch(() => null) as WorkspaceList | null;
@@ -116,15 +127,7 @@ export function useDesktopRuntimeBoot() {
             skipped?: boolean;
             error?: string;
             engine?: { baseUrl?: string | null };
-            openworkServer?: {
-              running?: boolean | null;
-              baseUrl?: string | null;
-              ownerToken?: string | null;
-              clientToken?: string | null;
-              hostToken?: string | null;
-              port?: number | null;
-              remoteAccessEnabled?: boolean;
-            };
+            openworkServer?: BootOpenworkServerInfo;
           };
 
           if (boot.ok === false) {
@@ -140,7 +143,14 @@ export function useDesktopRuntimeBoot() {
           if (boot.engine?.baseUrl) {
             setActive(boot.engine.baseUrl);
           }
-          const serverInfo = boot.openworkServer;
+          let serverInfo = boot.openworkServer;
+          if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
+            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+              console.warn("[desktop-boot] openworkServerRestart failed:", error);
+              return null;
+            });
+            if (isOpenworkServerInfoLike(restarted)) serverInfo = restarted;
+          }
           if (serverInfo?.baseUrl) {
             writeOpenworkServerSettings({
               urlOverride: serverInfo.baseUrl,

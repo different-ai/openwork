@@ -273,13 +273,18 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses };
   };
 
-  const resolveDesktopCommand = async (commandName: string) => {
+  const resolveDesktopCommand = async (commandName: string, fallbackOnError = true) => {
     try {
       const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.(commandName);
       if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
         return command;
       }
-    } catch {
+    } catch (error) {
+      if (!fallbackOnError) {
+        throw error instanceof Error
+          ? error
+          : new Error("Computer Use helper app is unavailable. Restart OpenWork or reinstall the app.");
+      }
       // Fall through to the published package command in the manifest/catalog.
     }
     return null;
@@ -287,8 +292,8 @@ export function createConnectionsStore(options: {
 
   const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
     const mcpResource = extensionResource(entry.extensionManifest, "mcp");
-    if (mcpResource?.localCommandRef === "openwork.handsfreeMcp") {
-      const command = await resolveDesktopCommand("getHandsFreeMcpCommand");
+    if (mcpResource?.localCommandRef === "openwork.computerUseMcp") {
+      const command = await resolveDesktopCommand("getComputerUseMcpCommand", false);
       return command ?? entry.command;
     }
     if (mcpResource?.localCommandRef === "openwork.uiMcp" || entry.serverName === "openwork-ui") {

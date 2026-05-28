@@ -64,6 +64,8 @@ import {
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const OPENCODE_MCP_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+const OPENCODE_MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
 const DEFAULT_HUB_REPO: HubSkillRepo = {
   owner: "different-ai",
   repo: "openwork-hub",
@@ -176,6 +178,49 @@ function uniqueSkillInstallName(base: string, taken: Set<string>, stableSuffix: 
     if (OPENCODE_SKILL_NAME_RE.test(candidate) && !taken.has(candidate)) return candidate;
   }
   return `skill-${suffixSource}`.slice(0, 64);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const text = readNonEmptyString(entry);
+        return text ? [text] : [];
+      })
+    : [];
+}
+
+function readStringRecord(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) return null;
+  const output: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const text = readNonEmptyString(entry);
+    if (text) output[key] = text;
+  }
+  return Object.keys(output).length ? output : null;
+}
+
+function cloudPluginMcpNameFromPath(path: string): string | null {
+  if (!path.startsWith(OPENCODE_MCP_IMPORT_PATH_PREFIX)) return null;
+  const name = path.slice(OPENCODE_MCP_IMPORT_PATH_PREFIX.length).trim();
+  return OPENCODE_MCP_NAME_RE.test(name) ? name : null;
 }
 
 function toConfigPluginListEntries(names: string[]): PluginListEntry[] {
@@ -747,8 +792,12 @@ export function createExtensionsStore(options: {
   ) => {
     const existing = normalizePluginSourcePath(object.currentRelativePath ?? "", object.objectType, namespace);
     if (existing) {
-      if (object.objectType === "skill" && !/\/SKILL\.md$/i.test(existing)) {
-        const skillName = existing.split("/").filter(Boolean).at(-1) ?? slugifyConfigObjectName(object.title, object.id);
+      if (object.objectType === "skill") {
+        const parts = existing.split("/").filter(Boolean);
+        const lastPart = parts.at(-1) ?? "";
+        const skillName = /^SKILL\.md$/i.test(lastPart)
+          ? parts.at(-2) ?? slugifyConfigObjectName(object.title, object.id)
+          : lastPart || slugifyConfigObjectName(object.title, object.id);
         return `.opencode/skills/${namespace}/${skillName}/SKILL.md`;
       }
       return existing;
@@ -772,6 +821,116 @@ export function createExtensionsStore(options: {
       default:
         return `.opencode/plugins/${namespace}/${name}.txt`;
     }
+  };
+
+  const pluginMcpName = (rawName: string, namespace: string, fallback: string, namespaceName: boolean) => {
+    const trimmed = rawName.trim();
+    const base = OPENCODE_MCP_NAME_RE.test(trimmed)
+      ? trimmed
+      : slugifyConfigObjectName(trimmed || fallback, fallback);
+    if (!namespaceName) return base;
+    const namespaced = base.startsWith(`${namespace}-`) ? base : `${namespace}-${base}`;
+    return OPENCODE_MCP_NAME_RE.test(namespaced)
+      ? namespaced
+      : slugifyConfigObjectName(namespaced, fallback);
+  };
+
+  const mcpCommandFromConfig = (config: Record<string, unknown>) => {
+    if (Array.isArray(config.command)) return readStringArray(config.command);
+    const command = readNonEmptyString(config.command);
+    if (!command) return [];
+    return [command, ...readStringArray(config.args)];
+  };
+
+  const normalizePluginMcpConfig = (input: unknown): Record<string, unknown> | null => {
+    if (!isRecord(input)) return null;
+    const enabled = typeof input.enabled === "boolean"
+      ? input.enabled
+      : typeof input.disabled === "boolean"
+        ? !input.disabled
+        : true;
+    const url = readNonEmptyString(input.url);
+    if (url) {
+      const config: Record<string, unknown> = { type: "remote", url, enabled };
+      const headers = readStringRecord(input.headers);
+      if (headers) config.headers = headers;
+      if (isRecord(input.oauth)) config.oauth = input.oauth;
+      if (input.oauth === true) config.oauth = {};
+      return config;
+    }
+
+    const command = mcpCommandFromConfig(input);
+    if (command.length > 0) {
+      const config: Record<string, unknown> = { type: "local", command, enabled };
+      const environment = readStringRecord(input.environment) ?? readStringRecord(input.env);
+      if (environment) config.environment = environment;
+      return config;
+    }
+
+    return null;
+  };
+
+  const pluginMcpConfigsFromPayload = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+    namespace: string,
+  ) => {
+    const version = object.latestVersion;
+    const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
+    if (!payload) return [];
+
+    const configs = new Map<string, { name: string; config: Record<string, unknown>; path: string }>();
+    const addConfig = (rawName: string, rawConfig: unknown, namespaceName: boolean) => {
+      const config = normalizePluginMcpConfig(rawConfig);
+      if (!config) return;
+      const name = pluginMcpName(rawName, namespace, object.id, namespaceName);
+      configs.set(name, {
+        name,
+        config,
+        path: `${OPENCODE_MCP_IMPORT_PATH_PREFIX}${name}`,
+      });
+    };
+
+    if (isRecord(payload.mcp)) {
+      for (const [name, config] of Object.entries(payload.mcp)) addConfig(name, config, false);
+    }
+    if (isRecord(payload.mcpServers)) {
+      for (const [name, config] of Object.entries(payload.mcpServers)) addConfig(name, config, false);
+    }
+    if (configs.size === 0) addConfig(object.title, payload, true);
+
+    return [...configs.values()];
+  };
+
+  const upsertPluginMcpConfig = async (name: string, config: Record<string, unknown>) => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+    ) {
+      await openworkClient.addMcp(openworkWorkspaceId, { name, config });
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to import MCP servers into this workspace.");
+  };
+
+  const deletePluginMcpConfig = async (name: string) => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+    ) {
+      await openworkClient.removeMcp(openworkWorkspaceId, name);
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to remove imported MCP servers from this workspace.");
   };
 
   const pluginReloadReason = (objectType: string): ReloadReason => {
@@ -816,7 +975,30 @@ export function createExtensionsStore(options: {
     for (const membership of resolved.memberships) {
       const object = membership.configObject;
       const version = object?.latestVersion ?? null;
-      if (!object || object.status !== "active" || version?.rawSourceText == null) continue;
+      if (!object || object.status !== "active") continue;
+
+      if (object.objectType === "mcp") {
+        const configs = pluginMcpConfigsFromPayload(object, namespace);
+        for (const config of configs) {
+          await upsertPluginMcpConfig(config.name, config.config);
+          files.push({
+            configObjectId: object.id,
+            versionId: version?.id ?? null,
+            objectType: object.objectType,
+            title: object.title,
+            path: config.path,
+            updatedAt: object.updatedAt,
+          });
+          options.markReloadRequired?.("mcp", {
+            type: "mcp",
+            name: config.name,
+            action: existing ? "updated" : "added",
+          });
+        }
+        continue;
+      }
+
+      if (version?.rawSourceText == null) continue;
 
       const path = getPluginObjectInstallPath(object, namespace);
       let content = version.rawSourceText;
@@ -838,13 +1020,22 @@ export function createExtensionsStore(options: {
       });
       options.markReloadRequired?.(pluginReloadReason(object.objectType), {
         type:
-          object.objectType === "skill" || object.objectType === "agent" || object.objectType === "command" || object.objectType === "mcp"
+          object.objectType === "skill" || object.objectType === "agent" || object.objectType === "command"
             ? object.objectType
             : "config",
         name: object.title,
         action: existing ? "updated" : "added",
       });
     }
+
+    const nextPaths = new Set(files.map((file) => file.path));
+    const removedMcpNames = (existing?.files ?? []).flatMap((file) => {
+      const name = file.objectType === "mcp" && !nextPaths.has(file.path)
+        ? cloudPluginMcpNameFromPath(file.path)
+        : null;
+      return name ? [name] : [];
+    });
+    await Promise.all(removedMcpNames.map((name) => deletePluginMcpConfig(name)));
 
     const nextPlugins = {
       ...snapshot.importedCloudPlugins,
@@ -1257,12 +1448,21 @@ export function createExtensionsStore(options: {
         return name ? [name] : [];
       });
       await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name).catch(() => undefined)));
+      const removedMcpNames = imported.files.flatMap((file) => {
+        const name = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
+        return name ? [name] : [];
+      });
+      await Promise.all(removedMcpNames.map((name) => deletePluginMcpConfig(name)));
 
       const nextPlugins = { ...snapshot.importedCloudPlugins };
       delete nextPlugins[pluginId];
       await persistImportedCloudPlugins(nextPlugins);
 
-      if (imported.files.length > removedSkillNames.length) {
+      if (removedMcpNames.length > 0) {
+        options.markReloadRequired?.("mcp", { type: "mcp", name: imported.name, action: "removed" });
+      }
+      const removedManagedCount = removedSkillNames.length + removedMcpNames.length;
+      if (imported.files.length > removedManagedCount) {
         options.markReloadRequired?.("config", { type: "config", name: imported.name, action: "removed" });
       }
       await Promise.all([
@@ -1270,8 +1470,8 @@ export function createExtensionsStore(options: {
         refreshCloudOrgMarketplaces({ force: true }),
       ]);
 
-      const partial = imported.files.length > removedSkillNames.length
-        ? " Non-skill files remain in the workspace and can be removed manually."
+      const partial = imported.files.length > removedManagedCount
+        ? " Non-skill and non-MCP files remain in the workspace and can be removed manually."
         : "";
       return { ok: true, message: `Removed ${imported.name}.${partial}` };
     } catch (error) {

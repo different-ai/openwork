@@ -1,7 +1,6 @@
-/** @jsxImportSource react */
 import type { UIMessage } from "ai";
 
-export type OpenTargetKind = "url" | "file";
+type OpenTargetKind = "url" | "file";
 export type OpenTargetPreview = "browser" | "markdown" | "sheet" | "image" | "pdf" | "html" | "text" | "external";
 
 export interface TextData {
@@ -76,7 +75,7 @@ function extname(value: string) {
   return index >= 0 ? name.slice(index) : "";
 }
 
-export function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
+function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
   if (kind === "url") return "browser";
   const ext = extname(value);
   if ([".md", ".markdown", ".mdx"].includes(ext)) return "markdown";
@@ -143,8 +142,8 @@ export function isLocalhostBrowserTarget(target: OpenTarget) {
   return target.kind === "url" && /(?:https?|wss?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(target.value);
 }
 
-export function selectAutoOpenTarget(targets: OpenTarget[]): OpenTarget | null {
-  return targets.find(shouldAutoOpenTarget) ?? null;
+export function selectAutoOpenTarget(_targets: OpenTarget[]): OpenTarget | null {
+  return null;
 }
 
 function scanText(
@@ -273,8 +272,4 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
   return Array.from(targets.values())
     .filter(isArtifactTarget)
     .sort((left, right) => right.confidence - left.confidence);
-}
-
-export function shouldAutoOpenTarget(): boolean {
-  return false;
 }

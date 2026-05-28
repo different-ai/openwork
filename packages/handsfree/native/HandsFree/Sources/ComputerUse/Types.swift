@@ -135,6 +135,8 @@ struct WindowTarget: @unchecked Sendable {
 }
 
 struct AppSnapshot: @unchecked Sendable {
+    let id: String
+    let observation: Int
     let appName: String
     let pid: pid_t
     let windowNumber: Int?
@@ -145,9 +147,32 @@ struct AppSnapshot: @unchecked Sendable {
     let records: [AXElementRecord]
     let strictMode: Bool
     let backgroundActivated: Bool
+    let recentActions: [String]
+    let addedLabels: [String]
+    let removedLabels: [String]
 
     var elements: [SemanticAXElement] {
         records.map(\.semantic)
+    }
+
+    func withSessionMetadata(id: String, observation: Int, recentActions: [String], addedLabels: [String], removedLabels: [String]) -> AppSnapshot {
+        AppSnapshot(
+            id: id,
+            observation: observation,
+            appName: appName,
+            pid: pid,
+            windowNumber: windowNumber,
+            windowTitle: windowTitle,
+            screenshotData: screenshotData,
+            screenshotMimeType: screenshotMimeType,
+            screenshotMeta: screenshotMeta,
+            records: records,
+            strictMode: strictMode,
+            backgroundActivated: backgroundActivated,
+            recentActions: recentActions,
+            addedLabels: addedLabels,
+            removedLabels: removedLabels
+        )
     }
 }
 
@@ -185,6 +210,7 @@ enum ComputerUseError: LocalizedError {
     case noFrontmostApplication
     case noWindow(String)
     case noSnapshot
+    case staleSnapshot(String)
     case invalidElement(String)
     case strictModeViolation(String)
     case eventSourceFailed
@@ -205,6 +231,8 @@ enum ComputerUseError: LocalizedError {
             return "No usable window found for \(app)."
         case .noSnapshot:
             return "No snapshot is available. Call snapshot first."
+        case .staleSnapshot(let reason):
+            return "The last snapshot is stale. \(reason)"
         case .invalidElement(let ref):
             return "Element \(ref) was not found in the last semantic snapshot."
         case .strictModeViolation(let reason):

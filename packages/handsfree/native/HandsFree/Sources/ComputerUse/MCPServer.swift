@@ -1,13 +1,15 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ScreenCaptureKit
 
 actor MCPServer {
     private let runtime = ComputerUseRuntime()
     private let input = InputService()
+    private var cuaSnapshotFrontmostPID: pid_t?
 
     func run() async {
-        log("HandsFree computer-use server starting")
+        log("Computer Use server starting")
         while let line = readLine(strippingNewline: true) {
             guard !line.isEmpty else { continue }
             guard let data = line.data(using: .utf8),
@@ -25,7 +27,7 @@ actor MCPServer {
                 respond(id: id, result: [
                     "protocolVersion": "2025-03-26",
                     "capabilities": ["tools": [:]],
-                    "serverInfo": ["name": "openwork-handsfree-computer-use", "version": "0.1.0"],
+                    "serverInfo": ["name": "openwork-computer-use", "version": "0.1.0"],
                 ])
             case "notifications/initialized":
                 break
@@ -59,6 +61,7 @@ actor MCPServer {
                 description: "Click a semantic ref like {e1}, an index, or screenshot x/y. AX is tried first; strict mode only falls back to background postToPid.",
                 properties: [
                     "ref": ["type": "string", "description": "Semantic ref from snapshot, e.g. {e1}."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "index": ["type": "number", "description": "Element id or zero-based compatibility index."],
                     "x": ["type": "number", "description": "Screenshot x coordinate."],
                     "y": ["type": "number", "description": "Screenshot y coordinate."],
@@ -71,6 +74,7 @@ actor MCPServer {
                 description: "Type text into the target process. In strict mode this uses CGEvent.postToPid and does not move the real cursor.",
                 properties: [
                     "text": ["type": "string", "description": "Text to type."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "strict": ["type": "boolean", "description": "Override strict mode for this action."],
                 ]
             ),
@@ -79,6 +83,7 @@ actor MCPServer {
                 description: "Press a key combo such as command+k, return, tab, or escape.",
                 properties: [
                     "combo": ["type": "string", "description": "Key combo."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "strict": ["type": "boolean", "description": "Override strict mode for this action."],
                 ]
             ),
@@ -87,6 +92,7 @@ actor MCPServer {
                 description: "Scroll the target window without foregrounding it in strict mode.",
                 properties: [
                     "direction": ["type": "string", "description": "up, down, left, or right."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "pages": ["type": "number", "description": "Approximate page count. Default 1."],
                     "x": ["type": "number", "description": "Optional screenshot x coordinate."],
                     "y": ["type": "number", "description": "Optional screenshot y coordinate."],
@@ -98,6 +104,7 @@ actor MCPServer {
                 description: "Set a semantic AX element value directly. This stays background-safe.",
                 properties: [
                     "ref": ["type": "string", "description": "Semantic ref from snapshot."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "index": ["type": "number", "description": "Element id or zero-based compatibility index."],
                     "value": ["type": "string", "description": "Value to set."],
                 ]
@@ -107,6 +114,7 @@ actor MCPServer {
                 description: "Perform a named AX action such as AXPress, AXShowMenu, AXIncrement, or AXDecrement.",
                 properties: [
                     "ref": ["type": "string", "description": "Semantic ref from snapshot."],
+                    "snapshot_id": ["type": "string", "description": "Optional snapshot id from the latest snapshot response."],
                     "index": ["type": "number", "description": "Element id or zero-based compatibility index."],
                     "action": ["type": "string", "description": "AX action name. Default AXPress."],
                 ]
@@ -153,6 +161,7 @@ actor MCPServer {
                 return try await snapshotResult(args: args)
             case "click":
                 let metadata = try await runtime.click(
+                    snapshotID: snapshotIDArg(args),
                     ref: args["ref"] as? String,
                     index: intArg(args, "index"),
                     imageX: doubleArg(args, "x"),
@@ -162,13 +171,14 @@ actor MCPServer {
                 )
                 return jsonResult(metadata.dictionary)
             case "type_text":
-                let metadata = try await runtime.typeText(args["text"] as? String ?? "", strict: boolArg(args, "strict"))
+                let metadata = try await runtime.typeText(snapshotID: snapshotIDArg(args), text: args["text"] as? String ?? "", strict: boolArg(args, "strict"))
                 return jsonResult(metadata.dictionary)
             case "press_key":
-                let metadata = try await runtime.pressKey(args["combo"] as? String ?? "", strict: boolArg(args, "strict"))
+                let metadata = try await runtime.pressKey(snapshotID: snapshotIDArg(args), combo: args["combo"] as? String ?? "", strict: boolArg(args, "strict"))
                 return jsonResult(metadata.dictionary)
             case "scroll":
                 let metadata = try await runtime.scroll(
+                    snapshotID: snapshotIDArg(args),
                     direction: args["direction"] as? String,
                     pages: doubleArg(args, "pages") ?? 1,
                     imageX: doubleArg(args, "x"),
@@ -177,10 +187,10 @@ actor MCPServer {
                 )
                 return jsonResult(metadata.dictionary)
             case "set_value":
-                let metadata = try await runtime.setValue(ref: args["ref"] as? String, index: intArg(args, "index"), value: args["value"] as? String ?? "")
+                let metadata = try await runtime.setValue(snapshotID: snapshotIDArg(args), ref: args["ref"] as? String, index: intArg(args, "index"), value: args["value"] as? String ?? "")
                 return jsonResult(metadata.dictionary)
             case "perform_action":
-                let metadata = try await runtime.performAction(ref: args["ref"] as? String, index: intArg(args, "index"), action: args["action"] as? String ?? kAXPressAction)
+                let metadata = try await runtime.performAction(snapshotID: snapshotIDArg(args), ref: args["ref"] as? String, index: intArg(args, "index"), action: args["action"] as? String ?? kAXPressAction)
                 return jsonResult(metadata.dictionary)
             case "wait":
                 let metadata = await runtime.wait(milliseconds: intArg(args, "milliseconds") ?? 1000)
@@ -208,23 +218,33 @@ actor MCPServer {
             case "display_info":
                 return jsonResult(displayInfo())
             case "cua_screenshot":
-                return try cuaScreenshotResult()
+                return try await cuaScreenshotResult()
             case "cua_click":
+                try validateCuaSnapshotFresh()
+                AgentCursorOverlay.shared.show(at: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 try await input.click(point: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 return jsonResult(["ok": true])
             case "cua_double_click":
+                try validateCuaSnapshotFresh()
+                AgentCursorOverlay.shared.show(at: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 try await input.click(point: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0), doubleClick: true)
                 return jsonResult(["ok": true])
             case "cua_move":
+                try validateCuaSnapshotFresh()
+                AgentCursorOverlay.shared.show(at: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 try input.moveMouse(point: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 return jsonResult(["ok": true])
             case "cua_type":
+                try validateCuaSnapshotFresh()
                 try input.typeText(args["text"] as? String ?? "")
                 return jsonResult(["ok": true])
             case "cua_keypress":
+                try validateCuaSnapshotFresh()
                 try input.pressKey(cuaKeysToCombo(args["keys"] as? [String] ?? []))
                 return jsonResult(["ok": true])
             case "cua_scroll":
+                try validateCuaSnapshotFresh()
+                AgentCursorOverlay.shared.show(at: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0))
                 try input.scroll(
                     point: CGPoint(x: intArg(args, "x") ?? 0, y: intArg(args, "y") ?? 0),
                     deltaX: Int32(intArg(args, "scroll_x") ?? 0),
@@ -232,7 +252,12 @@ actor MCPServer {
                 )
                 return jsonResult(["ok": true])
             case "cua_drag":
-                try await input.drag(path: parsePointPath(args["path"]))
+                try validateCuaSnapshotFresh()
+                let path = parsePointPath(args["path"])
+                if let first = path.first {
+                    AgentCursorOverlay.shared.show(at: first)
+                }
+                try await input.drag(path: path)
                 return jsonResult(["ok": true])
             case "cua_wait":
                 try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -273,6 +298,9 @@ actor MCPServer {
         var result: [String: Any] = [
             "ok": true,
             "semanticAXVersion": 1,
+            "snapshotId": snapshot.id,
+            "snapshot_id": snapshot.id,
+            "observation": snapshot.observation,
             "app": snapshot.appName,
             "pid": Int(snapshot.pid),
             "windowTitle": snapshot.windowTitle ?? "",
@@ -285,6 +313,12 @@ actor MCPServer {
             "elements": elements,
             "hint": "Use refs like {e1}. Prefer AX-capable refs; strict mode rejects foreground fallback and reports path metadata after every action.",
         ]
+        if !snapshot.recentActions.isEmpty {
+            result["recentActions"] = snapshot.recentActions
+        }
+        if !snapshot.addedLabels.isEmpty || !snapshot.removedLabels.isEmpty {
+            result["stateDelta"] = ["added": snapshot.addedLabels, "removed": snapshot.removedLabels]
+        }
         if let windowNumber = snapshot.windowNumber {
             result["windowNumber"] = windowNumber
         }
@@ -292,8 +326,7 @@ actor MCPServer {
     }
 
     private func checkPermissions() -> [String: Any] {
-        let screenRecording = CGWindowListCreateImage(CGRect(x: 0, y: 0, width: 1, height: 1), .optionOnScreenOnly, kCGNullWindowID, []) != nil
-        return ["ok": true, "accessibility": AXIsProcessTrusted(), "screenRecording": screenRecording]
+        ComputerUsePermissions.status().dictionary
     }
 
     private func handleActivateApp(args: [String: Any]) -> [String: Any] {
@@ -345,9 +378,11 @@ actor MCPServer {
         ]
     }
 
-    private func cuaScreenshotResult() throws -> [[String: Any]] {
+    private func cuaScreenshotResult() async throws -> [[String: Any]] {
         guard let screen = NSScreen.main else { throw ComputerUseError.screenshotFailed }
-        guard let cgImage = CGWindowListCreateImage(CGRect.null, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution]) else {
+        cuaSnapshotFrontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let cgImage = await screenCaptureKitDisplayImage() ?? CGWindowListCreateImage(CGRect.null, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
+        guard let cgImage else {
             throw ComputerUseError.screenshotFailed
         }
         let logicalWidth = Int(screen.frame.width)
@@ -382,6 +417,21 @@ actor MCPServer {
             ["type": "text", "text": jsonString(["ok": true, "width": logicalWidth, "height": logicalHeight]) ?? "{\"ok\":true}"],
             ["type": "image", "data": png.base64EncodedString(), "mimeType": "image/png"],
         ]
+    }
+
+    private func screenCaptureKitDisplayImage() async -> CGImage? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first else { return nil }
+            let configuration = SCStreamConfiguration()
+            configuration.width = display.width
+            configuration.height = display.height
+            configuration.showsCursor = true
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        } catch {
+            return nil
+        }
     }
 
     private func runningApps() -> [NSRunningApplication] {
@@ -451,6 +501,16 @@ actor MCPServer {
         }
     }
 
+    private func validateCuaSnapshotFresh() throws {
+        guard let snapshotPID = cuaSnapshotFrontmostPID else {
+            throw ComputerUseError.staleSnapshot("CUA action requires a screenshot first.")
+        }
+        let currentPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard currentPID == snapshotPID else {
+            throw ComputerUseError.staleSnapshot("The user changed focus since the last CUA screenshot. Capture a new screenshot before acting.")
+        }
+    }
+
     private func valueAsDouble(_ value: Any) -> Double? {
         if let value = value as? Double { return value }
         if let value = value as? Int { return Double(value) }
@@ -495,6 +555,12 @@ actor MCPServer {
     private func errorPayload(_ error: Error) -> [String: Any] {
         let message = error.localizedDescription
         var payload: [String: Any] = ["ok": false, "error": message]
+        if case ComputerUseError.staleSnapshot = error {
+            payload["staleSnapshot"] = true
+            payload["retryable"] = false
+            payload["requiredNextAction"] = "snapshot"
+            payload["hint"] = "Take a fresh snapshot before retrying. Do not repeat the same action against stale UI state."
+        }
         if message.localizedCaseInsensitiveContains("accessibility") {
             payload["permissionNeeded"] = "accessibility"
         }
@@ -505,7 +571,7 @@ actor MCPServer {
     }
 
     private func log(_ message: String) {
-        fputs("[HandsFreeComputerUse] \(message)\n", stderr)
+        fputs("[ComputerUse] \(message)\n", stderr)
     }
 
     private func intArg(_ args: [String: Any], _ key: String) -> Int? {
@@ -529,5 +595,9 @@ actor MCPServer {
             if value == "false" { return false }
         }
         return nil
+    }
+
+    private func snapshotIDArg(_ args: [String: Any]) -> String? {
+        args["snapshot_id"] as? String ?? args["snapshotId"] as? String
     }
 }

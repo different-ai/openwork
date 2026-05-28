@@ -261,6 +261,44 @@ export type OpenworkArtifactList = {
   items: OpenworkArtifactItem[];
 };
 
+export type GoogleWorkspaceAccount = {
+  email: string | null;
+  name: string | null;
+  picture: string | null;
+  sub: string | null;
+};
+
+export type GoogleWorkspaceAuthStatus = {
+  configured: boolean;
+  missing: string[];
+  vault: "encrypted" | "plaintext-dev" | "unavailable";
+  connected: boolean;
+  account: GoogleWorkspaceAccount | null;
+  scopes: string[];
+  connectedAt: string | null;
+  error: string | null;
+  testStatus: string | null;
+  smokeTest: {
+    driveFileId: string | null;
+    driveFileName: string | null;
+    gmailDraftId: string | null;
+  } | null;
+};
+
+export type GoogleWorkspaceConnectStart = {
+  flowId: string;
+  authUrl: string;
+  expiresAt: number;
+};
+
+export type GoogleWorkspaceConnectStatus = {
+  flowId: string;
+  status: "pending" | "connected" | "failed" | "expired";
+  expiresAt: number;
+  error: string | null;
+  googleWorkspace: GoogleWorkspaceAuthStatus | null;
+};
+
 export type OpenworkResolvedArtifactTarget = {
   id: string;
   kind: "file" | "url";
@@ -851,7 +889,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     config: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
-    shareBundle: 20_000,
     binary: 60_000,
   };
 
@@ -864,6 +901,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
+    googleWorkspaceConnectStart: () => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
+    googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
+    googleWorkspaceDisconnect: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
+    googleWorkspaceTestConnection: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/test", { token, hostToken, method: "POST", timeoutMs: 60_000 }),
+    googleWorkspaceRunScopeSmokeTest: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/smoke-test", { token, hostToken, method: "POST", timeoutMs: 120_000 }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
@@ -987,30 +1030,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
-      requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          payload,
-          bundleType,
-          name: options?.name,
-          timeoutMs: options?.timeoutMs,
-        },
-        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
-      }),
-    fetchBundle: (bundleUrl: string, options?: { timeoutMs?: number }) =>
-      requestJson<Record<string, unknown>>(baseUrl, "/share/bundles/fetch", {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          bundleUrl,
-          timeoutMs: options?.timeoutMs,
-        },
-        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
-      }),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
@@ -1386,6 +1405,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         hostToken,
         method: "DELETE",
+        timeoutMs: timeouts.config,
+      }),
+
+    createVoiceRealtimeSession: (payload?: { model?: string }) =>
+      requestJson<{
+        ok: true;
+        clientSecret: string;
+        expiresAt: number | null;
+        model: string;
+        transcriptionModel: string;
+        tools: string[];
+      }>(baseUrl, "/voice/realtime/session", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload ?? {},
         timeoutMs: timeouts.config,
       }),
   };

@@ -17,12 +17,14 @@ type QuestionState = {
   answers: string[][];
   currentSelection: string[];
   customInput: string;
+  customAnswerActive: boolean;
   focusedOptionIndex: number;
 };
 
 type QuestionAction =
   | { type: "reset"; questionCount: number }
   | { type: "setCustomInput"; value: string }
+  | { type: "setCustomAnswerActive"; value: boolean }
   | { type: "setFocusedOptionIndex"; value: number }
   | { type: "moveFocusedOption"; direction: 1 | -1; optionsCount: number }
   | { type: "toggleMultipleOption"; option: string }
@@ -35,6 +37,7 @@ const initialQuestionState: QuestionState = {
   answers: [],
   currentSelection: [],
   customInput: "",
+  customAnswerActive: false,
   focusedOptionIndex: 0,
 };
 
@@ -46,10 +49,13 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
         answers: new Array(action.questionCount).fill([]),
         currentSelection: [],
         customInput: "",
+        customAnswerActive: false,
         focusedOptionIndex: 0,
       };
     case "setCustomInput":
       return { ...state, customInput: action.value };
+    case "setCustomAnswerActive":
+      return { ...state, customAnswerActive: action.value };
     case "setFocusedOptionIndex":
       return { ...state, focusedOptionIndex: action.value };
     case "moveFocusedOption":
@@ -75,6 +81,7 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
         currentIndex: state.currentIndex + 1,
         currentSelection: [],
         customInput: "",
+        customAnswerActive: false,
         focusedOptionIndex: 0,
       };
     case "setAnswers":
@@ -92,16 +99,20 @@ export function QuestionPanel(props: QuestionPanelProps) {
   const currentQuestion = props.questions[state.currentIndex];
   const options = currentQuestion?.options ?? [];
   const isLastQuestion = state.currentIndex === props.questions.length - 1;
+  const customAnswerEnabled = currentQuestion?.custom !== false;
+  const customAnswerVisible =
+    customAnswerEnabled &&
+    (state.customAnswerActive || state.customInput.trim().length > 0);
   const canProceed = (() => {
     if (!currentQuestion) return false;
-    if (currentQuestion.custom && state.customInput.trim().length > 0) return true;
+    if (customAnswerEnabled && state.customInput.trim().length > 0) return true;
     return state.currentSelection.length > 0;
   })();
 
   const handleNext = () => {
     if (!canProceed || !currentQuestion) return;
     const nextAnswer = [...state.currentSelection];
-    if (currentQuestion.custom && state.customInput.trim()) {
+    if (customAnswerEnabled && state.customInput.trim()) {
       nextAnswer.push(state.customInput.trim());
     }
     const newAnswers = [...state.answers];
@@ -121,18 +132,16 @@ export function QuestionPanel(props: QuestionPanelProps) {
       return;
     }
     dispatch({ type: "selectOption", option });
-    if (!currentQuestion.custom) {
-      setTimeout(() => {
-        const newAnswers = [...state.answers];
-        newAnswers[state.currentIndex] = [option];
-        if (isLastQuestion) {
-          dispatch({ type: "setAnswers", answers: newAnswers });
-          props.onReply(newAnswers);
-        } else {
-          dispatch({ type: "advance", answers: newAnswers });
-        }
-      }, 150);
-    }
+    setTimeout(() => {
+      const newAnswers = [...state.answers];
+      newAnswers[state.currentIndex] = [option];
+      if (isLastQuestion) {
+        dispatch({ type: "setAnswers", answers: newAnswers });
+        props.onReply(newAnswers);
+      } else {
+        dispatch({ type: "advance", answers: newAnswers });
+      }
+    }, 150);
   };
 
   if (!currentQuestion) return null;
@@ -204,14 +213,17 @@ export function QuestionPanel(props: QuestionPanelProps) {
           </div>
         ) : null}
 
-          {currentQuestion.custom ? (
-            <div className="border-t border-dls-border pt-3">
-              <label className="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
-                {t("question_modal.custom_answer_label")}
-              </label>
+        {customAnswerEnabled ? (
+          <div className="border-t border-dls-border pt-3">
+            <label className="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
+              {t("question_modal.custom_answer_label")}
+            </label>
+            <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={state.customInput}
+                onFocus={() => dispatch({ type: "setCustomAnswerActive", value: true })}
+                onClick={() => dispatch({ type: "setCustomAnswerActive", value: true })}
                 onChange={(event) =>
                   dispatch({
                     type: "setCustomInput",
@@ -230,8 +242,17 @@ export function QuestionPanel(props: QuestionPanelProps) {
                   }
                 }}
               />
+              {customAnswerVisible ? (
+                <Button
+                  onClick={handleNext}
+                  disabled={!state.customInput.trim() || props.busy}
+                >
+                  {t("question_modal.custom_answer_send")}
+                </Button>
+              ) : null}
             </div>
-          ) : null}
+          </div>
+        ) : null}
 
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-dls-secondary flex items-center gap-2">
@@ -239,7 +260,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
           </div>
 
           <div className="flex gap-2">
-            {currentQuestion.multiple || currentQuestion.custom ? (
+            {currentQuestion.multiple ? (
               <Button
                 onClick={handleNext}
                 disabled={!canProceed || props.busy}

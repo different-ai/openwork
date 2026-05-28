@@ -10,7 +10,6 @@
     "dev:windows:x64": ".\\scripts\\dev-windows.cmd x64",
     "dev:ui": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/app dev",
     "dev:ui-demo": "pnpm --filter @openwork/ui-demo dev",
-    "dev:story": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/story-book dev",
     "dev:web": "pnpm run dev:den:web",
     "dev:web-local": "pnpm run dev:den",
     "dev:den": "node scripts/dev-local.mjs",
@@ -55,17 +54,5 @@
   "devDependencies": {
     "turbo": "^2.5.5"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@whiskeysockets/baileys",
-      "better-sqlite3",
-      "electron",
-      "esbuild",
-      "protobufjs"
-    ],
-    "patchedDependencies": {
-      "@solidjs/router@0.15.4": "patches/@solidjs__router@0.15.4.patch"
-    }
-  },
-  "packageManager": "pnpm@10.27.0"
+  "packageManager": "pnpm@11.4.0"
 }

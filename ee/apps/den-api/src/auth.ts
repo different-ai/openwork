@@ -17,9 +17,12 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
 import { oauthProvider } from "@better-auth/oauth-provider";
+import { scim } from "@better-auth/scim";
+import { sso } from "@better-auth/sso";
 import { APIError } from "better-call";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { sql } from "@openwork-ee/den-db/drizzle";
 import { emailOTP, jwt, organization } from "better-auth/plugins";
 
 function localMcpResourceAliases(resource: string) {
@@ -78,6 +81,20 @@ function hasRole(roleValue: string, roleName: string) {
     .map((entry) => entry.trim())
     .filter(Boolean)
     .includes(roleName);
+}
+
+function maybeString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function pickRemoteIdentity(userInfo: Record<string, unknown>) {
+  return (
+    maybeString(userInfo.sub) ??
+    maybeString(userInfo.id) ??
+    maybeString(userInfo.nameID) ??
+    maybeString(userInfo.nameId) ??
+    maybeString(userInfo.email)
+  );
 }
 
 function getInvitationOrigin() {
@@ -168,6 +185,14 @@ export const auth = betterAuth({
             return createDenTypeId("teamMember");
           case "organizationRole":
             return createDenTypeId("organizationRole");
+          case "scimProvider":
+            return createDenTypeId("scimProvider");
+          case "ssoProvider":
+            return createDenTypeId("ssoProvider");
+          case "ssoConnection":
+            return createDenTypeId("ssoConnection");
+          case "externalIdentity":
+            return createDenTypeId("externalIdentity");
           default:
             return false;
         }
@@ -355,6 +380,82 @@ export const auth = betterAuth({
         opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
         refreshToken: "ow_mcp_rt_",
         clientSecret: "ow_mcp_cs_",
+      },
+    }),
+    scim({
+      beforeSCIMTokenGenerated: async ({ member }) => {
+        if (!member?.organizationId) {
+          throw new APIError("FORBIDDEN", {
+            message: "SCIM connections must belong to an organization.",
+          });
+        }
+
+        if (!hasRole(member.role, "owner") && !hasRole(member.role, "admin")) {
+          throw new APIError("FORBIDDEN", {
+            message: "Only workspace owners and admins can manage SCIM.",
+          });
+        }
+      },
+    }),
+    sso({
+      providersLimit: 1000,
+      provisionUserOnEveryLogin: true,
+      domainVerification: {
+        enabled: true,
+      },
+      organizationProvisioning: {
+        disabled: false,
+        defaultRole: "member",
+      },
+      saml: {
+        enableInResponseToValidation: true,
+        allowIdpInitiated: true,
+        algorithms: {
+          onDeprecated: "warn",
+        },
+      },
+      provisionUser: async ({ user, userInfo, provider }) => {
+        if (!provider.organizationId) {
+          return;
+        }
+
+        const now = new Date();
+        const remoteId = pickRemoteIdentity(userInfo);
+        const displayName = maybeString(userInfo.name) ?? maybeString(userInfo.displayName) ?? maybeString(user.name);
+        const email = maybeString(userInfo.email) ?? maybeString(user.email);
+        const payload = {
+          organizationId: normalizeDenTypeId("organization", provider.organizationId),
+          userId: normalizeDenTypeId("user", user.id),
+          source: "sso",
+          ssoProviderId: provider.providerId,
+          remoteId,
+          userName: maybeString(userInfo.preferred_username) ?? email,
+          email,
+          displayName,
+          attributesJson: userInfo,
+          active: true,
+          lastSsoLoginAt: now,
+        };
+
+        await db
+          .insert(schema.ExternalIdentityTable)
+          .values({
+            id: createDenTypeId("externalIdentity"),
+            ...payload,
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              source: sql<string>`case when ${schema.ExternalIdentityTable.scimProviderId} is null then 'sso' else 'scim+sso' end`,
+              ssoProviderId: payload.ssoProviderId,
+              remoteId: payload.remoteId,
+              userName: payload.userName,
+              email: payload.email,
+              displayName: payload.displayName,
+              attributesJson: payload.attributesJson,
+              active: payload.active,
+              lastSsoLoginAt: payload.lastSsoLoginAt,
+            },
+          });
       },
     }),
     apiKey({

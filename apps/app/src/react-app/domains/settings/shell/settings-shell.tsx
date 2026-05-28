@@ -227,7 +227,7 @@ function WorkspaceMenu(props: Pick<SettingsShellProps, "selectedWorkspaceId" | "
       <DropdownMenuTrigger
         render={(
           <Button variant="ghost" size="sm" className="min-w-0 max-w-36 justify-start gap-2 text-dls-secondary">
-            <WorkspaceIcon seed={props.selectedWorkspaceName} sizeClass="size-4" />
+            <WorkspaceIcon workspaceId={props.selectedWorkspaceId} sizeClass="size-4" />
             <span className="truncate">{props.selectedWorkspaceName}</span>
             <ChevronDown className="ml-auto size-4 shrink-0" />
           </Button>
@@ -240,7 +240,7 @@ function WorkspaceMenu(props: Pick<SettingsShellProps, "selectedWorkspaceId" | "
             onClick={() => props.onSelectWorkspace(workspace.id)}
             disabled={workspace.id === props.selectedWorkspaceId}
           >
-            <WorkspaceIcon seed={workspace.name} sizeClass="size-4" />
+            <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
             <span className="truncate">{workspace.name}</span>
           </DropdownMenuItem>
         ))}

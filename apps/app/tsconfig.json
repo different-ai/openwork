@@ -26,7 +26,6 @@
     "src/overlay/**/*",
     "src/react-app/**/*",
     "src/app/lib/**/*",
-    "src/app/bundles/**/*",
     "src/app/cloud/**/*",
     "src/app/data/**/*",
     "src/app/utils/**/*",
