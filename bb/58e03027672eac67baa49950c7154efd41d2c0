@@ -1,0 +1,28 @@
+apps/app/src/react-app/domains/session/sync/actions-store.ts
+  s_874e9a28fc64bf::t_660040f29d806e 66-69
+  s_874e9a28fc64bf::t_4a71a90e2e0ce5 53,61,64-65,70-71,157-165
+apps/app/src/react-app/shell/session-route.tsx
+  s_874e9a28fc64bf::t_660040f29d806e 424-427
+  s_874e9a28fc64bf::t_4a71a90e2e0ce5 413,418,422-423,428-429,476-484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "bb58e03027672eac67baa49950c7154efd41d2c0",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_874e9a28fc64bf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e70a1-1b36-7e30-91e6-8db1b6dd4820",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
