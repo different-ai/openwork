@@ -91,6 +91,6 @@ Use this `browser_evaluate` pattern after selecting the OpenWork target:
 
 ## Notes
 
-- Electron CDP is only needed for external browser automation. The built-in browser uses native webContents APIs.
+- Electron CDP is used for development test tooling. User browser tasks should use the built-in OpenWork Browser target.
 - A successful local attach should show an `OpenWork` target at `http://127.0.0.1:9823`.
 - The known-good smoke prompt is `Say hello from the Electron browser test.` and the expected response is `Hello from the Electron browser test.`

@@ -17,6 +17,9 @@ export type SidebarSessionItem = {
   id: string;
   title: string;
   slug?: string | null;
+  status?: unknown;
+  state?: unknown;
+  runStatus?: unknown;
   parentID?: string | null;
   time?: {
     updated?: number | null;

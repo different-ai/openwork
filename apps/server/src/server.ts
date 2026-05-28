@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -18,7 +19,7 @@ import { computeReloadFingerprint } from "./reload-fingerprint.js";
 import { startReloadWatchers } from "./reload-watcher.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { workspaceIdForPath } from "./workspaces.js";
+import { workspaceIdForPath, workspaceIdForRemote } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
@@ -32,7 +33,6 @@ import {
   sanitizeOpenworkTemplateConfig,
 } from "./blueprint-sessions.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles } from "./portable-files.js";
 import {
@@ -53,6 +53,14 @@ import {
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { serve, type ServeResult } from "./serve-node.js";
+import {
+  createGoogleWorkspaceConnectFlowManager,
+  googleWorkspaceDisconnect,
+  googleWorkspaceRunScopeSmokeTest,
+  googleWorkspaceStatus,
+  googleWorkspaceTestConnection,
+} from "./extensions/google-workspace.js";
+import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "./extensions/index.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -66,6 +74,292 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
+const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
+const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+
+const OPENWORK_VOICE_REALTIME_TOOLS = [
+  {
+    type: "function",
+    name: "openwork_snapshot",
+    description: "Read the current OpenWork UI control snapshot: route, status, narration, and visible action metadata.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "openwork_list_actions",
+    description: "List semantic OpenWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    type: "function",
+    name: "openwork_execute_action",
+    description: "Execute a semantic OpenWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
+    parameters: {
+      type: "object",
+      properties: {
+        actionId: { type: "string", description: "The action id from openwork_list_actions, such as composer.set_text or composer.send." },
+        args: { type: "object", description: "Optional JSON arguments for the action.", additionalProperties: true },
+      },
+      required: ["actionId"],
+      additionalProperties: false,
+    },
+  },
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readStringField(value: unknown, key: string): string {
+  if (!isRecord(value)) return "";
+  const field = value[key];
+  return typeof field === "string" ? field.trim() : "";
+}
+
+function normalizeRemoteDirectory(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function parseOpenworkWorkspaceIdFromUrl(input: string | null | undefined): string | null {
+  const raw = input?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    return mountIndex >= 0 && segments[mountIndex + 1]
+      ? decodeURIComponent(segments[mountIndex + 1])
+      : null;
+  } catch {
+    const match = raw.match(/\/(?:workspace|w)\/([^/?#]+)/);
+    if (!match?.[1]) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+}
+
+function stripOpenworkWorkspaceMount(input: string | null | undefined): string | null {
+  const raw = input?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/\/(?:workspace|w)\/[^/?#]+.*$/, "").replace(/\/+$/, "") || raw;
+  }
+}
+
+function openworkRemoteWorkspaceId(hostUrl: string, workspaceId: string | null | undefined): string {
+  const remoteWorkspaceId = workspaceId?.trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  return remoteWorkspaceId ? `rem_${remoteWorkspaceId}` : workspaceIdForRemote(hostUrl, null);
+}
+
+function workspaceDirectoryCandidates(workspace: Record<string, unknown>): string[] {
+  const opencode = isRecord(workspace.opencode) ? workspace.opencode : {};
+  return [workspace.directory, workspace.path, opencode.directory]
+    .map(normalizeRemoteDirectory)
+    .filter(Boolean);
+}
+
+function selectOpenworkWorkspaceForConnection(list: unknown, directory: string | null): Record<string, unknown> | null {
+  if (!isRecord(list)) return null;
+  const rawItems = Array.isArray(list.items)
+    ? list.items
+    : Array.isArray(list.workspaces)
+      ? list.workspaces
+      : [];
+  const items = rawItems.filter(isRecord);
+  if (!items.length) return null;
+
+  const expectedDirectory = normalizeRemoteDirectory(directory);
+  if (expectedDirectory) {
+    return items.find((item) => workspaceDirectoryCandidates(item).includes(expectedDirectory)) ?? null;
+  }
+
+  const activeId = readStringField(list, "activeId");
+  return (activeId ? items.find((item) => readStringField(item, "id") === activeId) : null) ?? items[0] ?? null;
+}
+
+function openworkWorkspaceDisplayName(workspace: Record<string, unknown>): string | null {
+  return readStringField(workspace, "displayName")
+    || readStringField(workspace, "openworkWorkspaceName")
+    || readStringField(workspace, "name")
+    || readStringField(workspace, "id")
+    || null;
+}
+
+async function fetchOpenworkWorkspaceList(hostUrl: string, token: string, hostToken: string): Promise<unknown> {
+  const url = `${hostUrl.replace(/\/+$/, "")}/workspaces`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (hostToken) headers.set("X-OpenWork-Host-Token", hostToken);
+
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new ApiError(
+        502,
+        "openwork_workspace_discovery_failed",
+        `OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`,
+      );
+    }
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(502, "openwork_workspace_discovery_failed", "OpenWork workspace discovery failed", {
+      error: String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverOpenworkWorkspace(input: {
+  hostUrl: string;
+  token: string;
+  hostToken: string;
+  directory: string | null;
+}): Promise<Record<string, unknown> | null> {
+  const list = await fetchOpenworkWorkspaceList(input.hostUrl, input.token, input.hostToken);
+  return selectOpenworkWorkspaceForConnection(list, input.directory);
+}
+
+async function resolveOpenAiRealtimeApiKey(env: EnvService): Promise<string> {
+  const records = await env.list();
+  const storedKey =
+    records.find((entry) => entry.key === "OPENAI_REALTIME_API_KEY")?.value.trim() ||
+    records.find((entry) => entry.key === "OPENAI_API_KEY")?.value.trim() ||
+    "";
+  if (storedKey) return storedKey;
+
+  return process.env.OPENWORK_OPENAI_REALTIME_API_KEY?.trim() ||
+    process.env.OPENAI_REALTIME_API_KEY?.trim() ||
+    process.env.OPENAI_API_KEY?.trim() ||
+    "";
+}
+
+function openworkVoiceRealtimeInstructions() {
+  return `# Role and Objective
+
+You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
+Help the user control OpenWork by using the semantic OpenWork UI tools.
+
+# Tool Policy
+
+- Prefer openwork_snapshot, openwork_list_actions, and openwork_execute_action over visual guessing.
+- If the user asks to write or draft something, use composer.set_text.
+- If the user asks to send or run the current prompt, use composer.send.
+- For navigation, settings, session, transcript, and composer work, inspect the action list first if the action id is unknown.
+- Do not claim an action completed until the tool succeeds.
+- Ask for confirmation before destructive actions such as deleting a session.
+
+# Voice Style
+
+- Be concise, calm, and direct.
+- If audio is unclear, ask the user to repeat it instead of guessing.
+- Ignore background speech that is not addressed to OpenWork.
+- Summarize tool results briefly and offer the next useful step.`;
+}
+
+function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expiresAt: number | null } {
+  if (!isRecord(payload)) return { clientSecret: "", expiresAt: null };
+  const clientSecret = payload.client_secret;
+  if (typeof clientSecret === "string") return { clientSecret, expiresAt: null };
+  if (isRecord(clientSecret)) {
+    const value = typeof clientSecret.value === "string" ? clientSecret.value : "";
+    const expiresAt = typeof clientSecret.expires_at === "number" ? clientSecret.expires_at : null;
+    return { clientSecret: value, expiresAt };
+  }
+  const value = typeof payload.value === "string" ? payload.value : "";
+  return { clientSecret: value, expiresAt: null };
+}
+
+async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown) {
+  const apiKey = await resolveOpenAiRealtimeApiKey(env);
+  if (!apiKey) {
+    throw new ApiError(
+      400,
+      "openai_api_key_missing",
+      "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the Voice Mode extension.",
+    );
+  }
+
+  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
+  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session: {
+        type: "realtime",
+        model,
+        output_modalities: ["audio"],
+        audio: {
+          input: {
+            transcription: { model: OPENWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.58,
+              silence_duration_ms: 320,
+              prefix_padding_ms: 300,
+              create_response: true,
+              interrupt_response: true,
+            },
+          },
+        },
+        instructions: openworkVoiceRealtimeInstructions(),
+        tool_choice: "auto",
+        tools: OPENWORK_VOICE_REALTIME_TOOLS,
+      },
+    }),
+  });
+
+  const text = await response.text();
+  let payload: unknown = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+    const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
+    throw new ApiError(response.status, "openai_realtime_failed", message || "Failed to create OpenAI Realtime session");
+  }
+
+  const { clientSecret, expiresAt } = readOpenAiClientSecret(payload);
+  if (!clientSecret) {
+    throw new ApiError(502, "openai_realtime_invalid_response", "OpenAI did not return a usable Realtime client secret");
+  }
+
+  return {
+    ok: true,
+    clientSecret,
+    expiresAt,
+    model,
+    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+  };
+}
 
 const reloadBaselineRefreshers = new WeakMap<
   ServerConfig,
@@ -400,10 +694,10 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
   return {
     ...server,
-    stop: () => {
+    stop: async () => {
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
-      server.stop();
+      await server.stop();
     },
   };
 }
@@ -444,71 +738,51 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
-type OpencodeQueryValue = string | number | boolean | null | undefined;
+function buildOpencodeDirectoryHeader(directory: string) {
+  return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
+}
 
-async function fetchOpencodeJson(
-  config: ServerConfig,
-  workspace: WorkspaceInfo,
-  path: string,
-  init: { method: string; body?: unknown; query?: URLSearchParams | Record<string, OpencodeQueryValue> },
-) {
+function createOpencodeDirectoryFetch(directory: string): typeof fetch {
+  return Object.assign(
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const headers = new Headers(init?.headers ?? request.headers);
+      headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
+      return fetch(new Request(request, { headers }));
+    },
+    { preconnect: fetch.preconnect },
+  );
+}
+
+type OpencodeClientResult<T, E> =
+  | { data: T | undefined; error: undefined; response: Response }
+  | { data: undefined; error: E; response: Response };
+
+function createWorkspaceOpencodeClient(config: ServerConfig, workspace: WorkspaceInfo) {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-  const baseUrl = connection.baseUrl?.trim() ?? "";
-  if (!baseUrl) {
-    throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
-  }
-
-  const url = new URL(baseUrl);
-  url.pathname = path.startsWith("/") ? path : `/${path}`;
   const directory = resolveOpencodeDirectory(workspace);
-  if (init.query instanceof URLSearchParams) {
-    const params = new URLSearchParams(init.query);
-    if (directory && !params.has("directory")) {
-      params.set("directory", directory);
-    }
-    url.search = params.toString();
-  } else if (init.query) {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(init.query)) {
-      if (value === undefined || value === null) continue;
-      params.set(key, String(value));
-    }
-    if (directory && !params.has("directory")) {
-      params.set("directory", directory);
-    }
-    url.search = params.toString();
-  } else {
-    url.search = directory ? new URLSearchParams({ directory }).toString() : "";
-  }
+  const directoryFetch = directory ? createOpencodeDirectoryFetch(directory) : undefined;
 
-  const headers = new Headers();
-  headers.set("Content-Type", "application/json");
-
-  if (directory) {
-    headers.set("x-opencode-directory", directory);
-  }
-
-  const auth = connection.authHeader ?? null;
-  if (auth) {
-    headers.set("Authorization", auth);
-  }
-
-  const response = await fetch(url.toString(), {
-    method: init.method,
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  return createOpencodeClient({
+    baseUrl: connection.baseUrl?.trim(),
+    ...(directory ? { directory } : {}),
+    ...(directoryFetch ? { fetch: directoryFetch } : {}),
+    ...(connection.authHeader ? { headers: { Authorization: connection.authHeader } } : {}),
   });
+}
 
-  const text = await response.text();
-  const json = parseJsonResponse(text);
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: json ?? text,
-      path,
-    });
+function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, path: string): NonNullable<T> {
+  if (result.data != null) {
+    return result.data;
   }
-  return json;
+  if (result.error === undefined) {
+    throw new ApiError(502, "opencode_empty_response", "OpenCode returned an empty response", { path });
+  }
+  throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+    status: result.response.status,
+    body: result.error,
+    path,
+  });
 }
 
 async function proxyOpencodeRequest(input: {
@@ -535,7 +809,7 @@ async function proxyOpencodeRequest(input: {
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   if (directory && !headers.has("x-opencode-directory")) {
-    headers.set("x-opencode-directory", directory);
+    headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
   }
 
   const auth = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
@@ -931,6 +1205,7 @@ function normalizeUrlTarget(value: string): string | null {
 export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
+  const workspaceResolved = resolve(workspaceRoot);
 
   for (const item of targets) {
     if (!item || typeof item !== "object") continue;
@@ -962,7 +1237,16 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
 
     let relativePath: string;
     try {
-      relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+      if (isAbsolute(rawValue)) {
+        const absolutePath = resolve(rawValue);
+        const pathFromWorkspace = relative(workspaceResolved, absolutePath);
+        if (!pathFromWorkspace || pathFromWorkspace === ".." || pathFromWorkspace.startsWith(`..${sep}`) || isAbsolute(pathFromWorkspace)) {
+          continue;
+        }
+        relativePath = normalizeWorkspaceRelativePath(pathFromWorkspace, { allowSubdirs: true });
+      } else {
+        relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+      }
     } catch {
       continue;
     }
@@ -1228,6 +1512,144 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
+export type AuthorizedFoldersResponse = {
+  folders: string[];
+  hiddenCount: number;
+  workspaceRoot: string;
+};
+
+export type AuthorizedFoldersUpdateResponse = {
+  folders: string[];
+  hiddenCount: number;
+  updatedAt: number;
+};
+
+type AuthorizedFoldersConfig = {
+  folders: string[];
+  hiddenEntries: Record<string, unknown>;
+};
+
+function normalizeAuthorizedFolderPath(input: string | null | undefined): string {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "/*") return "/";
+  const withoutWildcard = trimmed.replace(/[\\/]\*+$/, "");
+  const withoutVerbatim = /^\\\\\?\\UNC\\/i.test(withoutWildcard)
+    ? `\\${withoutWildcard.slice(7)}`
+    : /^\\\\\?\\[a-zA-Z]:[\\/]/.test(withoutWildcard)
+      ? withoutWildcard.slice(4)
+      : withoutWildcard;
+  const unified = withoutVerbatim.replace(/\\/g, "/");
+  const withoutTrailing = unified.replace(/\/+$/, "");
+  return withoutTrailing || "/";
+}
+
+function externalDirectoryKeyToAuthorizedFolder(key: string, value: unknown): string | null {
+  if (value !== "allow") return null;
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  if (trimmed === "/*") return "/";
+  if (!trimmed.endsWith("/*")) return null;
+  return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
+}
+
+function authorizedFolderToExternalDirectoryKey(folder: string): string {
+  return folder === "/" ? "/*" : `${folder}/*`;
+}
+
+function hasOwnKey(object: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function readAuthorizedFoldersFromOpencodeConfig(
+  opencodeConfig: Record<string, unknown>,
+  workspaceRoot: string,
+): AuthorizedFoldersConfig {
+  const workspaceRootFolder = normalizeAuthorizedFolderPath(workspaceRoot);
+  const permission = ensurePlainObject(opencodeConfig.permission);
+  const externalDirectory = ensurePlainObject(permission.external_directory);
+  const folders: string[] = [];
+  const hiddenEntries: Record<string, unknown> = {};
+  const seen = new Set<string>();
+
+  for (const [key, value] of Object.entries(externalDirectory)) {
+    const folder = externalDirectoryKeyToAuthorizedFolder(key, value);
+    if (!folder) {
+      hiddenEntries[key] = value;
+      continue;
+    }
+    if (folder === workspaceRootFolder || seen.has(folder)) continue;
+    seen.add(folder);
+    folders.push(folder);
+  }
+
+  return { folders, hiddenEntries };
+}
+
+function parseAuthorizedFoldersPayload(input: unknown, workspaceRoot: string): string[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "folders must be an array");
+  }
+
+  const workspaceRootFolder = normalizeAuthorizedFolderPath(workspaceRoot);
+  const folders: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input) {
+    if (typeof item !== "string") {
+      throw new ApiError(400, "invalid_payload", "folders must be an array of strings");
+    }
+    const folder = normalizeAuthorizedFolderPath(item);
+    if (!folder || folder === workspaceRootFolder || seen.has(folder)) continue;
+    seen.add(folder);
+    folders.push(folder);
+  }
+
+  return folders;
+}
+
+function mergeAuthorizedFoldersIntoExternalDirectory(
+  folders: string[],
+  hiddenEntries: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const next: Record<string, unknown> = { ...hiddenEntries };
+  for (const folder of folders) {
+    next[authorizedFolderToExternalDirectoryKey(folder)] = "allow";
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+async function writeAuthorizedFoldersToOpencodeConfig(
+  configPath: string,
+  existingOpencode: Record<string, unknown>,
+  nextExternalDirectory: Record<string, unknown> | undefined,
+): Promise<void> {
+  const existingPermission = ensurePlainObject(existingOpencode.permission);
+  const hasExternalDirectory = hasOwnKey(existingPermission, "external_directory");
+  if (typeof nextExternalDirectory === "undefined" && !hasExternalDirectory) return;
+
+  const existingPermissionKeys = Object.keys(existingPermission);
+  const removePermissionParent =
+    typeof nextExternalDirectory === "undefined" &&
+    (existingPermissionKeys.length === 0 ||
+      (existingPermissionKeys.length === 1 && hasExternalDirectory));
+
+  if (removePermissionParent) {
+    await updateJsoncPath(configPath, ["permission"], undefined);
+    return;
+  }
+
+  await updateJsoncPath(configPath, ["permission", "external_directory"], nextExternalDirectory);
+}
+
+function buildAuthorizedFoldersResponse(workspace: WorkspaceInfo, config: AuthorizedFoldersConfig): AuthorizedFoldersResponse {
+  return {
+    folders: config.folders,
+    hiddenCount: Object.keys(config.hiddenEntries).length,
+    workspaceRoot: normalizeAuthorizedFolderPath(workspace.path),
+  };
+}
+
 function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   const { opencodeUsername, opencodePassword, ...rest } = workspace;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
@@ -1255,6 +1677,8 @@ function createRoutes(
 ): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
+  const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
+  const envPendingChangesByRuntime = new Map<string, boolean>();
 
   const serializeFileSession = (session: {
     id: string;
@@ -1474,6 +1898,49 @@ function createRoutes(
     return jsonResponse(buildCapabilities(config));
   });
 
+  addRoute(routes, "GET", "/experimental/extensions/actions", "client", async (ctx) => {
+    const extensionId = ctx.url.searchParams.get("extensionId") ?? "";
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      actions: listExperimentalExtensionActions(extensionId),
+    });
+  });
+
+  addRoute(routes, "POST", "/experimental/extensions/call", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") {
+      throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
+    }
+    const body = await readJsonBody(ctx.request);
+    return jsonResponse(await callExperimentalExtensionAction(config, body));
+  });
+
+  addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async () => {
+    return jsonResponse(await googleWorkspaceStatus(config));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/connect/start", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot connect Google Workspace");
+    return jsonResponse(await googleWorkspaceConnectFlows.start(), 201);
+  });
+
+  addRoute(routes, "GET", "/experimental/google-workspace/connect/status/:flowId", "client", async (ctx) => {
+    return jsonResponse(await googleWorkspaceConnectFlows.status(ctx.params.flowId));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/disconnect", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot disconnect Google Workspace");
+    return jsonResponse(await googleWorkspaceDisconnect(config));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/test", "client", async () => {
+    return jsonResponse(await googleWorkspaceTestConnection(config));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/smoke-test", "client", async () => {
+    return jsonResponse(await googleWorkspaceRunScopeSmokeTest(config));
+  });
+
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
@@ -1519,18 +1986,68 @@ function createRoutes(
   }
 
   // User-level env vars (see apps/app/pr/environment-variables.md). All routes
-  // require the desktop host token (not owner bearer tokens) because values are
-  // returned raw; the React pane masks them only for display. Reload semantics
-  // are driven from the UI after a write; this surface is user-scoped, not
-  // workspace-scoped, so no audit.
-  addRoute(routes, "GET", "/env", "host-token", async () => {
+  // require the desktop host token (not owner bearer tokens). List callers can
+  // request metadata-only results so renderer settings panes do not receive
+  // every raw secret value up front. Reload semantics are driven from the UI
+  // after a write; this surface is user-scoped, not workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host-token", async (ctx) => {
+    const includeValues = parseOptionalBoolean(ctx.url.searchParams.get("includeValues"), "includeValues") ?? true;
     const items = await env.list().catch(rethrowEnvStoreReadError);
-    return jsonResponse({ items });
+    return jsonResponse({
+      items: items.map((item) => ({
+        key: item.key,
+        updatedAt: item.updatedAt,
+        hasValue: item.value.length > 0,
+        ...(includeValues ? { value: item.value } : {}),
+      })),
+    });
   });
 
   addRoute(routes, "GET", "/env/keys", "host-token", async () => {
     const items = await env.list().catch(rethrowEnvStoreReadError);
     return jsonResponse({ keys: items.map((item) => item.key) });
+  });
+
+  function envRuntimeKeyFromUrl(url: URL): string {
+    return url.searchParams.get("runtimeKey")?.trim() || "default";
+  }
+
+  addRoute(routes, "GET", "/env/status", "host-token", async (ctx) => {
+    const runtimeKey = envRuntimeKeyFromUrl(ctx.url);
+    return jsonResponse({ runtimeKey, pendingChanges: envPendingChangesByRuntime.get(runtimeKey) === true });
+  });
+
+  addRoute(routes, "PUT", "/env/status", "host-token", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const runtimeKey = typeof body.runtimeKey === "string" && body.runtimeKey.trim()
+      ? body.runtimeKey.trim()
+      : "default";
+    const pendingChanges = body.pendingChanges === true;
+    if (pendingChanges) {
+      envPendingChangesByRuntime.set(runtimeKey, true);
+    } else {
+      envPendingChangesByRuntime.delete(runtimeKey);
+    }
+    return jsonResponse({ runtimeKey, pendingChanges });
+  });
+
+  addRoute(routes, "GET", "/env/:key", "host-token", async (ctx) => {
+    const key = ctx.params.key;
+    if (!isValidEnvKey(key)) {
+      throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+    }
+    const item = (await env.list().catch(rethrowEnvStoreReadError)).find((entry) => entry.key === key);
+    if (!item) {
+      throw new ApiError(404, "env_not_found", "Environment variable not found");
+    }
+    return jsonResponse({
+      item: {
+        key: item.key,
+        updatedAt: item.updatedAt,
+        hasValue: item.value.length > 0,
+        value: item.value,
+      },
+    });
   });
 
   addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
@@ -1588,6 +2105,11 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
+  });
+
   addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
@@ -1636,9 +2158,101 @@ function createRoutes(
     }, 201);
   });
 
+  addRoute(routes, "POST", "/workspaces/remote", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const baseUrl = readStringField(body, "baseUrl");
+    if (!baseUrl) {
+      throw new ApiError(400, "invalid_payload", "baseUrl is required");
+    }
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      throw new ApiError(400, "invalid_payload", "baseUrl must start with http:// or https://");
+    }
+
+    const remoteType = readStringField(body, "remoteType") === "opencode" ? "opencode" : "openwork";
+    const directory = readStringField(body, "directory") || null;
+    const displayName = readStringField(body, "displayName") || null;
+    const rawOpenworkHostUrl = readStringField(body, "openworkHostUrl") || null;
+    const openworkHostUrl = remoteType === "openwork"
+      ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
+      : rawOpenworkHostUrl;
+    const openworkToken = readStringField(body, "openworkToken");
+    const openworkHostToken = readStringField(body, "openworkHostToken");
+    const sandboxBackend = readStringField(body, "sandboxBackend");
+    const sandboxRunId = readStringField(body, "sandboxRunId");
+    const sandboxContainerName = readStringField(body, "sandboxContainerName");
+    let openworkWorkspaceId = remoteType === "openwork"
+      ? readStringField(body, "openworkWorkspaceId")
+        || parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl)
+        || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+      : "";
+    let openworkWorkspaceName = readStringField(body, "openworkWorkspaceName") || null;
+
+    if (remoteType === "openwork" && !openworkWorkspaceId) {
+      const discovered = await discoverOpenworkWorkspace({
+        hostUrl: openworkHostUrl ?? baseUrl,
+        token: openworkToken,
+        hostToken: openworkHostToken,
+        directory,
+      });
+      openworkWorkspaceId = discovered ? readStringField(discovered, "id") : "";
+      openworkWorkspaceName = discovered ? openworkWorkspaceDisplayName(discovered) : openworkWorkspaceName;
+      if (!openworkWorkspaceId) {
+        throw new ApiError(
+          400,
+          "openwork_workspace_not_found",
+          directory
+            ? `OpenWork server has no workspace matching ${directory}.`
+            : "OpenWork server returned no workspaces.",
+        );
+      }
+    }
+
+    const workspace: WorkspaceInfo = {
+      id: remoteType === "openwork"
+        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
+        : workspaceIdForRemote(baseUrl, directory),
+      name: displayName ?? openworkWorkspaceName ?? "Remote workspace",
+      path: directory ?? "",
+      preset: "remote",
+      workspaceType: "remote",
+      remoteType,
+      baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
+      ...(directory ? { directory } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(remoteType === "openwork" && openworkHostUrl ? { openworkHostUrl } : {}),
+      ...(openworkToken ? { openworkToken } : {}),
+      ...(remoteType === "openwork" && openworkWorkspaceId ? { openworkWorkspaceId } : {}),
+      ...(remoteType === "openwork" && openworkWorkspaceName ? { openworkWorkspaceName } : {}),
+      ...(sandboxBackend ? { sandboxBackend } : {}),
+      ...(sandboxRunId ? { sandboxRunId } : {}),
+      ...(sandboxContainerName ? { sandboxContainerName } : {}),
+    };
+
+    config.workspaces = [workspace, ...config.workspaces.filter((entry) => entry.id !== workspace.id)];
+    const persisted = await persistServerWorkspaceState(config);
+    onWorkspacesChanged();
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.create",
+      target: workspace.path || workspace.baseUrl || "workspace",
+      summary: `Created remote workspace ${workspace.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      activeId: workspace.id,
+      workspaces: config.workspaces.map(serializeWorkspace),
+      persisted,
+    }, 201);
+  });
+
   addRoute(routes, "PATCH", "/workspaces/:id/display-name", "host", async (ctx) => {
     ensureWritable(config);
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const nextDisplayName = typeof body.displayName === "string" && body.displayName.trim()
       ? body.displayName.trim()
@@ -1662,7 +2276,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "host" },
       action: "workspace.rename",
-      target: workspace.path,
+      target: workspace.path || workspace.baseUrl || "workspace",
       summary: `Updated workspace display name${nextDisplayName ? ` to ${nextDisplayName}` : ""}`,
       timestamp: Date.now(),
     });
@@ -1675,11 +2289,17 @@ function createRoutes(
   });
 
   addRoute(routes, "POST", "/workspaces/:id/activate", "host", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
+    const queryPersist = parseOptionalBoolean(ctx.url.searchParams.get("persist"), "persist");
+    const body = queryPersist === undefined ? await readOptionalJsonBody(ctx.request) : {};
+    const persist = queryPersist ?? (body.persist === true);
+    if (persist) ensureWritable(config);
     config.workspaces = [
       workspace,
       ...config.workspaces.filter((entry) => entry.id !== workspace.id),
     ];
+    const persisted = persist ? await persistServerWorkspaceState(config) : false;
+    if (persist) onWorkspacesChanged();
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -1689,23 +2309,22 @@ function createRoutes(
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-    if (connection.baseUrl?.trim()) {
+    if (workspace.workspaceType === "local" && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim()) {
       await reloadOpencodeEngine(config, workspace);
     }
-    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted: false });
+    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted });
   });
 
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(config);
 
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
 
     const before = config.workspaces.length;
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);
     const deleted = before !== config.workspaces.length;
 
-    if (deleted) {
+    if (deleted && workspace.workspaceType === "local") {
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
     }
@@ -1739,6 +2358,65 @@ function createRoutes(
     const openwork = await readOpenworkConfig(workspace.path);
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const opencode = await readOpencodeConfig(workspace.path);
+    const foldersConfig = readAuthorizedFoldersFromOpencodeConfig(opencode, workspace.path);
+    return jsonResponse(buildAuthorizedFoldersResponse(workspace, foldersConfig));
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/authorized-folders", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const folders = parseAuthorizedFoldersPayload(body.folders, workspace.path);
+    const configPath = opencodeConfigPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.authorized_folders.write",
+      summary: "Update authorized folders",
+      paths: [configPath],
+    });
+
+    const configFingerprintBefore = await computeReloadFingerprint(workspace.path, "config");
+    const existingOpencode = await readOpencodeConfig(workspace.path);
+    const existingFoldersConfig = readAuthorizedFoldersFromOpencodeConfig(existingOpencode, workspace.path);
+    const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
+      folders,
+      existingFoldersConfig.hiddenEntries,
+    );
+
+    await writeAuthorizedFoldersToOpencodeConfig(configPath, existingOpencode, nextExternalDirectory);
+
+    const updatedAt = Date.now();
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "config.authorized_folders.write",
+      target: configPath,
+      summary: "Updated authorized folders",
+      timestamp: updatedAt,
+    });
+
+    if (configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+    }
+
+    const updatedFoldersConfig = readAuthorizedFoldersFromOpencodeConfig({
+      permission: { external_directory: nextExternalDirectory ?? {} },
+    }, workspace.path);
+
+    const response: AuthorizedFoldersUpdateResponse = {
+      folders: updatedFoldersConfig.folders,
+      hiddenCount: Object.keys(updatedFoldersConfig.hiddenEntries).length,
+      updatedAt,
+    };
+    return jsonResponse(response);
   });
 
   addRoute(routes, "GET", "/workspace/:id/opencode-config", "client", async (ctx) => {
@@ -1863,9 +2541,8 @@ function createRoutes(
     }
 
     // OpenCode session deletion via the upstream API.
-        await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    });
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    unwrapOpencodeResult(await opencode.session.delete({ sessionID: sessionId }), `/session/${encodeURIComponent(sessionId)}`);
 
     return jsonResponse({ ok: true });
   });
@@ -3013,13 +3690,15 @@ function createRoutes(
 
     // Best-effort disconnect so any active connection is torn down.
     try {
-      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/disconnect`, { method: "POST" });
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      unwrapOpencodeResult(await opencode.mcp.disconnect({ name }), `/mcp/${encodeURIComponent(name)}/disconnect`);
     } catch {
       // ignore
     }
 
     try {
-      await fetchOpencodeJson(config, workspace, `/mcp/${encodeURIComponent(name)}/auth`, { method: "DELETE" });
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      unwrapOpencodeResult(await opencode.mcp.auth.remove({ name }), `/mcp/${encodeURIComponent(name)}/auth`);
     } catch (error) {
       // Treat missing credentials as a successful logout (idempotent).
       if (
@@ -3233,34 +3912,6 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
-    requireClientScope(ctx, "viewer");
-    const body = await readJsonBody(ctx.request);
-    if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
-      throw new ApiError(
-        400,
-        "publisher_base_url_forbidden",
-        "Bundle publishing always uses the configured OpenWork publisher. Remove baseUrl from the request.",
-      );
-    }
-    const result = await publishSharedBundle({
-      payload: body.payload,
-      bundleType: String(body.bundleType ?? "").trim(),
-      name: typeof body.name === "string" ? body.name : undefined,
-      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
-    });
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "POST", "/share/bundles/fetch", "client", async (ctx) => {
-    requireClientScope(ctx, "viewer");
-    const body = await readJsonBody(ctx.request);
-    const bundle = await fetchSharedBundle(body.bundleUrl, {
-      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
-    });
-  return jsonResponse(bundle);
-  });
-
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
     return jsonResponse({ items: ctx.approvals.list() });
   });
@@ -3299,16 +3950,17 @@ async function listWorkspaceSessions(
   input: { roots?: boolean; start?: number; search?: string; limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionList(
-      await fetchOpencodeJson(config, workspace, "/session", {
-        method: "GET",
-        query: {
+      unwrapOpencodeResult(
+        await opencode.session.list({
           roots: input.roots,
           start: input.start,
           search: input.search,
           limit: input.limit,
-        },
-      }),
+        }),
+        "/session",
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3317,10 +3969,12 @@ async function listWorkspaceSessions(
 
 async function readWorkspaceSession(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSession(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.get({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3334,11 +3988,12 @@ async function readWorkspaceSessionMessages(
   input: { limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionMessages(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
-        method: "GET",
-        query: { limit: input.limit },
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
+        `/session/${encodeURIComponent(sessionId)}/message`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3347,10 +4002,12 @@ async function readWorkspaceSessionMessages(
 
 async function readWorkspaceSessionTodos(config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionTodos(
-      await fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(
+        await opencode.session.todo({ sessionID: sessionId }),
+        `/session/${encodeURIComponent(sessionId)}/todo`,
+      ),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3359,10 +4016,9 @@ async function readWorkspaceSessionTodos(config: ServerConfig, workspace: Worksp
 
 async function readWorkspaceSessionStatuses(config: ServerConfig, workspace: WorkspaceInfo) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     return buildSessionStatuses(
-      await fetchOpencodeJson(config, workspace, "/session/status", {
-        method: "GET",
-      }),
+      unwrapOpencodeResult(await opencode.session.status(), "/session/status"),
     );
   } catch (error) {
     remapSessionReadError(error);
@@ -3376,20 +4032,18 @@ async function readWorkspaceSessionSnapshot(
   input: { limit?: number },
 ) {
   try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
     const [session, messages, todos, statuses] = await Promise.all([
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}`, {
-        method: "GET",
-      }),
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/message`, {
-        method: "GET",
-        query: { limit: input.limit },
-      }),
-      fetchOpencodeJson(config, workspace, `/session/${encodeURIComponent(sessionId)}/todo`, {
-        method: "GET",
-      }),
-      fetchOpencodeJson(config, workspace, "/session/status", {
-        method: "GET",
-      }),
+      opencode.session
+        .get({ sessionID: sessionId })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}`)),
+      opencode.session
+        .messages({ sessionID: sessionId, limit: input.limit })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/message`)),
+      opencode.session
+        .todo({ sessionID: sessionId })
+        .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
+      opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
     ]);
     return buildSessionSnapshot({ session, messages, todos, statuses });
   } catch (error) {
@@ -3398,7 +4052,11 @@ async function readWorkspaceSessionSnapshot(
 }
 
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
-  const workspace = config.workspaces.find((entry) => entry.id === id);
+  const workspaceId = id.trim();
+  const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
+  const workspace =
+    config.workspaces.find((entry) => entry.id === workspaceId) ??
+    (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
   if (!workspace) {
     throw new ApiError(404, "workspace_not_found", "Workspace not found");
   }
@@ -3419,6 +4077,21 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
     }
   }
   return { ...workspace, path: resolvedWorkspace };
+}
+
+async function resolveWorkspaceForRegistry(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+  const workspaceId = id.trim();
+  const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
+  const workspace =
+    config.workspaces.find((entry) => entry.id === workspaceId) ??
+    (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
+  if (!workspace) {
+    throw new ApiError(404, "workspace_not_found", "Workspace not found");
+  }
+  if (workspace.workspaceType === "remote") {
+    return { ...workspace, path: workspace.path?.trim() ?? "" };
+  }
+  return resolveWorkspace(config, id);
 }
 
 function reloadOpencodeEngineAfterInternalBootstrap(config: ServerConfig, workspace: WorkspaceInfo): void {
@@ -3468,6 +4141,16 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   }
 }
 
+async function readOptionalJsonBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    return ensurePlainObject(JSON.parse(text));
+  } catch {
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+}
+
 function parseOptionalPositiveInteger(value: string | null, name: string): number | undefined {
   if (value === null) return undefined;
   const parsed = Number.parseInt(value, 10);
@@ -3492,16 +4175,6 @@ function parseOptionalBoolean(value: string | null, name: string): boolean | und
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   throw new ApiError(400, "invalid_query", `${name} must be a boolean`);
-}
-
-function parseJsonResponse(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return trimmed;
-  }
 }
 
 function ensurePlainObject(value: unknown): Record<string, unknown> {
@@ -3531,6 +4204,7 @@ async function readServerConfigFile(configPath: string): Promise<OpenworkServerC
 }
 
 function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string, unknown> {
+  const isLocalWorkspace = workspace.workspaceType !== "remote";
   return {
     id: workspace.id,
     path: workspace.path,
@@ -3538,8 +4212,8 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     preset: workspace.preset,
     workspaceType: workspace.workspaceType,
     ...(workspace.remoteType ? { remoteType: workspace.remoteType } : {}),
-    ...(workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
-    ...(workspace.directory ? { directory: workspace.directory } : {}),
+    ...(!isLocalWorkspace && workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
+    ...(!isLocalWorkspace && workspace.directory ? { directory: workspace.directory } : {}),
     ...(workspace.displayName ? { displayName: workspace.displayName } : {}),
     ...(workspace.openworkHostUrl ? { openworkHostUrl: workspace.openworkHostUrl } : {}),
     ...(workspace.openworkToken ? { openworkToken: workspace.openworkToken } : {}),
@@ -3548,15 +4222,14 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     ...(workspace.sandboxBackend ? { sandboxBackend: workspace.sandboxBackend } : {}),
     ...(workspace.sandboxRunId ? { sandboxRunId: workspace.sandboxRunId } : {}),
     ...(workspace.sandboxContainerName ? { sandboxContainerName: workspace.sandboxContainerName } : {}),
-    ...(workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
-    ...(workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
+    ...(!isLocalWorkspace && workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
+    ...(!isLocalWorkspace && workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
   };
 }
 
 async function persistServerWorkspaceState(config: ServerConfig): Promise<boolean> {
   const configPath = config.configPath?.trim() ?? "";
   if (!configPath) return false;
-  if (!(await exists(configPath))) return false;
 
   const parsed = await readServerConfigFile(configPath);
   const next: OpenworkServerConfigFile = {
@@ -3905,11 +4578,9 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   }
 
   const created: Array<{ templateId: string; sessionId: string; title: string }> = [];
+  const opencode = createWorkspaceOpencodeClient(config, workspace);
   for (const template of templates) {
-    const result = await fetchOpencodeJson(config, workspace, "/session", {
-      method: "POST",
-      body: template.title ? { title: template.title } : undefined,
-    });
+    const result = unwrapOpencodeResult(await opencode.session.create({ title: template.title }), "/session");
     const sessionId =
       result && typeof result === "object" && "id" in result && typeof result.id === "string" ? result.id.trim() : "";
     if (!sessionId) {

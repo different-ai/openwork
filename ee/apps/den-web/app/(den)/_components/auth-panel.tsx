@@ -2,9 +2,9 @@
 
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { isSamePathname } from "../_lib/client-route";
-import type { AuthMode } from "../_lib/den-flow";
+import { getErrorMessage, requestJson, type AuthMode } from "../_lib/den-flow";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
@@ -97,6 +97,10 @@ export function AuthPanel({
   const pathname = usePathname();
   const prefillRef = useRef<string | null>(null);
   const [copiedDesktopField, setCopiedDesktopField] = useState<"link" | "code" | null>(null);
+  const [passwordResetRequested, setPasswordResetRequested] = useState(false);
+  const [passwordResetBusy, setPasswordResetBusy] = useState(false);
+  const [passwordResetInfo, setPasswordResetInfo] = useState("");
+  const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
   const {
     authMode,
     setAuthMode,
@@ -147,10 +151,20 @@ export function AuthPanel({
     ...verificationContent,
   };
 
+  const passwordResetContent: PanelContent = {
+    title: "Reset your password.",
+    copy: "Enter your email and we'll send you a secure reset link.",
+    submitLabel: "Send reset link",
+  };
+
   const desktopGrant = getDesktopGrant(desktopRedirectUrl);
+  const isPasswordResetRequest = authMode === "sign-in" && passwordResetRequested && !verificationRequired;
+  const formBusy = isPasswordResetRequest ? passwordResetBusy : authBusy || desktopRedirectBusy;
   const activeContent = verificationRequired
     ? resolvedVerificationContent
-    : authMode === "sign-in"
+    : isPasswordResetRequest
+      ? passwordResetContent
+      : authMode === "sign-in"
       ? resolvedSignInContent
       : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
@@ -175,6 +189,39 @@ export function AuthPanel({
     window.setTimeout(() => {
       setCopiedDesktopField((current) => (current === field ? null : current));
     }, 1800);
+  };
+
+  const submitPasswordResetRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setPasswordResetError("Enter your email to receive a reset link.");
+      return;
+    }
+
+    setPasswordResetBusy(true);
+    setPasswordResetInfo("");
+    setPasswordResetError(null);
+    try {
+      const { response, payload } = await requestJson("/api/auth/request-password-reset", {
+        method: "POST",
+        body: JSON.stringify({
+          email: trimmedEmail,
+          redirectTo: new URL("/reset-password", window.location.origin).toString(),
+        }),
+      });
+
+      if (!response.ok) {
+        setPasswordResetError(getErrorMessage(payload, `Could not send reset link (${response.status}).`));
+        return;
+      }
+
+      setPasswordResetInfo(`If an account exists for ${trimmedEmail}, we sent a reset link.`);
+    } catch (error) {
+      setPasswordResetError(error instanceof Error ? error.message : "Could not send reset link.");
+    } finally {
+      setPasswordResetBusy(false);
+    }
   };
 
   /* ------------------------------------------------------------------ */
@@ -271,6 +318,11 @@ export function AuthPanel({
       <form
         className="grid gap-4"
         onSubmit={async (event) => {
+          if (isPasswordResetRequest) {
+            await submitPasswordResetRequest(event);
+            return;
+          }
+
           const next = verificationRequired
             ? await submitVerificationCode(event)
             : await submitAuth(event);
@@ -289,7 +341,7 @@ export function AuthPanel({
           }
         }}
       >
-        {!verificationRequired && !hideSocialAuth ? (
+        {!verificationRequired && !isPasswordResetRequest && !hideSocialAuth ? (
           <>
             <SocialButton
               onClick={() => void beginSocialAuth("github")}
@@ -336,7 +388,7 @@ export function AuthPanel({
           </label>
         ) : null}
 
-        {!verificationRequired ? (
+        {!verificationRequired && !isPasswordResetRequest ? (
           <label className="grid gap-2">
             <span className="den-label">Password</span>
             <input
@@ -348,7 +400,7 @@ export function AuthPanel({
               required
             />
           </label>
-        ) : (
+        ) : isPasswordResetRequest ? null : (
           <label className="grid gap-2">
             <span className="den-label">Verification code</span>
             <input
@@ -366,13 +418,30 @@ export function AuthPanel({
           </label>
         )}
 
+        {authMode === "sign-in" && !verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
+          <div className="-mt-2 flex justify-end">
+            <button
+              type="button"
+              className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+              onClick={() => {
+                setAuthMode("sign-in");
+                setPasswordResetRequested(true);
+                setPasswordResetInfo("");
+                setPasswordResetError(null);
+              }}
+            >
+              Forgot password?
+            </button>
+          </div>
+        ) : null}
+
         <button
           type="submit"
           className="den-button-primary w-full"
-          disabled={authBusy || desktopRedirectBusy}
+          disabled={formBusy}
         >
-          {authBusy || desktopRedirectBusy ? "Working..." : activeContent.submitLabel}
-          {!authBusy && !desktopRedirectBusy ? <ArrowRight className="h-4 w-4" /> : null}
+          {formBusy ? "Working..." : activeContent.submitLabel}
+          {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
         </button>
 
         {verificationRequired ? (
@@ -397,7 +466,23 @@ export function AuthPanel({
         ) : null}
       </form>
 
-      {!verificationRequired ? (
+      {isPasswordResetRequest ? (
+        <div className="flex items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)]">
+          <p className="m-0">Remembered your password?</p>
+          <button
+            type="button"
+            className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+            onClick={() => {
+              setPasswordResetRequested(false);
+              setPasswordResetInfo("");
+              setPasswordResetError(null);
+              setAuthMode("sign-in");
+            }}
+          >
+            Back to sign in
+          </button>
+        </div>
+      ) : !verificationRequired ? (
         <div className="flex items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)]">
           <p className="m-0">
             {authMode === "sign-in"
@@ -407,7 +492,12 @@ export function AuthPanel({
           <button
             type="button"
             className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-            onClick={() => setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in")}
+            onClick={() => {
+              setPasswordResetRequested(false);
+              setPasswordResetInfo("");
+              setPasswordResetError(null);
+              setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
+            }}
           >
             {authMode === "sign-in"
               ? resolvedSignInContent.toggleActionLabel
@@ -416,7 +506,17 @@ export function AuthPanel({
         </div>
       ) : null}
 
-      {showAuthFeedback ? (
+      {isPasswordResetRequest && (passwordResetInfo || passwordResetError) ? (
+        <div
+          className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]"
+          aria-live="polite"
+        >
+          {passwordResetInfo ? <p>{passwordResetInfo}</p> : null}
+          {passwordResetError ? <p className="font-medium text-rose-600">{passwordResetError}</p> : null}
+        </div>
+      ) : null}
+
+      {!isPasswordResetRequest && showAuthFeedback ? (
         <div
           className="den-frame-inset grid gap-1 rounded-[1.5rem] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]"
           aria-live="polite"

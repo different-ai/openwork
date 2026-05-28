@@ -7,6 +7,7 @@ export const TYPE_ID_SUFFIX_LENGTH = 26
 
 const BASE32_REGEX = /^[0-9a-hjkmnp-tv-z]+$/
 
+// TypeID prefixes are persisted in DB rows; append new entries instead of changing existing values.
 export const idTypesMapNameToPrefix = {
   request: "req",
   user: "usr",
@@ -14,10 +15,6 @@ export const idTypesMapNameToPrefix = {
   account: "acc",
   verification: "ver",
   apiKey: "apk",
-  oauthClient: "oac",
-  oauthAccessToken: "oat",
-  oauthRefreshToken: "ort",
-  oauthConsent: "oco",
   rateLimit: "rli",
   org: "org",
   organization: "org",
@@ -53,6 +50,23 @@ export const idTypesMapNameToPrefix = {
   desktopPolicy: "dpo",
   desktopPolicyMember: "dpm",
   organizationRole: "orl",
+  orgSubscription: "osub",
+  scimProvider: "scp",
+  ssoConnection: "ssc",
+  ssoProvider: "ssp",
+  externalIdentity: "xid",
+  oauthClient: "ocl",
+  oauthAccessToken: "oat",
+  oauthRefreshToken: "ort",
+  oauthConsent: "ocn",
+  inferenceKey: "ink",
+  inferenceOrgLimitPolicy: "iolp",
+  inferenceOrgUsageBucket: "ioub",
+  inferenceOrgProviderKey: "iopk",
+  inferenceRequest: "ireq",
+  inferenceUsageLedgerEntry: "iule",
+  inferenceUsageLedgerBucketCharge: "iulc",
+  inferenceModelAlias: "ima",
   adminAllowlist: "aal",
   worker: "wrk",
   workerInstance: "wki",
@@ -61,15 +75,6 @@ export const idTypesMapNameToPrefix = {
   workerBundle: "wkb",
   auditEvent: "aev",
   telemetryEvent: "tev",
-  inferenceKey: "ink",
-  inferenceOrgLimitPolicy: "iolp",
-  inferenceOrgUsageBucket: "ioub",
-  inferenceRequest: "ireq",
-  inferenceUsageLedgerEntry: "iule",
-  inferenceUsageLedgerBucketCharge: "iulc",
-  inferenceModelAlias: "ima",
-  inferenceOrgProviderKey: "iopk",
-  orgSubscription: "osub",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

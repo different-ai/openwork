@@ -640,8 +640,10 @@ export function ManageMembersScreen() {
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
             <p className="text-[15px] text-gray-400">
-              {access.canInviteMembers
+              {access.canManageMembers
                 ? "Invite people, update their role, or remove them from the organization."
+                : access.canRemoveMembers
+                  ? "Invite people or remove non-owner members from the organization."
                 : "View who is in the organization and what role they currently hold."}
             </p>
             {toolbarAction ? (
@@ -667,7 +669,7 @@ export function ManageMembersScreen() {
                 ? false
                 : isInvited
                   ? access.canInviteMembers || access.canCancelInvitations
-                  : access.canManageMembers;
+                  : access.canManageMembers || access.canRemoveMembers;
 
               return (
                 <div
@@ -753,7 +755,7 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
-                            {!isInvited && access.canManageMembers ? (
+                            {!isInvited && access.canRemoveMembers ? (
                               <button
                                 type="button"
                                 onClick={() => {

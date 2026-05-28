@@ -119,7 +119,11 @@ export function useDenSession({
   }, [authError, isSignedIn, sessionBusy]);
 
   const syncCurrentDenSettings = React.useCallback(() => {
-    const resolved = resolveDenBaseUrls(baseUrl);
+    const currentSettings = readDenSettings();
+    const resolved = resolveDenBaseUrls({
+      baseUrl,
+      apiBaseUrl: currentSettings.apiBaseUrl,
+    });
     writeDenSettings({
       baseUrl: resolved.baseUrl,
       apiBaseUrl: resolved.apiBaseUrl,

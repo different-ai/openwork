@@ -8,6 +8,7 @@ on:
       - .devcontainer/Dockerfile.daytona-vnc
       - .devcontainer/start-daytona-vnc.sh
       - .devcontainer/start-daytona-electron.sh
+      - .devcontainer/start-daytona-recording.sh
       - .github/workflows/daytona-eval-image.yml
       - pnpm-lock.yaml
       - package.json

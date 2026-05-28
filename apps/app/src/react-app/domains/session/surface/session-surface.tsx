@@ -31,6 +31,7 @@ import {
 } from "../../../shell/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { ReactSessionComposer } from "./composer/composer";
+import { decodeComposerMentionValue, encodeComposerMentionValue } from "./composer/mention-encoding";
 import { DevProfiler } from "../../../shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
 import { OwDotTicker } from "../../../shell/dot-ticker";
@@ -43,9 +44,11 @@ import { SessionTranscript } from "./message-list";
 import { useLocal } from "../../../kernel/local-provider";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
+import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { PermissionApprovalPanel } from "../chat/permission-approval-modal";
 import { QuestionPanel } from "../modals/question-modal";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "../artifacts/open-target";
+import { usePanelTabStore } from "../panel/panel-tab-store";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
@@ -118,7 +121,6 @@ export type SessionSurfaceProps = {
   onRevertToMessage?: (messageId: string) => void;
   onForkAtMessage?: (messageId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }) => void;
-  onOpenTargetsChange?: (targets: OpenTarget[]) => void;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -418,6 +420,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
+  const sessionActivityStatus = useSessionActivityStore(
+    (state) => state.statusesByWorkspaceId[props.workspaceId]?.[props.sessionId] ?? "idle",
+  );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
@@ -591,12 +596,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [noVisibleAssistantOutputBaseline, renderedMessages]);
   const showAssistantWaitState = awaitingAssistantBaseline !== null && !assistantOutputAfterAwaitStart;
   const showAssistantRespondingState = awaitingAssistantBaseline !== null && assistantOutputAfterAwaitStart && chatStreaming;
+  const effectiveActivityStatus: SessionActivityStatus = sessionActivityStatus !== "idle"
+    ? sessionActivityStatus
+    : showAssistantWaitState
+      ? "thinking"
+      : showAssistantRespondingState
+        ? "responding"
+        : "idle";
   const showNoVisibleAssistantOutput = noVisibleAssistantOutputBaseline !== null && !assistantOutputAfterNoVisibleFallback;
-  const reserveAssistantStatusSpace = awaitingAssistantBaseline !== null && assistantOutputAfterAwaitStart && !chatStreaming;
-  const assistantStatusFooter = showAssistantWaitState ? (
-    <AssistantWaitingCard collapseLayout />
-  ) : showAssistantRespondingState ? (
-    <AssistantWaitingCard label={t("session.assistant_responding")} collapseLayout />
+  const reserveAssistantStatusSpace = effectiveActivityStatus === "idle" && awaitingAssistantBaseline !== null && assistantOutputAfterAwaitStart && !chatStreaming;
+  const assistantStatusFooter = effectiveActivityStatus !== "idle" ? (
+    <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} collapseLayout />
   ) : showNoVisibleAssistantOutput ? (
     <AssistantNoVisibleOutputCard text={noVisibleAssistantOutputText} />
   ) : reserveAssistantStatusSpace ? (
@@ -656,8 +666,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
-    props.onOpenTargetsChange?.(verifiedOpenTargets);
-  }, [props.onOpenTargetsChange, verifiedOpenTargets]);
+    usePanelTabStore.getState().syncTranscriptArtifacts(props.sessionId, verifiedOpenTargets);
+  }, [props.sessionId, verifiedOpenTargets]);
 
   useEffect(() => {
     if (!pendingSessionLoad) {
@@ -690,8 +700,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const trimmed = text.trim();
-    const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
     const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
@@ -702,7 +710,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         }
       }
       if (segment.startsWith("@")) {
-        const value = segment.slice(1);
+        const value = decodeComposerMentionValue(segment.slice(1));
         const kind = mentions[value];
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
@@ -715,13 +723,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     for (const part of pasteParts) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
+    for (const value of Object.keys(mentions)) {
+      resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
+    }
+    const resolvedSlashMatch = resolved.trim().match(/^\/([^\s]+)\s*(.*)$/);
     return {
       mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
       resolvedText: resolved,
-      command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
+      command: resolvedSlashMatch ? { name: resolvedSlashMatch[1] ?? "", arguments: resolvedSlashMatch[2] ?? "" } : undefined,
     };
   }, [mentions, pasteParts]);
 
@@ -746,6 +758,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // catch below. This restores the "append a prompt while it's still
     // talking" behavior that the Solid composer had.
     setError(null);
+    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
     setSending(true);
     setAwaitingAssistantBaseline(renderedMessages.length);
     setNoVisibleAssistantOutputBaseline(null);
@@ -759,12 +772,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       setError(parsed);
+      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId);
       setComposerDraft(props.sessionId, "");
       setAwaitingAssistantBaseline(null);
       setNoVisibleAssistantOutputBaseline(null);
       setSending(false);
     }
-  }, [attachments, buildDraft, clearComposerSession, draft, props.onDraftChange, props.onSendDraft, props.sessionId, renderedMessages.length, setComposerDraft]);
+  }, [attachments, buildDraft, clearComposerSession, draft, props.onDraftChange, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
 
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
@@ -776,6 +790,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
     }
   }, [chatStreaming, opencodeClient, props.sessionId, snapshotQuery.refetch]);
+
+  const handleDismissError = useCallback(() => {
+    setError(null);
+    useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
+  }, [props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     if (liveStatus.type === "idle") {
@@ -827,7 +846,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const handleInsertMention = (kind: "agent" | "file", value: string) => {
-    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${value} `));
+    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     setComposerMentions(props.sessionId, { ...mentions, [value]: kind });
   };
 
@@ -872,6 +891,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setComposerDraft(props.sessionId, text);
     await waitForControl(40);
   }, [props.sessionId, setComposerDraft]);
+
+  useEffect(() => {
+    const handleVoiceTranscript = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail: unknown = event.detail;
+      if (!detail || typeof detail !== "object" || Array.isArray(detail) || !("text" in detail) || typeof detail.text !== "string") return;
+      const text = detail.text;
+      void typeComposerText(text);
+      props.onDraftChange(buildDraft(text, attachments));
+      recordInspectorEvent("voice.transcript.applied", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        length: text.length,
+      });
+    };
+    window.addEventListener("openwork:voice-transcript", handleVoiceTranscript);
+    return () => window.removeEventListener("openwork:voice-transcript", handleVoiceTranscript);
+  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
 
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
@@ -1112,7 +1149,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 {error ? (
                   <SessionErrorCard
                     error={error}
-                    onDismiss={() => setError(null)}
+                    onDismiss={handleDismissError}
                     onChangeModel={props.onChangeModel}
                     onOpenModelPicker={props.onModelClick}
                   />
@@ -1122,15 +1159,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   </div>
                 )}
               </div>
-            ) : renderedMessages.length === 0 && showAssistantWaitState ? (
+            ) : renderedMessages.length === 0 && effectiveActivityStatus !== "idle" ? (
               <div className="px-6 py-12">
-                <AssistantWaitingCard />
+                <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
               error ? (
                 <SessionErrorCard
                   error={error}
-                  onDismiss={() => setError(null)}
+                  onDismiss={handleDismissError}
                   onChangeModel={props.onChangeModel}
                   onOpenModelPicker={props.onModelClick}
                 />
@@ -1155,7 +1192,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
                         onClick={() => void typeComposerText("Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.")}
                       >
-                        <img src="https://cdn.simpleicons.org/googlechrome" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
+                        <img src="/openwork-mark.svg" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
                         <div>
                           <div className="text-[12px] font-medium text-dls-text">Browse the web</div>
                           <div className="text-[11px] text-dls-secondary">Search Craigslist for couches</div>
@@ -1194,7 +1231,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   {error ? (
                     <SessionErrorCard
                       error={error}
-                      onDismiss={() => setError(null)}
+                      onDismiss={handleDismissError}
                       onChangeModel={props.onChangeModel}
                       onOpenModelPicker={props.onModelClick}
                     />
