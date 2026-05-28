@@ -22,6 +22,20 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+export const SCREENSHOT_FORMATS = ["png", "jpeg"];
+
+export function evaluateScriptCallFunctionOptions(functionDeclaration, argObjectIds) {
+  return {
+    objectId: argObjectIds[0],
+    functionDeclaration: `function(...args) {
+      const fn = (${functionDeclaration});
+      return fn.apply(args[0] ?? this, args);
+    }`,
+    arguments: argObjectIds.map((objectId) => ({ objectId })),
+    returnByValue: true,
+  };
+}
+
 // ── Snapshot manager ──────────────────────────────────────────────────
 //
 // Manages the a11y tree snapshot and uid→backendDOMNodeId mapping.
@@ -350,10 +364,10 @@ export function createNativeBuiltinServer({
     "take_screenshot",
     "Take a screenshot of the page or element.",
     {
-      format: z.enum(["png", "jpeg", "webp"]).default("png")
+      format: z.enum(SCREENSHOT_FORMATS).default("png")
         .describe('Format. Default: "png"'),
       quality: z.number().min(0).max(100).optional()
-        .describe("JPEG/WebP quality (0-100). Ignored for PNG."),
+        .describe("JPEG quality (0-100). Ignored for PNG."),
       uid: z.string().optional()
         .describe("Element uid from snapshot. Omit for page screenshot."),
       fullPage: z.boolean().optional()
@@ -698,12 +712,10 @@ export function createNativeBuiltinServer({
       if (params.args?.length) {
         const argIds = [];
         for (const uid of params.args) argIds.push(await snap.resolveElement(uid));
-        const { result } = await w.debugger.sendCommand("Runtime.callFunctionOn", {
-          objectId: argIds[0],
-          functionDeclaration: params.function,
-          arguments: argIds.slice(1).map((id) => ({ objectId: id })),
-          returnByValue: true,
-        });
+        const { result } = await w.debugger.sendCommand(
+          "Runtime.callFunctionOn",
+          evaluateScriptCallFunctionOptions(params.function, argIds),
+        );
         return { content: [{ type: "text", text: JSON.stringify(result?.value, null, 2) ?? "undefined" }] };
       }
 

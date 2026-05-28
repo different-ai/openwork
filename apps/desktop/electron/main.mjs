@@ -24,6 +24,7 @@ import { startBrowserMcpServers } from "./browser-mcp.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
+import { parseOpencodeConfig } from "./opencode-config-json.mjs";
 import {
   openworkWorkspaceDisplayName,
   selectOpenworkWorkspaceForConnection,
@@ -1188,7 +1189,7 @@ async function seedBrowserMcpConfig(workspaceDir) {
 
   let config;
   if (configPath) {
-    try { config = JSON.parse(await readFile(configPath, "utf8")); } catch { return; }
+    try { config = parseOpencodeConfig(await readFile(configPath, "utf8")); } catch { return; }
   } else {
     config = { $schema: "https://opencode.ai/config.json" };
   }

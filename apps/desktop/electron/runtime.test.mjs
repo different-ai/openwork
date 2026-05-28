@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
 import {
   prioritizeWorkspacePaths,
@@ -43,7 +44,7 @@ describe("resolveOpenworkServerConfigPath", () => {
   it("respects explicit server config path", () => {
     assert.equal(
       resolveOpenworkServerConfigPath({ OPENWORK_SERVER_CONFIG: "/tmp/openwork/server.json" }),
-      "/tmp/openwork/server.json",
+      path.resolve("/tmp/openwork/server.json"),
     );
   });
 
