@@ -6,7 +6,7 @@ OpenWork instance to verify end-to-end behavior of the UI.
 Each eval is:
 - A short list of steps written in plain English.
 - An **expected outcome** with observable signals.
-- The most useful Chrome DevTools MCP calls to drive it.
+- The CDP browser tool calls to drive it.
 
 They are not unit tests. They intentionally exercise the running stack
 (OpenCode + OpenWork server + React UI) so regressions in wiring — not just
@@ -14,37 +14,85 @@ types — get caught.
 
 ## How to run
 
-1. Start the Docker dev stack:
-   ```bash
-   packaging/docker/dev-up.sh
-   ```
-   Use the printed web URL (e.g. `http://localhost:50423`). The port is
-   random; never hard-code `5173`/`8787`.
+### Option A: On Daytona (recommended)
 
-2. Pick a runner:
-   - **Chrome DevTools MCP** (recommended). The tool names referenced in each
-     flow are the `chrome-devtools_*` tools from the Chrome DevTools MCP
-     server. Open the printed web URL in a fresh page via
-     `chrome-devtools_new_page` and drive from there.
-   - **Manual browser** — open the URL and follow the step lists by hand.
+Run against a real Electron app in a Daytona cloud sandbox. No local Docker or
+display needed. See [`daytona-flows.md`](./daytona-flows.md) for full details.
 
-3. Walk each eval top-to-bottom. Only mark ✅ when every expected signal is
-   visible. Capture a screenshot with `chrome-devtools_take_screenshot` if you
-   want evidence.
+Quick start:
 
-4. Stop the stack with the exact `docker compose -p openwork-dev-... down`
-   line printed by `dev-up.sh`.
+```bash
+daytona organization use "Different AI"
+bash .devcontainer/test-on-daytona.sh [branch-or-commit]
+# Use the printed Electron CDP URL with browser_* tools.
+```
+
+### Option B: Local Electron
+
+Start the Electron dev app locally:
+
+```bash
+pnpm dev
+```
+
+Wait ~15s, then use the browser tools against `http://127.0.0.1:9825`.
+
+### Option C: Manual browser
+
+Open the app and follow the step lists by hand.
+
+## Tool reference
+
+Evals use the OpenCode browser tools (`.opencode/tools/browser.ts`). Every tool
+takes `browser_url` as the first argument.
+
+| Tool | Description |
+|------|-------------|
+| `browser_list` | List page targets on the CDP endpoint |
+| `browser_navigate` | Navigate a target to a URL |
+| `browser_snapshot` | Accessibility tree with UIDs |
+| `browser_click` | Click by snapshot UID |
+| `browser_fill` | Fill input by snapshot UID |
+| `browser_evaluate` | Run JS in the page |
+| `browser_screenshot` | Capture PNG |
 
 ## Conventions
 
-- Selectors in the steps are descriptive, not CSS. Resolve them via
-  `chrome-devtools_take_snapshot` and click by `uid`.
-- When asked to "wait for X", use `chrome-devtools_wait_for` with the exact
-  visible text. Keep the text short and unique.
-- If a step expects a connected provider and the stack shows none, note it
-  as an environment limitation, not an eval failure.
+- Use `browser_evaluate` for button clicks and text input — it's more reliable
+  than snapshot UIDs for dynamic React UIs.
+- For Lexical editors, use `document.execCommand('insertText', false, text)`
+  after focusing. Direct DOM manipulation doesn't trigger Lexical state updates.
+- For React state injection (e.g., folder picker bypass), use the
+  `__reactFiber$` → reducer dispatch pattern documented in `daytona-flows.md`.
+- When asked to "wait for X", use `sleep` then `browser_evaluate` to check.
 
 ## Files
 
-- [`react-session-flows.md`](./react-session-flows.md) — the 9 core
-  session/settings flows verified during the React port cutover.
+- [`daytona-flows.md`](./daytona-flows.md) — Daytona sandbox flows (workspace
+  creation, session messaging, screenshot verification).
+- [`react-session-flows.md`](./react-session-flows.md) — core
+  session/settings flows verified during the React port cutover, including
+  long streaming interruption coverage.
+- [`openable-items-flow.md`](./openable-items-flow.md) — inline openable-item
+  chips, Cmd/Ctrl+K inventory, artifact/browser opening, icon checks, and
+  screenshot evidence requirements.
+- [`reload-events-flow.md`](./reload-events-flow.md) — reload-required toast
+  suppression on boot/no-op writes and positive coverage for real runtime config
+  changes.
+- [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the 7
+  onboarding/welcome flows covering first-run experience and folder
+  explanation.
+- [`browser-extension-flows.md`](./browser-extension-flows.md) — browser
+  extension plugin loading, built-in browser navigation, composer extensions
+  menu, extension toggle, and stale MCP migration.
+- [`extensions-marketplace-flows.md`](./extensions-marketplace-flows.md) —
+  extension runtime and marketplace install/remove/search/filter flows.
+- [`desktop-policy-extension-flows.md`](./desktop-policy-extension-flows.md) —
+  admin-to-member extension policy flows for disabling and restoring built-in
+  extensions.
+- [`workspace-layout-state-flows.md`](./workspace-layout-state-flows.md) —
+  persisted sidebar/browser layout, legacy layout migration, and workspace-safe
+  layout state.
+- [`environment-variable-flows.md`](./environment-variable-flows.md) — local
+  environment variable CRUD, masking, validation, apply/restart behavior, and
+  remote-workspace secret boundaries.

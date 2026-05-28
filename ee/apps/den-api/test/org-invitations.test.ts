@@ -56,7 +56,7 @@ test("legacy org-scoped proxy also reaches non-invitation org resources", async 
 
 test("current org endpoints are not swallowed by the legacy proxy", async () => {
   const app = createOrgApp()
-  const response = await app.request("http://den.local/v1/orgs/invitations/preview?id=bad", {
+  const response = await app.request("http://den.local/v1/orgs/invitations/preview?id=", {
     method: "GET",
   })
 

@@ -2,9 +2,10 @@ import {
   engineInfo,
   engineStart,
   openworkServerInfo,
-  orchestratorWorkspaceActivate,
+  type EngineInfo,
+  type OpenworkServerInfo,
 } from "../../app/lib/desktop";
-import { writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "./app-inspector";
 
@@ -47,10 +48,10 @@ export async function ensureDesktopLocalOpenworkConnection(
 
   const workspacePaths = Array.from(
     new Set(
-      options.allWorkspaces
-        .filter((item) => item.workspaceType === "local")
-        .map((item) => item.path?.trim() ?? "")
-        .filter((path) => path.length > 0),
+      options.allWorkspaces.flatMap((item) => {
+        const path = item.workspaceType === "local" ? item.path?.trim() ?? "" : "";
+        return path ? [path] : [];
+      }),
     ),
   );
   if (!workspacePaths.includes(workspaceRoot)) {
@@ -64,20 +65,16 @@ export async function ensureDesktopLocalOpenworkConnection(
   });
 
   try {
-    const engine = await engineInfo().catch(() => null);
+    const engine = await engineInfo().catch(() => null) as EngineInfo | null;
     if (!engine?.running || !engine.baseUrl) {
       await engineStart(workspaceRoot, {
-        runtime: "openwork-orchestrator",
+        runtime: "direct",
         workspacePaths,
+        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
       });
     }
 
-    await orchestratorWorkspaceActivate({
-      workspacePath: workspaceRoot,
-      name: workspace.name ?? workspace.displayNameResolved ?? null,
-    });
-
-    const info = await openworkServerInfo();
+    const info = await openworkServerInfo() as OpenworkServerInfo | null;
     if (!info?.baseUrl) {
       throw new Error("OpenWork server did not report a base URL after activation.");
     }
@@ -85,6 +82,7 @@ export async function ensureDesktopLocalOpenworkConnection(
     writeOpenworkServerSettings({
       urlOverride: info.baseUrl,
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
+      hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
       remoteAccessEnabled: info.remoteAccessEnabled === true,
     });

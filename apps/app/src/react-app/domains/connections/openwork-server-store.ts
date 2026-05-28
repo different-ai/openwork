@@ -1,20 +1,17 @@
 import { useSyncExternalStore } from "react";
 
-import { t, currentLocale } from "../../../i18n";
+import { t } from "../../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../../../app/types";
 import { isDesktopRuntime } from "../../../app/utils";
 import {
   openworkServerInfo,
   openworkServerRestart,
-  opencodeRouterInfo,
-  orchestratorStatus,
-  type OpenCodeRouterInfo,
   type OpenworkServerInfo,
-  type OrchestratorStatus,
 } from "../../../app/lib/desktop";
 import {
   clearOpenworkServerSettings,
   createOpenworkServerClient,
+  isLoopbackOpenworkServerUrl,
   normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
@@ -54,8 +51,6 @@ export type OpenworkServerStoreSnapshot = {
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkReconnectBusy: boolean;
-  opencodeRouterInfoState: OpenCodeRouterInfo | null;
-  orchestratorStatusState: OrchestratorStatus | null;
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
@@ -87,8 +82,6 @@ type MutableState = {
   openworkServerHostInfoReady: boolean;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkReconnectBusy: boolean;
-  opencodeRouterInfoState: OpenCodeRouterInfo | null;
-  orchestratorStatusState: OrchestratorStatus | null;
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
@@ -110,6 +103,8 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   let healthTimeoutId: number | null = null;
   let healthBusy = false;
   let healthDelayMs = 10_000;
+  let consecutiveHealthFailures = 0;
+  let visibilityChangeHandler: (() => void) | null = null;
   let snapshot: OpenworkServerStoreSnapshot;
 
   let state: MutableState = {
@@ -124,8 +119,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     openworkServerHostInfoReady: !isDesktopRuntime(),
     openworkServerDiagnostics: null,
     openworkReconnectBusy: false,
-    opencodeRouterInfoState: null,
-    orchestratorStatusState: null,
     openworkAuditEntries: [],
     openworkAuditStatus: "idle",
     openworkAuditError: null,
@@ -142,6 +135,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
 
     if (pref === "local") return hostInfo?.baseUrl ?? "";
+    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+      return hostInfo.baseUrl;
+    }
     if (pref === "server") return settingsUrl;
     return hostInfo?.baseUrl ?? settingsUrl;
   };
@@ -149,20 +145,34 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   const getAuth = () => {
     const pref = options.startupPreference();
     const hostInfo = state.openworkServerHostInfo;
+    const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
     const settingsToken = state.openworkServerSettings.token?.trim() ?? "";
+    const settingsHostToken = state.openworkServerSettings.hostToken?.trim() ?? "";
     const clientToken = hostInfo?.clientToken?.trim() ?? "";
     const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
     if (pref === "local") {
       return { token: clientToken || undefined, hostToken: hostToken || undefined };
     }
+    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+      return {
+        token: clientToken || settingsToken || undefined,
+        hostToken: hostToken || settingsHostToken || undefined,
+      };
+    }
     if (pref === "server") {
-      return { token: settingsToken || undefined, hostToken: undefined };
+      return {
+        token: settingsToken || undefined,
+        hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+      };
     }
     if (hostInfo?.baseUrl) {
       return { token: clientToken || undefined, hostToken: hostToken || undefined };
     }
-    return { token: settingsToken || undefined, hostToken: undefined };
+    return {
+      token: settingsToken || undefined,
+      hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+    };
   };
 
   const getClient = () => {
@@ -219,17 +229,13 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       resolvedOpenworkCapabilities,
       openworkServerCanWriteSkills:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.skills?.write ?? false),
       openworkServerCanWritePlugins:
         openworkServerReady &&
-        openworkServerWorkspaceReady &&
         (resolvedOpenworkCapabilities?.plugins?.write ?? false),
       openworkServerHostInfo: state.openworkServerHostInfo,
       openworkServerDiagnostics: state.openworkServerDiagnostics,
       openworkReconnectBusy: state.openworkReconnectBusy,
-      opencodeRouterInfoState: state.opencodeRouterInfoState,
-      orchestratorStatusState: state.orchestratorStatusState,
       openworkAuditEntries: state.openworkAuditEntries,
       openworkAuditStatus: state.openworkAuditStatus,
       openworkAuditError: state.openworkAuditError,
@@ -323,13 +329,20 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
   const runHealthCheck = async () => {
     if (disposed || typeof window === "undefined") return;
-    if (!options.documentVisible()) return;
-    if (shouldWaitForLocalHostInfo()) return;
+    if (!options.documentVisible()) {
+      queueHealthCheck(healthDelayMs);
+      return;
+    }
+    if (shouldWaitForLocalHostInfo()) {
+      queueHealthCheck(250);
+      return;
+    }
     if (healthBusy) return;
 
     const url = getBaseUrl().trim();
     const auth = getAuth();
     if (!url) {
+      consecutiveHealthFailures = 0;
       mutateState((current) => ({
         ...current,
         openworkServerStatus: "disconnected",
@@ -348,7 +361,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         if (disposed) return;
 
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
 
           mutateState((current) => ({
@@ -369,15 +382,26 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       }
 
       if (disposed) return;
-      healthDelayMs =
-        result.status === "connected" || result.status === "limited"
-          ? 10_000
-          : Math.min(healthDelayMs * 2, 60_000);
+      const previousStatus = state.openworkServerStatus;
+      const previousCapabilities = state.openworkServerCapabilities;
+      const healthy = result.status === "connected" || result.status === "limited";
+      if (healthy) {
+        consecutiveHealthFailures = 0;
+        healthDelayMs = 10_000;
+      } else {
+        consecutiveHealthFailures += 1;
+        healthDelayMs = Math.min(healthDelayMs * 2, 60_000);
+      }
+
+      const preservePrevious =
+        !healthy &&
+        consecutiveHealthFailures < 3 &&
+        (previousStatus === "connected" || previousStatus === "limited");
 
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: result.status,
-        openworkServerCapabilities: result.capabilities,
+        openworkServerStatus: preservePrevious ? previousStatus : result.status,
+        openworkServerCapabilities: preservePrevious ? previousCapabilities : result.capabilities,
         openworkServerCheckedAt: Date.now(),
       }));
     } catch {
@@ -432,13 +456,19 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
     syncFromOptions();
     queueHealthCheck(0);
+    visibilityChangeHandler = () => {
+      if (!options.documentVisible()) return;
+      consecutiveHealthFailures = 0;
+      queueHealthCheck(0);
+    };
+    window.addEventListener("visibilitychange", visibilityChangeHandler);
 
     const refreshHostInfo = () => {
       if (!isDesktopRuntime()) return;
       if (!options.documentVisible()) return;
       void (async () => {
         try {
-          const info = await openworkServerInfo();
+          const info = await openworkServerInfo() as OpenworkServerInfo;
           if (disposed) return;
           mutateState((current) => ({
             ...current,
@@ -482,46 +512,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     };
     refreshDiagnostics();
     startInterval("diagnostics", refreshDiagnostics, 10_000);
-
-    const refreshRouterInfo = () => {
-      if (!isDesktopRuntime()) return;
-      if (!options.documentVisible()) return;
-      if (!options.developerMode()) {
-        setStateField("opencodeRouterInfoState", null);
-        return;
-      }
-
-      void (async () => {
-        try {
-          const info = await opencodeRouterInfo();
-          if (!disposed) setStateField("opencodeRouterInfoState", info);
-        } catch {
-          if (!disposed) setStateField("opencodeRouterInfoState", null);
-        }
-      })();
-    };
-    refreshRouterInfo();
-    startInterval("router", refreshRouterInfo, 10_000);
-
-    const refreshOrchestratorStatus = () => {
-      if (!isDesktopRuntime()) return;
-      if (!options.documentVisible()) return;
-      if (!options.developerMode()) {
-        setStateField("orchestratorStatusState", null);
-        return;
-      }
-
-      void (async () => {
-        try {
-          const status = await orchestratorStatus();
-          if (!disposed) setStateField("orchestratorStatusState", status);
-        } catch {
-          if (!disposed) setStateField("orchestratorStatusState", null);
-        }
-      })();
-    };
-    refreshOrchestratorStatus();
-    startInterval("orchestrator", refreshOrchestratorStatus, 10_000);
 
     const refreshDevtoolsWorkspace = () => {
       if (!options.documentVisible()) return;
@@ -601,7 +591,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
             openworkAuditError:
               error instanceof Error
                 ? error.message
-                : t("app.error_audit_load", currentLocale()),
+                : t("app.error_audit_load"),
           }));
         }
       })();
@@ -614,6 +604,10 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     disposed = true;
     started = false;
     clearHealthTimeout();
+    if (visibilityChangeHandler && typeof window !== "undefined") {
+      window.removeEventListener("visibilitychange", visibilityChangeHandler);
+      visibilityChangeHandler = null;
+    }
     for (const key of [...intervals.keys()]) stopInterval(key);
   };
 
@@ -630,6 +624,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     }
 
     const result = await checkOpenworkServer(derived, next.token);
+    consecutiveHealthFailures = result.status === "disconnected" ? consecutiveHealthFailures + 1 : 0;
     mutateState((current) => ({
       ...current,
       openworkServerStatus: result.status,
@@ -664,7 +659,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       let hostInfo = state.openworkServerHostInfo;
       if (isDesktopRuntime()) {
         try {
-          hostInfo = await openworkServerInfo();
+          hostInfo = await openworkServerInfo() as OpenworkServerInfo;
           mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
         } catch {
           hostInfo = null;
@@ -729,7 +724,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     try {
       hostInfo = await openworkServerRestart({
         remoteAccessEnabled: state.openworkServerSettings.remoteAccessEnabled === true,
-      });
+      }) as OpenworkServerInfo;
       mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
     } catch {
       return null;
@@ -770,7 +765,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
         const restarted = await options.restartLocalServer();
         if (!restarted) {
-          throw new Error(t("app.error_restart_local_worker", currentLocale()));
+          throw new Error(t("app.error_restart_local_worker"));
         }
         await reconnectOpenworkServer();
       }
@@ -781,7 +776,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         shareRemoteAccessError:
           error instanceof Error
             ? error.message
-            : t("app.error_remote_access", currentLocale()),
+            : t("app.error_remote_access"),
       }));
       return;
     } finally {

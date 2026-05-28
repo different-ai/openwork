@@ -72,7 +72,7 @@ export function CreateWorkspaceSharedPanel(
           <div
             className={`${surfaceCardClass} w-full max-w-[420px] p-8 text-center`}
           >
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover text-dls-text">
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover text-dls-text">
               <Cloud size={24} />
             </div>
             <div className="mt-5 text-[20px] font-semibold tracking-[-0.3px] text-dls-text">
@@ -200,7 +200,7 @@ export function CreateWorkspaceSharedPanel(
                       <span
                         className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusBadgeClass(status.tone)}`.trim()}
                       >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                        <span className="size-1.5 rounded-full bg-current opacity-80" />
                         {status.label}
                       </span>
                     </div>

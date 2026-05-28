@@ -1,4 +1,4 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { InvitationTable, MemberTable, OrganizationRoleTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -152,7 +152,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       const members = await db
         .select()
         .from(MemberTable)
-        .where(eq(MemberTable.organizationId, payload.organization.id))
+        .where(and(eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
 
       for (const member of members) {
         if (!splitRoles(member.role).includes(roleRow.role)) {
@@ -232,7 +232,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     const membersUsingRole = await db
       .select({ role: MemberTable.role })
       .from(MemberTable)
-      .where(eq(MemberTable.organizationId, payload.organization.id))
+      .where(and(eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
 
     if (membersUsingRole.some((member) => splitRoles(member.role).includes(roleRow.role))) {
       return c.json({ error: "role_in_use", message: "Update members using this role before deleting it." }, 400)

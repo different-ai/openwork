@@ -26,6 +26,21 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const appRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const appPackagePath = resolve(appRoot, "package.json");
+const desktopPackagePath = resolve(appRoot, "..", "desktop", "package.json");
+
+function readPackageVersion(packagePath: string): string | null {
+  if (!existsSync(packagePath)) return null;
+
+  const parsed = JSON.parse(readFileSync(packagePath, "utf8")) as { version?: string };
+  return parsed.version?.trim() || null;
+}
+
+const buildAppVersion =
+  process.env.VITE_OPENWORK_APP_VERSION?.trim() ||
+  readPackageVersion(desktopPackagePath) ||
+  readPackageVersion(appPackagePath) ||
+  "0.0.0";
 
 // Load the Tauri → Electron migration-release fragment if present. Written
 // by scripts/migration/01-cut-migration-release.mjs for the specific
@@ -40,7 +55,7 @@ function loadMigrationReleaseEnv(): Record<string, string> {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
+    const eq = trimmed.search("=");
     if (eq < 0) continue;
     const key = trimmed.slice(0, eq).trim();
     if (!key.startsWith("VITE_")) continue;
@@ -57,12 +72,15 @@ const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 
 export default defineConfig({
   base: isElectronPackagedBuild ? "./" : "/",
-  define: Object.fromEntries(
-    Object.entries(migrationReleaseEnv).map(([k, v]) => [
-      `import.meta.env.${k}`,
-      JSON.stringify(v),
-    ]),
-  ),
+  define: {
+    ...Object.fromEntries(
+      Object.entries(migrationReleaseEnv).map(([k, v]) => [
+        `import.meta.env.${k}`,
+        JSON.stringify(v),
+      ]),
+    ),
+    "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
+  },
   plugins: [
     {
       name: "openwork-dev-server-id",
@@ -74,7 +92,11 @@ export default defineConfig({
       },
     },
     tailwindcss(),
-    react(),
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+      },
+    }),
   ],
   server: {
     port: devPort,
@@ -83,5 +105,16 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
+    rollupOptions: {
+      input: {
+        app: resolve(appRoot, "index.html"),
+        overlay: resolve(appRoot, "overlay.html"),
+      },
+    },
+  },
+  resolve: {
+    alias: {
+      "@": resolve(appRoot, "src"),
+    },
   },
 });

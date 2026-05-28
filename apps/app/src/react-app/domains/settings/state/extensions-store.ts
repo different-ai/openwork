@@ -1,8 +1,8 @@
-import { useSyncExternalStore } from "react";
+import * as React from "react";
 
 import { applyEdits, modify } from "jsonc-parser";
 
-import { currentLocale, t } from "../../../../i18n";
+import { t } from "../../../../i18n";
 import type {
   Client,
   DenOrgSkillCard,
@@ -38,22 +38,34 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import type { OpenworkHubRepo, OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import type {
+  OpenworkHubRepo,
+  OpenworkServerCapabilities,
+  OpenworkServerClient,
+  OpenworkServerStatus,
+} from "../../../../app/lib/openwork-server";
 import {
   createDenClient,
   fetchDenOrgSkillsCatalog,
   readDenSettings,
+  type DenOrgMarketplaceResolved,
+  type DenOrgPlugin,
+  type DenOrgPluginResolved,
   type DenOrgSkillHub,
 } from "../../../../app/lib/den";
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
+  type CloudImportedPlugin,
+  type CloudImportedPluginFile,
   type CloudImportedSkill,
   type CloudImportedSkillHub,
 } from "../../../../app/cloud/import-state";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const OPENCODE_MCP_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+const OPENCODE_MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
 const DEFAULT_HUB_REPO: HubSkillRepo = {
   owner: "different-ai",
   repo: "openwork-hub",
@@ -62,6 +74,12 @@ const DEFAULT_HUB_REPO: HubSkillRepo = {
 const HUB_REPOS_STORAGE_KEY = "openwork.skills.hubRepos.v1";
 
 type SetStateAction<T> = T | ((current: T) => T);
+
+type PluginListEntry = {
+  name: string;
+  source: "config" | "dir.project" | "dir.global";
+  removable: boolean;
+};
 
 export type ExtensionsStoreSnapshot = {
   workspaceContextKey: string;
@@ -75,12 +93,15 @@ export type ExtensionsStoreSnapshot = {
   cloudOrgSkillHubs: DenOrgSkillHub[];
   cloudOrgSkillHubsStatus: string | null;
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
+  cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: string | null;
+  importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
   pluginConfigPath: string | null;
-  pluginList: string[];
+  pluginList: PluginListEntry[];
   pluginInput: string;
   pluginStatus: string | null;
   activePluginGuide: string | null;
@@ -107,12 +128,15 @@ type MutableState = {
   cloudOrgSkillHubs: DenOrgSkillHub[];
   cloudOrgSkillHubsStatus: string | null;
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
+  cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
+  cloudOrgMarketplacesStatus: string | null;
+  importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
   pluginConfigPath: string | null;
-  pluginList: string[];
+  pluginList: PluginListEntry[];
   pluginInput: string;
   pluginStatus: string | null;
   activePluginGuide: string | null;
@@ -156,6 +180,85 @@ function uniqueSkillInstallName(base: string, taken: Set<string>, stableSuffix: 
   return `skill-${suffixSource}`.slice(0, 64);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const text = readNonEmptyString(entry);
+        return text ? [text] : [];
+      })
+    : [];
+}
+
+function readStringRecord(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) return null;
+  const output: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const text = readNonEmptyString(entry);
+    if (text) output[key] = text;
+  }
+  return Object.keys(output).length ? output : null;
+}
+
+function cloudPluginMcpNameFromPath(path: string): string | null {
+  if (!path.startsWith(OPENCODE_MCP_IMPORT_PATH_PREFIX)) return null;
+  const name = path.slice(OPENCODE_MCP_IMPORT_PATH_PREFIX.length).trim();
+  return OPENCODE_MCP_NAME_RE.test(name) ? name : null;
+}
+
+function toConfigPluginListEntries(names: string[]): PluginListEntry[] {
+  const next: PluginListEntry[] = [];
+  const seen = new Set<string>();
+  for (const rawName of names) {
+    const name = rawName.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    next.push({ name, source: "config", removable: true });
+  }
+  return next;
+}
+
+function toProjectPluginListEntries(
+  items: Array<{ spec: string; source: string }>,
+): PluginListEntry[] {
+  const byName = new Map<string, PluginListEntry>();
+  for (const item of items) {
+    const name = item.spec.trim();
+    if (!name) continue;
+    const source: PluginListEntry["source"] =
+      item.source === "dir.project" || item.source === "dir.global"
+        ? item.source
+        : "config";
+    const entry: PluginListEntry = {
+      name,
+      source,
+      removable: source === "config",
+    };
+    const existing = byName.get(name);
+    if (!existing || (entry.removable && !existing.removable)) {
+      byName.set(name, entry);
+    }
+  }
+  return [...byName.values()];
+}
+
 export function createExtensionsStore(options: {
   client: () => Client | null;
   projectDir: () => string;
@@ -163,7 +266,13 @@ export function createExtensionsStore(options: {
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
   openworkServer: OpenworkServerStore;
+  openworkServerConnection?: () => {
+    openworkServerClient: OpenworkServerClient | null;
+    openworkServerStatus: OpenworkServerStatus;
+    openworkServerCapabilities: OpenworkServerCapabilities | null;
+  };
   runtimeWorkspaceId: () => string | null;
+  ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -171,7 +280,6 @@ export function createExtensionsStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
   const listeners = new Set<() => void>();
-  const translate = (key: string) => t(key, currentLocale());
 
   let disposed = false;
   let started = false;
@@ -185,19 +293,26 @@ export function createExtensionsStore(options: {
   let refreshHubSkillsInFlight = false;
   let refreshCloudOrgSkillsInFlight = false;
   let refreshCloudOrgSkillHubsInFlight = false;
+  let refreshCloudOrgMarketplacesInFlight = false;
+  let refreshCloudOrgSkillsInFlightKey = "";
+  let refreshCloudOrgSkillHubsInFlightKey = "";
+  let refreshCloudOrgMarketplacesInFlightKey = "";
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
   let refreshCloudOrgSkillsAborted = false;
   let refreshCloudOrgSkillHubsAborted = false;
+  let refreshCloudOrgMarketplacesAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let cloudOrgSkillsLoaded = false;
   let cloudOrgSkillHubsLoaded = false;
+  let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let hubSkillsLoadKey = "";
   let cloudOrgSkillsLoadKey = "";
   let cloudOrgSkillHubsLoadKey = "";
+  let cloudOrgMarketplacesLoadKey = "";
 
   let state: MutableState = {
     skillsContextKey: "",
@@ -214,6 +329,9 @@ export function createExtensionsStore(options: {
     cloudOrgSkillHubs: [],
     cloudOrgSkillHubsStatus: null,
     importedCloudSkillHubs: {},
+    cloudOrgMarketplaces: [],
+    cloudOrgMarketplacesStatus: null,
+    importedCloudPlugins: {},
     hubRepo: DEFAULT_HUB_REPO,
     hubRepos: [DEFAULT_HUB_REPO],
     pluginScope: "project",
@@ -239,6 +357,36 @@ export function createExtensionsStore(options: {
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
   };
 
+  const getOpenworkServerSnapshot = () => {
+    const snapshot = options.openworkServer.getSnapshot();
+    const connection = options.openworkServerConnection?.();
+    if (!connection?.openworkServerClient) return snapshot;
+    return {
+      ...snapshot,
+      openworkServerClient: connection.openworkServerClient,
+      openworkServerStatus: connection.openworkServerStatus,
+      openworkServerCapabilities: connection.openworkServerCapabilities,
+    };
+  };
+
+  const resolveWorkspaceServerTarget = async () => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+    }
+    const hasOpenworkTarget =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient && openworkWorkspaceId);
+    return {
+      openworkSnapshot,
+      openworkClient,
+      openworkWorkspaceId,
+      hasOpenworkTarget,
+    };
+  };
+
   const refreshSnapshot = () => {
     const workspaceContextKey = getWorkspaceContextKey();
     const orgId = readDenSettings().activeOrgId?.trim() ?? "";
@@ -254,6 +402,9 @@ export function createExtensionsStore(options: {
       cloudOrgSkillHubs: state.cloudOrgSkillHubs,
       cloudOrgSkillHubsStatus: state.cloudOrgSkillHubsStatus,
       importedCloudSkillHubs: state.importedCloudSkillHubs,
+      cloudOrgMarketplaces: state.cloudOrgMarketplaces,
+      cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
+      importedCloudPlugins: state.importedCloudPlugins,
       hubRepo: state.hubRepo,
       hubRepos: state.hubRepos,
       pluginScope: state.pluginScope,
@@ -321,18 +472,19 @@ export function createExtensionsStore(options: {
   const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.config?.read;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.config?.read !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       const config = await openworkClient.getConfig(openworkWorkspaceId);
       return config.openwork ?? {};
+    }
+
+    if (hasOpenworkTarget) {
+      return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -345,25 +497,26 @@ export function createExtensionsStore(options: {
   const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.config?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.config?.write !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
       return true;
     }
 
+    if (hasOpenworkTarget) {
+      return false;
+    }
+
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await workspaceOpenworkWrite({
+      const result = (await workspaceOpenworkWrite({
         workspacePath: root,
         config: config as never,
-      });
+      })) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write .opencode/openwork.json");
       }
@@ -397,6 +550,18 @@ export function createExtensionsStore(options: {
     }
   };
 
+  const refreshImportedCloudPlugins = async () => {
+    try {
+      const config = await readWorkspaceOpenworkConfigRecord();
+      const cloudImports = readWorkspaceCloudImports(config);
+      setStateField("importedCloudPlugins", cloudImports.plugins);
+      return cloudImports.plugins;
+    } catch {
+      setStateField("importedCloudPlugins", {});
+      return {};
+    }
+  };
+
   const persistImportedCloudSkillHubs = async (nextSkillHubs: Record<string, CloudImportedSkillHub>) => {
     const config = await readWorkspaceOpenworkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
@@ -425,6 +590,20 @@ export function createExtensionsStore(options: {
     setStateField("importedCloudSkills", nextSkills);
   };
 
+  const persistImportedCloudPlugins = async (nextPlugins: Record<string, CloudImportedPlugin>) => {
+    const config = await readWorkspaceOpenworkConfigRecord();
+    const cloudImports = readWorkspaceCloudImports(config);
+    const nextConfig = withWorkspaceCloudImports(config, {
+      ...cloudImports,
+      plugins: nextPlugins,
+    });
+    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    if (!persisted) {
+      throw new Error("OpenWork server unavailable. Connect to manage imported cloud plugins.");
+    }
+    setStateField("importedCloudPlugins", nextPlugins);
+  };
+
   const buildCloudSkillContent = (name: string, description: string, body: string) => {
     const safeDescription = description.replace(/\s+/g, " ").trim();
     const normalizedBody = body.replace(/^\s*\n?/, "");
@@ -447,16 +626,13 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       await openworkClient.upsertSkill(openworkWorkspaceId, {
         name,
         content,
@@ -465,23 +641,27 @@ export function createExtensionsStore(options: {
       return;
     }
 
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server cannot write skills for this workspace.");
+    }
+
     if (isRemoteWorkspace) {
       throw new Error("OpenWork server unavailable. Connect to import skills.");
     }
 
     if (!isDesktopRuntime()) {
-      throw new Error(translate("skills.desktop_required"));
+      throw new Error(t("skills.desktop_required"));
     }
 
     if (!isLocalWorkspace || !root) {
-      throw new Error(translate("skills.pick_workspace_first"));
+      throw new Error(t("skills.pick_workspace_first"));
     }
 
-    const result = await installSkillTemplate(root, name, content, {
+    const result = (await installSkillTemplate(root, name, content, {
       overwrite: optionsOverride?.overwrite ?? false,
-    });
+    })) as { ok: boolean; stderr?: string; stdout?: string };
     if (!result.ok) {
-      throw new Error(result.stderr || result.stdout || translate("skills.install_failed"));
+      throw new Error(result.stderr || result.stdout || t("skills.install_failed"));
     }
   };
 
@@ -521,18 +701,19 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       await openworkClient.deleteSkill(openworkWorkspaceId, name);
       return;
+    }
+
+    if (hasOpenworkTarget) {
+      throw new Error("OpenWork server cannot remove skills for this workspace.");
     }
 
     if (isRemoteWorkspace) {
@@ -540,16 +721,16 @@ export function createExtensionsStore(options: {
     }
 
     if (!isDesktopRuntime()) {
-      throw new Error(translate("skills.desktop_required"));
+      throw new Error(t("skills.desktop_required"));
     }
 
     if (!isLocalWorkspace || !root) {
-      throw new Error(translate("skills.pick_workspace_first"));
+      throw new Error(t("skills.pick_workspace_first"));
     }
 
-    const result = await uninstallSkillCommand(root, name);
+    const result = (await uninstallSkillCommand(root, name)) as { ok: boolean; stderr?: string; stdout?: string };
     if (!result.ok) {
-      throw new Error(result.stderr || result.stdout || translate("skills.uninstall_failed"));
+      throw new Error(result.stderr || result.stdout || t("skills.uninstall_failed"));
     }
   };
 
@@ -561,33 +742,338 @@ export function createExtensionsStore(options: {
     });
 
     const nextSkillNames: string[] = [];
+    const nextSkillNameSet = new Set<string>();
     const nextSkillIds: string[] = [];
 
-    for (const skill of hub.skills) {
+    const skillWrites = hub.skills.map((skill) => {
       const preferredName = importedNameMap.get(skill.id)?.trim() ?? "";
       const installName =
-        preferredName && !nextSkillNames.includes(preferredName)
+        preferredName && !nextSkillNameSet.has(preferredName)
           ? preferredName
           : uniqueSkillInstallName(slugifyOpencodeSkillName(skill.title), taken, skill.id);
       taken.add(installName);
       nextSkillNames.push(installName);
+      nextSkillNameSet.add(installName);
       nextSkillIds.push(skill.id);
 
       const rawDesc = (skill.description?.trim() || skill.title).trim();
       const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
       const body = extractSkillBodyMarkdown(skill.skillText);
       const content = buildCloudSkillContent(installName, description, body);
-      await upsertWorkspaceSkill(installName, content, description, {
-        overwrite: Boolean(preferredName),
+      return { installName, content, description, overwrite: Boolean(preferredName) };
+    });
+
+    await Promise.all(
+      skillWrites.map(({ installName, content, description, overwrite }) =>
+        upsertWorkspaceSkill(installName, content, description, { overwrite }),
+      ),
+    );
+
+    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNameSet.has(name));
+    await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name)));
+
+    return { nextSkillNames, nextSkillIds, removedSkillNames };
+  };
+
+  const slugifyConfigObjectName = (title: string, fallback: string) => {
+    const slug = slugifyOpencodeSkillName(title || fallback);
+    return slug === "skill" && fallback ? slugifyOpencodeSkillName(fallback) : slug;
+  };
+
+  const pluginNamespace = (pluginName: string, pluginId: string) => {
+    const base = slugifyConfigObjectName(pluginName, pluginId);
+    return `${base.replace(/-plugin$/, "")}-plugin`;
+  };
+
+  const normalizePluginSourcePath = (path: string, objectType: string, namespace: string) => {
+    const parts = path.trim().replace(/^\/+/, "").split("/").filter(Boolean);
+    if (parts.length === 0 || parts.some((part) => part === ".." || part === ".")) return "";
+
+    const folderByType: Record<string, string> = {
+      agent: "agents",
+      command: "commands",
+      context: "context",
+      hook: "hooks",
+      mcp: "mcps",
+      skill: "skills",
+      tool: "tools",
+    };
+    const folder = folderByType[objectType];
+    if (!folder) return "";
+    const opencodeIndex = parts.findIndex((part) => part === ".opencode");
+    const searchParts = opencodeIndex >= 0 ? parts.slice(opencodeIndex + 1) : parts;
+    const folderIndex = searchParts.findIndex((part) => part === folder);
+    if (folderIndex < 0 || folderIndex === searchParts.length - 1) return "";
+    const rest = searchParts.slice(folderIndex + 1);
+    if (rest[0] === namespace) return [".opencode", folder, ...rest].join("/");
+    return [".opencode", folder, namespace, ...rest].join("/");
+  };
+
+  const getPluginObjectInstallPath = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+    namespace: string,
+  ) => {
+    const existing = normalizePluginSourcePath(object.currentRelativePath ?? "", object.objectType, namespace);
+    if (existing) {
+      if (object.objectType === "skill") {
+        const parts = existing.split("/").filter(Boolean);
+        const lastPart = parts.at(-1) ?? "";
+        const skillName = /^SKILL\.md$/i.test(lastPart)
+          ? parts.at(-2) ?? slugifyConfigObjectName(object.title, object.id)
+          : lastPart || slugifyConfigObjectName(object.title, object.id);
+        return `.opencode/skills/${namespace}/${skillName}/SKILL.md`;
+      }
+      return existing;
+    }
+    const name = slugifyConfigObjectName(object.title, object.id);
+    switch (object.objectType) {
+      case "skill":
+        return `.opencode/skills/${namespace}/${name}/SKILL.md`;
+      case "agent":
+        return `.opencode/agents/${namespace}/${name}.md`;
+      case "command":
+        return `.opencode/commands/${namespace}/${name}.md`;
+      case "mcp":
+        return `.opencode/mcps/${namespace}/${name}.json`;
+      case "hook":
+        return `.opencode/hooks/${namespace}/${name}.json`;
+      case "tool":
+        return `.opencode/tools/${namespace}/${name}.ts`;
+      case "context":
+        return `.opencode/context/${namespace}/${name}.md`;
+      default:
+        return `.opencode/plugins/${namespace}/${name}.txt`;
+    }
+  };
+
+  const pluginMcpName = (rawName: string, namespace: string, fallback: string, namespaceName: boolean) => {
+    const trimmed = rawName.trim();
+    const base = OPENCODE_MCP_NAME_RE.test(trimmed)
+      ? trimmed
+      : slugifyConfigObjectName(trimmed || fallback, fallback);
+    if (!namespaceName) return base;
+    const namespaced = base.startsWith(`${namespace}-`) ? base : `${namespace}-${base}`;
+    return OPENCODE_MCP_NAME_RE.test(namespaced)
+      ? namespaced
+      : slugifyConfigObjectName(namespaced, fallback);
+  };
+
+  const mcpCommandFromConfig = (config: Record<string, unknown>) => {
+    if (Array.isArray(config.command)) return readStringArray(config.command);
+    const command = readNonEmptyString(config.command);
+    if (!command) return [];
+    return [command, ...readStringArray(config.args)];
+  };
+
+  const normalizePluginMcpConfig = (input: unknown): Record<string, unknown> | null => {
+    if (!isRecord(input)) return null;
+    const enabled = typeof input.enabled === "boolean"
+      ? input.enabled
+      : typeof input.disabled === "boolean"
+        ? !input.disabled
+        : true;
+    const url = readNonEmptyString(input.url);
+    if (url) {
+      const config: Record<string, unknown> = { type: "remote", url, enabled };
+      const headers = readStringRecord(input.headers);
+      if (headers) config.headers = headers;
+      if (isRecord(input.oauth)) config.oauth = input.oauth;
+      if (input.oauth === true) config.oauth = {};
+      return config;
+    }
+
+    const command = mcpCommandFromConfig(input);
+    if (command.length > 0) {
+      const config: Record<string, unknown> = { type: "local", command, enabled };
+      const environment = readStringRecord(input.environment) ?? readStringRecord(input.env);
+      if (environment) config.environment = environment;
+      return config;
+    }
+
+    return null;
+  };
+
+  const pluginMcpConfigsFromPayload = (
+    object: NonNullable<DenOrgPluginResolved["memberships"][number]["configObject"]>,
+    namespace: string,
+  ) => {
+    const version = object.latestVersion;
+    const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
+    if (!payload) return [];
+
+    const configs = new Map<string, { name: string; config: Record<string, unknown>; path: string }>();
+    const addConfig = (rawName: string, rawConfig: unknown, namespaceName: boolean) => {
+      const config = normalizePluginMcpConfig(rawConfig);
+      if (!config) return;
+      const name = pluginMcpName(rawName, namespace, object.id, namespaceName);
+      configs.set(name, {
+        name,
+        config,
+        path: `${OPENCODE_MCP_IMPORT_PATH_PREFIX}${name}`,
+      });
+    };
+
+    if (isRecord(payload.mcp)) {
+      for (const [name, config] of Object.entries(payload.mcp)) addConfig(name, config, false);
+    }
+    if (isRecord(payload.mcpServers)) {
+      for (const [name, config] of Object.entries(payload.mcpServers)) addConfig(name, config, false);
+    }
+    if (configs.size === 0) addConfig(object.title, payload, true);
+
+    return [...configs.values()];
+  };
+
+  const upsertPluginMcpConfig = async (name: string, config: Record<string, unknown>) => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+    ) {
+      await openworkClient.addMcp(openworkWorkspaceId, { name, config });
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to import MCP servers into this workspace.");
+  };
+
+  const deletePluginMcpConfig = async (name: string) => {
+    const openworkSnapshot = getOpenworkServerSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    if (
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+    ) {
+      await openworkClient.removeMcp(openworkWorkspaceId, name);
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to remove imported MCP servers from this workspace.");
+  };
+
+  const pluginReloadReason = (objectType: string): ReloadReason => {
+    switch (objectType) {
+      case "skill":
+        return "skills";
+      case "agent":
+        return "agents";
+      case "command":
+        return "commands";
+      case "mcp":
+        return "mcp";
+      default:
+        return "config";
+    }
+  };
+
+  const writePluginWorkspaceFile = async (path: string, content: string) => {
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
+    if (
+      hasOpenworkTarget &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.config?.write !== false &&
+      typeof openworkClient.writeWorkspaceFile === "function"
+    ) {
+      await openworkClient.writeWorkspaceFile(openworkWorkspaceId, { path, content, force: true });
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to import plugin files into this workspace.");
+  };
+
+  const applyCloudOrgPluginImport = async (
+    marketplaceId: string | null,
+    resolved: DenOrgPluginResolved,
+  ): Promise<CloudImportedPluginFile[]> => {
+    const files: CloudImportedPluginFile[] = [];
+    const existing = snapshot.importedCloudPlugins[resolved.plugin.id];
+    const namespace = pluginNamespace(resolved.plugin.name, resolved.plugin.id);
+
+    for (const membership of resolved.memberships) {
+      const object = membership.configObject;
+      const version = object?.latestVersion ?? null;
+      if (!object || object.status !== "active") continue;
+
+      if (object.objectType === "mcp") {
+        const configs = pluginMcpConfigsFromPayload(object, namespace);
+        for (const config of configs) {
+          await upsertPluginMcpConfig(config.name, config.config);
+          files.push({
+            configObjectId: object.id,
+            versionId: version?.id ?? null,
+            objectType: object.objectType,
+            title: object.title,
+            path: config.path,
+            updatedAt: object.updatedAt,
+          });
+          options.markReloadRequired?.("mcp", {
+            type: "mcp",
+            name: config.name,
+            action: existing ? "updated" : "added",
+          });
+        }
+        continue;
+      }
+
+      if (version?.rawSourceText == null) continue;
+
+      const path = getPluginObjectInstallPath(object, namespace);
+      let content = version.rawSourceText;
+      if (object.objectType === "skill") {
+        const rawDesc = (object.description?.trim() || object.title).trim();
+        const description = rawDesc.slice(0, 1024) || object.title.slice(0, 1024) || "Skill";
+        const installName = path.match(/^\.opencode\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/)?.[1] ?? slugifyConfigObjectName(object.title, object.id);
+        content = buildCloudSkillContent(installName, description, extractSkillBodyMarkdown(content));
+      }
+      await writePluginWorkspaceFile(path, content);
+
+      files.push({
+        configObjectId: object.id,
+        versionId: version.id,
+        objectType: object.objectType,
+        title: object.title,
+        path,
+        updatedAt: object.updatedAt,
+      });
+      options.markReloadRequired?.(pluginReloadReason(object.objectType), {
+        type:
+          object.objectType === "skill" || object.objectType === "agent" || object.objectType === "command"
+            ? object.objectType
+            : "config",
+        name: object.title,
+        action: existing ? "updated" : "added",
       });
     }
 
-    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNames.includes(name));
-    for (const name of removedSkillNames) {
-      await deleteWorkspaceSkill(name);
-    }
+    const nextPaths = new Set(files.map((file) => file.path));
+    const removedMcpNames = (existing?.files ?? []).flatMap((file) => {
+      const name = file.objectType === "mcp" && !nextPaths.has(file.path)
+        ? cloudPluginMcpNameFromPath(file.path)
+        : null;
+      return name ? [name] : [];
+    });
+    await Promise.all(removedMcpNames.map((name) => deletePluginMcpConfig(name)));
 
-    return { nextSkillNames, nextSkillIds, removedSkillNames };
+    const nextPlugins = {
+      ...snapshot.importedCloudPlugins,
+      [resolved.plugin.id]: {
+        pluginId: resolved.plugin.id,
+        marketplaceId,
+        name: resolved.plugin.name,
+        description: resolved.plugin.description,
+        updatedAt: resolved.plugin.updatedAt,
+        files,
+        importedAt: existing?.importedAt ?? Date.now(),
+      },
+    } satisfies Record<string, CloudImportedPlugin>;
+    await persistImportedCloudPlugins(nextPlugins);
+    return files;
   };
 
   const persistHubRepos = () => {
@@ -607,10 +1093,17 @@ export function createExtensionsStore(options: {
     hubSkillsLoaded = false;
     cloudOrgSkillsLoaded = false;
     cloudOrgSkillHubsLoaded = false;
+    cloudOrgMarketplacesLoaded = false;
     skillsRoot = "";
     hubSkillsLoadKey = "";
     cloudOrgSkillsLoadKey = "";
     cloudOrgSkillHubsLoadKey = "";
+    cloudOrgMarketplacesLoadKey = "";
+  };
+
+  const getCurrentCloudOrgLoadKey = () => {
+    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+    return `${getWorkspaceContextKey()}::${orgId}`;
   };
 
   const touch = () => {
@@ -622,7 +1115,7 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const repo = snapshot.hubRepo;
     const loadKey = `${root}::${repo ? hubRepoKey(repo) : "none"}`;
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const openworkSnapshot = getOpenworkServerSnapshot();
     const openworkClient = openworkSnapshot.openworkServerClient;
     const canUseOpenworkServer =
       openworkSnapshot.openworkServerStatus === "connected" &&
@@ -690,10 +1183,11 @@ export function createExtensionsStore(options: {
       }
       const listing = (await listingRes.json()) as unknown;
       const dirs: string[] = Array.isArray(listing)
-        ? listing
-            .filter((entry) => entry && typeof entry === "object" && (entry as { type?: string }).type === "dir")
-            .map((entry) => String((entry as { name?: string }).name ?? ""))
-            .filter(Boolean)
+        ? listing.flatMap((entry) => {
+            if (!entry || typeof entry !== "object" || (entry as { type?: string }).type !== "dir") return [];
+            const name = String((entry as { name?: string }).name ?? "");
+            return name ? [name] : [];
+          })
         : [];
 
       const next: HubSkillCard[] = dirs.map((dirName) => ({
@@ -702,7 +1196,7 @@ export function createExtensionsStore(options: {
       }));
 
       if (refreshHubSkillsAborted) return;
-      const sorted = next.slice().sort((a, b) => a.name.localeCompare(b.name));
+      const sorted = next.toSorted((a, b) => a.name.localeCompare(b.name));
       mutateState((current) => ({
         ...current,
         hubSkills: sorted,
@@ -751,9 +1245,10 @@ export function createExtensionsStore(options: {
       await refreshImportedCloudSkills();
       return;
     }
-    if (refreshCloudOrgSkillsInFlight) return;
+    if (refreshCloudOrgSkillsInFlight && refreshCloudOrgSkillsInFlightKey === loadKey) return;
 
     refreshCloudOrgSkillsInFlight = true;
+    refreshCloudOrgSkillsInFlightKey = loadKey;
     refreshCloudOrgSkillsAborted = false;
 
     try {
@@ -774,26 +1269,29 @@ export function createExtensionsStore(options: {
 
       const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const catalog = await fetchDenOrgSkillsCatalog(client, orgId);
-      if (refreshCloudOrgSkillsAborted) return;
+      if (refreshCloudOrgSkillsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
         cloudOrgSkills: catalog,
-        cloudOrgSkillsStatus: catalog.length ? null : translate("skills.cloud_org_empty"),
+        cloudOrgSkillsStatus: null,
         cloudOrgSkillsContextKey: loadKey,
       }));
       cloudOrgSkillsLoaded = true;
       cloudOrgSkillsLoadKey = loadKey;
       await refreshImportedCloudSkills();
     } catch (error) {
-      if (refreshCloudOrgSkillsAborted) return;
+      if (refreshCloudOrgSkillsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
         cloudOrgSkills: [],
         cloudOrgSkillsStatus:
-          error instanceof Error ? error.message : translate("skills.cloud_org_load_failed"),
+          error instanceof Error ? error.message : t("skills.cloud_org_load_failed"),
       }));
     } finally {
-      refreshCloudOrgSkillsInFlight = false;
+      if (refreshCloudOrgSkillsInFlightKey === loadKey) {
+        refreshCloudOrgSkillsInFlight = false;
+        refreshCloudOrgSkillsInFlightKey = "";
+      }
     }
   }
 
@@ -812,9 +1310,10 @@ export function createExtensionsStore(options: {
       await refreshImportedCloudSkillHubs();
       return;
     }
-    if (refreshCloudOrgSkillHubsInFlight) return;
+    if (refreshCloudOrgSkillHubsInFlight && refreshCloudOrgSkillHubsInFlightKey === loadKey) return;
 
     refreshCloudOrgSkillHubsInFlight = true;
+    refreshCloudOrgSkillHubsInFlightKey = loadKey;
     refreshCloudOrgSkillHubsAborted = false;
 
     try {
@@ -834,17 +1333,17 @@ export function createExtensionsStore(options: {
 
       const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const hubs = await client.listOrgSkillHubs(orgId);
-      if (refreshCloudOrgSkillHubsAborted) return;
+      if (refreshCloudOrgSkillHubsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
         cloudOrgSkillHubs: hubs,
-        cloudOrgSkillHubsStatus: hubs.length ? null : "No organization skill hubs are available yet.",
+        cloudOrgSkillHubsStatus: null,
       }));
       cloudOrgSkillHubsLoaded = true;
       cloudOrgSkillHubsLoadKey = loadKey;
       await refreshImportedCloudSkillHubs();
     } catch (error) {
-      if (refreshCloudOrgSkillHubsAborted) return;
+      if (refreshCloudOrgSkillHubsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
         cloudOrgSkillHubs: [],
@@ -852,7 +1351,158 @@ export function createExtensionsStore(options: {
           error instanceof Error ? error.message : "Failed to load organization skill hubs.",
       }));
     } finally {
-      refreshCloudOrgSkillHubsInFlight = false;
+      if (refreshCloudOrgSkillHubsInFlightKey === loadKey) {
+        refreshCloudOrgSkillHubsInFlight = false;
+        refreshCloudOrgSkillHubsInFlightKey = "";
+      }
+    }
+  }
+
+  async function refreshCloudOrgMarketplaces(optionsOverride?: { force?: boolean }) {
+    const wk = getWorkspaceContextKey();
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const loadKey = `${wk}::${orgId}`;
+
+    if (loadKey !== cloudOrgMarketplacesLoadKey) {
+      cloudOrgMarketplacesLoaded = false;
+    }
+
+    if (!optionsOverride?.force && cloudOrgMarketplacesLoaded) {
+      await refreshImportedCloudPlugins();
+      return;
+    }
+    if (refreshCloudOrgMarketplacesInFlight && refreshCloudOrgMarketplacesInFlightKey === loadKey) return;
+
+    refreshCloudOrgMarketplacesInFlight = true;
+    refreshCloudOrgMarketplacesInFlightKey = loadKey;
+    refreshCloudOrgMarketplacesAborted = false;
+
+    try {
+      setStateField("cloudOrgMarketplacesStatus", null);
+
+      if (!token || !orgId) {
+        mutateState((current) => ({
+          ...current,
+          cloudOrgMarketplaces: [],
+          cloudOrgMarketplacesStatus: null,
+        }));
+        cloudOrgMarketplacesLoaded = true;
+        cloudOrgMarketplacesLoadKey = loadKey;
+        await refreshImportedCloudPlugins();
+        return;
+      }
+
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
+      const marketplaces = await client.listOrgMarketplaces(orgId);
+      const resolved = await Promise.all(
+        marketplaces.map((marketplace) => client.getOrgMarketplaceResolved(orgId, marketplace.id)),
+      );
+      if (refreshCloudOrgMarketplacesAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
+      mutateState((current) => ({
+        ...current,
+        cloudOrgMarketplaces: resolved,
+        cloudOrgMarketplacesStatus: null,
+      }));
+      cloudOrgMarketplacesLoaded = true;
+      cloudOrgMarketplacesLoadKey = loadKey;
+      await refreshImportedCloudPlugins();
+    } catch (error) {
+      if (refreshCloudOrgMarketplacesAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
+      mutateState((current) => ({
+        ...current,
+        cloudOrgMarketplaces: [],
+        cloudOrgMarketplacesStatus:
+          error instanceof Error ? error.message : "Failed to load organization marketplaces.",
+      }));
+    } finally {
+      if (refreshCloudOrgMarketplacesInFlightKey === loadKey) {
+        refreshCloudOrgMarketplacesInFlight = false;
+        refreshCloudOrgMarketplacesInFlightKey = "";
+      }
+    }
+  }
+
+  async function importCloudOrgPlugin(
+    marketplaceId: string | null,
+    plugin: DenOrgPlugin,
+  ): Promise<{ ok: boolean; message: string; files: CloudImportedPluginFile[] }> {
+    options.setBusy(true);
+    options.setError(null);
+    setStateField("cloudOrgMarketplacesStatus", null);
+
+    try {
+      const settings = readDenSettings();
+      const token = settings.authToken?.trim() ?? "";
+      const orgId = settings.activeOrgId?.trim() ?? "";
+      if (!token || !orgId) throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
+      const resolved = await client.getOrgPluginResolved(orgId, plugin);
+      const files = await applyCloudOrgPluginImport(marketplaceId, resolved);
+      await refreshSkills({ force: true });
+      await refreshCloudOrgMarketplaces({ force: true });
+      return {
+        ok: true,
+        message: `Imported ${plugin.name} with ${files.length} file${files.length === 1 ? "" : "s"}.`,
+        files,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message, files: [] };
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function removeCloudOrgPlugin(pluginId: string): Promise<{ ok: boolean; message: string }> {
+    options.setBusy(true);
+    options.setError(null);
+    setStateField("cloudOrgMarketplacesStatus", null);
+
+    try {
+      const imported = snapshot.importedCloudPlugins[pluginId];
+      if (!imported) throw new Error("Marketplace package is not installed in this workspace.");
+
+      const removedSkillNames = imported.files.flatMap((file) => {
+        if (file.objectType !== "skill") return [];
+        const name = file.path.match(/^\.opencode\/skills\/(?:[^/]+\/)?([^/]+)\/SKILL\.md$/)?.[1];
+        return name ? [name] : [];
+      });
+      await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name).catch(() => undefined)));
+      const removedMcpNames = imported.files.flatMap((file) => {
+        const name = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
+        return name ? [name] : [];
+      });
+      await Promise.all(removedMcpNames.map((name) => deletePluginMcpConfig(name)));
+
+      const nextPlugins = { ...snapshot.importedCloudPlugins };
+      delete nextPlugins[pluginId];
+      await persistImportedCloudPlugins(nextPlugins);
+
+      if (removedMcpNames.length > 0) {
+        options.markReloadRequired?.("mcp", { type: "mcp", name: imported.name, action: "removed" });
+      }
+      const removedManagedCount = removedSkillNames.length + removedMcpNames.length;
+      if (imported.files.length > removedManagedCount) {
+        options.markReloadRequired?.("config", { type: "config", name: imported.name, action: "removed" });
+      }
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgMarketplaces({ force: true }),
+      ]);
+
+      const partial = imported.files.length > removedManagedCount
+        ? " Non-skill and non-MCP files remain in the workspace and can be removed manually."
+        : "";
+      return { ok: true, message: `Removed ${imported.name}.${partial}` };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message };
+    } finally {
+      options.setBusy(false);
     }
   }
 
@@ -877,16 +1527,18 @@ export function createExtensionsStore(options: {
       };
       await persistImportedCloudSkillHubs(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return {
         ok: true,
         message: `Imported ${hub.skills.length} skill${hub.skills.length === 1 ? "" : "s"} from ${hub.name}.`,
         importedNames,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, importedNames };
     } finally {
@@ -916,12 +1568,14 @@ export function createExtensionsStore(options: {
       };
       await persistImportedCloudSkillHubs(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return { ok: true, message: `Synced ${hub.name} from cloud.`, importedNames: applied.nextSkillNames };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, importedNames: [] };
     } finally {
@@ -940,24 +1594,26 @@ export function createExtensionsStore(options: {
     setStateField("skillsStatus", null);
 
     try {
+      await Promise.all(imported.skillNames.map((name) => deleteWorkspaceSkill(name)));
       for (const name of imported.skillNames) {
-        await deleteWorkspaceSkill(name);
         options.markReloadRequired?.("skills", { type: "skill", name, action: "removed" });
       }
 
       const nextImports = { ...snapshot.importedCloudSkillHubs };
       delete nextImports[hubId];
       await persistImportedCloudSkillHubs(nextImports);
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
-      await refreshCloudOrgSkillHubs({ force: true });
+      await Promise.all([
+        refreshSkills({ force: true }),
+        refreshCloudOrgSkills({ force: true }),
+        refreshCloudOrgSkillHubs({ force: true }),
+      ]);
       return {
         ok: true,
         message: `Removed ${imported.skillNames.length} imported skill${imported.skillNames.length === 1 ? "" : "s"} from ${imported.name}.`,
         removedNames: imported.skillNames,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, removedNames: [] };
     } finally {
@@ -972,14 +1628,11 @@ export function createExtensionsStore(options: {
     if (!repo) return { ok: false, message: "Select a hub repo before installing skills." };
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.hub?.skills?.install;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.hub?.skills?.install !== false;
 
     if (!canUseOpenworkServer) {
       if (isRemoteWorkspace) return { ok: false, message: "OpenWork server unavailable. Connect to install skills." };
@@ -992,13 +1645,13 @@ export function createExtensionsStore(options: {
 
     try {
       const repoOverride: OpenworkHubRepo = { owner: repo.owner, repo: repo.repo, ref: repo.ref };
+      if (!openworkClient || !openworkWorkspaceId) return { ok: false, message: "Hub install requires OpenWork server." };
       const result = await openworkClient.installHubSkill(openworkWorkspaceId, trimmed, { repo: repoOverride });
-      await refreshSkills({ force: true });
-      await refreshHubSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshHubSkills({ force: true })]);
       if (!result?.ok) return { ok: false, message: "Install failed." };
       return { ok: true, message: `Installed ${trimmed}.` };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
     } finally {
@@ -1026,14 +1679,13 @@ export function createExtensionsStore(options: {
       await upsertWorkspaceSkill(installName, content, description, { overwrite: Boolean(existingImport) });
       await persistImportedCloudSkillRecord(skill, installName);
       options.markReloadRequired?.("skills", { type: "skill", name: installName, action });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshCloudOrgSkills({ force: true })]);
       return {
         ok: true,
-        message: t(existingImport ? "skills.cloud_updated" : "skills.cloud_installed", currentLocale(), { name: installName }),
+        message: t(existingImport ? "skills.cloud_updated" : "skills.cloud_installed", { name: installName }),
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
     } finally {
@@ -1063,15 +1715,14 @@ export function createExtensionsStore(options: {
       delete nextImports[cloudSkillId];
       await persistImportedCloudSkills(nextImports);
       options.markReloadRequired?.("skills", { type: "skill", name: imported.installedName, action: "removed" });
-      await refreshSkills({ force: true });
-      await refreshCloudOrgSkills({ force: true });
+      await Promise.all([refreshSkills({ force: true }), refreshCloudOrgSkills({ force: true })]);
       return {
         ok: true,
-        message: t("skills.cloud_removed", currentLocale(), { name: imported.installedName }),
+        message: t("skills.cloud_removed", { name: imported.installedName }),
         removedName: imported.installedName,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message, removedName: null };
     } finally {
@@ -1080,15 +1731,15 @@ export function createExtensionsStore(options: {
   }
 
   const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
-    isPluginInstalled(snapshot.pluginList, pluginName, aliases);
+    isPluginInstalled(snapshot.pluginList.map((entry) => entry.name), pluginName, aliases);
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
-    const nextPluginList: string[] = [];
+    const nextPluginNames: string[] = [];
     let nextPluginStatus: string | null = null;
     loadPluginsFromConfigHelpers(
       config,
       (value) => {
-        nextPluginList.splice(0, nextPluginList.length, ...applyStateAction(nextPluginList, value));
+        nextPluginNames.splice(0, nextPluginNames.length, ...applyStateAction(nextPluginNames, value));
       },
       (message) => {
         nextPluginStatus = message;
@@ -1096,35 +1747,32 @@ export function createExtensionsStore(options: {
     );
     mutateState((current) => ({
       ...current,
-      pluginList: nextPluginList,
+      pluginList: toConfigPluginListEntries(nextPluginNames),
       pluginStatus: nextPluginStatus,
     }));
   };
 
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const root = options.selectedWorkspaceRoot().trim();
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.read;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.read !== false;
 
-    if (!root) {
+    if (!root && !hasOpenworkTarget) {
       mutateState((current) => ({
         ...current,
         skills: [],
-        skillsStatus: translate("skills.pick_workspace_first"),
+        skillsStatus: t("skills.pick_workspace_first"),
       }));
       return;
     }
 
-    if (canUseOpenworkServer) {
-      if (root !== skillsRoot) skillsLoaded = false;
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+      const skillCacheKey = root || openworkWorkspaceId;
+      if (skillCacheKey !== skillsRoot) skillsLoaded = false;
       if (!optionsOverride?.force && skillsLoaded) return;
       if (refreshSkillsInFlight) return;
 
@@ -1145,21 +1793,30 @@ export function createExtensionsStore(options: {
         mutateState((current) => ({
           ...current,
           skills: next,
-          skillsStatus: next.length ? null : translate("skills.no_skills_found"),
+          skillsStatus: next.length ? null : t("skills.no_skills_found"),
           skillsContextKey: getWorkspaceContextKey(),
         }));
         skillsLoaded = true;
-        skillsRoot = root;
+        skillsRoot = skillCacheKey;
       } catch (error) {
         if (refreshSkillsAborted) return;
         mutateState((current) => ({
           ...current,
           skills: [],
-          skillsStatus: error instanceof Error ? error.message : translate("skills.failed_to_load"),
+          skillsStatus: error instanceof Error ? error.message : t("skills.failed_to_load"),
         }));
       } finally {
         refreshSkillsInFlight = false;
       }
+      return;
+    }
+
+    if (hasOpenworkTarget) {
+      mutateState((current) => ({
+        ...current,
+        skills: [],
+        skillsStatus: "OpenWork server cannot read skills for this workspace.",
+      }));
       return;
     }
 
@@ -1185,7 +1842,7 @@ export function createExtensionsStore(options: {
         mutateState((current) => ({
           ...current,
           skills: next,
-          skillsStatus: next.length ? null : translate("skills.no_skills_found"),
+          skillsStatus: next.length ? null : t("skills.no_skills_found"),
           skillsContextKey: getWorkspaceContextKey(),
         }));
         skillsLoaded = true;
@@ -1195,7 +1852,7 @@ export function createExtensionsStore(options: {
         mutateState((current) => ({
           ...current,
           skills: [],
-          skillsStatus: error instanceof Error ? error.message : translate("skills.failed_to_load"),
+          skillsStatus: error instanceof Error ? error.message : t("skills.failed_to_load"),
         }));
       } finally {
         refreshSkillsInFlight = false;
@@ -1229,7 +1886,7 @@ export function createExtensionsStore(options: {
       };
       if (result?.data === undefined) {
         const err = result?.error;
-        const message = err instanceof Error ? err.message : typeof err === "string" ? err : translate("skills.failed_to_load");
+        const message = err instanceof Error ? err.message : typeof err === "string" ? err : t("skills.failed_to_load");
         throw new Error(message);
       }
       if (refreshSkillsAborted) return;
@@ -1243,7 +1900,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         skills: next,
-        skillsStatus: next.length ? null : translate("skills.no_skills_found"),
+        skillsStatus: next.length ? null : t("skills.no_skills_found"),
         skillsContextKey: getWorkspaceContextKey(),
       }));
       skillsLoaded = true;
@@ -1253,7 +1910,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         skills: [],
-        skillsStatus: error instanceof Error ? error.message : translate("skills.failed_to_load"),
+        skillsStatus: error instanceof Error ? error.message : t("skills.failed_to_load"),
       }));
     } finally {
       refreshSkillsInFlight = false;
@@ -1263,14 +1920,11 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.read;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.plugins?.read !== false;
 
     if (refreshPluginsInFlight) return;
     refreshPluginsInFlight = true;
@@ -1291,7 +1945,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (scope === "project" && canUseOpenworkServer) {
+    if (scope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       mutateState((current) => ({
         ...current,
         pluginConfig: null,
@@ -1303,12 +1957,12 @@ export function createExtensionsStore(options: {
         if (refreshPluginsAborted) return;
         const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
-        const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
-        const list = configItems.map((item) => item.spec);
+        const projectItems = result.items.filter((item) => item.scope === "project");
+        const list = toProjectPluginListEntries(projectItems);
         mutateState((current) => ({
           ...current,
           pluginList: list,
-          sidebarPluginList: list,
+          sidebarPluginList: list.map((entry) => entry.name),
           pluginStatus: list.length ? null : "No plugins configured yet.",
           sidebarPluginStatus: null,
           pluginsContextKey: getWorkspaceContextKey(),
@@ -1328,12 +1982,24 @@ export function createExtensionsStore(options: {
       return;
     }
 
+    if (scope === "project" && hasOpenworkTarget) {
+      mutateState((current) => ({
+        ...current,
+        pluginStatus: "OpenWork server cannot read plugins for this workspace.",
+        pluginList: [],
+        sidebarPluginStatus: "OpenWork server cannot read plugins for this workspace.",
+        sidebarPluginList: [],
+      }));
+      refreshPluginsInFlight = false;
+      return;
+    }
+
     if (!isDesktopRuntime()) {
       mutateState((current) => ({
         ...current,
-        pluginStatus: translate("skills.plugin_management_host_only"),
+        pluginStatus: t("skills.plugin_management_host_only"),
         pluginList: [],
-        sidebarPluginStatus: translate("skills.plugins_host_only"),
+        sidebarPluginStatus: t("skills.plugins_host_only"),
         sidebarPluginList: [],
       }));
       refreshPluginsInFlight = false;
@@ -1355,9 +2021,9 @@ export function createExtensionsStore(options: {
     if (scope === "project" && !targetDir) {
       mutateState((current) => ({
         ...current,
-        pluginStatus: translate("skills.pick_project_for_plugins"),
+        pluginStatus: t("skills.pick_project_for_plugins"),
         pluginList: [],
-        sidebarPluginStatus: translate("skills.pick_project_for_active"),
+        sidebarPluginStatus: t("skills.pick_project_for_active"),
         sidebarPluginList: [],
       }));
       refreshPluginsInFlight = false;
@@ -1367,17 +2033,17 @@ export function createExtensionsStore(options: {
     try {
       mutateState((current) => ({ ...current, pluginStatus: null, sidebarPluginStatus: null }));
       if (refreshPluginsAborted) return;
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       if (refreshPluginsAborted) return;
-      mutateState((current) => ({ ...current, pluginConfig: config, pluginConfigPath: config.path ?? null }));
+      mutateState((current) => ({ ...current, pluginConfig: (config as OpencodeConfigFile | null), pluginConfigPath: config.path ?? null }));
 
       if (!config.exists) {
         mutateState((current) => ({
           ...current,
           pluginList: [],
-          pluginStatus: translate("skills.no_opencode_found"),
+          pluginStatus: t("skills.no_opencode_found"),
           sidebarPluginList: [],
-          sidebarPluginStatus: translate("skills.no_opencode_workspace"),
+          sidebarPluginStatus: t("skills.no_opencode_workspace"),
         }));
         return;
       }
@@ -1388,15 +2054,15 @@ export function createExtensionsStore(options: {
         nextSidebarPluginList = parsePluginListFromContent(config.content ?? "");
       } catch {
         nextSidebarPluginList = [];
-        nextSidebarPluginStatus = translate("skills.failed_parse_opencode");
+        nextSidebarPluginStatus = t("skills.failed_parse_opencode");
       }
 
-      const nextPluginList: string[] = [];
+      const nextPluginNames: string[] = [];
       let nextPluginStatus: string | null = null;
       loadPluginsFromConfigHelpers(
-        config,
+        config as never,
         (value) => {
-          nextPluginList.splice(0, nextPluginList.length, ...applyStateAction(nextPluginList, value));
+          nextPluginNames.splice(0, nextPluginNames.length, ...applyStateAction(nextPluginNames, value));
         },
         (message) => {
           nextPluginStatus = message;
@@ -1405,7 +2071,7 @@ export function createExtensionsStore(options: {
 
       mutateState((current) => ({
         ...current,
-        pluginList: nextPluginList,
+        pluginList: toConfigPluginListEntries(nextPluginNames),
         pluginStatus: nextPluginStatus,
         sidebarPluginList: nextSidebarPluginList,
         sidebarPluginStatus: nextSidebarPluginStatus,
@@ -1418,8 +2084,8 @@ export function createExtensionsStore(options: {
         pluginConfig: null,
         pluginConfigPath: null,
         pluginList: [],
-        pluginStatus: error instanceof Error ? error.message : translate("skills.failed_load_opencode"),
-        sidebarPluginStatus: translate("skills.failed_load_active"),
+        pluginStatus: error instanceof Error ? error.message : t("skills.failed_load_opencode"),
+        sidebarPluginStatus: t("skills.failed_load_active"),
         sidebarPluginList: [],
       }));
     } finally {
@@ -1432,19 +2098,15 @@ export function createExtensionsStore(options: {
     const isManualInput = pluginNameOverride == null;
     const triggerName = stripPluginVersion(pluginName);
 
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.plugins?.write !== false;
 
     if (!pluginName) {
-      if (isManualInput) setStateField("pluginStatus", translate("skills.enter_plugin_name"));
+      if (isManualInput) setStateField("pluginStatus", t("skills.enter_plugin_name"));
       return;
     }
 
@@ -1453,7 +2115,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (snapshot.pluginScope === "project" && canUseOpenworkServer) {
+    if (snapshot.pluginScope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       try {
         setStateField("pluginStatus", null);
         await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
@@ -1466,12 +2128,17 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isDesktopRuntime()) {
-      setStateField("pluginStatus", translate("skills.plugin_management_host_only"));
+    if (snapshot.pluginScope === "project" && hasOpenworkTarget) {
+      setStateField("pluginStatus", "OpenWork server cannot write plugins for this workspace.");
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
+    if (!isDesktopRuntime()) {
+      setStateField("pluginStatus", t("skills.plugin_management_host_only"));
+      return;
+    }
+
+    if (!isLocalWorkspace) {
       setStateField("pluginStatus", "OpenWork server unavailable. Connect to manage plugins.");
       return;
     }
@@ -1480,13 +2147,13 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope === "project" && !targetDir) {
-      setStateField("pluginStatus", translate("skills.pick_project_for_plugins"));
+      setStateField("pluginStatus", t("skills.pick_project_for_plugins"));
       return;
     }
 
     try {
       setStateField("pluginStatus", null);
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       const raw = config.content ?? "";
 
       if (!raw.trim()) {
@@ -1501,7 +2168,7 @@ export function createExtensionsStore(options: {
       const plugins = parsePluginListFromContent(raw);
       const desired = stripPluginVersion(pluginName).toLowerCase();
       if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
-        setStateField("pluginStatus", translate("skills.plugin_already_listed"));
+        setStateField("pluginStatus", t("skills.plugin_already_listed"));
         return;
       }
 
@@ -1513,7 +2180,7 @@ export function createExtensionsStore(options: {
       if (isManualInput) setStateField("pluginInput", "");
       await refreshPlugins(scope);
     } catch (error) {
-      setStateField("pluginStatus", error instanceof Error ? error.message : translate("skills.failed_update_opencode"));
+      setStateField("pluginStatus", error instanceof Error ? error.message : t("skills.failed_update_opencode"));
     }
   }
 
@@ -1521,23 +2188,25 @@ export function createExtensionsStore(options: {
     const name = pluginName.trim();
     if (!name) return;
     const triggerName = stripPluginVersion(name);
+    const existingPlugin = snapshot.pluginList.find((entry) => entry.name === name);
+    if (existingPlugin && !existingPlugin.removable) {
+      setStateField("pluginStatus", "Directory-discovered plugins are read-only.");
+      return;
+    }
 
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.plugins?.write !== false;
 
     if (snapshot.pluginScope !== "project" && !isLocalWorkspace) {
       setStateField("pluginStatus", "Global plugins are only available for local workers.");
       return;
     }
 
-    if (snapshot.pluginScope === "project" && canUseOpenworkServer) {
+    if (snapshot.pluginScope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       try {
         setStateField("pluginStatus", null);
         await openworkClient.removePlugin(openworkWorkspaceId, name);
@@ -1549,12 +2218,17 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isDesktopRuntime()) {
-      setStateField("pluginStatus", translate("skills.plugin_management_host_only"));
+    if (snapshot.pluginScope === "project" && hasOpenworkTarget) {
+      setStateField("pluginStatus", "OpenWork server cannot write plugins for this workspace.");
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
+    if (!isDesktopRuntime()) {
+      setStateField("pluginStatus", t("skills.plugin_management_host_only"));
+      return;
+    }
+
+    if (!isLocalWorkspace) {
       setStateField("pluginStatus", "OpenWork server unavailable. Connect to manage plugins.");
       return;
     }
@@ -1562,13 +2236,13 @@ export function createExtensionsStore(options: {
     const scope = snapshot.pluginScope;
     const targetDir = options.projectDir().trim();
     if (scope === "project" && !targetDir) {
-      setStateField("pluginStatus", translate("skills.pick_project_for_plugins"));
+      setStateField("pluginStatus", t("skills.pick_project_for_plugins"));
       return;
     }
 
     try {
       setStateField("pluginStatus", null);
-      const config = await readOpencodeConfig(scope, targetDir);
+      const config = (await readOpencodeConfig(scope, targetDir)) as OpencodeConfigFile;
       const raw = config.content ?? "";
       if (!raw.trim()) {
         setStateField("pluginStatus", "No plugins configured yet.");
@@ -1589,14 +2263,14 @@ export function createExtensionsStore(options: {
       options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
       await refreshPlugins(scope);
     } catch (error) {
-      setStateField("pluginStatus", error instanceof Error ? error.message : translate("skills.failed_update_opencode"));
+      setStateField("pluginStatus", error instanceof Error ? error.message : t("skills.failed_update_opencode"));
     }
   }
 
   async function importLocalSkill() {
     const isLocalWorkspace = options.workspaceType() === "local";
     if (!isDesktopRuntime()) {
-      options.setError(translate("skills.desktop_required"));
+      options.setError(t("skills.desktop_required"));
       return;
     }
     if (!isLocalWorkspace) {
@@ -1605,7 +2279,7 @@ export function createExtensionsStore(options: {
     }
     const targetDir = options.projectDir().trim();
     if (!targetDir) {
-      options.setError(translate("skills.pick_project_first"));
+      options.setError(t("skills.pick_project_first"));
       return;
     }
 
@@ -1613,20 +2287,20 @@ export function createExtensionsStore(options: {
     options.setError(null);
     setStateField("skillsStatus", null);
     try {
-      const selection = await pickDirectory({ title: translate("skills.select_skill_folder") });
+      const selection = await pickDirectory({ title: t("skills.select_skill_folder") });
       const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!sourceDir) return;
       const inferredName = sourceDir.split(/[\\/]/).filter(Boolean).pop();
-      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
+      const result = (await importSkill(targetDir, sourceDir, { overwrite: false })) as { ok: boolean; stderr?: string; stdout?: string; status?: number };
       if (!result.ok) {
-        setStateField("skillsStatus", result.stderr || result.stdout || translate("skills.import_failed").replace("{status}", String(result.status)));
+        setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
-        setStateField("skillsStatus", result.stdout || translate("skills.imported"));
+        setStateField("skillsStatus", result.stdout || t("skills.imported"));
         options.markReloadRequired?.("skills", { type: "skill", name: inferredName, action: "added" });
       }
       await refreshSkills({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
@@ -1636,28 +2310,25 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       options.setBusy(true);
       options.setError(null);
-      setStateField("skillsStatus", translate("skills.installing_skill_creator"));
+      setStateField("skillsStatus", t("skills.installing_skill_creator"));
       try {
         await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
-        const message = translate("skills.skill_creator_installed");
+        const message = t("skills.skill_creator_installed");
         setStateField("skillsStatus", message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
         await refreshSkills({ force: true });
         return { ok: true, message };
       } catch (error) {
-        const raw = error instanceof Error ? error.message : translate("skills.unknown_error");
+        const raw = error instanceof Error ? error.message : t("skills.unknown_error");
         const message = addOpencodeCacheHint(raw);
         setStateField("skillsStatus", message);
         options.setError(message);
@@ -1667,13 +2338,19 @@ export function createExtensionsStore(options: {
       }
     }
 
+    if (hasOpenworkTarget) {
+      const message = "OpenWork server cannot write skills for this workspace.";
+      setStateField("skillsStatus", message);
+      return { ok: false, message };
+    }
+
     if (isRemoteWorkspace) {
       const message = "OpenWork server unavailable. Connect to install skills.";
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
     if (!isDesktopRuntime()) {
-      const message = translate("skills.desktop_required");
+      const message = t("skills.desktop_required");
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
@@ -1686,35 +2363,35 @@ export function createExtensionsStore(options: {
 
     const targetDir = options.selectedWorkspaceRoot().trim();
     if (!targetDir) {
-      const message = translate("skills.pick_workspace_first");
+      const message = t("skills.pick_workspace_first");
       setStateField("skillsStatus", message);
       return { ok: false, message };
     }
 
     options.setBusy(true);
     options.setError(null);
-    setStateField("skillsStatus", translate("skills.installing_skill_creator"));
+    setStateField("skillsStatus", t("skills.installing_skill_creator"));
     try {
-      const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
+      const result = (await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false })) as { ok: boolean; stderr: string; stdout: string };
       if (!result.ok && /already exists/i.test(result.stderr)) {
-        const message = translate("skills.skill_creator_already_installed");
+        const message = t("skills.skill_creator_already_installed");
         setStateField("skillsStatus", message);
         await refreshSkills({ force: true });
         return { ok: true, message };
       }
       if (!result.ok) {
-        const message = result.stderr || result.stdout || translate("skills.install_failed");
+        const message = result.stderr || result.stdout || t("skills.install_failed");
         setStateField("skillsStatus", message);
         await refreshSkills({ force: true });
         return { ok: false, message };
       }
-      const message = result.stdout || translate("skills.skill_creator_installed");
+      const message = result.stdout || t("skills.skill_creator_installed");
       setStateField("skillsStatus", message);
       options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
       await refreshSkills({ force: true });
       return { ok: true, message };
     } catch (error) {
-      const raw = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const raw = error instanceof Error ? error.message : t("skills.unknown_error");
       const message = addOpencodeCacheHint(raw);
       setStateField("skillsStatus", message);
       options.setError(message);
@@ -1726,19 +2403,21 @@ export function createExtensionsStore(options: {
 
   async function revealSkillsFolder() {
     if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", translate("skills.desktop_required"));
+      setStateField("skillsStatus", t("skills.desktop_required"));
       return;
     }
     const root = options.selectedWorkspaceRoot().trim();
     if (!root) {
-      setStateField("skillsStatus", translate("skills.pick_workspace_first"));
+      setStateField("skillsStatus", t("skills.pick_workspace_first"));
       return;
     }
 
     try {
-      const opencodeSkills = await joinDesktopPath(root, ".opencode", "skills");
-      const claudeSkills = await joinDesktopPath(root, ".claude", "skills");
-      const legacySkills = await joinDesktopPath(root, ".opencode", "skill");
+      const [opencodeSkills, claudeSkills, legacySkills] = await Promise.all([
+        joinDesktopPath(root, ".opencode", "skills"),
+        joinDesktopPath(root, ".claude", "skills"),
+        joinDesktopPath(root, ".opencode", "skill"),
+      ]);
       const tryOpen = async (target: string) => {
         try {
           await openDesktopPath(target);
@@ -1752,16 +2431,11 @@ export function createExtensionsStore(options: {
       if (await tryOpen(legacySkills)) return;
       await revealDesktopItemInDir(opencodeSkills);
     } catch (error) {
-      setStateField("skillsStatus", error instanceof Error ? error.message : translate("skills.reveal_failed"));
+      setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.reveal_failed"));
     }
   }
 
   async function uninstallSkill(name: string) {
-    const root = options.selectedWorkspaceRoot().trim();
-    if (!root) {
-      setStateField("skillsStatus", translate("skills.pick_workspace_first"));
-      return;
-    }
     const trimmed = name.trim();
     if (!trimmed) return;
 
@@ -1770,11 +2444,11 @@ export function createExtensionsStore(options: {
     setStateField("skillsStatus", null);
     try {
       await deleteWorkspaceSkill(trimmed);
-      setStateField("skillsStatus", translate("skills.uninstalled"));
+      setStateField("skillsStatus", t("skills.uninstalled"));
       options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "removed" });
       await refreshSkills({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       setStateField("skillsStatus", message);
       options.setError(addOpencodeCacheHint(message));
     } finally {
@@ -1786,31 +2460,33 @@ export function createExtensionsStore(options: {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const root = options.selectedWorkspaceRoot().trim();
-    if (!root) {
-      setStateField("skillsStatus", translate("skills.pick_workspace_first"));
-      return null;
-    }
-
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.read;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.read !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       try {
         setStateField("skillsStatus", null);
         const result = await openworkClient.getSkill(openworkWorkspaceId, trimmed, { includeGlobal: isLocalWorkspace });
         return { name: result.item.name, path: result.item.path, content: result.content };
       } catch (error) {
-        setStateField("skillsStatus", error instanceof Error ? error.message : translate("skills.failed_to_load"));
+        setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.failed_to_load"));
         return null;
       }
+    }
+
+    if (hasOpenworkTarget) {
+      setStateField("skillsStatus", "OpenWork server cannot read skills for this workspace.");
+      return null;
+    }
+
+    if (!root) {
+      setStateField("skillsStatus", t("skills.pick_workspace_first"));
+      return null;
     }
 
     if (isRemoteWorkspace) {
@@ -1818,7 +2494,7 @@ export function createExtensionsStore(options: {
       return null;
     }
     if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", translate("skills.desktop_required"));
+      setStateField("skillsStatus", t("skills.desktop_required"));
       return null;
     }
     if (!isLocalWorkspace) {
@@ -1828,10 +2504,10 @@ export function createExtensionsStore(options: {
 
     try {
       setStateField("skillsStatus", null);
-      const result = await readLocalSkill(root, trimmed);
+      const result = (await readLocalSkill(root, trimmed)) as { path: string; content: string };
       return { name: trimmed, path: result.path, content: result.content };
     } catch (error) {
-      setStateField("skillsStatus", error instanceof Error ? error.message : translate("skills.failed_to_load"));
+      setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.failed_to_load"));
       return null;
     }
   }
@@ -1840,23 +2516,15 @@ export function createExtensionsStore(options: {
     const trimmed = input.name.trim();
     if (!trimmed) return;
     const root = options.selectedWorkspaceRoot().trim();
-    if (!root) {
-      setStateField("skillsStatus", translate("skills.pick_workspace_first"));
-      return;
-    }
-
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
     const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write;
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer) {
+    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       options.setBusy(true);
       options.setError(null);
       setStateField("skillsStatus", null);
@@ -1870,11 +2538,21 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         setStateField("skillsStatus", "Saved.");
       } catch (error) {
-        const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+        const message = error instanceof Error ? error.message : t("skills.unknown_error");
         options.setError(addOpencodeCacheHint(message));
       } finally {
         options.setBusy(false);
       }
+      return;
+    }
+
+    if (hasOpenworkTarget) {
+      setStateField("skillsStatus", "OpenWork server cannot write skills for this workspace.");
+      return;
+    }
+
+    if (!root) {
+      setStateField("skillsStatus", t("skills.pick_workspace_first"));
       return;
     }
 
@@ -1883,7 +2561,7 @@ export function createExtensionsStore(options: {
       return;
     }
     if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", translate("skills.desktop_required"));
+      setStateField("skillsStatus", t("skills.desktop_required"));
       return;
     }
     if (!isLocalWorkspace) {
@@ -1895,16 +2573,16 @@ export function createExtensionsStore(options: {
     options.setError(null);
     setStateField("skillsStatus", null);
     try {
-      const result = await writeLocalSkill(root, trimmed, input.content);
+      const result = (await writeLocalSkill(root, trimmed, input.content)) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
-        setStateField("skillsStatus", result.stderr || result.stdout || translate("skills.unknown_error"));
+        setStateField("skillsStatus", result.stderr || result.stdout || t("skills.unknown_error"));
       } else {
         setStateField("skillsStatus", result.stdout || "Saved.");
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
       }
       await refreshSkills({ force: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
@@ -1917,6 +2595,7 @@ export function createExtensionsStore(options: {
     refreshHubSkillsAborted = true;
     refreshCloudOrgSkillsAborted = true;
     refreshCloudOrgSkillHubsAborted = true;
+    refreshCloudOrgMarketplacesAborted = true;
   }
 
   function ensureSkillsFresh() {
@@ -2025,6 +2704,7 @@ export function createExtensionsStore(options: {
       const onDenSessionUpdated = () => {
         cloudOrgSkillsLoaded = false;
         cloudOrgSkillHubsLoaded = false;
+        cloudOrgMarketplacesLoaded = false;
         mutateState((current) => ({ ...current, cloudOrgSkillsContextKey: "" }));
       };
       window.addEventListener("openwork-den-session-updated", onDenSessionUpdated);
@@ -2062,6 +2742,7 @@ export function createExtensionsStore(options: {
     void refreshPlugins();
     void refreshImportedCloudSkills();
     void refreshImportedCloudSkillHubs();
+    void refreshImportedCloudPlugins();
   };
 
   refreshSnapshot();
@@ -2091,6 +2772,9 @@ export function createExtensionsStore(options: {
     cloudOrgSkillHubs: () => snapshot.cloudOrgSkillHubs,
     cloudOrgSkillHubsStatus: () => snapshot.cloudOrgSkillHubsStatus,
     importedCloudSkillHubs: () => snapshot.importedCloudSkillHubs,
+    cloudOrgMarketplaces: () => snapshot.cloudOrgMarketplaces,
+    cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
+    importedCloudPlugins: () => snapshot.importedCloudPlugins,
     hubRepo: () => snapshot.hubRepo,
     hubRepos: () => snapshot.hubRepos,
     get pluginScope() {
@@ -2126,6 +2810,7 @@ export function createExtensionsStore(options: {
     refreshHubSkills,
     refreshCloudOrgSkills,
     refreshCloudOrgSkillHubs,
+    refreshCloudOrgMarketplaces,
     setHubRepo,
     addHubRepo,
     removeHubRepo,
@@ -2141,6 +2826,8 @@ export function createExtensionsStore(options: {
     importCloudOrgSkillHub,
     syncCloudOrgSkillHub,
     removeCloudOrgSkillHub,
+    importCloudOrgPlugin,
+    removeCloudOrgPlugin,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,
@@ -2154,5 +2841,5 @@ export function createExtensionsStore(options: {
 }
 
 export function useExtensionsStoreSnapshot(store: ExtensionsStore) {
-  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

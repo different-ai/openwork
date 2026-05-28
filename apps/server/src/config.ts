@@ -4,7 +4,7 @@ import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFo
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
-interface CliArgs {
+export interface CliArgs {
   configPath?: string;
   host?: string;
   port?: number;

@@ -21,6 +21,10 @@ export function useDesktopFontZoomBehavior() {
       const next = normalizeFontZoom(value);
       persistFontZoom(window.localStorage, next);
 
+      // Keep the current desktop zoom available so native WebContentsView bounds
+      // can be converted from renderer CSS pixels to contentView coordinates.
+      window.__OPENWORK_ZOOM_FACTOR__ = next;
+
       void setDesktopZoomFactor(next)
         .then((applied) => {
           if (applied) {

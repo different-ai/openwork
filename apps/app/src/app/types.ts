@@ -7,7 +7,7 @@ import type {
   Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
-import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/desktop";
+import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -17,6 +17,9 @@ export type SidebarSessionItem = {
   id: string;
   title: string;
   slug?: string | null;
+  status?: unknown;
+  state?: unknown;
+  runStatus?: unknown;
   parentID?: string | null;
   time?: {
     updated?: number | null;
@@ -165,17 +168,23 @@ export type StartupPreference = "local" | "server";
  */
 export type ReleaseChannel = "stable" | "alpha";
 
-export type EngineRuntime = "direct" | "openwork-orchestrator";
+export type EngineRuntime = "direct";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export type SettingsTab =
   | "general"
-  | "den"
-  | "automations"
+  | "ai"
+  | "preferences"
+  | "permissions"
+  | "shell"
+  | "cloud-account"
+  | "cloud-marketplaces"
+  | "cloud-workers"
+  | "cloud-providers"
   | "skills"
   | "extensions"
-  | "messaging"
+  | "environment"
   | "advanced"
   | "appearance"
   | "updates"
@@ -314,6 +323,8 @@ export type SuggestedPlugin = {
 
 export type PluginScope = "project" | "global";
 
+export type McpServerSource = "config.project" | "config.global" | "config.remote";
+
 export type McpServerConfig = {
   type: "remote" | "local";
   url?: string;
@@ -328,6 +339,7 @@ export type McpServerConfig = {
 export type McpServerEntry = {
   name: string;
   config: McpServerConfig;
+  source?: McpServerSource;
 };
 
 export type McpStatus =
@@ -405,6 +417,8 @@ export type ModelOption = {
   isFree: boolean;
   isConnected: boolean;
   isRecommended?: boolean;
+  /** "cloud" for org-managed providers (lpr_*), undefined for local. */
+  source?: "cloud";
 };
 
 export type SelectedSessionSnapshot = {
@@ -418,8 +432,6 @@ export type WorkspaceState = {
   path: string;
   root: string;
 };
-
-export type ScheduledJob = TauriScheduledJob;
 
 export type PluginState = {
   scope: PluginScope;

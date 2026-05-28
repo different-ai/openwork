@@ -1,4 +1,4 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -9,7 +9,7 @@ import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizati
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, roleIncludesOwner } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOwner, idParamSchema, normalizeRoleName } from "./shared.js"
+import { ensureMemberRemover, ensureOwner, idParamSchema, normalizeRoleName } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
@@ -57,7 +57,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     const memberRows = await db
       .select()
       .from(MemberTable)
-      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id)))
+      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
       .limit(1)
 
     const member = memberRows[0]
@@ -90,7 +90,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         204: emptyResponse("Member removed successfully."),
         400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners can remove members.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can remove members.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
@@ -98,9 +98,9 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     paramValidator(orgMemberParamsSchema),
     resolveOrganizationContextMiddleware,
     async (c) => {
-    const permission = ensureOwner(c)
+    const permission = ensureMemberRemover(c)
     if (!permission.ok) {
-      return c.json(permission.response, 403)
+      return c.json(permission.response, permission.response.error === "forbidden" ? 403 : 404)
     }
 
     const payload = c.get("organizationContext")
@@ -115,7 +115,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     const memberRows = await db
       .select()
       .from(MemberTable)
-      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id)))
+      .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
       .limit(1)
 
     const member = memberRows[0]
@@ -130,6 +130,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     await removeOrganizationMember({
       organizationId: payload.organization.id,
       memberId: member.id,
+      removedByOrgMemberId: payload.currentMember.id,
     })
     return c.body(null, 204)
     },

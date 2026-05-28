@@ -1,13 +1,16 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
-const LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
-const RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
-
-export const DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH = 260;
-export const MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH = 220;
-export const MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH = 420;
-export const DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH = 72;
+import {
+  DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH,
+  DEFAULT_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_WIDTH,
+  MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
+  MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH,
+  useUiStateStore,
+} from "./ui-state-store";
 
 type WorkspaceShellLayoutOptions = {
   defaultLeftWidth?: number;
@@ -15,25 +18,9 @@ type WorkspaceShellLayoutOptions = {
   maxLeftWidth?: number;
   collapsedRightWidth?: number;
   expandedRightWidth: number;
+  minRightWidth?: number;
+  maxRightWidth?: number;
 };
-
-function readStorage(key: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(key: string, value: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // ignore persistence failures
-  }
-}
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -52,53 +39,44 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
     options.collapsedRightWidth ?? DEFAULT_WORKSPACE_RIGHT_SIDEBAR_COLLAPSED_WIDTH,
   );
   const expandedRightWidth = Math.max(collapsedRightWidth, options.expandedRightWidth);
-
-  const readLeftSidebarWidth = useCallback(() => {
-    const raw = readStorage(LEFT_SIDEBAR_WIDTH_KEY);
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return defaultLeftWidth;
-    return clampNumber(parsed, minLeftWidth, maxLeftWidth);
-  }, [defaultLeftWidth, maxLeftWidth, minLeftWidth]);
-
-  const readRightSidebarExpanded = useCallback(() => {
-    const raw = readStorage(RIGHT_SIDEBAR_EXPANDED_KEY);
-    if (raw == null) return false;
-    return raw === "1";
-  }, []);
-
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState(readLeftSidebarWidth);
-  const [rightSidebarExpanded, setRightSidebarExpanded] = useState(readRightSidebarExpanded);
-  const dragCleanupRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    writeStorage(
-      LEFT_SIDEBAR_WIDTH_KEY,
-      String(clampNumber(leftSidebarWidth, minLeftWidth, maxLeftWidth)),
-    );
-  }, [leftSidebarWidth, maxLeftWidth, minLeftWidth]);
-
-  useEffect(() => {
-    writeStorage(RIGHT_SIDEBAR_EXPANDED_KEY, rightSidebarExpanded ? "1" : "0");
-  }, [rightSidebarExpanded]);
-
-  const rightSidebarWidth = useMemo(
-    () => (rightSidebarExpanded ? expandedRightWidth : collapsedRightWidth),
-    [collapsedRightWidth, expandedRightWidth, rightSidebarExpanded],
+  const minRightWidth = Math.max(collapsedRightWidth, options.minRightWidth ?? MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH);
+  const maxRightWidth = Math.max(minRightWidth, options.maxRightWidth ?? MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH);
+  const defaultRightWidth = clampNumber(
+    expandedRightWidth || DEFAULT_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_WIDTH,
+    minRightWidth,
+    maxRightWidth,
   );
+
+  const leftSidebarWidth = useUiStateStore((state) =>
+    clampNumber(state.workspaceLeftSidebarWidth || defaultLeftWidth, minLeftWidth, maxLeftWidth),
+  );
+  const leftSidebarResizing = useUiStateStore((state) => state.workspaceLeftSidebarResizing);
+  const rightSidebarExpanded = useUiStateStore((state) => state.workspaceRightSidebarExpanded);
+  const rightSidebarExpandedWidth = useUiStateStore((state) =>
+    clampNumber(state.workspaceRightSidebarExpandedWidth || defaultRightWidth, minRightWidth, maxRightWidth),
+  );
+  const setLeftSidebarWidth = useUiStateStore((state) => state.setWorkspaceLeftSidebarWidth);
+  const setLeftSidebarResizing = useUiStateStore((state) => state.setWorkspaceLeftSidebarResizing);
+  const setRightSidebarExpanded = useUiStateStore((state) => state.setWorkspaceRightSidebarExpanded);
+  const setRightSidebarExpandedWidth = useUiStateStore((state) => state.setWorkspaceRightSidebarExpandedWidth);
+  const toggleRightSidebar = useUiStateStore((state) => state.toggleWorkspaceRightSidebar);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   const stopLeftSidebarResize = useCallback(() => {
     dragCleanupRef.current?.();
     dragCleanupRef.current = null;
+    setLeftSidebarResizing(false);
     if (typeof document === "undefined") return;
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
-  }, []);
+  }, [setLeftSidebarResizing]);
 
   const startLeftSidebarResize = useCallback(
     (event: PointerEvent | React.PointerEvent<HTMLElement>) => {
       if (event.button !== 0 || typeof window === "undefined") return;
 
       stopLeftSidebarResize();
+      setLeftSidebarResizing(true);
       const initialX = event.clientX;
       const initialWidth = leftSidebarWidth;
 
@@ -121,18 +99,16 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       };
 
       if (typeof document !== "undefined") {
-        document.body.style.cursor = "col-resize";
-        document.body.style.userSelect = "none";
+        Object.assign(document.body.style, {
+          cursor: "col-resize",
+          userSelect: "none",
+        });
       }
 
       event.preventDefault();
     },
-    [leftSidebarWidth, maxLeftWidth, minLeftWidth, stopLeftSidebarResize],
+    [leftSidebarWidth, maxLeftWidth, minLeftWidth, setLeftSidebarResizing, setLeftSidebarWidth, stopLeftSidebarResize],
   );
-
-  const toggleRightSidebar = useCallback(() => {
-    setRightSidebarExpanded((current) => !current);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -142,9 +118,12 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
 
   return {
     leftSidebarWidth,
+    leftSidebarResizing,
     rightSidebarExpanded,
-    rightSidebarWidth,
+    rightSidebarExpandedWidth,
+    rightSidebarWidth: rightSidebarExpanded ? rightSidebarExpandedWidth : collapsedRightWidth,
     setRightSidebarExpanded,
+    setRightSidebarExpandedWidth,
     startLeftSidebarResize,
     toggleRightSidebar,
   };

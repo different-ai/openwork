@@ -34,7 +34,6 @@ INFRA_GLOBS=(
   "ee/apps/den-worker-runtime/Dockerfile*"
   # Deployment
   "apps/app/vercel.json"
-  "apps/share/vercel.json"
   "ee/apps/den-web/vercel.json"
   # Tauri
   "apps/desktop/src-tauri/tauri.conf.json"
@@ -45,8 +44,6 @@ INFRA_GLOBS=(
   "apps/app/tailwind.config.ts"
   "apps/story-book/vite.config.ts"
   "apps/ui-demo/vite.config.ts"
-  "apps/share/next.config.ts"
-  "apps/share/playwright.config.ts"
   "ee/apps/den-web/next.config.js"
   "ee/apps/den-web/postcss.config.js"
   "ee/apps/den-web/tailwind.config.js"
@@ -84,8 +81,6 @@ CONVENTION_PATTERNS=(
 
 # File-based routing directories — files here are entry points by convention
 ROUTING_DIRS=(
-  "apps/share/server/"
-  "apps/share/app/"
   "ee/apps/den-web/app/"
   "ee/apps/landing/app/"
 )

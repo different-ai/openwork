@@ -1,31 +1,99 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, MonitorUp, Rocket, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { ArrowLeft, MonitorUp } from "lucide-react";
 
-import { t } from "../../../i18n";
 import {
-  modalHeaderButtonClass,
-  modalHeaderClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
-  tagClass,
-} from "./modal-styles";
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { t } from "../../../i18n";
+import { tagClass } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
 import { ShareWorkspaceAccessPanel } from "./share-workspace-access-panel";
-import { ShareWorkspaceTemplatePanel } from "./share-workspace-template-panel";
 import type { ShareView, ShareWorkspaceModalProps } from "./types";
 
+type ShareWorkspaceModalState = {
+  activeView: ShareView;
+  revealedByKey: Record<string, boolean>;
+  copiedKey: string | null;
+  collaboratorExpanded: boolean;
+  remoteAccessEnabled: boolean;
+};
+
+type ShareWorkspaceModalAction =
+  | { type: "reset"; remoteAccessEnabled: boolean }
+  | { type: "setActiveView"; view: ShareView }
+  | { type: "toggleReveal"; key: string }
+  | { type: "setCopiedKey"; key: string | null }
+  | { type: "clearCopiedKey"; key: string }
+  | { type: "toggleCollaboratorExpanded" }
+  | { type: "setRemoteAccessEnabled"; enabled: boolean };
+
+const initialShareWorkspaceModalState: ShareWorkspaceModalState = {
+  activeView: "chooser",
+  revealedByKey: {},
+  copiedKey: null,
+  collaboratorExpanded: false,
+  remoteAccessEnabled: false,
+};
+
+function shareWorkspaceModalReducer(
+  state: ShareWorkspaceModalState,
+  action: ShareWorkspaceModalAction,
+): ShareWorkspaceModalState {
+  switch (action.type) {
+    case "reset":
+      return {
+        activeView: "chooser",
+        revealedByKey: {},
+        copiedKey: null,
+        collaboratorExpanded: false,
+        remoteAccessEnabled: action.remoteAccessEnabled,
+      };
+    case "setActiveView":
+      return { ...state, activeView: action.view };
+    case "toggleReveal":
+      return {
+        ...state,
+        revealedByKey: {
+          ...state.revealedByKey,
+          [action.key]: !state.revealedByKey[action.key],
+        },
+      };
+    case "setCopiedKey":
+      return { ...state, copiedKey: action.key };
+    case "clearCopiedKey":
+      return {
+        ...state,
+        copiedKey: state.copiedKey === action.key ? null : state.copiedKey,
+      };
+    case "toggleCollaboratorExpanded":
+      return {
+        ...state,
+        collaboratorExpanded: !state.collaboratorExpanded,
+      };
+    case "setRemoteAccessEnabled":
+      return { ...state, remoteAccessEnabled: action.enabled };
+  }
+}
+
 export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
-  const [activeView, setActiveView] = useState<ShareView>("chooser");
-  const [revealedByKey, setRevealedByKey] = useState<Record<string, boolean>>(
-    {},
+  const [state, dispatch] = useReducer(
+    shareWorkspaceModalReducer,
+    initialShareWorkspaceModalState,
   );
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [collaboratorExpanded, setCollaboratorExpanded] = useState(false);
-  const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(false);
-  const [teamTemplateName, setTeamTemplateName] = useState("");
+  const {
+    activeView,
+    revealedByKey,
+    copiedKey,
+    collaboratorExpanded,
+    remoteAccessEnabled,
+  } = state;
 
   const title = props.title ?? t("share.title");
   const workspaceBadge = useMemo(() => {
@@ -37,21 +105,11 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
   // Reset state whenever the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    setActiveView("chooser");
-    setRevealedByKey({});
-    setCopiedKey(null);
-    setCollaboratorExpanded(false);
-    setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
-    setTeamTemplateName(
-      `${props.workspaceName.trim() || t("share.workspace_fallback")} template`,
-    );
+    dispatch({
+      type: "reset",
+      remoteAccessEnabled: props.remoteAccess?.enabled === true,
+    });
   }, [props.open, props.remoteAccess?.enabled, props.workspaceName]);
-
-  // Mirror remote-access-enabled changes from the parent while open.
-  useEffect(() => {
-    if (!props.open) return;
-    setRemoteAccessEnabled(props.remoteAccess?.enabled === true);
-  }, [props.open, props.remoteAccess?.enabled]);
 
   // Escape key handling: chooser closes the modal, sub-views step back.
   useEffect(() => {
@@ -59,28 +117,18 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setActiveView((view) => {
-        if (view === "chooser") {
-          props.onClose();
-          return view;
-        }
-        if (view === "template-public" || view === "template-team") {
-          return "template";
-        }
-        return "chooser";
-      });
+      if (activeView === "chooser") {
+        props.onClose();
+        return;
+      }
+      dispatch({ type: "setActiveView", view: "chooser" });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props]);
+  }, [activeView, props]);
 
   const goBack = useCallback(() => {
-    setActiveView((view) => {
-      if (view === "template-public" || view === "template-team") {
-        return "template";
-      }
-      return "chooser";
-    });
+    dispatch({ type: "setActiveView", view: "chooser" });
   }, []);
 
   const handleCopy = useCallback(async (value: string, key: string) => {
@@ -88,9 +136,9 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
+      dispatch({ type: "setCopiedKey", key });
       window.setTimeout(() => {
-        setCopiedKey((current) => (current === key ? null : current));
+        dispatch({ type: "clearCopiedKey", key });
       }, 2000);
     } catch {
       // ignore clipboard failures
@@ -99,12 +147,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
 
   const headerTitle = (() => {
     switch (activeView) {
-      case "template":
-        return t("share.view_template");
-      case "template-public":
-        return t("share.view_template_public");
-      case "template-team":
-        return t("share.view_template_team");
       case "access":
         return t("share.view_access");
       default:
@@ -114,12 +156,6 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
 
   const headerSubtitle = (() => {
     switch (activeView) {
-      case "template":
-        return t("share.template_intro");
-      case "template-public":
-        return t("share.subtitle_template_public");
-      case "template-team":
-        return t("share.subtitle_template_team");
       case "access":
         return t("share.subtitle_access");
       default:
@@ -127,117 +163,46 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
     }
   })();
 
-  if (!props.open) return null;
-
   return (
-    <div className={`${modalOverlayClass} items-start pt-[10vh]`}>
-      <div
-        className={`${modalShellClass} max-h-[78vh] max-w-[640px]`}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className={modalHeaderClass}>
-          <div className="flex min-w-0 items-start gap-3">
-            {activeView !== "chooser" ? (
-              <button
-                onClick={goBack}
-                className={modalHeaderButtonClass}
-                aria-label={t("share.back_hint")}
-              >
-                <ArrowLeft size={16} />
-              </button>
-            ) : null}
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className={modalTitleClass}>{headerTitle}</h2>
-                {activeView === "chooser" ? (
-                  <span className={tagClass}>{workspaceBadge}</span>
-                ) : null}
-              </div>
-              <p className={modalSubtitleClass}>{headerSubtitle}</p>
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[78vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader className="flex-row">
+          {activeView !== "chooser" ? (
+            <Button
+              onClick={goBack}
+              variant="ghost"
+              size="icon"
+              aria-label={t("share.back_hint")}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+          ) : null}
+          <div className="min-w-0 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle>{headerTitle}</DialogTitle>
+              {activeView === "chooser" ? (
+                <span className={tagClass}>{workspaceBadge}</span>
+              ) : null}
             </div>
+            <DialogDescription>{headerSubtitle}</DialogDescription>
           </div>
-          <button
-            onClick={props.onClose}
-            className={modalHeaderButtonClass}
-            aria-label={t("share.close_hint")}
-            title={t("share.close_hint")}
-          >
-            <X size={16} />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 pb-7 pt-2 scrollbar-hide">
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
           {activeView === "chooser" ? (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-300">
-              <WorkspaceOptionCard
-                title={t("share.option_template_title")}
-                description={t("share.option_template_desc")}
-                icon={Rocket}
-                onClick={() => setActiveView("template")}
-              />
               <WorkspaceOptionCard
                 title={t("share.option_access_title")}
                 description={t("share.option_access_desc")}
                 icon={MonitorUp}
-                onClick={() => setActiveView("access")}
+                onClick={() => dispatch({ type: "setActiveView", view: "access" })}
               />
             </div>
-          ) : null}
-
-          {activeView === "template" ||
-          activeView === "template-public" ||
-          activeView === "template-team" ? (
-            <ShareWorkspaceTemplatePanel
-              view={activeView}
-              setView={setActiveView}
-              copiedKey={copiedKey}
-              onCopy={(value, key) => void handleCopy(value, key)}
-              workspaceName={props.workspaceName}
-              teamTemplateName={teamTemplateName}
-              onTeamTemplateNameInput={setTeamTemplateName}
-              onShareWorkspaceProfile={props.onShareWorkspaceProfile}
-              shareWorkspaceProfileBusy={props.shareWorkspaceProfileBusy}
-              shareWorkspaceProfileUrl={props.shareWorkspaceProfileUrl}
-              shareWorkspaceProfileError={props.shareWorkspaceProfileError}
-              shareWorkspaceProfileDisabledReason={
-                props.shareWorkspaceProfileDisabledReason
-              }
-              shareWorkspaceProfileSensitiveWarnings={
-                props.shareWorkspaceProfileSensitiveWarnings
-              }
-              shareWorkspaceProfileSensitiveMode={
-                props.shareWorkspaceProfileSensitiveMode
-              }
-              onShareWorkspaceProfileSensitiveModeChange={
-                props.onShareWorkspaceProfileSensitiveModeChange
-              }
-              onShareWorkspaceProfileToTeam={
-                props.onShareWorkspaceProfileToTeam
-              }
-              shareWorkspaceProfileToTeamBusy={
-                props.shareWorkspaceProfileToTeamBusy
-              }
-              shareWorkspaceProfileToTeamError={
-                props.shareWorkspaceProfileToTeamError
-              }
-              shareWorkspaceProfileToTeamSuccess={
-                props.shareWorkspaceProfileToTeamSuccess
-              }
-              shareWorkspaceProfileToTeamDisabledReason={
-                props.shareWorkspaceProfileToTeamDisabledReason
-              }
-              shareWorkspaceProfileToTeamOrgName={
-                props.shareWorkspaceProfileToTeamOrgName
-              }
-              shareWorkspaceProfileToTeamNeedsSignIn={
-                props.shareWorkspaceProfileToTeamNeedsSignIn
-              }
-              onShareWorkspaceProfileToTeamSignIn={
-                props.onShareWorkspaceProfileToTeamSignIn
-              }
-              templateContentSummary={props.templateContentSummary}
-            />
           ) : null}
 
           {activeView === "access" ? (
@@ -246,25 +211,21 @@ export function ShareWorkspaceModal(props: ShareWorkspaceModalProps) {
               copiedKey={copiedKey}
               onCopy={(value, key) => void handleCopy(value, key)}
               revealedByKey={revealedByKey}
-              onToggleReveal={(key) =>
-                setRevealedByKey((prev) => ({
-                  ...prev,
-                  [key]: !prev[key],
-                }))
-              }
+              onToggleReveal={(key) => dispatch({ type: "toggleReveal", key })}
               collaboratorExpanded={collaboratorExpanded}
               onToggleCollaboratorExpanded={() =>
-                setCollaboratorExpanded((value) => !value)
+                dispatch({ type: "toggleCollaboratorExpanded" })
               }
               remoteAccess={props.remoteAccess}
               remoteAccessEnabled={remoteAccessEnabled}
-              onRemoteAccessEnabledChange={setRemoteAccessEnabled}
+              onRemoteAccessEnabledChange={(enabled) =>
+                dispatch({ type: "setRemoteAccessEnabled", enabled })
+              }
               note={props.note}
-              onOpenBots={props.onOpenBots}
             />
           ) : null}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

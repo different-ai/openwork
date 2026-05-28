@@ -7,6 +7,7 @@ export const TYPE_ID_SUFFIX_LENGTH = 26
 
 const BASE32_REGEX = /^[0-9a-hjkmnp-tv-z]+$/
 
+// TypeID prefixes are persisted in DB rows; append new entries instead of changing existing values.
 export const idTypesMapNameToPrefix = {
   request: "req",
   user: "usr",
@@ -46,8 +47,26 @@ export const idTypesMapNameToPrefix = {
   llmProvider: "lpr",
   llmProviderModel: "lpm",
   llmProviderAccess: "lpa",
+  desktopPolicy: "dpo",
+  desktopPolicyMember: "dpm",
   organizationRole: "orl",
-  tempTemplateSharing: "tts",
+  orgSubscription: "osub",
+  scimProvider: "scp",
+  ssoConnection: "ssc",
+  ssoProvider: "ssp",
+  externalIdentity: "xid",
+  oauthClient: "ocl",
+  oauthAccessToken: "oat",
+  oauthRefreshToken: "ort",
+  oauthConsent: "ocn",
+  inferenceKey: "ink",
+  inferenceOrgLimitPolicy: "iolp",
+  inferenceOrgUsageBucket: "ioub",
+  inferenceOrgProviderKey: "iopk",
+  inferenceRequest: "ireq",
+  inferenceUsageLedgerEntry: "iule",
+  inferenceUsageLedgerBucketCharge: "iulc",
+  inferenceModelAlias: "ima",
   adminAllowlist: "aal",
   worker: "wrk",
   workerInstance: "wki",
@@ -55,6 +74,7 @@ export const idTypesMapNameToPrefix = {
   workerToken: "wkt",
   workerBundle: "wkb",
   auditEvent: "aev",
+  telemetryEvent: "tev",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

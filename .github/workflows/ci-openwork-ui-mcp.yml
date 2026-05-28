@@ -1,0 +1,87 @@
+name: openwork-ui-mcp
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "packages/openwork-ui-mcp/**"
+      - ".github/workflows/ci-openwork-ui-mcp.yml"
+    tags:
+      - "openwork-ui-mcp-v*"
+  pull_request:
+    branches: [dev]
+    paths:
+      - "packages/openwork-ui-mcp/**"
+      - ".github/workflows/ci-openwork-ui-mcp.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/openwork-ui-mcp
+
+jobs:
+  check:
+    name: Syntax & dry-run publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Syntax check
+        run: node --check index.mjs
+
+      - name: Dry-run publish
+        run: npm publish --dry-run --access public
+
+  publish:
+    name: Publish to npm
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/openwork-ui-mcp-v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Syntax check
+        run: node --check index.mjs
+
+      - name: Publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

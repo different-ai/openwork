@@ -1,7 +1,5 @@
 import { DEFAULT_DEN_BASE_URL, normalizeDenBaseUrl } from "./den";
 import { normalizeOpenworkServerUrl } from "./openwork-server";
-import { normalizeBundleImportIntent, parseBundleDeepLink } from "../bundles/sources";
-import type { BundleRequest } from "../bundles/types";
 
 export type RemoteWorkspaceDefaults = {
   openworkHostUrl?: string | null;
@@ -141,14 +139,10 @@ function normalizeDebugDeepLinkInput(rawValue: string): string {
   const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
   if (directMatch) return directMatch[0];
 
-  const bareShareMatch = trimmed.match(/share\.openwork(?:labs\.com|\.software)\/b\/[^\s"'<>]+/i);
-  if (bareShareMatch) return `https://${bareShareMatch[0]}`;
-
   return trimmed;
 }
 
 export function parseDebugDeepLinkInput(rawValue: string):
-  | { kind: "bundle"; link: BundleRequest }
   | { kind: "remote"; link: RemoteWorkspaceDefaults }
   | { kind: "auth"; link: DenAuthDeepLink }
   | null {
@@ -160,46 +154,9 @@ export function parseDebugDeepLinkInput(rawValue: string):
     return { kind: "auth", link: denAuthLink };
   }
 
-  const bundleLink = parseBundleDeepLink(normalized);
-  if (bundleLink) {
-    return { kind: "bundle", link: bundleLink };
-  }
-
   const remoteConnectLink = parseRemoteConnectDeepLink(normalized);
   if (remoteConnectLink) {
     return { kind: "remote", link: remoteConnectLink };
-  }
-
-  const bundleMatch = normalized.match(/ow_bundle=([^&\s]+)/i);
-  if (bundleMatch?.[1]) {
-    try {
-      const bundleUrl = decodeURIComponent(bundleMatch[1]);
-      const intentMatch = normalized.match(/(?:ow_intent|intent)=([^&\s]+)/i);
-      const labelMatch = normalized.match(/ow_label=([^&\s]+)/i);
-      const sourceMatch = normalized.match(/(?:ow_source|source)=([^&\s]+)/i);
-      return {
-        kind: "bundle",
-        link: {
-          bundleUrl,
-          intent: normalizeBundleImportIntent(intentMatch?.[1] ? decodeURIComponent(intentMatch[1]) : undefined),
-          label: labelMatch?.[1] ? decodeURIComponent(labelMatch[1]) : undefined,
-          source: sourceMatch?.[1] ? decodeURIComponent(sourceMatch[1]) : undefined,
-        },
-      };
-    } catch {
-      // ignore fallback parsing errors
-    }
-  }
-
-  const shareIdMatch = normalized.match(/share\.openwork(?:labs\.com|\.software)\/b\/([^\s/?#"'<>]+)/i);
-  if (shareIdMatch?.[1]) {
-    return {
-      kind: "bundle",
-      link: {
-        bundleUrl: `https://share.openworklabs.com/b/${shareIdMatch[1]}`,
-        intent: "new_worker",
-      },
-    };
   }
 
   return null;

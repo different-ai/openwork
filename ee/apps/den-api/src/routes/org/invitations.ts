@@ -1,17 +1,18 @@
-import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { DenEmailSendError, sendDenOrganizationInvitationEmail } from "../../email.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
-import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
+import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
+import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
+import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { buildInvitationLink, createInvitationId, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
+import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
@@ -23,11 +24,12 @@ const invitationResponseSchema = z.object({
   email: z.string().email(),
   role: z.string(),
   expiresAt: z.string().datetime(),
+  inviteToken: z.string(),
 }).meta({ ref: "InvitationResponse" })
 
 const invitationEmailFailedSchema = z.object({
   error: z.literal("invitation_email_failed"),
-  reason: z.enum(["loops_not_configured", "loops_rejected", "loops_network"]),
+  reason: z.enum(["email_not_configured", "resend_rejected", "resend_network", "nodemailer_rejected"]),
   message: z.string(),
   invitationId: denTypeIdSchema("invitation"),
 }).meta({ ref: "InvitationEmailFailedError" })
@@ -49,7 +51,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the email provider (Loops) failed to send; the client should surface the error and give the user a retry affordance.",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance.",
       responses: {
         200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
@@ -58,7 +60,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
-        502: jsonResponse("The invitation was saved but the email provider (Loops) rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
+        502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
       },
     }),
     requireUserMiddleware,
@@ -98,7 +100,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       .select({ id: MemberTable.id })
       .from(MemberTable)
       .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-      .where(and(eq(MemberTable.organizationId, payload.organization.id), eq(AuthUserTable.email, email)))
+      .where(and(eq(MemberTable.organizationId, payload.organization.id), eq(AuthUserTable.email, email), isNull(MemberTable.removedAt)))
       .limit(1)
 
     if (existingMembers[0]) {
@@ -136,12 +138,39 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
     const invitationId = existingInvitation[0]?.id ?? createInvitationId()
+    const inviteToken = createInvitationToken()
+    let createdOrgMemberId: typeof MemberTable.$inferSelect.id | null = null
 
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
-        .set({ role, inviterId: normalizeDenTypeId("user", user.id), expiresAt })
+        .set({ role, inviterId: normalizeDenTypeId("user", user.id), orgMemberId: payload.currentMember.id, inviteToken, expiresAt })
         .where(eq(InvitationTable.id, existingInvitation[0].id))
+
+      const invitedMemberRows = await db
+        .select({ id: MemberTable.id })
+        .from(MemberTable)
+        .where(and(eq(MemberTable.inviteId, existingInvitation[0].id), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
+        .limit(1)
+
+      if (invitedMemberRows[0]) {
+        await db
+          .update(MemberTable)
+          .set({ role, invitedByOrgMember: payload.currentMember.id })
+          .where(eq(MemberTable.id, invitedMemberRows[0].id))
+      } else {
+        const memberId = createDenTypeId("member")
+        await db.insert(MemberTable).values({
+          id: memberId,
+          organizationId: payload.organization.id,
+          userId: null,
+          inviteId: existingInvitation[0].id,
+          invitedByOrgMember: payload.currentMember.id,
+          role,
+          joinedAt: null,
+        })
+        createdOrgMemberId = memberId
+      }
     } else {
       await db.insert(InvitationTable).values({
         id: invitationId,
@@ -150,18 +179,39 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role,
         status: "pending",
         inviterId: normalizeDenTypeId("user", user.id),
+        orgMemberId: payload.currentMember.id,
+        inviteToken,
         expiresAt,
       })
+
+      const memberId = createDenTypeId("member")
+      await db.insert(MemberTable).values({
+        id: memberId,
+        organizationId: payload.organization.id,
+        userId: null,
+        inviteId: invitationId,
+        invitedByOrgMember: payload.currentMember.id,
+        role,
+        joinedAt: null,
+      })
+      createdOrgMemberId = memberId
+    }
+
+    if (createdOrgMemberId) {
+      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
     }
 
     try {
-      await sendDenOrganizationInvitationEmail({
-        email,
-        inviteLink: buildInvitationLink(invitationId),
-        invitedByName: user.name ?? user.email ?? "OpenWork",
-        invitedByEmail: user.email ?? "",
-        organizationName: payload.organization.name,
-        role,
+      await sendEmail({
+        to: email,
+        template: "organizationInvite",
+        props: {
+          inviteLink: buildInvitationLink(inviteToken),
+          invitedByName: user.name ?? user.email ?? "OpenWork",
+          invitedByEmail: user.email ?? "",
+          organizationName: payload.organization.name,
+          role,
+        },
       })
     } catch (error) {
       if (error instanceof DenEmailSendError) {
@@ -177,9 +227,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           error: "invitation_email_failed" as const,
           reason: error.reason,
           message:
-            error.reason === "loops_not_configured"
-              ? "The invitation email provider (Loops) is not configured on this deployment."
-              : error.reason === "loops_network"
+            error.reason === "email_not_configured"
+              ? "The invitation email provider is not configured on this deployment."
+              : error.reason === "resend_network"
                 ? "Could not reach the invitation email provider. The invitation is saved; retry to send again."
                 : `The invitation email provider rejected the send${error.detail ? `: ${error.detail}` : "."}`,
           invitationId,
@@ -189,7 +239,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       throw error
     }
 
-    return c.json({ invitationId, email, role, expiresAt }, existingInvitation[0] ? 200 : 201)
+    return c.json({ invitationId, email, role, expiresAt, inviteToken }, existingInvitation[0] ? 200 : 201)
     },
   )
 
@@ -235,7 +285,22 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
+    const invitedMemberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.inviteId, invitationId), eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.joinedAt), isNull(MemberTable.removedAt)))
+      .limit(1)
+
     await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
+
+    if (invitedMemberRows[0]) {
+      await removeOrganizationMember({
+        organizationId: payload.organization.id,
+        memberId: invitedMemberRows[0].id,
+        removedByOrgMemberId: payload.currentMember.id,
+      })
+    }
+
     return c.json({ success: true })
     },
   )

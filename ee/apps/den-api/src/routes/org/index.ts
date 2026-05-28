@@ -1,16 +1,20 @@
 import type { Hono } from "hono"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
+import { registerOrgBillingRoutes } from "./billing.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
+import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
+import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
+import { registerOrgScimRoutes } from "./scim.js"
+import { registerOrgSsoRoutes } from "./sso.js"
 import { registerOrgSkillRoutes } from "./skills.js"
 import { registerOrgTeamRoutes } from "./teams.js"
-import { registerOrgTemplateRoutes } from "./templates.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
 
@@ -41,6 +45,11 @@ function extractLegacyOrgProxyTarget(pathname: string) {
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
   registerOrgApiKeyRoutes(app)
+  registerOrgBillingRoutes(app)
+  registerOrgDesktopPolicyRoutes(app)
+  registerOrgInferenceRoutes(app)
+  registerOrgScimRoutes(app)
+  registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
@@ -48,7 +57,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgRoleRoutes(app)
   registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
-  registerOrgTemplateRoutes(app)
 
   app.all("/v1/orgs/:orgId/*", async (c) => {
     const url = new URL(c.req.raw.url)

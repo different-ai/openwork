@@ -7,7 +7,7 @@ Frontend for `app.openworklabs.com`.
 - Signs up / signs in users against Den service auth.
 - Handles invited-org signup flows where the invited email stays locked and the user verifies access before joining.
 - Launches cloud workers via `POST /v1/workers`.
-- Handles paywall responses (`402 payment_required`), routes users through Polar checkout, and only enables worker launch after purchase.
+- Handles shared workspace paywall responses (`402 payment_required`) from cloud worker launch and routes users through Polar checkout.
 - Offers desktop handoff actions so users can open the generated worker directly in OpenWork or copy the connect credentials manually.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openworklabs.com` without browser CORS issues.
 - Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openworklabs.com`.
@@ -15,9 +15,10 @@ Frontend for `app.openworklabs.com`.
 ## Current hosted user flow
 
 1. Sign in with a standard provider or accept an org invite.
-2. If the org requires billing, complete checkout before launching a worker.
-3. Launch the worker from the cloud dashboard.
-4. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
+2. Create or select an organization without a billing gate.
+3. If the shared workspace launch requires billing, complete checkout before launching the hosted worker.
+4. Launch the worker from the cloud dashboard.
+5. Open the worker in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
 
 ## Local development
 

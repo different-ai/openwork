@@ -7,7 +7,7 @@ import type {
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
-import { t, currentLocale } from "../../../../i18n";
+import { t } from "../../../../i18n";
 import { unwrap } from "../../../../app/lib/opencode";
 import {
   abortSession as abortSessionTyped,
@@ -18,8 +18,10 @@ import {
   shellInSession,
   unrevertSession,
 } from "../../../../app/lib/opencode-session";
+import { trackSessionActive } from "../../../../app/lib/den-telemetry";
 import { finishPerf, perfNow, recordPerfLog } from "../../../../app/lib/perf-log";
 import { toSessionTransportDirectory } from "../../../../app/lib/session-scope";
+import { workspaceSessionRoute } from "../../../shell/workspace-routes";
 import type {
   Client,
   ComposerAttachment,
@@ -279,8 +281,8 @@ export function createSessionActionsStore(options: {
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
     const heading = (() => {
-      if (status === 401 || status === 403) return t("app.error_auth_failed", currentLocale());
-      if (status === 429) return t("app.error_rate_limit", currentLocale());
+      if (status === 401 || status === 403) return t("app.error_auth_failed");
+      if (status === 429) return t("app.error_rate_limit");
       if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
@@ -304,7 +306,7 @@ export function createSessionActionsStore(options: {
   const assertNoClientError = (result: unknown) => {
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
-    throw new Error(describeProviderError(maybe.error, t("app.error_request_failed", currentLocale())));
+    throw new Error(describeProviderError(maybe.error, t("app.error_request_failed")));
   };
 
   const lastPromptSent = () => snapshot.lastPromptSent;
@@ -392,6 +394,7 @@ export function createSessionActionsStore(options: {
         mark("session:create:start");
         rawResult = await c.session.create({ directory });
         mark("session:create:ok");
+        trackSessionActive();
       } catch (createErr) {
         mark("session:create:error", {
           error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
@@ -423,7 +426,7 @@ export function createSessionActionsStore(options: {
 
       await options.refreshSidebarWorkspaceSessions(id).catch(() => undefined);
 
-      options.navigate(`/session/${session.id}`);
+      options.navigate(workspaceSessionRoute(id, session.id));
 
       finishPerf(perfEnabled, "session.create", "done", startedAt, {
         runId,
@@ -437,7 +440,7 @@ export function createSessionActionsStore(options: {
         error: e instanceof Error ? e.message : safeStringify(e),
         workspaceId: id,
       });
-      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
+      const message = e instanceof Error ? e.message : t("app.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return undefined;
     } finally {
@@ -498,7 +501,7 @@ export function createSessionActionsStore(options: {
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !options.selectedSessionId()) {
-      options.setError(t("app.error_compact_no_session", currentLocale()));
+      options.setError(t("app.error_compact_no_session"));
       return;
     }
 
@@ -560,7 +563,7 @@ export function createSessionActionsStore(options: {
 
         const command = resolvedDraft.command;
         if (!command) {
-          throw new Error(t("app.error_command_not_resolved", currentLocale()));
+          throw new Error(t("app.error_command_not_resolved"));
         }
 
         const modelString = `${model.providerID}/${model.modelID}`;
@@ -640,17 +643,17 @@ export function createSessionActionsStore(options: {
   async function compactCurrentSession(sessionIdOverride?: string) {
     const c = options.client();
     if (!c) {
-      throw new Error(t("app.error_not_connected", currentLocale()));
+      throw new Error(t("app.error_not_connected"));
     }
 
     const sessionID = (sessionIdOverride ?? options.selectedSessionId() ?? "").trim();
     if (!sessionID) {
-      throw new Error(t("app.error_compact_no_session_id", currentLocale()));
+      throw new Error(t("app.error_compact_no_session_id"));
     }
 
     const visible = options.messages();
     if (!visible.length) {
-      throw new Error(t("app.error_compact_empty", currentLocale()));
+      throw new Error(t("app.error_compact_empty"));
     }
 
     const model = options.selectedSessionModel();
@@ -765,7 +768,7 @@ export function createSessionActionsStore(options: {
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) {
-      throw new Error(t("app.error_session_name_required", currentLocale()));
+      throw new Error(t("app.error_session_name_required"));
     }
 
     await options.renameSession(sessionID, trimmed);
@@ -777,7 +780,7 @@ export function createSessionActionsStore(options: {
     if (!trimmed) return;
     const c = options.client();
     if (!c) {
-      throw new Error(t("app.error_not_connected", currentLocale()));
+      throw new Error(t("app.error_not_connected"));
     }
 
     const root = options.selectedWorkspaceRoot().trim();
@@ -792,8 +795,8 @@ export function createSessionActionsStore(options: {
 
     try {
       const path = options.locationPath().toLowerCase();
-      if (path === `/session/${trimmed.toLowerCase()}`) {
-        options.navigate("/session", { replace: true });
+      if (path === `/session/${trimmed.toLowerCase()}` || path.endsWith(`/session/${trimmed.toLowerCase()}`)) {
+        options.navigate(workspaceSessionRoute(options.selectedWorkspaceId()), { replace: true });
       }
     } catch {
       // ignore
@@ -829,7 +832,7 @@ export function createSessionActionsStore(options: {
   const BUILTIN_COMPACT_COMMAND = {
     id: "builtin:compact",
     name: "compact",
-    description: t("app.compact_command_desc", currentLocale()),
+    description: t("app.compact_command_desc"),
     source: "command" as const,
   };
 

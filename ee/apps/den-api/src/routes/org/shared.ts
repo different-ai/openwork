@@ -1,4 +1,5 @@
 import { createDenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
+import { customAlphabet } from "nanoid"
 import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { env } from "../../env.js"
@@ -56,16 +57,10 @@ export function getInvitationOrigin() {
   return env.betterAuthTrustedOrigins.find((origin) => origin !== "*") ?? env.betterAuthUrl
 }
 
-export function buildInvitationLink(invitationId: string) {
-  return new URL(`/join-org?invite=${encodeURIComponent(invitationId)}`, getInvitationOrigin()).toString()
-}
+const createNanoid = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 21)
 
-export function parseTemplateJson(value: string) {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
+export function buildInvitationLink(inviteToken: string) {
+  return new URL(`/join-org?invite=${encodeURIComponent(inviteToken)}`, getInvitationOrigin()).toString()
 }
 
 export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
@@ -103,6 +98,30 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
     response: {
       error: "forbidden",
       message: "Only workspace owners and admins can invite members.",
+    },
+  }
+}
+
+export function ensureMemberRemover(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can remove members.",
     },
   }
 }
@@ -155,8 +174,60 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
   }
 }
 
+export function ensureScimManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can manage SCIM.",
+    },
+  }
+}
+
+export function ensureSsoManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can manage SSO.",
+    },
+  }
+}
+
 export function createInvitationId() {
   return createDenTypeId("invitation")
+}
+
+export function createInvitationToken() {
+  return createNanoid()
 }
 
 export function createRoleId() {

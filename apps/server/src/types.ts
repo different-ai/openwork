@@ -96,6 +96,7 @@ export interface ServerConfig {
 export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
+  opencodeVersion: string;
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
   hub: {
     skills: {
@@ -115,7 +116,6 @@ export interface Capabilities {
   tokens: { scoped: boolean; scopes: TokenScope[] };
   proxy: {
     opencode: boolean;
-    opencodeRouter: boolean;
   };
   toolProviders: {
     browser: {

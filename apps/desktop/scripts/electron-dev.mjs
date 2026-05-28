@@ -6,6 +6,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
+const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
+const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
+const defaultDevDataDir = resolve(
+  process.env.HOME ?? process.env.USERPROFILE ?? repoRoot,
+  ".openwork",
+  "openwork-orchestrator-dev",
+);
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -21,10 +28,14 @@ const viteProbeUrls = explicitStartUrl
       `http://localhost:${devPort}`,
     ];
 
+function needsShell(command) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
 function run(command, args, options = {}) {
   return spawn(command, args, {
-    stdio: "inherit",
-    shell: process.platform === "win32",
+    stdio: ["ignore", "inherit", "inherit"],
+    shell: needsShell(command),
     ...options,
   });
 }
@@ -32,7 +43,7 @@ function run(command, args, options = {}) {
 function runSync(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: needsShell(command),
     ...options,
   });
   if (result.status !== 0) {
@@ -106,7 +117,7 @@ async function waitForVite(url, timeoutMs = 60_000) {
   throw new Error(`Timed out waiting for Vite dev server at ${viteProbeUrls.join(", ")}`);
 }
 
-function killTree(child) {
+function signalTree(child, signal) {
   if (!child?.pid) return;
   if (process.platform === "win32") {
     try {
@@ -118,32 +129,79 @@ function killTree(child) {
   }
 
   try {
-    process.kill(-child.pid, "SIGTERM");
+    process.kill(-child.pid, signal);
   } catch {
     try {
-      child.kill("SIGTERM");
+      child.kill(signal);
     } catch {
       // ignore
     }
   }
 }
 
+function restoreTerminal() {
+  try {
+    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(false);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function waitForExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolveWait) => {
+    let settled = false;
+    const finish = (clean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolveWait(clean);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+async function waitForChildren(children, timeoutMs) {
+  const results = await Promise.all(children.map((child) => waitForExit(child, timeoutMs)));
+  return results.every(Boolean);
+}
+
 let uiChild = null;
 let electronChild = null;
 let stopping = false;
 
-function stopAll(exitCode = 0) {
+async function stopAll(exitCode = 0) {
   if (stopping) return;
   stopping = true;
-  killTree(electronChild);
-  killTree(uiChild);
+  restoreTerminal();
+
+  const children = [electronChild, uiChild].filter(Boolean);
+  for (const child of children) signalTree(child, "SIGINT");
+
+  const stoppedCleanly = await waitForChildren(children, 2_000);
+  if (!stoppedCleanly) {
+    for (const child of children) signalTree(child, "SIGTERM");
+    await waitForChildren(children, 1_000);
+  }
+
+  restoreTerminal();
   process.exit(exitCode);
 }
 
-process.once("SIGINT", () => stopAll(0));
-process.once("SIGTERM", () => stopAll(0));
+process.once("SIGINT", () => void stopAll(130));
+process.once("SIGTERM", () => void stopAll(143));
 
-runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force"], { cwd: desktopRoot });
+runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
+runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
+
+// Build the server TS → JS so Electron can import it in-process
+console.log("[electron-dev] Building openwork-server (tsc)...");
+runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;
@@ -166,30 +224,29 @@ if (!viteReady) {
 if (!viteReady) {
   uiChild = run(pnpmCmd, ["-w", "dev:ui"], {
     cwd: repoRoot,
-    detached: process.platform !== "win32",
     env: {
       ...process.env,
       PORT: String(devPort),
       OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
+      OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
     },
   });
 }
 
 const resolvedStartUrl = await waitForVite(startUrl);
 
-// Default Electron CDP on a stable dev port so chrome-devtools MCP / raw CDP
-// clients can attach without each launch picking a random port. Override with
-// OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=<port> or set to "0" to disable.
-const defaultCdpPort = "9823";
-const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? defaultCdpPort;
+// Optional Electron CDP for external debugging / raw CDP clients.
+// NOT required for the built-in browser (uses native webContents APIs).
+// Set OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9823 to enable.
+const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
   cwd: desktopRoot,
-  detached: process.platform !== "win32",
   env: {
     ...process.env,
     OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
+    OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
     OPENWORK_ELECTRON_START_URL: resolvedStartUrl,
     ...(cdpPort ? { OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
   },
@@ -200,5 +257,6 @@ if (cdpPort) {
 }
 
 electronChild.on("exit", (code) => {
-  stopAll(code ?? 0);
+  if (stopping) return;
+  void stopAll(code ?? 0);
 });

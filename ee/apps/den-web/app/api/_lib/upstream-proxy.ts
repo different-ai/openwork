@@ -8,6 +8,12 @@ const NO_BODY_STATUS = new Set([204, 205, 304]);
 const apiBase = normalizeBaseUrl(process.env.DEN_API_BASE ?? DEFAULT_API_BASE);
 const authOrigin = normalizeBaseUrl(process.env.DEN_AUTH_ORIGIN ?? DEFAULT_AUTH_ORIGIN);
 const authFallbackBase = normalizeBaseUrl(process.env.DEN_AUTH_FALLBACK_BASE ?? DEFAULT_AUTH_FALLBACK_BASE);
+const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173";
+const configuredCorsOrigins = splitCsv(process.env.DEN_CORS_ORIGINS ?? process.env.CORS_ORIGINS);
+const localDevCorsOrigins = process.env.OPENWORK_DEV_MODE === "1"
+  ? [`http://localhost:${appPort}`, `http://127.0.0.1:${appPort}`]
+  : [];
+const corsOrigins = Array.from(new Set([...configuredCorsOrigins, ...localDevCorsOrigins]));
 
 type ProxyOptions = {
   routePrefix: string;
@@ -17,6 +23,13 @@ type ProxyOptions = {
 
 function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, "");
+}
+
+function splitCsv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
 }
 
 function normalizePathPrefix(value: string): string {
@@ -107,6 +120,48 @@ function buildUpstreamErrorResponse(status: number, error: string): Response {
   });
 }
 
+function applyCorsHeaders(request: NextRequest, headers: Headers): void {
+  const origin = request.headers.get("origin")?.trim().replace(/\/+$/, "") ?? "";
+  if (!origin) {
+    return;
+  }
+
+  const allowOrigin = corsOrigins.includes("*") || corsOrigins.includes(origin) ? origin : "";
+  if (!allowOrigin) {
+    return;
+  }
+
+  headers.set("access-control-allow-origin", allowOrigin);
+  headers.set("access-control-allow-credentials", "true");
+  headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  headers.set("access-control-allow-headers", "Content-Type,Authorization,X-Api-Key,X-Request-Id,X-Requested-With,X-OpenWork-Legacy-Org-Id");
+  headers.append("vary", "Origin");
+}
+
+export function buildCorsPreflightResponse(request: NextRequest): Response {
+  const headers = new Headers();
+  applyCorsHeaders(request, headers);
+  return new Response(null, { status: 204, headers });
+}
+
+function getJsonRedirectUrl(body: ArrayBuffer): string | null {
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "redirect" in payload &&
+      payload.redirect === true &&
+      "url" in payload &&
+      typeof payload.url === "string" &&
+      payload.url.trim()
+    ) {
+      return payload.url.trim();
+    }
+  } catch {}
+  return null;
+}
+
 function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers): void {
   const getSetCookie = (upstreamHeaders as Headers & { getSetCookie?: () => string[] }).getSetCookie;
   if (typeof getSetCookie === "function") {
@@ -134,6 +189,7 @@ function buildHeaders(request: NextRequest, contentType: string | null): Headers
     "user-agent",
     "x-requested-with",
     "x-api-key",
+    "x-openwork-legacy-org-id",
     "origin",
     "x-forwarded-for",
   ];
@@ -259,6 +315,7 @@ function buildProxyResponse(
   }
 
   copySetCookieHeaders(upstream.headers, responseHeaders);
+  applyCorsHeaders(request, responseHeaders);
 
   const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
 
@@ -294,7 +351,9 @@ export async function proxyUpstream(
   }
 
   if (!upstream) {
-    return buildUpstreamErrorResponse(502, "Upstream request failed.");
+    const response = buildUpstreamErrorResponse(502, "Upstream request failed.");
+    applyCorsHeaders(request, response.headers);
+    return response;
   }
 
   if (isEventStreamRequest(request) || isEventStreamResponse(upstream)) {
@@ -317,7 +376,19 @@ export async function proxyUpstream(
 
   const responseContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
   if (upstream.status >= 500 && (responseContentType.includes("text/html") || isLikelyHtmlBody(body))) {
-    return buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
+    const response = buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
+    applyCorsHeaders(request, response.headers);
+    return response;
+  }
+
+  if (request.method === "GET" && targetPath === "oauth2/authorize") {
+    const redirectUrl = getJsonRedirectUrl(body);
+    if (redirectUrl) {
+      const incoming = new URL(request.url);
+      const host = request.headers.get("host") ?? incoming.host;
+      const origin = `${incoming.protocol}//${host}`;
+      return Response.redirect(new URL(redirectUrl, origin), 302);
+    }
   }
 
   return buildProxyResponse(request, upstream, options, body);

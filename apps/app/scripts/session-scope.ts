@@ -25,12 +25,12 @@ const results = {
   steps: [] as Array<Record<string, unknown>>,
 };
 
-async function step(name: string, fn: () => void | Promise<void>) {
+function step(name: string, fn: () => void) {
   results.steps.push({ name, status: "running" });
   const index = results.steps.length - 1;
 
   try {
-    await fn();
+    fn();
     results.steps[index] = { name, status: "ok" };
   } catch (error) {
     results.ok = false;
@@ -44,7 +44,7 @@ async function step(name: string, fn: () => void | Promise<void>) {
 }
 
 try {
-  await step("local connect prefers explicit target root", () => {
+  step("local connect prefers explicit target root", () => {
     assert.equal(
       resolveScopedClientDirectory({ workspaceType: "local", targetRoot: starterRoot }),
       starterRoot,
@@ -59,16 +59,16 @@ try {
     );
   });
 
-  await step("remote connect still waits for remote discovery", () => {
+  step("remote connect still waits for remote discovery", () => {
     assert.equal(resolveScopedClientDirectory({ workspaceType: "remote", targetRoot: starterRoot }), "");
   });
 
-  await step("scope matching is stable on desktop-style paths", () => {
+  step("scope matching is stable on desktop-style paths", () => {
     assert.equal(scopedRootsMatch(`${starterRoot}/`, starterRoot.toUpperCase()), true);
     assert.equal(scopedRootsMatch(starterRoot, otherRoot), false);
   });
 
-  await step("stale session loads cannot overwrite another workspace sidebar", () => {
+  step("stale session loads cannot overwrite another workspace sidebar", () => {
     for (let index = 0; index < 50; index += 1) {
       assert.equal(
         shouldApplyScopedSessionLoad({
@@ -80,7 +80,7 @@ try {
     }
   });
 
-  await step("same-scope session loads still update the active workspace", () => {
+  step("same-scope session loads still update the active workspace", () => {
     assert.equal(
       shouldApplyScopedSessionLoad({
         loadedScopeRoot: `${starterRoot}/`,
@@ -90,7 +90,7 @@ try {
     );
   });
 
-  await step("windows create and list use the same transport directory", () => {
+  step("windows create and list use the same transport directory", () => {
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
       value: {
@@ -115,7 +115,7 @@ try {
     assert.equal(describeDirectoryScope(verbatimDriveRoot).normalized, "c:/users/test/openwork/starter");
   });
 
-  await step("round-trip invariant: every query path equals the create path (unix)", () => {
+  step("round-trip invariant: every query path equals the create path (unix)", () => {
     // Restore macOS navigator for this step.
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
@@ -142,7 +142,7 @@ try {
     }
   });
 
-  await step("round-trip invariant: every query path equals the create path (windows)", () => {
+  step("round-trip invariant: every query path equals the create path (windows)", () => {
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
       value: {
@@ -170,7 +170,7 @@ try {
     }
   });
 
-  await step("idempotency: double-converting a transport directory is stable", () => {
+  step("idempotency: double-converting a transport directory is stable", () => {
     // Restore macOS for Unix paths.
     Object.defineProperty(globalThis, "navigator", {
       configurable: true,
@@ -210,7 +210,7 @@ try {
     }
   });
 
-  await step("route guard only redirects when the loaded scope matches", () => {
+  step("route guard only redirects when the loaded scope matches", () => {
     assert.equal(
       shouldRedirectMissingSessionAfterScopedLoad({
         loadedScopeRoot: otherRoot,

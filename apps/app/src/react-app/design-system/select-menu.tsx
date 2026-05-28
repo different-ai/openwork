@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 export type SelectMenuOption = {
@@ -37,7 +37,7 @@ export function SelectMenu(props: SelectMenuProps) {
     return props.placeholder?.trim() || "";
   }, [props.options, props.placeholder, props.value]);
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useEffectEvent(() => setOpen(false));
 
   useEffect(() => {
     if (!open) return;
@@ -50,7 +50,7 @@ export function SelectMenu(props: SelectMenuProps) {
     window.addEventListener("pointerdown", onPointerDown, true);
     return () =>
       window.removeEventListener("pointerdown", onPointerDown, true);
-  }, [close, open]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,7 +62,7 @@ export function SelectMenu(props: SelectMenuProps) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, open]);
+  }, [open]);
 
   return (
     <div ref={rootRef} className="relative w-full">

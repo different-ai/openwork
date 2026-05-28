@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 
+import { mkdir } from "node:fs/promises";
+
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
+import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { createServerLogger, startServer } from "./server.js";
+import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { openworkExtensionsPreviewPluginPath } from "./openwork-extensions-plugin-path.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -18,7 +23,50 @@ if (args.version) {
 
 const config = await resolveServerConfig(args);
 const logger = createServerLogger(config);
-const server = startServer(config);
+const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
+let managedOpencode: ManagedOpencodeServer | null = null;
+
+if (!config.readOnly) {
+  for (const workspace of config.workspaces) {
+    await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
+  }
+}
+
+if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
+  const workspace = config.workspaces[0];
+  if (workspace?.path) {
+    const openworkExtensionsPreviewConfig = JSON.stringify({
+      plugin: [
+        "opencode-chrome-devtools",
+        openworkExtensionsPreviewPluginPath(),
+      ],
+    });
+    const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
+    await mkdir(managedOpencodeCwd, { recursive: true });
+    managedOpencode = await createManagedOpencodeServer({
+      bin: process.env.OPENWORK_OPENCODE_BIN,
+      cwd: managedOpencodeCwd,
+      env: {
+        ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+        OPENWORK_SERVER_URL: serverUrl,
+        OPENWORK_SERVER_TOKEN: config.token,
+        OPENCODE_CONFIG_CONTENT: openworkExtensionsPreviewConfig,
+      },
+    });
+    config.opencodeBaseUrl = managedOpencode.url;
+    config.opencodeUsername = managedOpencode.username;
+    config.opencodePassword = managedOpencode.password;
+    for (const entry of config.workspaces) {
+      entry.baseUrl ??= managedOpencode.url;
+      entry.opencodeUsername ??= managedOpencode.username;
+      entry.opencodePassword ??= managedOpencode.password;
+      entry.directory ??= entry.path;
+    }
+    logger.log("info", `Managed OpenCode listening on ${managedOpencode.url}`);
+  }
+}
+
+const server = await startServer(config);
 
 const url = `http://${config.host}:${server.port}`;
 logger.log("info", `OpenWork server listening on ${url}`);
@@ -46,3 +94,17 @@ if (args.verbose) {
   logger.log("info", `Token source: ${config.tokenSource}`);
   logger.log("info", `Host token source: ${config.hostTokenSource}`);
 }
+
+const shutdown = () => {
+  managedOpencode?.close();
+  (server as { stop?: (closeActiveConnections?: boolean) => void }).stop?.(true);
+};
+
+process.once("SIGINT", () => {
+  shutdown();
+  process.exit(0);
+});
+process.once("SIGTERM", () => {
+  shutdown();
+  process.exit(0);
+});

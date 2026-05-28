@@ -1,11 +1,8 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
-import {
-  sendDenOrganizationInvitationEmail,
-  sendDenVerificationEmail,
-} from "./email.js";
 import { syncDenSignupContact } from "./loops.js";
+import { sendEmail } from "./utils/email/send-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_RATE_LIMIT_MAX,
@@ -19,10 +16,45 @@ import { seedDefaultOrganizationRoles } from "./orgs.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
+import { oauthProvider } from "@better-auth/oauth-provider";
+import { scim } from "@better-auth/scim";
+import { sso } from "@better-auth/sso";
 import { APIError } from "better-call";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { emailOTP, organization } from "better-auth/plugins";
+import { sql } from "@openwork-ee/den-db/drizzle";
+import { emailOTP, jwt, organization } from "better-auth/plugins";
+
+function localMcpResourceAliases(resource: string) {
+  if (!env.devMode) {
+    return [];
+  }
+
+  try {
+    const url = new URL(resource);
+    if (url.hostname === "127.0.0.1") {
+      url.hostname = "localhost";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+      return [url.toString().replace(/\/+$/, "")];
+    }
+  } catch {}
+
+  return [];
+}
+
+export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? `${env.betterAuthUrl}/mcp`;
+export const DEN_MCP_RESOURCES = Array.from(new Set([
+  DEN_MCP_RESOURCE,
+  ...localMcpResourceAliases(DEN_MCP_RESOURCE),
+]));
+export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];
+export const DEN_MCP_TOKEN_USE_CLAIM = "https://openworklabs.com/token_use";
+export const DEN_MCP_ORG_ID_CLAIM = "https://openworklabs.com/org_id";
+export const DEN_MCP_RESOURCE_CLAIM = "https://openworklabs.com/resource";
+export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 
 const socialProviders = {
   ...(env.github.clientId && env.github.clientSecret
@@ -51,6 +83,20 @@ function hasRole(roleValue: string, roleName: string) {
     .includes(roleName);
 }
 
+function maybeString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function pickRemoteIdentity(userInfo: Record<string, unknown>) {
+  return (
+    maybeString(userInfo.sub) ??
+    maybeString(userInfo.id) ??
+    maybeString(userInfo.nameID) ??
+    maybeString(userInfo.nameId) ??
+    maybeString(userInfo.email)
+  );
+}
+
 function getInvitationOrigin() {
   return (
     env.betterAuthTrustedOrigins.find((origin) => origin !== "*") ??
@@ -63,6 +109,10 @@ function buildInvitationLink(invitationId: string) {
     `/join-org?invite=${encodeURIComponent(invitationId)}`,
     getInvitationOrigin(),
   ).toString();
+}
+
+function hasMcpScope(scopes: readonly string[]) {
+  return scopes.some((scope) => scope.startsWith("mcp:"));
 }
 
 export const auth = betterAuth({
@@ -113,6 +163,14 @@ export const auth = betterAuth({
           case "apikey":
           case "apiKey":
             return createDenTypeId("apiKey");
+          case "oauthClient":
+            return createDenTypeId("oauthClient");
+          case "oauthAccessToken":
+            return createDenTypeId("oauthAccessToken");
+          case "oauthRefreshToken":
+            return createDenTypeId("oauthRefreshToken");
+          case "oauthConsent":
+            return createDenTypeId("oauthConsent");
           case "rateLimit":
             return createDenTypeId("rateLimit");
           case "organization":
@@ -127,6 +185,14 @@ export const auth = betterAuth({
             return createDenTypeId("teamMember");
           case "organizationRole":
             return createDenTypeId("organizationRole");
+          case "scimProvider":
+            return createDenTypeId("scimProvider");
+          case "ssoProvider":
+            return createDenTypeId("ssoProvider");
+          case "ssoConnection":
+            return createDenTypeId("ssoConnection");
+          case "externalIdentity":
+            return createDenTypeId("externalIdentity");
           default:
             return false;
         }
@@ -145,7 +211,7 @@ export const auth = betterAuth({
       },
       "/sign-up/email": {
         window: 3600,
-        max: 3,
+        max: env.devMode ? 100 : 5,
       },
       "/email-otp/send-verification-otp": {
         window: 3600,
@@ -175,17 +241,27 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: false,
     requireEmailVerification: true,
+    revokeSessionsOnPasswordReset: true,
+    async sendResetPassword({ user, url }) {
+      await sendEmail({
+        to: user.email,
+        template: "passwordReset",
+        props: { resetLink: url },
+      });
+    },
   },
   plugins: [
+    jwt(),
     emailOTP({
       overrideDefaultEmailVerification: true,
       otpLength: 6,
       expiresIn: 600,
       allowedAttempts: 5,
       async sendVerificationOTP({ email, otp, type }) {
-        await sendDenVerificationEmail({
-          email,
-          verificationCode: otp,
+        await sendEmail({
+          to: email,
+          template: "verification",
+          props: { verificationCode: otp },
         });
       },
     }),
@@ -204,13 +280,16 @@ export const auth = betterAuth({
         },
       },
       async sendInvitationEmail(data) {
-        await sendDenOrganizationInvitationEmail({
-          email: data.email,
-          inviteLink: buildInvitationLink(data.id),
-          invitedByName: data.inviter.user.name ?? data.inviter.user.email,
-          invitedByEmail: data.inviter.user.email,
-          organizationName: data.organization.name,
-          role: data.role,
+        await sendEmail({
+          to: data.email,
+          template: "organizationInvite",
+          props: {
+            inviteLink: buildInvitationLink(data.id),
+            invitedByName: data.inviter.user.name ?? data.inviter.user.email,
+            invitedByEmail: data.inviter.user.email,
+            organizationName: data.organization.name,
+            role: data.role,
+          },
         });
       },
       organizationHooks: {
@@ -240,6 +319,143 @@ export const auth = betterAuth({
             });
           }
         },
+      },
+    }),
+    oauthProvider({
+      loginPage: env.betterAuthUrl,
+      consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
+      scopes: [...DEN_MCP_SCOPES],
+      validAudiences: DEN_MCP_RESOURCES,
+      allowPublicClientPrelogin: true,
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
+      clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
+      advertisedMetadata: {
+        scopes_supported: [...DEN_MCP_SCOPES],
+        claims_supported: [
+          DEN_MCP_TOKEN_USE_CLAIM,
+          DEN_MCP_ORG_ID_CLAIM,
+          DEN_MCP_RESOURCE_CLAIM,
+        ],
+      },
+      postLogin: {
+        page: `${env.betterAuthUrl}/mcp/select-organization`,
+        shouldRedirect: async ({ session, scopes }) => {
+          if (!hasMcpScope(scopes)) {
+            return false;
+          }
+
+          return !session.activeOrganizationId;
+        },
+        consentReferenceId: async ({ session, scopes }) => {
+          if (!hasMcpScope(scopes)) {
+            return undefined;
+          }
+
+          const activeOrganizationId = typeof session.activeOrganizationId === "string"
+            ? session.activeOrganizationId
+            : undefined;
+          if (!activeOrganizationId) {
+            throw new APIError("BAD_REQUEST", {
+              message: "Select an organization before authorizing MCP access.",
+            });
+          }
+
+          return normalizeDenTypeId("organization", activeOrganizationId);
+        },
+      },
+      customAccessTokenClaims: ({ referenceId, resource, scopes }) => {
+        const claims: Record<string, string> = {};
+        if (hasMcpScope(scopes) || resource === DEN_MCP_RESOURCE) {
+          claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";
+          claims[DEN_MCP_RESOURCE_CLAIM] = resource ?? DEN_MCP_RESOURCE;
+        }
+        if (referenceId) {
+          claims[DEN_MCP_ORG_ID_CLAIM] = referenceId;
+        }
+        return claims;
+      },
+      prefix: {
+        opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
+        refreshToken: "ow_mcp_rt_",
+        clientSecret: "ow_mcp_cs_",
+      },
+    }),
+    scim({
+      beforeSCIMTokenGenerated: async ({ member }) => {
+        if (!member?.organizationId) {
+          throw new APIError("FORBIDDEN", {
+            message: "SCIM connections must belong to an organization.",
+          });
+        }
+
+        if (!hasRole(member.role, "owner") && !hasRole(member.role, "admin")) {
+          throw new APIError("FORBIDDEN", {
+            message: "Only workspace owners and admins can manage SCIM.",
+          });
+        }
+      },
+    }),
+    sso({
+      providersLimit: 1000,
+      provisionUserOnEveryLogin: true,
+      domainVerification: {
+        enabled: true,
+      },
+      organizationProvisioning: {
+        disabled: false,
+        defaultRole: "member",
+      },
+      saml: {
+        enableInResponseToValidation: true,
+        allowIdpInitiated: true,
+        algorithms: {
+          onDeprecated: "warn",
+        },
+      },
+      provisionUser: async ({ user, userInfo, provider }) => {
+        if (!provider.organizationId) {
+          return;
+        }
+
+        const now = new Date();
+        const remoteId = pickRemoteIdentity(userInfo);
+        const displayName = maybeString(userInfo.name) ?? maybeString(userInfo.displayName) ?? maybeString(user.name);
+        const email = maybeString(userInfo.email) ?? maybeString(user.email);
+        const payload = {
+          organizationId: normalizeDenTypeId("organization", provider.organizationId),
+          userId: normalizeDenTypeId("user", user.id),
+          source: "sso",
+          ssoProviderId: provider.providerId,
+          remoteId,
+          userName: maybeString(userInfo.preferred_username) ?? email,
+          email,
+          displayName,
+          attributesJson: userInfo,
+          active: true,
+          lastSsoLoginAt: now,
+        };
+
+        await db
+          .insert(schema.ExternalIdentityTable)
+          .values({
+            id: createDenTypeId("externalIdentity"),
+            ...payload,
+          })
+          .onDuplicateKeyUpdate({
+            set: {
+              source: sql<string>`case when ${schema.ExternalIdentityTable.scimProviderId} is null then 'sso' else 'scim+sso' end`,
+              ssoProviderId: payload.ssoProviderId,
+              remoteId: payload.remoteId,
+              userName: payload.userName,
+              email: payload.email,
+              displayName: payload.displayName,
+              attributesJson: payload.attributesJson,
+              active: payload.active,
+              lastSsoLoginAt: payload.lastSsoLoginAt,
+            },
+          });
       },
     }),
     apiKey({

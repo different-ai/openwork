@@ -19,10 +19,10 @@ import {
   writeFile,
   realpath,
 } from "node:fs/promises";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
-import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
+import { homedir, hostname, networkInterfaces, platform, tmpdir } from "node:os";
 import {
   basename,
   delimiter,
@@ -1318,6 +1318,20 @@ function resolveManagedOpencodeHost(requestedHost?: string): string {
   return normalized === "localhost" ? "127.0.0.1" : normalized;
 }
 
+const OPENCODE_LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"] as const;
+
+function resolveOpencodeLogLevel(requested?: string): string | undefined {
+  const trimmed = requested?.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.toUpperCase();
+  if (!(OPENCODE_LOG_LEVELS as readonly string[]).includes(normalized)) {
+    throw new Error(
+      `Unsupported --opencode-log-level value: ${requested}. Expected one of: ${OPENCODE_LOG_LEVELS.join(", ")}.`,
+    );
+  }
+  return normalized;
+}
+
 function resolveOpenworkRemoteAccess(args: ParsedArgs): boolean {
   const explicitHost =
     readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST;
@@ -1541,12 +1555,26 @@ function resolveBinCommand(bin: string): {
 }
 
 async function readVersionManifest(): Promise<VersionManifest | null> {
+  const binDir = dirname(process.execPath);
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const envManifestPath = process.env.OPENWORK_VERSION_MANIFEST?.trim();
+  const envSidecarDir = process.env.OPENWORK_BUNDLED_SIDECAR_DIR?.trim();
   const candidates = [
-    dirname(process.execPath),
-    dirname(fileURLToPath(import.meta.url)),
+    ...(envManifestPath
+      ? [
+          {
+            manifestPath: envManifestPath,
+            dir: envSidecarDir || dirname(envManifestPath),
+          },
+        ]
+      : []),
+    { manifestPath: join(binDir, "versions.json"), dir: binDir },
+    // macOS treats files in Contents/MacOS as executable code, so the manifest
+    // is bundled as a resource while sidecar binaries remain next to execPath.
+    { manifestPath: join(binDir, "..", "Resources", "versions.json"), dir: binDir },
+    { manifestPath: join(moduleDir, "versions.json"), dir: moduleDir },
   ];
-  for (const dir of candidates) {
-    const manifestPath = join(dir, "versions.json");
+  for (const { manifestPath, dir } of candidates) {
     if (await fileExists(manifestPath)) {
       try {
         const payload = await readFile(manifestPath, "utf8");
@@ -1673,21 +1701,67 @@ function resolveExtraPathEntries(): string[] {
   return entries;
 }
 
+// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
+// apps/desktop/src-tauri/src/env_file.rs. Honor OPENWORK_ENV_STORE override.
+function resolveUserEnvFilePath(): string {
+  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  if (override) return resolve(override);
+  if (platform() === "win32") {
+    const appData = (process.env.APPDATA ?? "").trim();
+    const root = appData || join(homedir(), "AppData", "Roaming");
+    return join(root, "openwork", "env.json");
+  }
+  return join(homedir(), ".config", "openwork", "env.json");
+}
+
+const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+
+// Synchronous, best-effort, never throws. Absent or malformed files return {}.
+// Reads on every spawn so UI edits are picked up on the next child start.
+function loadUserEnvFile(): Record<string, string> {
+  try {
+    const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
+    const parsed = JSON.parse(raw) as { variables?: unknown };
+    if (!Array.isArray(parsed.variables)) return {};
+    const out: Record<string, string> = {};
+    for (const entry of parsed.variables) {
+      if (!entry || typeof entry !== "object") continue;
+      const { key, value } = entry as { key?: unknown; value?: unknown };
+      if (typeof key !== "string" || typeof value !== "string") continue;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function buildSpawnEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const base = env ?? process.env;
+  // User env is layered first so existing process.env / caller overrides
+  // always win. This is what makes Linux GUI launches work: the shell env
+  // is empty for ANTHROPIC_API_KEY, the user file supplies it, but anything
+  // the shell or spawn-site already set (OPENWORK_TOKEN, etc.) is untouched.
+  const merged: NodeJS.ProcessEnv = { ...loadUserEnvFile() };
+  for (const [key, value] of Object.entries(base)) {
+    if (value !== undefined) merged[key] = value;
+  }
   const pathKey =
-    Object.prototype.hasOwnProperty.call(base, "PATH") ||
-    !Object.prototype.hasOwnProperty.call(base, "Path")
+    Object.prototype.hasOwnProperty.call(merged, "PATH") ||
+    !Object.prototype.hasOwnProperty.call(merged, "Path")
       ? "PATH"
       : "Path";
-  const currentPath = pathKey === "PATH" ? base.PATH : base.Path;
+  const currentPath = pathKey === "PATH" ? merged.PATH : merged.Path;
   const entries = [
     ...resolveExtraPathEntries(),
     ...splitPathEntries(currentPath),
   ];
   const deduped = entries.filter((entry, index) => entries.indexOf(entry) === index);
-  if (!deduped.length) return { ...base };
-  return { ...base, [pathKey]: deduped.join(delimiter) };
+  if (!deduped.length) return merged;
+  return { ...merged, [pathKey]: deduped.join(delimiter) };
 }
 
 function resolveSidecarTarget(): SidecarTarget | null {
@@ -1805,6 +1879,21 @@ function addEnvPassThroughArgs(args: string[], names: string[]) {
   for (const name of names) {
     args.push("--env", name);
   }
+}
+
+const SANDBOX_INTERNAL_ENV_NAMES = [
+  "OPENWORK_TOKEN",
+  "OPENWORK_HOST_TOKEN",
+  "OPENCODE_SERVER_USERNAME",
+  "OPENCODE_SERVER_PASSWORD",
+  "OPENWORK_OPENCODE_USERNAME",
+  "OPENWORK_OPENCODE_PASSWORD",
+] as const;
+
+function sandboxEnvPassThroughNames(userEnv: Record<string, string>): string[] {
+  return [...SANDBOX_INTERNAL_ENV_NAMES, ...Object.keys(userEnv).sort()].filter(
+    (name, index, names) => names.indexOf(name) === index,
+  );
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
@@ -3603,6 +3692,7 @@ function printHelp(): void {
     "  --opencode-host <host>    Bind host for opencode serve (loopback only, default: 127.0.0.1)",
     "  --opencode-port <port>    Port for opencode serve (default: random)",
     "  --opencode-workdir <p>    Workdir for router-managed opencode serve",
+    "  --opencode-log-level <l>  Log level for opencode serve (DEBUG, INFO, WARN, ERROR; default: opencode default)",
     "  --opencode-auth           OpenCode basic auth is always enabled",
     "  --opencode-hot-reload     Enable OpenCode hot reload (default: true)",
     "  --opencode-hot-reload-debounce-ms <ms>  Debounce window for hot reload triggers (default: 700)",
@@ -3705,6 +3795,7 @@ async function startOpencode(options: {
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
+  logLevel?: string;
   opencodeRouterHealthPort?: number;
 }) {
   const args = [
@@ -3714,6 +3805,9 @@ async function startOpencode(options: {
     "--port",
     String(options.port),
   ];
+  if (options.logLevel) {
+    args.push("--log-level", options.logLevel);
+  }
   for (const origin of options.corsOrigins) {
     args.push("--cors", origin);
   }
@@ -4166,6 +4260,7 @@ async function writeSandboxEntrypoint(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4194,6 +4289,10 @@ async function writeSandboxEntrypoint(options: {
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
     .join(" ");
+
+  const opencodeLogLevelArg = options.opencode.logLevel
+    ? `--log-level ${shQuote(options.opencode.logLevel)}`
+    : "";
 
   const openworkCors = options.openwork.corsOrigins.length
     ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
@@ -4263,7 +4362,7 @@ async function writeSandboxEntrypoint(options: {
     '  if [ -n "$opencode_pid" ]; then kill "$opencode_pid" 2>/dev/null || true; fi',
     "}",
     "trap cleanup INT TERM",
-    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
+    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))}${opencodeLogLevelArg ? ` ${opencodeLogLevelArg}` : ""} ${opencodeCors} &`,
     "opencode_pid=$!",
     options.openwork.opencodeRouterEnabled
       ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &`
@@ -4307,6 +4406,7 @@ async function startDockerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4408,14 +4508,8 @@ async function startDockerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     const suffix = mount.readonly ? ":ro" : "";
@@ -4440,6 +4534,7 @@ async function startDockerSandbox(options: {
   const child = spawnProcess(options.dockerCommand, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,
@@ -4493,6 +4588,7 @@ async function startAppleContainerSandbox(options: {
     username?: string;
     password?: string;
     hotReload: OpencodeHotReload;
+    logLevel?: string;
   };
   openwork: {
     token: string;
@@ -4596,14 +4692,8 @@ async function startAppleContainerSandbox(options: {
     );
   }
 
-  addEnvPassThroughArgs(args, [
-    "OPENWORK_TOKEN",
-    "OPENWORK_HOST_TOKEN",
-    "OPENCODE_SERVER_USERNAME",
-    "OPENCODE_SERVER_PASSWORD",
-    "OPENWORK_OPENCODE_USERNAME",
-    "OPENWORK_OPENCODE_PASSWORD",
-  ]);
+  const userEnv = loadUserEnvFile();
+  addEnvPassThroughArgs(args, sandboxEnvPassThroughNames(userEnv));
 
   for (const mount of options.extraMounts) {
     if (mount.readonly) {
@@ -4626,6 +4716,7 @@ async function startAppleContainerSandbox(options: {
   const child = spawnProcess("container", args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
+      ...userEnv,
       ...process.env,
       OPENWORK_TOKEN: options.openwork.token,
       OPENWORK_HOST_TOKEN: options.openwork.hostToken,
@@ -5534,6 +5625,10 @@ async function spawnRouterDaemon(
   const opencodeWorkdir =
     readFlag(args.flags, "opencode-workdir") ??
     process.env.OPENWORK_OPENCODE_WORKDIR;
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload =
     readFlag(args.flags, "opencode-hot-reload") ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD;
@@ -5569,6 +5664,8 @@ async function spawnRouterDaemon(
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
   if (opencodePort) commandArgs.push("--opencode-port", String(opencodePort));
   if (opencodeWorkdir) commandArgs.push("--opencode-workdir", opencodeWorkdir);
+  if (opencodeLogLevel)
+    commandArgs.push("--opencode-log-level", opencodeLogLevel);
   if (opencodeHotReload)
     commandArgs.push("--opencode-hot-reload", opencodeHotReload);
   if (opencodeHotReloadDebounceMs)
@@ -5860,6 +5957,10 @@ async function runRouterDaemon(args: ParsedArgs) {
     "127.0.0.1",
     state.opencode?.port,
   );
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
     {
@@ -5992,6 +6093,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       logger,
       runId,
       logFormat,
+      logLevel: opencodeLogLevel,
     });
     opencodeChild = child;
     logger.info("Process spawned", { pid: child.pid ?? 0 }, "opencode");
@@ -6932,6 +7034,10 @@ async function runStart(args: ParsedArgs) {
           ),
           "127.0.0.1",
         );
+  const opencodeLogLevel = resolveOpencodeLogLevel(
+    readFlag(args.flags, "opencode-log-level") ??
+      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+  );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
     {
@@ -7282,6 +7388,7 @@ async function runStart(args: ParsedArgs) {
       logger,
       runId,
       logFormat,
+      logLevel: opencodeLogLevel,
       opencodeRouterHealthPort: opencodeRouterEnabled
         ? opencodeRouterHealthPort
         : undefined,
@@ -7916,6 +8023,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
@@ -7959,6 +8067,7 @@ async function runStart(args: ParsedArgs) {
                 username: opencodeUsername,
                 password: opencodePassword,
                 hotReload: opencodeHotReload,
+                logLevel: opencodeLogLevel,
               },
               openwork: {
                 token: openworkToken,
@@ -8089,6 +8198,7 @@ async function runStart(args: ParsedArgs) {
         logger,
         runId,
         logFormat,
+        logLevel: opencodeLogLevel,
         opencodeRouterHealthPort: opencodeRouterEnabled
           ? opencodeRouterHealthPort
           : undefined,

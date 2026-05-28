@@ -21,6 +21,16 @@
       "development": "./src/schema/auth.ts",
       "default": "./dist/schema/auth.js"
     },
+    "./schema/desktop-policies": {
+      "types": "./src/schema/desktop-policies.ts",
+      "development": "./src/schema/desktop-policies.ts",
+      "default": "./dist/schema/desktop-policies.js"
+    },
+    "./schema/inference": {
+      "types": "./src/schema/inference.ts",
+      "development": "./src/schema/inference.ts",
+      "default": "./dist/schema/inference.js"
+    },
     "./schema/org": {
       "types": "./src/schema/org.ts",
       "development": "./src/schema/org.ts",
@@ -36,6 +46,11 @@
       "development": "./src/schema/sharables/skills.ts",
       "default": "./dist/schema/sharables/skills.js"
     },
+    "./schema/subscriptions": {
+      "types": "./src/schema/subscriptions.ts",
+      "development": "./src/schema/subscriptions.ts",
+      "default": "./dist/schema/subscriptions.js"
+    },
     "./schema/workers": {
       "types": "./src/schema/workers.ts",
       "development": "./src/schema/workers.ts",
@@ -45,6 +60,11 @@
       "types": "./src/schema/system.ts",
       "development": "./src/schema/system.ts",
       "default": "./dist/schema/system.js"
+    },
+    "./schema/telemetry": {
+      "types": "./src/schema/telemetry.ts",
+      "development": "./src/schema/telemetry.ts",
+      "default": "./dist/schema/telemetry.js"
     },
     "./drizzle": {
       "types": "./src/drizzle.ts",

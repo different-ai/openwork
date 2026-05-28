@@ -1,6 +1,6 @@
 "use client";
 import { AnimatePresence, motion, useInView } from "framer-motion";
-import { Download, Users } from "lucide-react";
+import { ArrowRight, Users } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { LandingAppDemoPanel } from "./landing-app-demo-panel";
@@ -28,6 +28,8 @@ const externalLinkProps = (href: string) =>
     ? { rel: "noreferrer", target: "_blank" as const }
     : {};
 
+const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
   const [activeUseCase, setActiveUseCase] = useState(0);
@@ -43,15 +45,9 @@ export function LandingHome(props: Props) {
   );
 
   const callLinkProps = externalLinkProps(props.callHref);
-  const primaryCtaHref = props.isMobileVisitor
-    ? "https://app.openworklabs.com"
-    : "/download";
-  const primaryCtaLabel = props.isMobileVisitor
-    ? "Open the app"
-    : "Download for free";
-  const primaryCtaLinkProps = props.isMobileVisitor
-    ? {}
-    : externalLinkProps(primaryCtaHref);
+  const primaryCtaHref = CLOUD_SIGNUP_URL;
+  const primaryCtaLabel = "Get Started for free";
+  const primaryCtaLinkProps = externalLinkProps(primaryCtaHref);
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -63,8 +59,8 @@ export function LandingHome(props: Props) {
             stars={props.stars}
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
-            mobilePrimaryHref="https://app.openworklabs.com"
-            mobilePrimaryLabel="Open app"
+            mobilePrimaryHref={CLOUD_SIGNUP_URL}
+            mobilePrimaryLabel="Get Started for free"
             active="home"
           />
         </div>
@@ -72,7 +68,13 @@ export function LandingHome(props: Props) {
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <section className="max-w-4xl pt-8 md:pt-12">
             <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-              The open source Claude Cowork<br />for your team
+              The open source
+              <br />
+              Claude Cowork
+              <br />
+              <span className="font-pixel inline-block align-middle text-[1.05em] font-normal">
+                alternative.
+              </span>
             </h1>
             <p className="mb-6 max-w-4xl text-lg leading-relaxed text-gray-700 md:mb-7 md:text-xl">
               OpenWork is the desktop app that lets you use 50+ LLMs, bring your
@@ -86,7 +88,7 @@ export function LandingHome(props: Props) {
                   className="doc-button inline-flex items-center gap-2"
                   {...primaryCtaLinkProps}
                 >
-                  {primaryCtaLabel} <Download size={18} />
+                  {primaryCtaLabel} <ArrowRight size={18} />
                 </a>
                 <a
                   href={props.callHref}

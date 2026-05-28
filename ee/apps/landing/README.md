@@ -11,9 +11,12 @@
 
 - `NEXT_PUBLIC_CAL_URL` - enterprise booking link
 - `NEXT_PUBLIC_DEN_CHECKOUT_URL` - Polar checkout URL for the Den preorder CTA
-- `LOOPS_API_KEY` - Loops API key for feedback/contact submissions
-- `LOOPS_TRANSACTIONAL_ID_APP_FEEDBACK` - Loops transactional template ID for app feedback emails
-- `LOOPS_INTERNAL_FEEDBACK_EMAIL` - optional override for the internal feedback recipient (defaults to `team@openworklabs.com`)
+- `EMAIL_FROM` - sender for feedback emails (for example `OpenWork <team@openworklabs.com>`)
+- `RESEND_API_KEY` - Resend API key for feedback emails
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` - SMTP fallback for feedback emails when Resend is not configured
+- `OPENWORK_FEEDBACK_EMAIL` - optional override for the internal feedback recipient (defaults to `team@openworklabs.com`)
+- `LOOPS_API_KEY` - Loops API key for enterprise contact submissions
+- `LOOPS_INTERNAL_FEEDBACK_EMAIL` - legacy feedback recipient override, used only when `OPENWORK_FEEDBACK_EMAIL` is not set
 - `LANDING_FORM_ALLOWED_ORIGINS` - optional comma-separated origin allowlist for feedback/contact form posts
 
 ## Deploy (recommended)

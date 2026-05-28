@@ -1,7 +1,7 @@
 import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
-} from "@openwork/types/den/desktop-app-restrictions";
+} from "@openwork/types/den/desktop-policies";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -21,7 +21,18 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { isDesktopRuntime } from "../utils";
-import type { DenOrgSkillCard } from "../types";
+import type { DenOrgSkillCard, ReloadReason } from "../types";
+import type {
+  OpenWorkExtensionContribution,
+  OpenWorkExtensionContributionType,
+  OpenWorkExtensionLifecycle,
+  OpenWorkExtensionManifest,
+  OpenWorkExtensionResource,
+  OpenWorkExtensionResourceType,
+  OpenWorkExtensionSetup,
+  OpenWorkExtensionSource,
+  OpenWorkExtensionSourceFormat,
+} from "../extensions";
 
 const STORAGE_BASE_URL = "openwork.den.baseUrl";
 const STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
@@ -29,6 +40,7 @@ const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "openwork.den.activeOrgSlug";
 const STORAGE_ACTIVE_ORG_NAME = "openwork.den.activeOrgName";
+const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
@@ -46,6 +58,7 @@ const BUILD_DEN_REQUIRE_SIGNIN =
     : false);
 
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
+export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
 export type DenSettings = {
   baseUrl: string;
@@ -98,25 +111,6 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
-export type DenTemplateCreator = {
-  memberId: string;
-  role: "owner" | "admin" | "member";
-  userId: string;
-  name: string | null;
-  email: string | null;
-  image: string | null;
-};
-
-export type DenTemplate = {
-  id: string;
-  organizationId: string;
-  name: string;
-  templateData: unknown;
-  createdAt: string | null;
-  updatedAt: string | null;
-  creator: DenTemplateCreator | null;
-};
-
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -126,7 +120,7 @@ export type DenOrgLlmProviderModel = {
 
 export type DenOrgLlmProvider = {
   id: string;
-  source: "models_dev" | "custom";
+  source: "models_dev" | "custom" | "openwork";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
@@ -138,6 +132,77 @@ export type DenOrgLlmProvider = {
 
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
   apiKey: string | null;
+};
+
+export type DenPluginConfigObjectType = "skill" | "agent" | "command" | "tool" | "mcp" | "hook" | "context" | "custom";
+
+export type DenPluginConfigObjectVersion = {
+  id: string;
+  rawSourceText: string | null;
+  normalizedPayloadJson: Record<string, unknown> | null;
+  sourceRevisionRef: string | null;
+  createdAt: string | null;
+};
+
+export type DenPluginConfigObject = {
+  id: string;
+  objectType: DenPluginConfigObjectType;
+  title: string;
+  description: string | null;
+  currentFileName: string | null;
+  currentFileExtension: string | null;
+  currentRelativePath: string | null;
+  status: string;
+  updatedAt: string | null;
+  latestVersion: DenPluginConfigObjectVersion | null;
+};
+
+export type DenPluginMembership = {
+  id: string;
+  pluginId: string;
+  configObjectId: string;
+  configObject?: DenPluginConfigObject;
+};
+
+export type DenOrgExtensionProjection = {
+  id: string;
+  name: string;
+  description: string | null;
+  sourceFormat: OpenWorkExtensionSourceFormat;
+  manifest: OpenWorkExtensionManifest | null;
+};
+
+export type DenOrgPlugin = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  memberCount: number;
+  updatedAt: string | null;
+  componentCounts: Record<string, number>;
+  /** Preferred Den surface: plugins are normalized into OpenWork extensions. */
+  extension?: DenOrgExtensionProjection | null;
+};
+
+export type DenOrgMarketplace = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  pluginCount: number;
+  updatedAt: string | null;
+};
+
+export type DenOrgMarketplaceResolved = {
+  marketplace: DenOrgMarketplace;
+  plugins: DenOrgPlugin[];
+};
+
+export type DenOrgPluginResolved = {
+  plugin: DenOrgPlugin;
+  memberships: DenPluginMembership[];
+  /** Future Den extension manifest; absent while Claude plugin imports are resource-only. */
+  extension?: DenOrgExtensionProjection | null;
 };
 
 export type DenBillingPrice = {
@@ -263,6 +328,11 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   } catch {
     return null;
   }
+}
+
+export function getDenInferenceUrl(baseUrl?: string | null): string {
+  const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
+  return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
 function isWebAppHost(hostname: string): boolean {
@@ -419,7 +489,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   }
 
   try {
-    const bootstrap = await getDesktopBootstrapConfigFromShell();
+    const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
   } catch {
     desktopBootstrapConfig = resolveDenBootstrapConfig({
@@ -443,7 +513,8 @@ export async function setDenBootstrapConfig(
       baseUrl: normalized.baseUrl,
       apiBaseUrl: normalized.apiBaseUrl,
       requireSignin: normalized.requireSignin,
-    });
+    }) as ShellDesktopBootstrapConfig;
+    
     applyDesktopBootstrapConfig(resolveDenBootstrapConfig(persisted));
   } else {
     applyDesktopBootstrapConfig(normalized);
@@ -605,7 +676,11 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
   });
 
   const response = await client.listOrgs();
+  const selectedOrgId = settings.activeOrgId?.trim() ?? "";
+  const selectedOrgSlug = settings.activeOrgSlug?.trim() ?? "";
   const targetOrg =
+    response.orgs.find((org) => org.id === selectedOrgId) ??
+    response.orgs.find((org) => org.slug === selectedOrgSlug) ??
     response.orgs.find((org) => org.id === response.activeOrgId) ??
     response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
     response.orgs[0] ??
@@ -687,26 +762,26 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
     return [];
   }
 
-  return payload.orgs
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      if (
-        typeof entry.id !== "string" ||
-        typeof entry.name !== "string" ||
-        typeof entry.slug !== "string" ||
-        (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
-      ) {
-        return null;
-      }
+  return payload.orgs.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    if (
+      typeof entry.id !== "string" ||
+      typeof entry.name !== "string" ||
+      typeof entry.slug !== "string" ||
+      (entry.role !== "owner" && entry.role !== "admin" && entry.role !== "member")
+    ) {
+      return [];
+    }
 
-      return {
+    return [
+      {
         id: entry.id,
         name: entry.name,
         slug: entry.slug,
         role: entry.role,
-      } satisfies DenOrgSummary;
-    })
-    .filter((entry): entry is DenOrgSummary => Boolean(entry));
+      } satisfies DenOrgSummary,
+    ];
+  });
 }
 
 function getWorkers(payload: unknown): DenWorkerSummary[] {
@@ -714,14 +789,14 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
     return [];
   }
 
-  return payload.workers
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      const instance = isRecord(entry.instance) ? entry.instance : null;
-      if (typeof entry.id !== "string" || typeof entry.name !== "string") {
-        return null;
-      }
-      return {
+  return payload.workers.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    const instance = isRecord(entry.instance) ? entry.instance : null;
+    if (typeof entry.id !== "string" || typeof entry.name !== "string") {
+      return [];
+    }
+    return [
+      {
         workerId: entry.id,
         workerName: entry.name,
         status: typeof entry.status === "string" ? entry.status : "unknown",
@@ -729,9 +804,9 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
         provider: instance && typeof instance.provider === "string" ? instance.provider : null,
         isMine: Boolean(entry.isMine),
         createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
-      } satisfies DenWorkerSummary;
-    })
-    .filter((entry): entry is DenWorkerSummary => Boolean(entry));
+      } satisfies DenWorkerSummary,
+    ];
+  });
 }
 
 function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
@@ -749,65 +824,6 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
     workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
   };
 }
-
-function getTemplateCreator(value: unknown): DenTemplateCreator | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const role = value.role;
-  if (
-    typeof value.memberId !== "string" ||
-    typeof value.userId !== "string" ||
-    (role !== "owner" && role !== "admin" && role !== "member")
-  ) {
-    return null;
-  }
-
-  return {
-    memberId: value.memberId,
-    role,
-    userId: value.userId,
-    name: typeof value.name === "string" ? value.name : null,
-    email: typeof value.email === "string" ? value.email : null,
-    image: typeof value.image === "string" ? value.image : null,
-  };
-}
-
-function getTemplate(value: unknown): DenTemplate | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  if (
-    typeof value.id !== "string" ||
-    typeof value.organizationId !== "string" ||
-    typeof value.name !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    organizationId: value.organizationId,
-    name: value.name,
-    templateData: value.templateData,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
-    creator: getTemplateCreator(value.creator),
-  };
-}
-
-function getTemplates(payload: unknown): DenTemplate[] {
-  if (!isRecord(payload) || !Array.isArray(payload.templates)) {
-    return [];
-  }
-
-  return payload.templates
-    .map((entry) => getTemplate(entry))
-    .filter((entry): entry is DenTemplate => entry !== null);
-}
-
 
 function parseDenOrgSkillRow(record: Record<string, unknown>, hubName: string | null): DenOrgSkillCard | null {
   if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.skillText !== "string") {
@@ -830,9 +846,10 @@ function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
   if (!isRecord(payload) || !Array.isArray(payload.skills)) {
     return [];
   }
-  return payload.skills
-    .map((entry) => (isRecord(entry) ? parseDenOrgSkillRow(entry, null) : null))
-    .filter((entry): entry is DenOrgSkillCard => entry !== null);
+  return payload.skills.flatMap((entry) => {
+    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry, null) : null;
+    return skill ? [skill] : [];
+  });
 }
 
 export type DenOrgSkillHub = { id: string; name: string; skills: DenOrgSkillCard[] };
@@ -844,9 +861,10 @@ function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHub | n
   if (typeof hubId !== "string" || typeof hubName !== "string" || !Array.isArray(hubSkills)) {
     return null;
   }
-  const skills = hubSkills
-    .map((s) => (isRecord(s) ? parseDenOrgSkillRow(s, hubName) : null))
-    .filter((s): s is DenOrgSkillCard => s !== null);
+  const skills = hubSkills.flatMap((s) => {
+    const skill = isRecord(s) ? parseDenOrgSkillRow(s, hubName) : null;
+    return skill ? [skill] : [];
+  });
   return { id: hubId, name: hubName, skills };
 }
 
@@ -854,9 +872,10 @@ function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
   if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
     return [];
   }
-  return payload.skillHubs
-    .map((entry) => (isRecord(entry) ? parseOrgSkillHubEntry(entry) : null))
-      .filter((e): e is DenOrgSkillHub => e !== null);
+  return payload.skillHubs.flatMap((entry) => {
+    const hub = isRecord(entry) ? parseOrgSkillHubEntry(entry) : null;
+    return hub ? [hub] : [];
+  });
 }
 
 function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
@@ -878,7 +897,9 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     typeof value.id !== "string" ||
     typeof value.providerId !== "string" ||
     typeof value.name !== "string" ||
-    (value.source !== "models_dev" && value.source !== "custom")
+    (value.source !== "models_dev" &&
+      value.source !== "custom" &&
+      value.source !== "openwork")
   ) {
     return null;
   }
@@ -891,7 +912,10 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerConfig: isRecord(value.providerConfig) ? value.providerConfig : {},
     hasApiKey: value.hasApiKey === true,
     models: Array.isArray(value.models)
-      ? value.models.map(parseDenOrgLlmProviderModel).filter((entry): entry is DenOrgLlmProviderModel => entry !== null)
+      ? value.models.flatMap((model) => {
+          const parsed = parseDenOrgLlmProviderModel(model);
+          return parsed ? [parsed] : [];
+        })
       : [],
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
@@ -903,9 +927,10 @@ function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
     return [];
   }
 
-  return payload.llmProviders
-    .map(parseDenOrgLlmProvider)
-    .filter((entry): entry is DenOrgLlmProvider => entry !== null);
+  return payload.llmProviders.flatMap((provider) => {
+    const parsed = parseDenOrgLlmProvider(provider);
+    return parsed ? [parsed] : [];
+  });
 }
 
 function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConnection | null {
@@ -922,6 +947,388 @@ function getDenOrgLlmProviderConnection(payload: unknown): DenOrgLlmProviderConn
     ...provider,
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
   };
+}
+
+function parsePluginConfigObjectType(value: unknown): DenPluginConfigObjectType | null {
+  return value === "skill" || value === "agent" || value === "command" || value === "tool" ||
+    value === "mcp" || value === "hook" || value === "context" || value === "custom"
+    ? value
+    : null;
+}
+
+function parsePluginConfigObjectVersion(value: unknown): DenPluginConfigObjectVersion | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  return {
+    id: value.id,
+    rawSourceText: typeof value.rawSourceText === "string" ? value.rawSourceText : null,
+    normalizedPayloadJson: isRecord(value.normalizedPayloadJson) ? value.normalizedPayloadJson : null,
+    sourceRevisionRef: typeof value.sourceRevisionRef === "string" ? value.sourceRevisionRef : null,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
+  };
+}
+
+function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return null;
+  const objectType = parsePluginConfigObjectType(value.objectType);
+  if (!objectType) return null;
+  return {
+    id: value.id,
+    objectType,
+    title: value.title,
+    description: typeof value.description === "string" ? value.description : null,
+    currentFileName: typeof value.currentFileName === "string" ? value.currentFileName : null,
+    currentFileExtension: typeof value.currentFileExtension === "string" ? value.currentFileExtension : null,
+    currentRelativePath: typeof value.currentRelativePath === "string" ? value.currentRelativePath : null,
+    status: typeof value.status === "string" ? value.status : "active",
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    latestVersion: parsePluginConfigObjectVersion(value.latestVersion),
+  };
+}
+
+function parseExtensionSourceFormat(value: unknown): OpenWorkExtensionSourceFormat | null {
+  switch (value) {
+    case "openwork-builtin":
+    case "openwork-extension-manifest":
+    case "claude-plugin":
+    case "opencode-plugin":
+    case "mcp-directory":
+    case "manual":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionSourceOrigin(value: unknown): OpenWorkExtensionSource["origin"] | undefined {
+  switch (value) {
+    case "builtin":
+    case "den":
+    case "workspace":
+    case "local":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionSource(value: unknown): OpenWorkExtensionSource | null {
+  if (!isRecord(value) || typeof value.trusted !== "boolean") return null;
+  const format = parseExtensionSourceFormat(value.format);
+  if (!format) return null;
+  const origin = parseExtensionSourceOrigin(value.origin);
+  return {
+    format,
+    trusted: value.trusted,
+    ...(origin ? { origin } : {}),
+    ...(typeof value.reference === "string" ? { reference: value.reference } : {}),
+  };
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return undefined;
+  return value;
+}
+
+function parseExtensionResourceType(value: unknown): OpenWorkExtensionResourceType | null {
+  switch (value) {
+    case "skill":
+    case "agent":
+    case "command":
+    case "tool":
+    case "mcp":
+    case "opencode-plugin":
+    case "provider":
+    case "hook":
+    case "context":
+    case "secret":
+    case "file":
+    case "local-service":
+    case "native-binary":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionLocalCommandRef(value: unknown): OpenWorkExtensionResource["localCommandRef"] | undefined {
+  switch (value) {
+    case "openwork.computerUseMcp":
+    case "openwork.uiMcp":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionResource(value: unknown): OpenWorkExtensionResource | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  const type = parseExtensionResourceType(value.type);
+  if (!type) return null;
+  const command = parseStringList(value.command);
+  const localCommandRef = parseExtensionLocalCommandRef(value.localCommandRef);
+  return {
+    type,
+    id: value.id,
+    ...(typeof value.label === "string" ? { label: value.label } : {}),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(typeof value.path === "string" ? { path: value.path } : {}),
+    ...(command ? { command } : {}),
+    ...(typeof value.envKey === "string" ? { envKey: value.envKey } : {}),
+    ...(typeof value.packageName === "string" ? { packageName: value.packageName } : {}),
+    ...(typeof value.providerId === "string" ? { providerId: value.providerId } : {}),
+    ...(typeof value.mcpServerName === "string" ? { mcpServerName: value.mcpServerName } : {}),
+    ...(localCommandRef ? { localCommandRef } : {}),
+    ...(typeof value.required === "boolean" ? { required: value.required } : {}),
+  };
+}
+
+function parseExtensionContributionType(value: unknown): OpenWorkExtensionContributionType | null {
+  switch (value) {
+    case "settings-panel":
+    case "setup-instructions":
+    case "composer-prompt":
+    case "session-side-panel":
+    case "session-rail-item":
+    case "control-actions":
+    case "server-route":
+    case "native-capability":
+    case "test-action":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseExtensionContributionLocation(value: unknown): OpenWorkExtensionContribution["location"] | undefined {
+  switch (value) {
+    case "settings-detail":
+    case "composer":
+    case "session-right-pane":
+    case "session-rail":
+    case "server":
+    case "native":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function parseExtensionContribution(value: unknown): OpenWorkExtensionContribution | null {
+  if (!isRecord(value)) return null;
+  const type = parseExtensionContributionType(value.type);
+  if (!type) return null;
+  const location = parseExtensionContributionLocation(value.location);
+  return {
+    type,
+    ...(typeof value.ref === "string" ? { ref: value.ref } : {}),
+    ...(typeof value.label === "string" ? { label: value.label } : {}),
+    ...(typeof value.description === "string" ? { description: value.description } : {}),
+    ...(typeof value.prompt === "string" ? { prompt: value.prompt } : {}),
+    ...(location ? { location } : {}),
+  };
+}
+
+function parseExtensionSetup(value: unknown): OpenWorkExtensionSetup | undefined {
+  if (!isRecord(value)) return undefined;
+  const requiredEnv = parseStringList(value.requiredEnv);
+  return {
+    ...(typeof value.instructions === "string" ? { instructions: value.instructions } : {}),
+    ...(typeof value.primaryCta === "string" ? { primaryCta: value.primaryCta } : {}),
+    ...(typeof value.secondaryCta === "string" ? { secondaryCta: value.secondaryCta } : {}),
+    ...(requiredEnv ? { requiredEnv } : {}),
+    ...(typeof value.testActionRef === "string" ? { testActionRef: value.testActionRef } : {}),
+  };
+}
+
+function parseReloadReason(value: unknown): ReloadReason | null {
+  switch (value) {
+    case "plugins":
+    case "skills":
+    case "mcp":
+    case "config":
+    case "agents":
+    case "commands":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function parseReloadReasons(value: unknown): ReloadReason[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const reasons = value.flatMap((item) => {
+    const reason = parseReloadReason(item);
+    return reason ? [reason] : [];
+  });
+  return reasons.length === value.length ? reasons : undefined;
+}
+
+function parseExtensionLifecycle(value: unknown): OpenWorkExtensionLifecycle | undefined {
+  if (!isRecord(value)) return undefined;
+  const reload = parseReloadReasons(value.reload);
+  const detection = parseStringList(value.detection);
+  return {
+    ...(reload ? { reload } : {}),
+    ...(detection ? { detection } : {}),
+  };
+}
+
+function parseExtensionPlatform(value: unknown): OpenWorkExtensionManifest["platform"] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const platforms = value.flatMap((item) => {
+    switch (item) {
+      case "darwin":
+      case "linux":
+      case "windows":
+      case "web":
+        return [item];
+      default:
+        return [];
+    }
+  });
+  return platforms.length === value.length ? platforms : undefined;
+}
+
+function parseOpenWorkExtensionManifest(value: unknown): OpenWorkExtensionManifest | null {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.id !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.description !== "string" ||
+    !Array.isArray(value.resources)
+  ) {
+    return null;
+  }
+  const source = parseExtensionSource(value.source);
+  if (!source) return null;
+  const resources = value.resources.flatMap((entry) => {
+    const resource = parseExtensionResource(entry);
+    return resource ? [resource] : [];
+  });
+  if (resources.length !== value.resources.length) return null;
+  const contributions = Array.isArray(value.contributions)
+    ? value.contributions.flatMap((entry) => {
+        const contribution = parseExtensionContribution(entry);
+        return contribution ? [contribution] : [];
+      })
+    : undefined;
+  if (Array.isArray(value.contributions) && contributions?.length !== value.contributions.length) return null;
+  const setup = parseExtensionSetup(value.setup);
+  const lifecycle = parseExtensionLifecycle(value.lifecycle);
+  const platform = parseExtensionPlatform(value.platform);
+  if (Array.isArray(value.platform) && !platform) return null;
+  return {
+    schemaVersion: 1,
+    id: value.id,
+    name: value.name,
+    description: value.description,
+    source,
+    ...(isRecord(value.icon)
+      ? { icon: {
+          ...(typeof value.icon.src === "string" ? { src: value.icon.src } : {}),
+          ...(typeof value.icon.simpleIconSlug === "string" ? { simpleIconSlug: value.icon.simpleIconSlug } : {}),
+        } }
+      : {}),
+    ...(isRecord(value.composer) && typeof value.composer.prompt === "string" ? { composer: { prompt: value.composer.prompt } } : {}),
+    ...(setup ? { setup } : {}),
+    resources,
+    ...(contributions ? { contributions } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
+    ...(typeof value.defaultEnabled === "boolean" ? { defaultEnabled: value.defaultEnabled } : {}),
+    ...(typeof value.defaultHidden === "boolean" ? { defaultHidden: value.defaultHidden } : {}),
+    ...(platform ? { platform } : {}),
+  };
+}
+
+function parseDenExtensionProjection(value: unknown): DenOrgExtensionProjection | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
+  const sourceFormat = parseExtensionSourceFormat(value.sourceFormat);
+  if (!sourceFormat) return null;
+  return {
+    id: value.id,
+    name: value.name,
+    description: typeof value.description === "string" ? value.description : null,
+    sourceFormat,
+    manifest: parseOpenWorkExtensionManifest(value.manifest),
+  };
+}
+
+function parseOrgPlugin(value: unknown): DenOrgPlugin | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
+  const counts = isRecord(value.componentCounts)
+    ? Object.fromEntries(
+        Object.entries(value.componentCounts).filter((entry): entry is [string, number] =>
+          typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0,
+        ),
+      )
+    : {};
+  return {
+    id: value.id,
+    name: value.name,
+    description: typeof value.description === "string" ? value.description : null,
+    status: typeof value.status === "string" ? value.status : "active",
+    memberCount: typeof value.memberCount === "number" && Number.isFinite(value.memberCount) ? value.memberCount : 0,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+    componentCounts: counts,
+    extension: parseDenExtensionProjection(value.extension),
+  };
+}
+
+function parseOrgMarketplace(value: unknown): DenOrgMarketplace | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") return null;
+  return {
+    id: value.id,
+    name: value.name,
+    description: typeof value.description === "string" ? value.description : null,
+    status: typeof value.status === "string" ? value.status : "active",
+    pluginCount: typeof value.pluginCount === "number" && Number.isFinite(value.pluginCount) ? value.pluginCount : 0,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+function parsePluginMembership(value: unknown): DenPluginMembership | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.pluginId !== "string" || typeof value.configObjectId !== "string") {
+    return null;
+  }
+  const configObject = parsePluginConfigObject(value.configObject);
+  return {
+    id: value.id,
+    pluginId: value.pluginId,
+    configObjectId: value.configObjectId,
+    ...(configObject ? { configObject } : {}),
+  };
+}
+
+function getOrgMarketplaces(payload: unknown): DenOrgMarketplace[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((item) => {
+    const marketplace = parseOrgMarketplace(item);
+    return marketplace ? [marketplace] : [];
+  });
+}
+
+function getOrgMarketplaceResolved(payload: unknown): DenOrgMarketplaceResolved | null {
+  if (!isRecord(payload) || !isRecord(payload.item)) return null;
+  const marketplace = parseOrgMarketplace(payload.item.marketplace);
+  if (!marketplace || !Array.isArray(payload.item.plugins)) return null;
+  return {
+    marketplace,
+    plugins: payload.item.plugins.flatMap((item) => {
+      const plugin = parseOrgPlugin(item);
+      return plugin ? [plugin] : [];
+    }),
+  };
+}
+
+function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPluginResolved {
+  const memberships = isRecord(payload) && Array.isArray(payload.items)
+    ? payload.items.flatMap((item) => {
+        const membership = parsePluginMembership(item);
+        return membership ? [membership] : [];
+      })
+    : [];
+  return { plugin, memberships };
 }
 
 function getBillingPrice(value: unknown): DenBillingPrice | null {
@@ -984,15 +1391,13 @@ function getOrgSkillHubSummaries(payload: unknown): DenOrgSkillHubSummary[] {
     return [];
   }
 
-  return payload.skillHubs
-    .map((entry) => {
-      if (!isRecord(entry)) return null;
-      if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
-        return null;
-      }
-      return { id: entry.id, name: entry.name, canManage: entry.canManage };
-    })
-    .filter((entry): entry is DenOrgSkillHubSummary => Boolean(entry));
+  return payload.skillHubs.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
+      return [];
+    }
+    return [{ id: entry.id, name: entry.name, canManage: entry.canManage }];
+  });
 }
 
 function getCreatedOrgSkillId(payload: unknown): string | null {
@@ -1023,7 +1428,10 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
     price: getBillingPrice(billing.price),
     subscription: getBillingSubscription(billing.subscription),
     invoices: Array.isArray(billing.invoices)
-      ? billing.invoices.map((item) => getBillingInvoice(item)).filter((item): item is DenBillingInvoice => item !== null)
+      ? billing.invoices.flatMap((item) => {
+          const invoice = getBillingInvoice(item);
+          return invoice ? [invoice] : [];
+        })
       : [],
     productId: typeof billing.productId === "string" ? billing.productId : null,
     benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
@@ -1033,6 +1441,14 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
 const resolveFetch = () => (isDesktopRuntime() ? desktopFetch : globalThis.fetch);
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+type DenRequestOptions = {
+  method?: string;
+  token?: string | null;
+  body?: unknown;
+  timeoutMs?: number;
+  organizationId?: string | null;
+};
 
 async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -1065,7 +1481,7 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
 async function requestJsonRaw<T>(
   input: string | DenBaseUrls,
   path: string,
-  options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
+  options: DenRequestOptions = {},
 ): Promise<RawJsonResponse<T>> {
   const baseUrls = typeof input === "string" ? resolveDenBaseUrls(input) : input;
   const url = `${resolveRequestBaseUrl(baseUrls, path)}${path}`;
@@ -1073,6 +1489,10 @@ async function requestJsonRaw<T>(
   const token = options.token?.trim() ?? "";
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  const organizationId = options.organizationId?.trim() ?? "";
+  if (organizationId) {
+    headers[ORG_PROXY_HEADER] = organizationId;
   }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -1103,7 +1523,7 @@ async function requestJsonRaw<T>(
 async function requestJson<T>(
   input: string | DenBaseUrls,
   path: string,
-  options: { method?: string; token?: string | null; body?: unknown; timeoutMs?: number } = {},
+  options: DenRequestOptions = {},
 ): Promise<T> {
   const raw = await requestJsonRaw<T>(input, path, options);
   if (!raw.ok) {
@@ -1126,7 +1546,7 @@ async function ensureActiveOrganization(
     return;
   }
 
-  await requestJson<unknown>(baseUrls, "/api/auth/organization/set-active", {
+  await requestJson<unknown>(baseUrls, "/v1/me/active-organization", {
     method: "POST",
     token,
     body: {
@@ -1245,6 +1665,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getWorkers(payload);
     },
@@ -1253,6 +1674,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
         method: "POST",
         token,
+        organizationId: orgId,
         body: {},
       });
       const tokens = getWorkerTokens(payload);
@@ -1262,62 +1684,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return tokens;
     },
 
-    async listTemplates(orgSlug: string): Promise<DenTemplate[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        "/v1/templates",
-        {
-          method: "GET",
-          token,
-        },
-      );
-      return getTemplates(payload);
-    },
-
-    async createTemplate(
-      orgSlug: string,
-      input: { name: string; templateData: unknown },
-    ): Promise<DenTemplate> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        "/v1/templates",
-        {
-          method: "POST",
-          token,
-          body: {
-            name: input.name.trim(),
-            templateData: input.templateData,
-          },
-        },
-      );
-      const template = isRecord(payload) ? getTemplate(payload.template) : null;
-      if (!template) {
-        throw new DenApiError(500, "invalid_template_payload", "Template response was missing template details.");
-      }
-      return template;
-    },
-
-    async deleteTemplate(orgSlug: string, templateId: string): Promise<void> {
-      const raw = await requestJsonRaw(
-        baseUrls,
-        `/v1/templates/${encodeURIComponent(templateId)}`,
-        {
-          method: "DELETE",
-          token,
-        },
-      );
-      if (!raw.ok) {
-        const payload = raw.json;
-        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
-        const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
-        throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
-      }
-    },
-
     async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgSkillsFromPayload(payload);
     },
@@ -1326,6 +1697,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgSkillHubsFromPayload(payload);
     },
@@ -1334,6 +1706,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getOrgSkillHubSummaries(payload);
     },
@@ -1349,6 +1722,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/skills", {
         method: "POST",
         token,
+        organizationId: orgId,
         body,
       });
       const id = getCreatedOrgSkillId(payload);
@@ -1365,6 +1739,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         {
           method: "POST",
           token,
+          organizationId: orgId,
           body: { skillId },
         },
       );
@@ -1374,6 +1749,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const payload = await requestJson<unknown>(baseUrls, "/v1/llm-providers", {
         method: "GET",
         token,
+        organizationId: orgId,
       });
       return getDenOrgLlmProviders(payload);
     },
@@ -1385,6 +1761,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         {
           method: "GET",
           token,
+          organizationId: orgId,
         },
       );
       const provider = getDenOrgLlmProviderConnection(payload);
@@ -1392,6 +1769,37 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_llm_provider_payload", "LLM provider response was missing connection details.");
       }
       return provider;
+    },
+
+    async listOrgMarketplaces(orgId: string): Promise<DenOrgMarketplace[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/marketplaces?status=active&limit=100`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getOrgMarketplaces(payload);
+    },
+
+    async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/marketplaces/${encodeURIComponent(marketplaceId)}/resolved`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const resolved = getOrgMarketplaceResolved(payload);
+      if (!resolved) {
+        throw new DenApiError(500, "invalid_marketplace_payload", "Marketplace response was missing plugin details.");
+      }
+      return resolved;
+    },
+
+    async getOrgPluginResolved(orgId: string, plugin: DenOrgPlugin): Promise<DenOrgPluginResolved> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(plugin.id)}/resolved`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return getOrgPluginResolved(plugin, payload);
     },
 
     async getBillingStatus(options: { includeCheckout?: boolean; includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
@@ -1437,6 +1845,8 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
   };
 }
 
+export type DenClient = ReturnType<typeof createDenClient>;
+
 export async function fetchDenOrgSkillsCatalog(
   client: ReturnType<typeof createDenClient>,
   orgId: string,
@@ -1457,5 +1867,5 @@ export async function fetchDenOrgSkillsCatalog(
       hubName: hubNameBySkillId.get(skill.id) ?? null,
     });
   }
-  return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
+  return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
 }

@@ -3,40 +3,44 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
+  type SetStateAction,
 } from "react";
-import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2, X } from "lucide-react";
+import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2 } from "lucide-react";
 
-import { currentLocale, t } from "../../../i18n";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { t } from "../../../i18n";
 import {
   buildDenAuthUrl,
   createDenClient,
   type DenOrgSummary,
-  type DenTemplate,
   type DenWorkerSummary,
   readDenSettings,
   resolveDenBaseUrls,
   writeDenSettings,
 } from "../../../app/lib/den";
-import {
-  loadDenTemplateCache,
-  readDenTemplateCacheSnapshot,
-} from "../../../app/lib/den-template-cache";
 import type { WorkspacePreset } from "../../../app/types";
 import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
+import {
+  createInitialWorkspaceLocalState,
+  createWorkspaceLocalReducer,
+  type CreateWorkspaceLocalState,
+} from "./create-workspace-modal-state";
 import { CreateWorkspaceSharedPanel } from "./create-workspace-shared-panel";
 import {
   modalBodyClass,
-  modalHeaderButtonClass,
-  modalHeaderClass,
-  modalOverlayClass,
-  modalShellClass,
-  modalSubtitleClass,
-  modalTitleClass,
   pillGhostClass,
-  pillPrimaryClass,
   tagClass,
 } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
@@ -47,35 +51,32 @@ import type {
   RemoteWorkspaceInput,
 } from "./types";
 
-function workerStatusMeta(
-  status: string,
-  translate: (key: string) => string,
-) {
+function workerStatusMeta(status: string) {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "healthy":
       return {
-        label: translate("dashboard.worker_status_ready"),
+        label: t("dashboard.worker_status_ready"),
         tone: "ready" as const,
         canOpen: true,
       };
     case "provisioning":
     case "starting":
       return {
-        label: translate("dashboard.worker_status_starting"),
+        label: t("dashboard.worker_status_starting"),
         tone: "warning" as const,
         canOpen: false,
       };
     case "failed":
     case "error":
       return {
-        label: translate("dashboard.worker_status_attention"),
+        label: t("dashboard.worker_status_attention"),
         tone: "error" as const,
         canOpen: false,
       };
     case "stopped":
       return {
-        label: translate("dashboard.worker_status_stopped"),
+        label: t("dashboard.worker_status_stopped"),
         tone: "neutral" as const,
         canOpen: false,
       };
@@ -83,86 +84,75 @@ function workerStatusMeta(
       return {
         label: normalized
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : translate("common.unknown"),
+          : t("common.unknown"),
         tone: "neutral" as const,
         canOpen: normalized === "ready",
       };
   }
 }
 
-function formatTemplateTimestamp(
-  value: string | null,
-  translate: (key: string) => string,
-) {
-  if (!value) return translate("dashboard.recently_updated");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()))
-    return translate("dashboard.recently_updated");
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
-function templateCreatorLabel(
-  template: DenTemplate,
-  translate: (key: string) => string,
-) {
-  const creator = template.creator;
-  if (!creator) return translate("dashboard.unknown_creator");
-  return (
-    creator.name?.trim() ||
-    creator.email?.trim() ||
-    translate("dashboard.unknown_creator")
-  );
-}
-
-function workerSecondaryLine(
-  worker: DenWorkerSummary,
-  translate: (key: string) => string,
-) {
-  const parts = [worker.provider?.trim() || translate("dashboard.cloud_worker")];
+function workerSecondaryLine(worker: DenWorkerSummary) {
+  const parts = [worker.provider?.trim() || t("dashboard.cloud_worker")];
   if (worker.instanceUrl?.trim()) parts.push(worker.instanceUrl.trim());
   return parts.join(" · ");
 }
 
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteUrlRef = useRef<HTMLInputElement | null>(null);
-  const translate = useCallback(
-    (key: string, params?: Record<string, string | number>) =>
-      t(key, currentLocale(), params),
-    [],
-  );
   const platform = usePlatform();
 
-  const [screen, setScreen] = useState<CreateWorkspaceScreen>("chooser");
-  const preset = props.defaultPreset ?? "starter";
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-  const [pickingFolder, setPickingFolder] = useState(false);
-  const [showProgressDetails, setShowProgressDetails] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [cloudSettings, setCloudSettings] = useState(() => readDenSettings());
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    null,
+  const [localState, dispatchLocal] = useReducer(
+    createWorkspaceLocalReducer,
+    undefined,
+    () => createInitialWorkspaceLocalState(),
   );
-  const [templateError, setTemplateError] = useState<string | null>(null);
-  const [remoteUrl, setRemoteUrl] = useState("");
-  const [remoteToken, setRemoteToken] = useState("");
-  const [remoteDisplayName, setRemoteDisplayName] = useState("");
-  const [remoteTokenVisible, setRemoteTokenVisible] = useState(false);
-  const [orgs, setOrgs] = useState<DenOrgSummary[]>([]);
-  const [activeOrgId, setActiveOrgId] = useState("");
-  const [orgsBusy, setOrgsBusy] = useState(false);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [workers, setWorkers] = useState<DenWorkerSummary[]>([]);
-  const [workersBusy, setWorkersBusy] = useState(false);
-  const [workersError, setWorkersError] = useState<string | null>(null);
-  const [openingWorkerId, setOpeningWorkerId] = useState<string | null>(null);
-  const [workerSearch, setWorkerSearch] = useState("");
+  const {
+    screen,
+    selectedFolder,
+    pickingFolder,
+    showProgressDetails,
+    now,
+    cloudSettings,
+    remoteUrl,
+    remoteToken,
+    remoteDisplayName,
+    remoteTokenVisible,
+    orgs,
+    activeOrgId,
+    orgsBusy,
+    orgsError,
+    workers,
+    workersBusy,
+    workersError,
+    openingWorkerId,
+    workerSearch,
+  } = localState;
+  const setLocal = <K extends keyof CreateWorkspaceLocalState>(
+    key: K,
+    value: SetStateAction<CreateWorkspaceLocalState[K]>,
+  ) => dispatchLocal({ type: "set", key, value });
+  const setScreen = (value: SetStateAction<CreateWorkspaceScreen>) => setLocal("screen", value);
+  const setSelectedFolder = (value: SetStateAction<string | null>) => setLocal("selectedFolder", value);
+  const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
+  const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
+  const setNow = (value: SetStateAction<number>) => setLocal("now", value);
+  const setCloudSettings = (value: SetStateAction<ReturnType<typeof readDenSettings>>) => setLocal("cloudSettings", value);
+  const setRemoteUrl = (value: SetStateAction<string>) => setLocal("remoteUrl", value);
+  const setRemoteToken = (value: SetStateAction<string>) => setLocal("remoteToken", value);
+  const setRemoteDisplayName = (value: SetStateAction<string>) => setLocal("remoteDisplayName", value);
+  const setRemoteTokenVisible = (value: SetStateAction<boolean>) => setLocal("remoteTokenVisible", value);
+  const setOrgs = (value: SetStateAction<DenOrgSummary[]>) => setLocal("orgs", value);
+  const setActiveOrgId = (value: SetStateAction<string>) => setLocal("activeOrgId", value);
+  const setOrgsBusy = (value: SetStateAction<boolean>) => setLocal("orgsBusy", value);
+  const setOrgsError = (value: SetStateAction<string | null>) => setLocal("orgsError", value);
+  const setWorkers = (value: SetStateAction<DenWorkerSummary[]>) => setLocal("workers", value);
+  const setWorkersBusy = (value: SetStateAction<boolean>) => setLocal("workersBusy", value);
+  const setWorkersError = (value: SetStateAction<string | null>) => setLocal("workersError", value);
+  const setOpeningWorkerId = (value: SetStateAction<string | null>) => setLocal("openingWorkerId", value);
+  const setWorkerSearch = (value: SetStateAction<string>) => setLocal("workerSearch", value);
+  const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
-  const isInline = props.inline ?? false;
   const submitting = props.submitting ?? false;
   const remoteSubmitting = props.remoteSubmitting ?? false;
   const workerSubmitting = props.workerSubmitting ?? false;
@@ -170,10 +160,14 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const workerDisabled = Boolean(props.workerDisabled);
   const workerDisabledReason = (props.workerDisabledReason ?? "").trim();
   const workerDebugLines = useMemo(
-    () => (props.workerDebugLines ?? []).map((line) => line.trim()).filter(Boolean),
+    () => (props.workerDebugLines ?? []).flatMap((line) => {
+      const trimmed = line.trim();
+      return trimmed ? [trimmed] : [];
+    }),
     [props.workerDebugLines],
   );
   const hasSelectedFolder = Boolean(selectedFolder?.trim());
+  const localError = (props.localError ?? "").trim() || null;
   const remoteError = (props.remoteError ?? "").trim() || null;
   const isSignedIn = Boolean(cloudSettings.authToken?.trim());
   const denClient = useMemo(
@@ -183,43 +177,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         token: cloudSettings.authToken ?? "",
       }),
     [cloudSettings.authToken, cloudSettings.baseUrl],
-  );
-  const templateCacheSnapshot = useMemo(
-    () =>
-      readDenTemplateCacheSnapshot({
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      }),
-    [
-      cloudSettings.activeOrgSlug,
-      cloudSettings.authToken,
-      cloudSettings.baseUrl,
-    ],
-  );
-  const cloudWorkspaceTemplates = useMemo(
-    () =>
-      templateCacheSnapshot.templates.filter((template) => {
-        const payload = template.templateData;
-        return Boolean(
-          payload &&
-            typeof payload === "object" &&
-            (payload as { type?: unknown }).type === "workspace-profile",
-        );
-      }),
-    [templateCacheSnapshot.templates],
-  );
-  const showTemplateSection = Boolean(
-    props.onConfirmTemplate &&
-      cloudSettings.authToken?.trim() &&
-      cloudSettings.activeOrgSlug?.trim(),
-  );
-  const selectedTemplate = useMemo(
-    () =>
-      cloudWorkspaceTemplates.find(
-        (template) => template.id === selectedTemplateId,
-      ) ?? null,
-    [cloudWorkspaceTemplates, selectedTemplateId],
   );
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
@@ -243,59 +200,47 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   }, [workerSearch, workers]);
 
   const modalWidthClass =
-    screen === "shared" ? "max-w-[640px]" : "max-w-[560px]";
+    screen === "shared"
+      ? "max-w-2xl sm:max-w-2xl"
+      : "max-w-xl sm:max-w-xl";
 
   const headerTitle = (() => {
     switch (screen) {
       case "local":
-        return translate("dashboard.create_local_workspace_title");
+        return t("dashboard.create_local_workspace_title");
       case "remote":
-        return translate("dashboard.create_remote_custom_title");
+        return t("dashboard.create_remote_custom_title");
       case "shared":
-        return translate("dashboard.create_shared_title");
+        return t("dashboard.create_shared_title");
       default:
-        return props.title ?? translate("dashboard.create_workspace_title");
+        return props.title ?? t("dashboard.create_workspace_title");
     }
   })();
 
   const headerSubtitle = (() => {
     switch (screen) {
       case "local":
-        return translate("dashboard.create_local_workspace_subtitle");
+        return t("dashboard.create_local_workspace_subtitle");
       case "remote":
-        return translate("dashboard.create_remote_custom_subtitle");
+        return t("dashboard.create_remote_custom_subtitle");
       case "shared":
         return isSignedIn
-          ? translate("dashboard.create_shared_subtitle_signed_in")
-          : translate("dashboard.create_shared_subtitle_signed_out");
+          ? t("dashboard.create_shared_subtitle_signed_in")
+          : t("dashboard.create_shared_subtitle_signed_out");
       default:
-        return props.subtitle ?? translate("dashboard.create_workspace_subtitle");
+        return props.subtitle ?? t("dashboard.create_workspace_subtitle");
     }
   })();
 
   // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    const settings = readDenSettings();
-    setScreen("chooser");
-    setCloudSettings(settings);
-    setSelectedTemplateId(null);
-    setTemplateError(null);
-    setRemoteUrl("");
-    setRemoteToken("");
-    setRemoteDisplayName("");
-    setRemoteTokenVisible(false);
-    setWorkerSearch("");
-    setOrgs([]);
-    setWorkers([]);
-    setOrgsError(null);
-    setWorkersError(null);
-    setActiveOrgId(settings.activeOrgId?.trim() ?? "");
+    dispatchLocal({ type: "reset", settings: readDenSettings() });
   }, [props.open]);
 
   // React to Den session changes.
   useEffect(() => {
-    if (!props.open && !isInline) return;
+    if (!props.open) return;
     const handler = () => {
       const settings = readDenSettings();
       setCloudSettings(settings);
@@ -310,27 +255,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         "openwork-den-session-updated",
         handler as EventListener,
       );
-  }, [isInline, props.open]);
-
-  // Prime the template cache when the shared tab first becomes available.
-  useEffect(() => {
-    if (!showTemplateSection || (!props.open && !isInline)) return;
-    void loadDenTemplateCache(
-      {
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken,
-        orgSlug: cloudSettings.activeOrgSlug,
-      },
-      { force: true },
-    ).catch(() => undefined);
-  }, [
-    cloudSettings.activeOrgSlug,
-    cloudSettings.authToken,
-    cloudSettings.baseUrl,
-    isInline,
-    props.open,
-    showTemplateSection,
-  ]);
+  }, [props.open]);
 
   // Tick the "elapsed" clock while submitting.
   useEffect(() => {
@@ -383,7 +308,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setOrgsError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_load_orgs"),
+          : t("dashboard.error_load_orgs"),
       );
     } finally {
       setOrgsBusy(false);
@@ -393,7 +318,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     cloudSettings.activeOrgId,
     denClient,
     isSignedIn,
-    translate,
   ]);
 
   const refreshWorkers = useCallback(
@@ -408,13 +332,13 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         setWorkersError(
           error instanceof Error
             ? error.message
-            : translate("dashboard.error_load_shared_workspaces"),
+            : t("dashboard.error_load_shared_workspaces"),
         );
       } finally {
         setWorkersBusy(false);
       }
     },
-    [activeOrgId, denClient, isSignedIn, translate],
+    [activeOrgId, denClient, isSignedIn],
   );
 
   // Load orgs/workers when the shared tab is active and signed in.
@@ -469,7 +393,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     if (!props.onConfirmRemote) return;
     const orgId = activeOrgId.trim();
     if (!orgId) {
-      setWorkersError(translate("dashboard.error_choose_org"));
+      setWorkersError(t("dashboard.error_choose_org"));
       return;
     }
     setOpeningWorkerId(worker.workerId);
@@ -480,7 +404,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const accessToken =
         tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
       if (!openworkUrl || !accessToken) {
-        throw new Error(translate("dashboard.error_workspace_not_ready"));
+        throw new Error(t("dashboard.error_workspace_not_ready"));
       }
       const ok = await Promise.resolve(
         props.onConfirmRemote({
@@ -495,7 +419,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       );
       if (ok === false) {
         throw new Error(
-          translate("dashboard.error_connect_worker", {
+          t("dashboard.error_connect_worker", {
             name: worker.workerName,
           }),
         );
@@ -504,7 +428,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       setWorkersError(
         error instanceof Error
           ? error.message
-          : translate("dashboard.error_connect_worker", {
+          : t("dashboard.error_connect_worker", {
               name: worker.workerName,
             }),
       );
@@ -514,250 +438,210 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    if (selectedTemplate && props.onConfirmTemplate) {
-      try {
-        setTemplateError(null);
-        await props.onConfirmTemplate(selectedTemplate, preset, selectedFolder);
-      } catch (error) {
-        setTemplateError(
-          error instanceof Error
-            ? error.message
-            : translate("dashboard.error_create_template", {
-                name: selectedTemplate.name,
-              }),
-        );
-      }
-      return;
-    }
     props.onConfirm(preset, selectedFolder);
   };
 
-  if (!props.open && !isInline) {
-    return null;
-  }
-
-  const content = (
-    <div className={`${modalShellClass} ${modalWidthClass}`}>
-      <div className={modalHeaderClass}>
-        <div className="flex min-w-0 items-start gap-3">
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent
+        showCloseButton={showClose}
+        className={`flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden ${modalWidthClass}`}
+      >
+        <DialogHeader className="flex-row">
           {screen !== "chooser" ? (
-            <button
-              type="button"
+            <Button
               onClick={() => setScreen("chooser")}
               disabled={submitting || remoteSubmitting}
-              className={modalHeaderButtonClass}
-              aria-label={translate("dashboard.modal_back")}
+              variant="ghost"
+              size="icon"
+              aria-label={t("dashboard.modal_back")}
             >
-              <ArrowLeft size={18} />
-            </button>
+              <ArrowLeft className="size-4" />
+            </Button>
           ) : null}
-          <div className="min-w-0">
-            <h3 className={modalTitleClass}>{headerTitle}</h3>
-            <p className={modalSubtitleClass}>{headerSubtitle}</p>
+          <div className="min-w-0 flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle>{headerTitle}</DialogTitle>
+            </div>
+            <DialogDescription>{headerSubtitle}</DialogDescription>
           </div>
-        </div>
-        {showClose ? (
-          <button
-            type="button"
-            onClick={props.onClose}
-            disabled={submitting || remoteSubmitting}
-            className={modalHeaderButtonClass}
-            aria-label={translate("dashboard.modal_close")}
-          >
-            <X size={18} />
-          </button>
-        ) : null}
-      </div>
+        </DialogHeader>
 
-      {screen === "chooser" ? (
-        <div className={modalBodyClass}>
-          <div className="space-y-3">
-            <WorkspaceOptionCard
-              title={translate("dashboard.create_local_workspace_title")}
-              description={
-                props.localDisabled
-                  ? props.localDisabledReason?.trim() ||
-                    translate("dashboard.chooser_local_desc")
-                  : translate("dashboard.chooser_local_desc")
-              }
-              icon={FolderPlus}
-              onClick={() => setScreen("local")}
-              disabled={props.localDisabled}
-              endAdornment={
-                props.localDisabled ? (
-                  <span className={tagClass}>
-                    {translate("dashboard.desktop_badge")}
-                  </span>
-                ) : undefined
-              }
-            />
-            <WorkspaceOptionCard
-              title={translate("dashboard.create_remote_custom_title")}
-              description={translate("dashboard.chooser_remote_desc")}
-              icon={Globe}
-              onClick={() => setScreen("remote")}
-            />
-            <WorkspaceOptionCard
-              title={translate("dashboard.create_shared_title")}
-              description={translate("dashboard.chooser_shared_desc")}
-              icon={Cloud}
-              onClick={() => setScreen("shared")}
-            />
-
-            {props.onImportConfig ? (
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => props.onImportConfig?.()}
-                  disabled={props.importingConfig}
-                  className={pillGhostClass}
-                >
-                  {props.importingConfig ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 size={14} className="animate-spin" />
-                      {translate("dashboard.importing")}
-                    </span>
-                  ) : (
-                    translate("dashboard.import_config")
-                  )}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      {screen === "local" ? (
-        <CreateWorkspaceLocalPanel
-          translate={translate}
-          selectedFolder={selectedFolder}
-          hasSelectedFolder={hasSelectedFolder}
-          pickingFolder={pickingFolder}
-          onPickFolder={() => void handlePickFolder()}
-          submitting={submitting}
-          selectedTemplateId={selectedTemplateId}
-          setSelectedTemplateId={setSelectedTemplateId}
-          showTemplateSection={showTemplateSection}
-          cloudWorkspaceTemplates={cloudWorkspaceTemplates}
-          templateCreatorLabel={(template) =>
-            templateCreatorLabel(template, translate)
-          }
-          formatTemplateTimestamp={(value) =>
-            formatTemplateTimestamp(value, translate)
-          }
-          templateError={templateError}
-          templateCacheBusy={templateCacheSnapshot.busy}
-          templateCacheError={templateCacheSnapshot.error}
-          onClose={props.onClose}
-          onSubmit={() => void handleLocalSubmit()}
-          confirmLabel={props.confirmLabel}
-          workerLabel={props.workerLabel}
-          onConfirmWorker={props.onConfirmWorker}
-          preset={preset}
-          workerSubmitting={workerSubmitting}
-          workerDisabled={workerDisabled}
-          workerDisabledReason={workerDisabledReason}
-          workerCtaLabel={props.workerCtaLabel}
-          workerCtaDescription={props.workerCtaDescription}
-          onWorkerCta={props.onWorkerCta}
-          workerRetryLabel={props.workerRetryLabel}
-          onWorkerRetry={props.onWorkerRetry}
-          workerDebugLines={workerDebugLines}
-          progress={progress}
-          elapsedSeconds={elapsedSeconds}
-          showProgressDetails={showProgressDetails}
-          onToggleProgressDetails={() =>
-            setShowProgressDetails((prev) => !prev)
-          }
-        />
-      ) : null}
-
-      {screen === "remote" ? (
-        <>
+        {screen === "chooser" ? (
           <div className={modalBodyClass}>
-            <RemoteWorkspaceFields
-              hostUrl={remoteUrl}
-              onHostUrlInput={setRemoteUrl}
-              token={remoteToken}
-              tokenVisible={remoteTokenVisible}
-              onTokenInput={setRemoteToken}
-              onToggleTokenVisible={() =>
-                setRemoteTokenVisible((prev) => !prev)
-              }
-              displayName={remoteDisplayName}
-              onDisplayNameInput={setRemoteDisplayName}
-              submitting={remoteSubmitting}
-              hostInputRef={remoteUrlRef}
-              title={translate("dashboard.remote_server_details_title")}
-              description={translate("dashboard.remote_server_details_hint")}
-            />
-          </div>
-          <div className="space-y-3 border-t border-dls-border px-6 py-5">
-            {remoteError ? (
-              <div className="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
-                {remoteError}
-              </div>
-            ) : null}
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                className={pillGhostClass}
-                onClick={props.onClose}
-                disabled={remoteSubmitting}
-              >
-                {translate("common.cancel")}
-              </button>
-              <button
-                type="button"
-                className={pillPrimaryClass}
-                disabled={!remoteUrl.trim() || remoteSubmitting}
-                onClick={() => void handleRemoteSubmit()}
-              >
-                {remoteSubmitting ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 size={16} className="animate-spin" />
-                    {translate("dashboard.connecting")}
-                  </span>
-                ) : (
-                  translate("dashboard.connect_remote_button")
-                )}
-              </button>
+            <div className="space-y-3">
+              <WorkspaceOptionCard
+                title={t("dashboard.create_local_workspace_title")}
+                description={
+                  props.localDisabled
+                    ? props.localDisabledReason?.trim() ||
+                      t("dashboard.chooser_local_desc")
+                    : t("dashboard.chooser_local_desc")
+                }
+                icon={FolderPlus}
+                onClick={() => setScreen("local")}
+                disabled={props.localDisabled}
+                endAdornment={
+                  props.localDisabled ? (
+                    <span className={tagClass}>
+                      {t("dashboard.desktop_badge")}
+                    </span>
+                  ) : undefined
+                }
+              />
+              <WorkspaceOptionCard
+                title={t("dashboard.create_remote_custom_title")}
+                description={t("dashboard.chooser_remote_desc")}
+                icon={Globe}
+                onClick={() => setScreen("remote")}
+              />
+              <WorkspaceOptionCard
+                title={t("dashboard.create_shared_title")}
+                description={t("dashboard.chooser_shared_desc")}
+                icon={Cloud}
+                onClick={() => setScreen("shared")}
+              />
+
+              {props.onImportConfig ? (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => props.onImportConfig?.()}
+                    disabled={props.importingConfig}
+                    className={pillGhostClass}
+                  >
+                    {props.importingConfig ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" />
+                        {t("dashboard.importing")}
+                      </span>
+                    ) : (
+                      t("dashboard.import_config")
+                    )}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
-        </>
-      ) : null}
+        ) : null}
 
-      {screen === "shared" ? (
-        <CreateWorkspaceSharedPanel
-          signedIn={isSignedIn}
-          orgs={orgs}
-          activeOrgId={activeOrgId}
-          onActiveOrgChange={(orgId) => {
-            const nextOrg = orgs.find((org) => org.id === orgId) ?? null;
-            applyActiveOrg(nextOrg);
-          }}
-          orgsBusy={orgsBusy}
-          orgsError={orgsError}
-          workers={workers}
-          workersBusy={workersBusy}
-          workersError={workersError}
-          workerSearch={workerSearch}
-          onWorkerSearchInput={setWorkerSearch}
-          filteredWorkers={filteredWorkers}
-          openingWorkerId={openingWorkerId}
-          workerStatusMeta={(status) => workerStatusMeta(status, translate)}
-          workerSecondaryLine={(worker) => workerSecondaryLine(worker, translate)}
-          onOpenWorker={(worker) => void handleOpenWorker(worker)}
-          onOpenCloudSignIn={openCloudSignIn}
-          onRefreshWorkers={() => void refreshWorkers()}
-          onOpenCloudDashboard={openCloudDashboard}
-        />
-      ) : null}
-    </div>
-  );
+        {screen === "local" ? (
+          <CreateWorkspaceLocalPanel
+            selectedFolder={selectedFolder}
+            hasSelectedFolder={hasSelectedFolder}
+            pickingFolder={pickingFolder}
+            onPickFolder={() => void handlePickFolder()}
+            submitting={submitting}
+            localError={localError}
+            onClose={props.onClose}
+            onSubmit={() => void handleLocalSubmit()}
+            confirmLabel={props.confirmLabel}
+            workerLabel={props.workerLabel}
+            onConfirmWorker={props.onConfirmWorker}
+            preset={preset}
+            workerSubmitting={workerSubmitting}
+            workerDisabled={workerDisabled}
+            workerDisabledReason={workerDisabledReason}
+            workerCtaLabel={props.workerCtaLabel}
+            workerCtaDescription={props.workerCtaDescription}
+            onWorkerCta={props.onWorkerCta}
+            workerRetryLabel={props.workerRetryLabel}
+            onWorkerRetry={props.onWorkerRetry}
+            workerDebugLines={workerDebugLines}
+            progress={progress}
+            elapsedSeconds={elapsedSeconds}
+            showProgressDetails={showProgressDetails}
+            onToggleProgressDetails={() =>
+              setShowProgressDetails((prev) => !prev)
+            }
+          />
+        ) : null}
 
-  return (
-    <div className={isInline ? "w-full" : modalOverlayClass}>{content}</div>
+        {screen === "remote" ? (
+          <>
+            <div className={modalBodyClass}>
+              <RemoteWorkspaceFields
+                hostUrl={remoteUrl}
+                onHostUrlInput={setRemoteUrl}
+                token={remoteToken}
+                tokenVisible={remoteTokenVisible}
+                onTokenInput={setRemoteToken}
+                onToggleTokenVisible={() =>
+                  setRemoteTokenVisible((prev) => !prev)
+                }
+                displayName={remoteDisplayName}
+                onDisplayNameInput={setRemoteDisplayName}
+                submitting={remoteSubmitting}
+                hostInputRef={remoteUrlRef}
+                title={t("dashboard.remote_server_details_title")}
+                description={t("dashboard.remote_server_details_hint")}
+              />
+            </div>
+            <DialogFooter className="flex-col gap-3">
+              {remoteError ? (
+                <div className="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
+                  {remoteError}
+                </div>
+              ) : null}
+              <div className="flex justify-end gap-3">
+                <DialogClose
+                  disabled={remoteSubmitting}
+                  render={<Button variant="outline" disabled={remoteSubmitting} />}
+                >
+                  {t("common.cancel")}
+                </DialogClose>
+                <Button
+                  type="button"
+                  disabled={!remoteUrl.trim() || remoteSubmitting}
+                  onClick={() => void handleRemoteSubmit()}
+                >
+                  {remoteSubmitting ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={16} className="animate-spin" />
+                      {t("dashboard.connecting")}
+                    </span>
+                  ) : (
+                    t("dashboard.connect_remote_button")
+                  )}
+                </Button>
+              </div>
+            </DialogFooter>
+          </>
+        ) : null}
+
+        {screen === "shared" ? (
+          <CreateWorkspaceSharedPanel
+            signedIn={isSignedIn}
+            orgs={orgs}
+            activeOrgId={activeOrgId}
+            onActiveOrgChange={(orgId) => {
+              const nextOrg = orgs.find((org) => org.id === orgId) ?? null;
+              applyActiveOrg(nextOrg);
+            }}
+            orgsBusy={orgsBusy}
+            orgsError={orgsError}
+            workers={workers}
+            workersBusy={workersBusy}
+            workersError={workersError}
+            workerSearch={workerSearch}
+            onWorkerSearchInput={setWorkerSearch}
+            filteredWorkers={filteredWorkers}
+            openingWorkerId={openingWorkerId}
+            workerStatusMeta={(status) => workerStatusMeta(status)}
+            workerSecondaryLine={(worker) => workerSecondaryLine(worker)}
+            onOpenWorker={(worker) => void handleOpenWorker(worker)}
+            onOpenCloudSignIn={openCloudSignIn}
+            onRefreshWorkers={() => void refreshWorkers()}
+            onOpenCloudDashboard={openCloudDashboard}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

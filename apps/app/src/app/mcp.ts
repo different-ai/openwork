@@ -1,14 +1,12 @@
-import { parse } from "jsonc-parser";
+import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
 import { readOpencodeConfig, writeOpencodeConfig } from "./lib/desktop";
-import { CHROME_DEVTOOLS_MCP_COMMAND, CHROME_DEVTOOLS_MCP_ID } from "./constants";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
 
-export const CHROME_DEVTOOLS_AUTO_CONNECT_ARG = "--autoConnect";
-
 type McpIdentity = {
   id?: string;
+  serverName?: string;
   name: string;
 };
 
@@ -17,24 +15,7 @@ export function normalizeMcpSlug(name: string): string {
 }
 
 export function getMcpIdentityKey(entry: McpIdentity): string {
-  return entry.id ?? normalizeMcpSlug(entry.name);
-}
-
-export function isChromeDevtoolsMcp(entry: McpIdentity | string | null | undefined): boolean {
-  if (!entry) return false;
-  const key = typeof entry === "string" ? entry : getMcpIdentityKey(entry);
-  return key === CHROME_DEVTOOLS_MCP_ID || normalizeMcpSlug(typeof entry === "string" ? entry : entry.name) === "control-chrome";
-}
-
-export function usesChromeDevtoolsAutoConnect(command?: string[]): boolean {
-  return Array.isArray(command) && command.includes(CHROME_DEVTOOLS_AUTO_CONNECT_ARG);
-}
-
-export function buildChromeDevtoolsCommand(command: string[] | undefined, useExistingProfile: boolean): string[] {
-  const base = Array.isArray(command) && command.length
-    ? command.filter((part) => part !== CHROME_DEVTOOLS_AUTO_CONNECT_ARG)
-    : [...CHROME_DEVTOOLS_MCP_COMMAND];
-  return useExistingProfile ? [...base, CHROME_DEVTOOLS_AUTO_CONNECT_ARG] : base;
+  return entry.id ?? entry.serverName ?? normalizeMcpSlug(entry.name);
 }
 
 export function validateMcpServerName(name: string): string {
@@ -55,25 +36,30 @@ export async function removeMcpFromConfig(
   projectDir: string,
   name: string,
 ): Promise<void> {
-  const configFile = await readOpencodeConfig("project", projectDir);
-  let existingConfig: Record<string, unknown> = {};
-  if (configFile.exists && configFile.content?.trim()) {
-    try {
-      existingConfig = parse(configFile.content) ?? {};
-    } catch {
-      existingConfig = {};
-    }
+  const configFile = await readOpencodeConfig("project", projectDir) as { path: string; exists: boolean; content: string | null };
+  const raw = configFile.exists && configFile.content?.trim()
+    ? configFile.content
+    : "{}\n";
+
+  const parseErrors: Array<{ error: number; offset: number; length: number }> = [];
+  const existingConfig = parse(raw, parseErrors, { allowTrailingComma: true }) as Record<string, unknown> | undefined;
+  if (parseErrors.length > 0) {
+    const details = parseErrors
+      .map((entry) => printParseErrorCode(entry.error))
+      .join(", ");
+    throw new Error(`Failed to parse opencode config: ${details}`);
   }
 
-  const mcpSection = existingConfig["mcp"] as Record<string, unknown> | undefined;
+  const mcpSection = existingConfig?.["mcp"] as Record<string, unknown> | undefined;
   if (!mcpSection || !(name in mcpSection)) return;
 
-  delete mcpSection[name];
+  const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
+  const updated = applyEdits(raw, modify(raw, ["mcp", name], undefined, { formattingOptions }));
   const writeResult = await writeOpencodeConfig(
     "project",
     projectDir,
-    `${JSON.stringify(existingConfig, null, 2)}\n`,
-  );
+    updated.endsWith("\n") ? updated : `${updated}\n`,
+  ) as { ok: boolean; stderr?: string; stdout?: string };
   if (!writeResult.ok) {
     throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
   }
@@ -100,7 +86,7 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
         return [];
       }
 
-      return [{ name, config }];
+      return [{ name, config, source: "config.project" as const }];
     });
   } catch {
     return [];

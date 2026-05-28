@@ -124,7 +124,7 @@ Makes worker recovery clearer and preserves existing access, while smoothing Doc
 #### Main changes
 - Added a plain-language Get back online action for remote worker recovery.
 - Reused existing OpenWork tokens during sandbox restarts so reconnects keep working.
-- Updated `dev-up.sh` to mount host OpenCode config and auth into Docker dev stacks.
+- Updated the legacy Docker dev stack to mount host OpenCode config and auth.
 
 #### Lines of code changed since previous release
 370 lines changed since `v0.11.126` (325 insertions, 45 deletions).

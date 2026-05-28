@@ -64,6 +64,7 @@ export type OpencodeAuth = {
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
+const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|prompt_async|summarize)(?:[?#]|$)/;
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -74,6 +75,9 @@ function getRequestUrl(input: RequestInfo | URL): string {
 
 function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): number {
   const url = getRequestUrl(input);
+  if (SESSION_LONG_RUNNING_URL_RE.test(url)) {
+    return 0;
+  }
   if (/\/provider\/oauth\//.test(url) || /\/mcp\/auth\/callback\b/.test(url)) {
     return Math.max(fallbackMs, OAUTH_OPENCODE_REQUEST_TIMEOUT_MS);
   }
@@ -135,9 +139,11 @@ async function postSessionRequest<T>(
 function resolveOpenworkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
   try {
     const url = new URL(baseUrl);
-    const match = url.pathname.replace(/\/+$/, "").match(/^(.*\/w\/([^/]+))\/opencode$/);
-    if (!match?.[1] || !match[2]) return null;
-    url.pathname = match[1];
+    const match = url.pathname
+      .replace(/\/+$/, "")
+      .match(/^(.*)\/(?:w|workspace)\/([^/]+)\/opencode$/);
+    if (!match || match[1] === undefined || !match[2]) return null;
+    url.pathname = match[1] || "/";
     url.search = "";
     return {
       baseUrl: url.toString().replace(/\/+$/, ""),
