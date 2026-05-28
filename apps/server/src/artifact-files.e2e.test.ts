@@ -63,6 +63,7 @@ describe("artifact file routes", () => {
       headers: auth(token),
       body: JSON.stringify({
         targets: [
+          { kind: "file", value: join(root, "reports", "artifact-eval.md"), confidence: 95 },
           { kind: "file", value: "Workspace/32423/reports/artifact-eval.md", confidence: 80 },
           { kind: "file", value: "reports/artifact-eval.csv", confidence: 80 },
           { kind: "file", value: "reports/artifact-eval.xlsx", confidence: 80 },
@@ -75,7 +76,7 @@ describe("artifact file routes", () => {
     });
     expect(resolveResponse.status).toBe(200);
     const resolved = await resolveResponse.json() as { items: Array<any> };
-    expect(resolved.items.find((item) => item.value === "reports/artifact-eval.md")).toMatchObject({ exists: true, preview: "markdown" });
+    expect(resolved.items.find((item) => item.value === "reports/artifact-eval.md")).toMatchObject({ exists: true, preview: "markdown", confidence: 95 });
     expect(resolved.items.find((item) => item.value === "reports/artifact-eval.csv")).toMatchObject({ exists: true, preview: "sheet" });
     expect(resolved.items.find((item) => item.value === "reports/artifact-eval.xlsx")).toMatchObject({ exists: true, preview: "sheet" });
     expect(resolved.items.find((item) => item.value === "reports/index.html")).toMatchObject({ exists: true, preview: "html" });

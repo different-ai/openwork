@@ -129,7 +129,7 @@ pnpm --filter @openwork/app typecheck
 pnpm --filter @openwork/app build
 ```
 
-For UI flow verification, start the local app and attach browser tools to the local Electron or Chrome DevTools endpoint, then run the same eval steps from `evals/`.
+For UI flow verification, start the local app and attach browser tools to the local Electron CDP endpoint, then run the same eval steps from `evals/`.
 
 ```bash
 pnpm dev

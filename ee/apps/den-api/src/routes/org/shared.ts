@@ -102,6 +102,30 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
   }
 }
 
+export function ensureMemberRemover(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can remove members.",
+    },
+  }
+}
+
 export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
   const payload = c.get("organizationContext")
   if (!payload) {
@@ -146,6 +170,54 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
     response: {
       error: "forbidden",
       message: "Only workspace owners and admins can manage API keys.",
+    },
+  }
+}
+
+export function ensureScimManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can manage SCIM.",
+    },
+  }
+}
+
+export function ensureSsoManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message: "Only workspace owners and admins can manage SSO.",
     },
   }
 }

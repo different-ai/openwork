@@ -7,7 +7,8 @@ import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "../../../../.
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "../../../../../app/types";
 import { t } from "../../../../../i18n";
-import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../../settings/extension-state";
+import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "../../../settings/extension-state";
+import { useDesktopRestriction } from "../../../cloud/desktop-config-provider";
 import { ModelBehaviorSelect } from "../../../../../components/model-behavior-select";
 import { ModelSelect } from "../../../../../components/model-select";
 import { LexicalPromptEditor } from "./editor";
@@ -32,6 +33,14 @@ type PastedTextChip = {
 
 type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
 type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
+
+function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
+  const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
+    contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
+  ) === true;
+  if (hasSessionSurface) return isOpenWorkExtensionEnabled(entry);
+  return !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry);
+}
 
 type ComposerProps = {
   draft: string;
@@ -259,6 +268,7 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
 }
 
 export function ReactSessionComposer(props: ComposerProps) {
+  const builtInExtensionsDisabled = useDesktopRestriction("allowBuiltInExtensions");
   let fileInput: HTMLInputElement | undefined;
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -634,7 +644,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activePlugin = toolMenuSection.startsWith("plugin:")
     ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
     : null;
-  const composerExtensions = OPENWORK_EXTENSION_CATALOG.filter((entry) => !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry));
+  const composerExtensions = OPENWORK_EXTENSION_CATALOG.filter((entry) =>
+    !builtInExtensionsDisabled &&
+    !isOpenWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
+  );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 
   useEffect(() => {

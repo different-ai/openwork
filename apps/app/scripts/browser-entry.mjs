@@ -78,11 +78,11 @@ function createInvalidToolStream() {
   ];
 }
 
-function hasChromeQuickstartPrompt(haystack) {
+function hasBuiltInBrowserPrompt(haystack) {
   return (
-    haystack.includes("chrome devtools mcp") ||
-    haystack.includes("chrome-devtools_*") ||
-    haystack.includes("control chrome")
+    haystack.includes("built-in openwork browser") ||
+    haystack.includes("openwork browser") ||
+    haystack.includes("example.com")
   );
 }
 
@@ -116,7 +116,7 @@ function step(name, fn) {
 let tmpdir;
 let mock;
 let opencode;
-let sawChromeQuickstartPrompt = false;
+let sawBuiltInBrowserPrompt = false;
 const mockSockets = new Set();
 
 try {
@@ -164,14 +164,14 @@ try {
         }
 
         const haystack = JSON.stringify(body).toLowerCase();
-        const triesChromeMcp = hasChromeQuickstartPrompt(haystack);
+        const triesBuiltInBrowser = hasBuiltInBrowserPrompt(haystack);
 
-        if (triesChromeMcp) {
-          sawChromeQuickstartPrompt = true;
+        if (triesBuiltInBrowser) {
+          sawBuiltInBrowserPrompt = true;
           writeSse(
             res,
             createTextStream(
-              "Trying Control Chrome first. If Chrome MCP is unavailable, open the MCP tab, connect Control Chrome, and retry.",
+              "Using the built-in OpenWork Browser to open example.com and read the page title.",
             ),
           );
         } else {
@@ -246,9 +246,9 @@ try {
     return {};
   });
 
-  await step("assert.chrome-mcp-quickstart", async () => {
-    assert.equal(sawChromeQuickstartPrompt, true, "Expected browser quickstart prompt to reference Chrome DevTools MCP");
-    return { sawChromeQuickstartPrompt };
+  await step("assert.built-in-browser-quickstart", async () => {
+    assert.equal(sawBuiltInBrowserPrompt, true, "Expected browser quickstart prompt to use the built-in OpenWork Browser");
+    return { sawBuiltInBrowserPrompt };
   });
 
   await step("assert.no-tool-errors", async () => {

@@ -64,6 +64,14 @@ export const connectorMappingKindSchema = z.enum(connectorMappingKindValues)
 export const connectorSyncStatusSchema = z.enum(connectorSyncStatusValues)
 export const connectorSyncEventTypeSchema = z.enum(connectorSyncEventTypeValues)
 export const githubWebhookEventSchema = z.enum(githubWebhookEventValues)
+export const extensionSourceFormatSchema = z.enum([
+  "openwork-builtin",
+  "openwork-extension-manifest",
+  "claude-plugin",
+  "opencode-plugin",
+  "mcp-directory",
+  "manual",
+])
 
 export const pluginArchPaginationQuerySchema = z.object({
   cursor: cursorSchema.optional(),
@@ -436,6 +444,31 @@ export const pluginMembershipSchema = z.object({
   configObject: configObjectSchema.optional(),
 }).meta({ ref: "PluginArchPluginMembership" })
 
+export const extensionManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: z.string().trim().min(1).max(255),
+  name: z.string().trim().min(1).max(255),
+  description: z.string().trim().min(1).max(2048),
+  source: z.object({
+    format: extensionSourceFormatSchema,
+    trusted: z.boolean(),
+    origin: z.enum(["builtin", "den", "workspace", "local"]).optional(),
+    reference: z.string().trim().min(1).max(512).optional(),
+  }),
+  resources: z.array(jsonObjectSchema),
+  contributions: z.array(jsonObjectSchema).optional(),
+  setup: jsonObjectSchema.optional(),
+  lifecycle: jsonObjectSchema.optional(),
+}).passthrough().meta({ ref: "OpenWorkExtensionManifest" })
+
+export const pluginExtensionSchema = z.object({
+  id: pluginIdSchema,
+  name: z.string().trim().min(1).max(255),
+  description: nullableStringSchema,
+  sourceFormat: extensionSourceFormatSchema,
+  manifest: extensionManifestSchema.nullable(),
+}).meta({ ref: "PluginArchExtensionProjection" })
+
 export const pluginSchema = z.object({
   id: pluginIdSchema,
   organizationId: denTypeIdSchema("organization"),
@@ -451,6 +484,7 @@ export const pluginSchema = z.object({
     id: marketplaceIdSchema,
     name: z.string().trim().min(1).max(255),
   })).optional(),
+  extension: pluginExtensionSchema.nullable().optional(),
 }).meta({ ref: "PluginArchPlugin" })
 
 export const marketplacePluginSchema = z.object({

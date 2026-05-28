@@ -1,7 +1,7 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OAuthClientTable } from "@openwork-ee/den-db/schema"
-import type { Hono } from "hono"
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
+import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { auth } from "../../auth.js"
 import { db } from "../../db.js"
@@ -9,6 +9,7 @@ import { env } from "../../env.js"
 import { emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { registerScimAuthRoutes } from "./scim.js"
 
 function rewriteAuthRequest(request: Request, path: string) {
   const url = new URL(request.url)
@@ -102,7 +103,12 @@ async function ensureMcpClientScopes(request: Request) {
   }
 
   const scopes = new Set(readStoredClientScopes(client.scopes))
-  if (!scopes.has("mcp:read") && !scopes.has("mcp:write")) {
+  const hasMcpRead = scopes.has("mcp:read")
+  const hasMcpWrite = scopes.has("mcp:write")
+  if (!hasMcpRead && !hasMcpWrite) {
+    return
+  }
+  if (hasMcpRead && hasMcpWrite) {
     return
   }
 
@@ -115,6 +121,7 @@ async function ensureMcpClientScopes(request: Request) {
 }
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerScimAuthRoutes(app)
   app.get("/api/auth/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
   app.get("/api/auth/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
   app.get("/.well-known/oauth-authorization-server/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
@@ -129,7 +136,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   })
 
   app.on(
-    ["GET", "POST"],
+    ["GET", "POST", "PUT", "PATCH", "DELETE"],
     "/api/auth/*",
     describeRoute({
       hide: true,

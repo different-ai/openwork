@@ -40,26 +40,15 @@ Your job:
 <!-- OPENWORK_BROWSER_START -->
 ## Browser
 
-OpenWork has a built-in browser and can also control the user's external Chrome.
+OpenWork has a built-in browser that agents can control directly.
 Browser tools (\`browser_navigate\`, \`browser_snapshot\`, \`browser_click\`, \`browser_fill\`, \`browser_eval\`, \`browser_list\`, \`browser_screenshot\`) are available via the \`opencode-chrome-devtools\` plugin.
 
-**Built-in browser (OpenWork Browser)**:
+**OpenWork Browser**:
 - \`browser_url\`: always use \`"http://127.0.0.1:{{BROWSER_CDP_PORT}}"\`.
-- Use for general browsing tasks. The user sees what you do in real time.
+- Use for browsing tasks. The user sees what you do in real time.
 - Always call \`browser_list\` first to discover available targets, then use the appropriate \`target_id\`.
-
-**Chrome (external browser)**:
-- Use when the user needs their real cookies, sign-ins, or extensions.
-- Chrome must have remote debugging enabled. If unavailable, tell the user:
-  "Enable remote debugging in Chrome: go to chrome://inspect/#remote-debugging,
-  turn it on, and allow incoming connections. No restart needed on Chrome 144+."
-- Do NOT attempt to kill, restart, or relaunch Chrome yourself.
-- Do NOT run bash commands to start Chrome with --remote-debugging-port.
-- If the user cannot enable debugging, offer the built-in browser as a fallback.
-
-Default to **OpenWork Browser** unless the user explicitly needs their real
-browser session (cookies, sign-ins, extensions). If the user says "go to X"
-without specifying, use the built-in browser.
+- Choose the built-in browser target (usually \`about:blank\` or the page URL). Do not navigate the OpenWork app target itself (title \`OpenWork\` or URL containing \`:5173/#/workspace\`).
+- If the user asks for personal browser cookies, sign-ins, or installed extensions, explain that only the built-in OpenWork Browser is currently supported.
 <!-- OPENWORK_BROWSER_END -->
 
 ## Memory
@@ -103,6 +92,10 @@ function normalizePreset(preset: string | null | undefined): string {
   const trimmed = preset?.trim() ?? "";
   if (!trimmed) return "starter";
   return trimmed;
+}
+
+function isSchemaOnlyOpencodeConfig(config: Record<string, unknown>): boolean {
+  return Object.keys(config).every((key) => key === "$schema");
 }
 
 async function ensureWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): Promise<boolean> {
@@ -200,7 +193,8 @@ async function ensureBrowserPlugin(workspaceRoot: string): Promise<boolean> {
   const hasPlugin = Array.isArray(config.plugin) && (config.plugin as string[]).includes(BROWSER_PLUGIN);
   const mcp = typeof config.mcp === "object" && config.mcp !== null ? config.mcp as Record<string, unknown> : null;
   const hasLegacyMcps = mcp ? LEGACY_BROWSER_MCP_KEYS.some((key) => key in mcp) : false;
-  const isOpenWorkOwned = config.default_agent === "openwork";
+  const shouldClaimDesktopCreatedConfig = await exists(openworkConfigPath(workspaceRoot)) && isSchemaOnlyOpencodeConfig(config);
+  const isOpenWorkOwned = config.default_agent === "openwork" || shouldClaimDesktopCreatedConfig;
 
   if (hasPlugin && !hasLegacyMcps) return false;
 
@@ -210,6 +204,10 @@ async function ensureBrowserPlugin(workspaceRoot: string): Promise<boolean> {
   if (!hasPlugin && (isOpenWorkOwned || hasLegacyMcps)) {
     const existing = Array.isArray(config.plugin) ? config.plugin as string[] : [];
     updates.plugin = [...existing, BROWSER_PLUGIN];
+  }
+
+  if (shouldClaimDesktopCreatedConfig) {
+    updates.default_agent = "openwork";
   }
 
   if (!Object.keys(updates).length && !hasLegacyMcps) return false;

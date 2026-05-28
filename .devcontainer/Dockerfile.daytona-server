@@ -1,0 +1,36 @@
+# Daytona image for the OpenWork Den server stack.
+#
+# This intentionally does not run Docker inside Daytona. The sandbox runs the
+# same services as packaging/docker/docker-compose.den-dev.yml directly:
+# MySQL, Den API, Den Web, and the worker proxy.
+FROM daytonaio/sandbox:0.6.0
+
+USER root
+
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    default-mysql-client \
+    default-mysql-server \
+    git \
+    procps \
+    sudo \
+  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*
+
+WORKDIR /workspace
+
+RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
+  && mkdir -p /workspace/.openwork-daytona \
+  && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.openwork-daytona/pnpm-lock.sha256 \
+  && git gc --prune=now \
+  && rm -rf /home/daytona/.cache /home/daytona/.npm /home/daytona/.local/share/pnpm/store \
+    /workspace/node_modules
+
+RUN chown -R daytona:daytona /workspace \
+  && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-openwork \
+  && chmod 0440 /etc/sudoers.d/daytona-openwork
+
+USER daytona

@@ -12,7 +12,17 @@ export type SessionTreeState = {
   ancestorIdsBySessionId: Map<string, string[]>;
   descendantCountBySessionId: Map<string, number>;
   activeIds: Set<string>;
+  streamingIds: Set<string>;
 };
+
+export const isStreamingSessionStatus = (status: string | undefined) =>
+  status === "running" ||
+  status === "busy" ||
+  status === "retry" ||
+  status === "streaming" ||
+  status === "thinking" ||
+  status === "responding" ||
+  status === "waiting";
 
 const normalizeSessionParentID = (session: SessionListItem) => {
   const parentID = session.parentID?.trim();
@@ -35,6 +45,7 @@ export const buildSessionTreeState = (
   const ancestorIdsBySessionId = new Map<string, string[]>();
   const descendantCountBySessionId = new Map<string, number>();
   const activeIds = new Set<string>();
+  const streamingIds = new Set<string>();
   const sessionIds = new Set(sessions.map((session) => session.id));
 
   sessions.forEach((session) => {
@@ -49,17 +60,21 @@ export const buildSessionTreeState = (
     ancestorIdsBySessionId.set(session.id, ancestors);
     const children = childrenByParent.get(session.id) ?? [];
     let descendantCount = 0;
-    let subtreeActive = (sessionStatusById?.[session.id] ?? "idle") !== "idle";
+    const ownStatus = sessionStatusById?.[session.id] ?? "idle";
+    let subtreeActive = ownStatus !== "idle";
+    let subtreeStreaming = isStreamingSessionStatus(ownStatus);
 
     children.forEach((child) => {
       const childState = walk(child, [...ancestors, session.id]);
       descendantCount += 1 + childState.descendantCount;
       subtreeActive = subtreeActive || childState.subtreeActive;
+      subtreeStreaming = subtreeStreaming || childState.subtreeStreaming;
     });
 
     descendantCountBySessionId.set(session.id, descendantCount);
     if (subtreeActive) activeIds.add(session.id);
-    return { descendantCount, subtreeActive };
+    if (subtreeStreaming) streamingIds.add(session.id);
+    return { descendantCount, subtreeActive, subtreeStreaming };
   };
 
   getRootSessions(sessions).forEach((session) => {
@@ -71,6 +86,7 @@ export const buildSessionTreeState = (
     ancestorIdsBySessionId,
     descendantCountBySessionId,
     activeIds,
+    streamingIds,
   };
 };
 

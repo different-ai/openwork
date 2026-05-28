@@ -15,7 +15,7 @@
  * the overlay renders null.
  *
  * Findings also land on window.__openwork.slice("profiler") so external
- * tools / Chrome MCP can read them.
+ * tools can read them.
  */
 
 import {

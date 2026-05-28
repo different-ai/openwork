@@ -7,12 +7,12 @@ import {
   Box,
   Check,
   ChevronDown,
-  Chrome,
   CircleAlert,
   Copy,
   File as FileIcon,
   Folder,
   GitFork,
+  Globe,
   Search,
   Terminal,
   Undo2,
@@ -843,7 +843,7 @@ function inlineOpenTargetsForMessage(message: UIMessage, verifiedTargets: OpenTa
 
 function OpenTargetIcon(props: { target: OpenTarget }) {
   if (props.target.kind === "url") {
-    return <Chrome size={12} className="shrink-0 text-muted-foreground" />;
+    return <Globe size={12} className="shrink-0 text-muted-foreground" />;
   }
 
   if (props.target.preview === "sheet") {

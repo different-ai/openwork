@@ -1,4 +1,11 @@
 import { z } from "zod";
+import type {
+  SessionGetResponse,
+  SessionListResponse,
+  SessionMessagesResponse,
+  SessionStatusResponse,
+  SessionTodoResponse,
+} from "@opencode-ai/sdk/v2/client";
 
 import { ApiError } from "./errors.js";
 
@@ -98,31 +105,31 @@ function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, label: string): T
   });
 }
 
-export function buildSessionList(value: unknown): SessionInfoReadModel[] {
+export function buildSessionList(value: SessionListResponse): SessionInfoReadModel[] {
   return parseOrThrow(sessionListSchema, value, "session list");
 }
 
-export function buildSession(value: unknown): SessionInfoReadModel {
+export function buildSession(value: SessionGetResponse): SessionInfoReadModel {
   return parseOrThrow(sessionInfoSchema, value, "session");
 }
 
-export function buildSessionMessages(value: unknown): SessionMessageReadModel[] {
+export function buildSessionMessages(value: SessionMessagesResponse): SessionMessageReadModel[] {
   return parseOrThrow(sessionMessagesSchema, value, "session messages");
 }
 
-export function buildSessionTodos(value: unknown): SessionTodoReadModel[] {
+export function buildSessionTodos(value: SessionTodoResponse): SessionTodoReadModel[] {
   return parseOrThrow(sessionTodosSchema, value, "session todos");
 }
 
-export function buildSessionStatuses(value: unknown): Record<string, SessionStatusReadModel> {
+export function buildSessionStatuses(value: SessionStatusResponse): Record<string, SessionStatusReadModel> {
   return parseOrThrow(sessionStatusesSchema, value, "session statuses");
 }
 
 export function buildSessionSnapshot(input: {
-  session: unknown;
-  messages: unknown;
-  todos: unknown;
-  statuses: unknown;
+  session: SessionGetResponse;
+  messages: SessionMessagesResponse;
+  todos: SessionTodoResponse;
+  statuses: SessionStatusResponse;
 }): SessionSnapshotReadModel {
   const session = buildSession(input.session);
   const messages = buildSessionMessages(input.messages);

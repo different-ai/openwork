@@ -352,6 +352,31 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setAuthError(null);
   }
 
+  async function redirectToRequiredSso(trimmedEmail: string) {
+    const { response, payload } = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
+
+    if (response.status === 204) {
+      return false;
+    }
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Could not resolve workspace SSO (${response.status}).`));
+    }
+
+    const signInUrl = typeof (payload as { signInUrl?: unknown } | null)?.signInUrl === "string"
+      ? (payload as { signInUrl: string }).signInUrl
+      : "";
+    if (!signInUrl) {
+      return false;
+    }
+
+    const nextUrl = new URL(signInUrl, window.location.origin);
+    nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl());
+    nextUrl.searchParams.set("loginHint", trimmedEmail);
+    window.location.assign(nextUrl.toString());
+    return true;
+  }
+
   async function finalizeEmailPasswordSignIn(
     nextMode: AuthMode,
     trimmedEmail: string,
@@ -1068,6 +1093,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     try {
       const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
+      if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
+        return null;
+      }
       const body =
         authMode === "sign-up"
           ? {
@@ -1144,6 +1172,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     });
 
     try {
+      const trimmedEmail = email.trim();
+      if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
+        }
+        return;
+      }
       const callbackURL = getSocialCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",

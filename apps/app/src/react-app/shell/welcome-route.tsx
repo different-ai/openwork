@@ -6,8 +6,6 @@ import { t } from "../../i18n";
 import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
-  workspaceCreate,
-  workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type WorkspaceInfo,
@@ -112,56 +110,56 @@ export function WelcomeRoute() {
       dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
-      const list = await workspaceCreate({
-        folderPath: folder,
-        name: workspaceName,
-        preset: "starter",
-      }) as WorkspaceList;
-      const createdId =
-        resolveWorkspaceListSelectedId(list) ||
-        list.workspaces[list.workspaces.length - 1]?.id ||
-        "";
-      let targetWorkspaceId = createdId;
-      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
+        let list: WorkspaceList | null = null;
+        let serverBaseUrl = "";
+        let serverToken = "";
+        try {
+          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
+            await resolveOpenworkConnection();
+          if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
+            const openworkClient = createOpenworkServerClient({
+              baseUrl: normalizedBaseUrl,
+              token: resolvedToken || undefined,
+              hostToken: resolvedHostToken || undefined,
+            });
+            list = await openworkClient.createLocalWorkspace({
+              folderPath: folder,
+              name: workspaceName,
+              preset: "starter",
+            });
+            serverBaseUrl = normalizedBaseUrl;
+            serverToken = resolvedToken;
+          }
+        } catch {
+          list = null;
+        }
+        if (!list) {
+          throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
+        }
+        const createdId =
+          resolveWorkspaceListSelectedId(list) ||
+          list.workspaces[list.workspaces.length - 1]?.id ||
+          "";
+        let targetWorkspaceId = createdId;
+        let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
         let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
           writeActiveWorkspaceId(createdId);
         }
-        // Register with the running openwork-server if available.
-        try {
-          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-            await resolveOpenworkConnection();
-          if (normalizedBaseUrl && resolvedToken) {
-            const openworkClient = createOpenworkServerClient({
-              baseUrl: normalizedBaseUrl,
-              token: resolvedToken,
-              hostToken: resolvedHostToken || undefined,
-            });
-            const serverList = await openworkClient
-              .createLocalWorkspace({
-                folderPath: folder,
-                name: workspaceName,
-                preset: "starter",
-              })
-              .catch(() => null);
-            targetWorkspaceId = serverList
-              ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
-              : targetWorkspaceId;
-            targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
-            if (targetWorkspaceId) {
-              const workspacePath = targetWorkspace?.path?.trim() || folder;
-              const session = unwrap(await createClient(
-                `${(buildOpenworkWorkspaceBaseUrl(normalizedBaseUrl, targetWorkspaceId) ?? normalizedBaseUrl).replace(/\/+$/, "")}/opencode`,
-                workspacePath || undefined,
-                { token: resolvedToken, mode: "openwork" },
-              ).session.create({ directory: workspacePath || undefined }));
-              targetSessionId = session.id;
-            }
+        if (targetWorkspaceId && serverBaseUrl && serverToken) {
+          try {
+            const workspacePath = targetWorkspace?.path?.trim() || folder;
+            const session = unwrap(await createClient(
+              `${(buildOpenworkWorkspaceBaseUrl(serverBaseUrl, targetWorkspaceId) ?? serverBaseUrl).replace(/\/+$/, "")}/opencode`,
+              workspacePath || undefined,
+              { token: serverToken, mode: "openwork" },
+            ).session.create({ directory: workspacePath || undefined }));
+            targetSessionId = session.id;
+          } catch {
+            // Best-effort first task creation.
           }
-        } catch {
-          // Best-effort server registration.
         }
         if (targetWorkspaceId) {
           writeActiveWorkspaceId(targetWorkspaceId);
@@ -194,18 +192,36 @@ export function WelcomeRoute() {
       if (!baseUrlValue) return false;
       dispatch({ type: "remote:start" });
       try {
-      const list = await workspaceCreateRemote({
-        baseUrl: baseUrlValue,
-        openworkHostUrl: baseUrlValue,
-        openworkToken: input.openworkToken?.trim() || null,
-        displayName: input.displayName?.trim() || null,
-        directory: input.directory?.trim() || null,
-        remoteType: "openwork",
-      }) as WorkspaceList;
-      const createdId =
-        resolveWorkspaceListSelectedId(list) ||
-        list.workspaces[list.workspaces.length - 1]?.id ||
-        "";
+        const remoteType: "openwork" = "openwork";
+        const payload = {
+          baseUrl: baseUrlValue,
+          openworkHostUrl: baseUrlValue,
+          openworkToken: input.openworkToken?.trim() || null,
+          displayName: input.displayName?.trim() || null,
+          directory: input.directory?.trim() || null,
+          remoteType,
+        };
+        let list: WorkspaceList | null = null;
+        try {
+          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
+            await resolveOpenworkConnection();
+          if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
+            list = await createOpenworkServerClient({
+              baseUrl: normalizedBaseUrl,
+              token: resolvedToken || undefined,
+              hostToken: resolvedHostToken || undefined,
+            }).createRemoteWorkspace(payload);
+          }
+        } catch {
+          list = null;
+        }
+        if (!list) {
+          throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+        }
+        const createdId =
+          resolveWorkspaceListSelectedId(list) ||
+          list.workspaces[list.workspaces.length - 1]?.id ||
+          "";
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);

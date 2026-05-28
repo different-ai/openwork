@@ -9,7 +9,7 @@ Full-stack dev environment that runs the **real Electron app** + Den stack in a 
 | **Desktop App (noVNC)** | 6080 | The real Electron app rendered in a virtual display, accessible in your browser |
 | **Den Web** | 3005 | Admin dashboard for managing orgs, restrictions, providers |
 | **Den API** | 8788 | Control plane API |
-| **CDP Debug** | 9825 | Chrome DevTools Protocol — for automation and Chrome MCP |
+| **CDP Debug** | 9825 | Chrome DevTools Protocol — for app and browser automation |
 | **Vite HMR** | 5173 | Hot module replacement for the React UI |
 | **MySQL** | 3306 | Database (internal) |
 
@@ -36,9 +36,43 @@ bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken
 Future Daytona test sandboxes mount `openwork-eval-secrets:/daytona-secrets`
 and source `/daytona-secrets/openai.env` automatically before Electron starts.
 
+For downloadable eval artifacts or optional video recording, use:
+
+```bash
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] --record-video
+```
+
+The artifacts flow mounts `openwork-eval-artifacts:/daytona-artifacts`, starts a
+static download server on port 8090, and prints a Daytona preview URL. Recording
+writes mp4 files to `/daytona-artifacts/recordings` and prints the direct video
+URL. Stop recording with the printed `pkill -INT -f "ffmpeg.*x11grab"` command so
+ffmpeg finalizes the file cleanly.
+
 Do not use the generic `daytona create https://github.com/different-ai/openwork`
 flow for Electron/noVNC tests. The default resource size is too small and the
 generic image path does not guarantee the desktop stack we need.
+
+## Quick start with Daytona server
+
+```bash
+bash .devcontainer/create-daytona-openwork-server-snapshot.sh  # one-time / refresh when deps change
+bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
+```
+
+The server helper creates a separate public Daytona sandbox for the Den stack:
+MySQL, Den API, Den Web, and the worker proxy. It prints public preview URLs and
+the exact Electron command to point a desktop sandbox at that server:
+
+```bash
+bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
+  --den-base-url https://3005-...daytonaproxy... \
+  --den-api-base-url https://8788-...daytonaproxy...
+```
+
+This keeps the architecture simple: the server sandbox owns cloud auth, orgs,
+policies, workers, and persistence; the Electron sandbox stays a real desktop
+client and talks to the server through public Daytona preview URLs.
 
 ## How it works
 
@@ -56,6 +90,8 @@ generic image path does not guarantee the desktop stack we need.
 6. `/opt/openwork-daytona/start-daytona-electron.sh` sources optional secrets,
    applies Daytona-safe Chromium flags, and starts Electron on display `:99`.
 7. **CDP on port 9825** enables Chrome MCP and browser-tool automation.
+8. Optional artifact capture mounts `/daytona-artifacts`, serves it on port 8090,
+   and records display `:99` with ffmpeg when `--record-video` is passed.
 
 ## Testing the customization system
 
@@ -80,6 +116,10 @@ Your Browser
     │
     └── :8788 Den API (Hono) ──▶ MySQL :3306
 ```
+
+With a separate server sandbox, the Electron box uses Daytona preview URLs for
+Den Web/API instead of `localhost`, while the server sandbox still keeps its
+internal service graph local.
 
 ## Automation
 

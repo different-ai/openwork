@@ -66,6 +66,15 @@ export const desktopPolicyDefinitions = [
     defaultValue: true,
   },
   {
+    id: "allowBuiltInExtensions",
+    name: "Built-in Extensions",
+    description:
+      "Allow users to see and use OpenWork's built-in extensions, including browser, image, and local-provider extensions.",
+    userNotice:
+      "Your organization administrator has disabled built-in OpenWork extensions.",
+    defaultValue: true,
+  },
+  {
     id: "showWelcomePage",
     name: "Welcome Page",
     description: "Show the Getting Started page to new users.",

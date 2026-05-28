@@ -323,6 +323,39 @@ Always use two separate `daytona exec` calls with a `sleep` between them.
 | Den Web   | 3005 | Admin dashboard (needs MySQL)            |
 | Den API   | 8788 | Control plane (needs MySQL)              |
 
+## Two-sandbox Den + Electron marketplace evals
+
+Use this when testing Cloud Marketplace, desktop policies, or org-managed
+extension flows end-to-end.
+
+1. Start the Den server sandbox:
+```bash
+bash .devcontainer/test-server-on-daytona.sh <branch-or-commit>
+```
+
+2. Seed the server sandbox with demo org, marketplace, and plugin data. The seed
+must use the same encryption key as `.devcontainer/start-daytona-server.sh`, and
+`@openwork/email` must be built before the seed imports Den email helpers:
+```bash
+daytona exec <server-sandbox> -- 'cd /workspace && pnpm --filter @openwork/email build && cd /workspace/ee/apps/den-api && OPENWORK_DEV_MODE=1 DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den DEN_DB_ENCRYPTION_KEY=daytona-den-db-encryption-key-please-change-1234567890 BETTER_AUTH_SECRET=local-dev-secret-not-for-production-use!! BETTER_AUTH_URL=http://localhost:3005 pnpm exec tsx scripts/seed-demo-org.ts --reset'
+```
+
+3. Start Electron against the printed Den Web/API URLs:
+```bash
+bash .devcontainer/test-on-daytona.sh <branch-or-commit> --den-base-url <DEN_WEB_URL> --den-api-base-url <DEN_API_URL> --record-video --recording-name <name>
+```
+
+4. Sign in from Electron using the seeded demo account. Create a desktop handoff
+grant from the Den API, paste the `openwork://den-auth?...` URL into Cloud
+Account -> `Paste sign-in code`, and choose `Acme Robotics`:
+```bash
+TOKEN=$(curl -s -X POST '<DEN_API_URL>/api/auth/sign-in/email' -H 'content-type: application/json' --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}' | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')
+curl -s -X POST '<DEN_API_URL>/v1/auth/desktop-handoff' -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' --data '{"desktopScheme":"openwork"}'
+```
+
+5. Open Settings -> Extensions -> Marketplace and run the marketplace install,
+remove, search, and filter flows against the seeded marketplace packages.
+
 ## Troubleshooting
 
 **OOM during pnpm install or Vite esbuild crash (EPIPE):**

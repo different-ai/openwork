@@ -85,7 +85,7 @@ title: "Changelog"
   ## [v0.11.198](https://github.com/different-ai/openwork/compare/v0.11.196...v0.11.198): Improved workspace export security 
 
   - Blocked sensitive workspace exports and showed warnings before sharing risky config or secrets.
-  - Trusted bundle imports only from the configured publisher unless users explicitly choose a warning-backed manual path.
+  - Tightened import safety for workspace configuration and portable files.
 
 </Update>
 
@@ -170,7 +170,7 @@ title: "Changelog"
   ## [v0.11.168](https://github.com/different-ai/openwork/compare/v0.11.164...v0.11.168): Release recovery with repaired installers
   - Cloud Migration from render VMs to Daytona Sandbox workers
   - pnpm web:dev-local working reliably when starting from scratch in a new worktree 
-  - Restored Shared bundle installs and better cache clearing of disconnected provider credentials.
+  - Restored skill install flows and better cache clearing of disconnected provider credentials.
 
 </Update>
 
@@ -197,11 +197,11 @@ title: "Changelog"
 
 <Update label="March 14th" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
 
-  ## [v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.149): Better share page, den onboarding flow and Oath
+  ## [v0.11.149](https://github.com/different-ai/openwork/compare/v0.11.146...v0.11.149): Better den onboarding flow and Oath
 
-  - Simplified Den onboarding flow and openworkshare page to publish a single skill
+  - Simplified Den onboarding flow.
   - More polished feedback card and telemetry around bug reporting. 
-  - Shared skills can now be imported into existing workers. 
+  - Cloud skills can now be installed into existing workers.
   - ChatGPT Oath added to "New chat Session"
 
     <img src="/images/chatgpt-new-session-cta.png" alt="New session with Connect ChatGPT for free CTA" />
@@ -231,7 +231,7 @@ title: "Changelog"
   ## [v0.11.140](https://github.com/different-ai/openwork/compare/v0.11.136...v0.11.140): Improved workers, sharing skills, GOAuth
 
   - Creating a new worker opens up an empty session instead of automations
-  - Share skills with one click at share.openworklabs.com
+  - Skill sharing improvements
   - Task list not sticking to the composer box
   - Google and GitHub
 
@@ -241,10 +241,9 @@ title: "Changelog"
 
 <Update label="March 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
-  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker, Share and MCP auth
+  ## [v0.11.136](https://github.com/different-ai/openwork/compare/v0.11.135...v0.11.136): Improved model picker and MCP auth
 
   - Model picker now separates enabled and not-enabled providers, and clicking a disabled provider opens its settings.
-  - OpenWork Share now packages dropped skills, agents, commands, and MCP or OpenWork config into worker bundles.
   - MCP auth now waits for agents to stop or finish before continuing.
 
   <table>
