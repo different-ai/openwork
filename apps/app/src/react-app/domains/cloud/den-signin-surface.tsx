@@ -114,10 +114,10 @@ function ShowcasePanel() {
           <Share2 size={16} className="mt-0.5 shrink-0 text-dls-secondary" strokeWidth={1.5} />
           <div>
             <div className="text-[12px] font-medium text-dls-text">
-              Share in one link
+              Team skill hubs
             </div>
             <div className="mt-0.5 text-[11px] leading-snug text-dls-secondary">
-              Package skills, MCPs, and configs for your team.
+              Save approved skills for your organization.
             </div>
           </div>
         </div>

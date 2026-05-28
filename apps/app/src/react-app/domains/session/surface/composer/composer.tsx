@@ -34,6 +34,14 @@ type PastedTextChip = {
 type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
 type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
 
+function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
+  const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
+    contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
+  ) === true;
+  if (hasSessionSurface) return isOpenWorkExtensionEnabled(entry);
+  return !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry);
+}
+
 type ComposerProps = {
   draft: string;
   mentions: Record<string, "agent" | "file">;
@@ -638,7 +646,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     : null;
   const composerExtensions = OPENWORK_EXTENSION_CATALOG.filter((entry) =>
     !builtInExtensionsDisabled &&
-    !isOpenWorkExtensionHidden(entry) && (!entry.defaultEnabled || isOpenWorkExtensionEnabled(entry))
+    !isOpenWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
   );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 

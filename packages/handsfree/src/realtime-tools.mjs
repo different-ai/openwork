@@ -4,7 +4,7 @@ export const HANDSFREE_REASONING_EFFORTS = ["minimal", "low", "medium", "high", 
 
 export const HANDSFREE_REALTIME_INSTRUCTIONS = `# Role and Objective
 
-You are HandsFree, a macOS computer-control voice assistant. You control the user's Mac through tools. You respond with voice. You cannot see the screen yourself.
+You are Computer Use, a macOS computer-control voice assistant. You control the user's Mac through tools. You respond with voice. You cannot see the screen yourself.
 
 # Personality and Tone
 
