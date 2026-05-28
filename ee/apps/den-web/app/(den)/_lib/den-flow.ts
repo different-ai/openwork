@@ -42,7 +42,6 @@ export type BillingSummary = {
   featureGateEnabled: boolean;
   hasActivePlan: boolean;
   checkoutRequired: boolean;
-  checkoutUrl: string | null;
   portalUrl: string | null;
   price: BillingPrice | null;
   subscription: BillingSubscription | null;
@@ -419,13 +418,6 @@ export function getToken(payload: unknown): string | null {
   return typeof payload.token === "string" ? payload.token : null;
 }
 
-export function getCheckoutUrl(payload: unknown): string | null {
-  if (!isRecord(payload) || !isRecord(payload.polar)) {
-    return null;
-  }
-  return typeof payload.polar.checkoutUrl === "string" ? payload.polar.checkoutUrl : null;
-}
-
 export function getWorker(payload: unknown): WorkerLaunch | null {
   if (!isRecord(payload) || !isRecord(payload.worker)) {
     return null;
@@ -606,7 +598,7 @@ export function getBillingSummary(payload: unknown): BillingSummary | null {
     return null;
   }
 
-  const billing = payload.billing;
+  const billing = isRecord(payload.billing.polar) ? payload.billing.polar : payload.billing;
   const featureGateEnabled = billing.featureGateEnabled;
   const hasActivePlan = billing.hasActivePlan;
   const checkoutRequired = billing.checkoutRequired;
@@ -623,7 +615,6 @@ export function getBillingSummary(payload: unknown): BillingSummary | null {
     featureGateEnabled,
     hasActivePlan,
     checkoutRequired,
-    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
     portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
     price: getBillingPrice(billing.price),
     subscription: getBillingSubscription(billing.subscription),

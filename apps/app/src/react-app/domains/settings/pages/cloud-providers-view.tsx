@@ -21,6 +21,7 @@ type ProviderActionKind = "import" | "remove" | "sync";
 export type CloudProvidersViewProps = {
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  embedded?: boolean;
   importedCloudProviders: Record<string, CloudImportedProvider>;
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
@@ -36,6 +37,7 @@ const sameStringList = (a: string[], b: string[]) =>
 export function CloudProvidersView({
   cloudOrgProviders,
   connectCloudProvider,
+  embedded = false,
   importedCloudProviders,
   onOpenAccount,
   refreshCloudOrgProviders,
@@ -207,35 +209,42 @@ export function CloudProvidersView({
   );
 
   if (!isSignedIn) {
-    return (
+    const notice = (
+      <SettingsNotice>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span>{t("skills.share_team_sign_in_hint")}</span>
+          <Button size="sm" onClick={onOpenAccount}>
+            {t("skills.share_team_sign_in")}
+          </Button>
+        </div>
+      </SettingsNotice>
+    );
+    return embedded ? notice : (
       <SettingsStack>
         <Separator />
-        <SettingsNotice>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>{t("skills.share_team_sign_in_hint")}</span>
-            <Button size="sm" onClick={onOpenAccount}>
-              {t("skills.share_team_sign_in")}
-            </Button>
-          </div>
-        </SettingsNotice>
+        {notice}
       </SettingsStack>
     );
   }
 
-  return (
+  const section = (
+    <CloudProvidersSection
+      actionError={actionError}
+      actionId={actionId}
+      actionKind={actionKind}
+      busy={busy}
+      rows={rows}
+      onImport={importProvider}
+      onRefresh={refresh}
+      onRemove={undefined}
+      onSync={syncProvider}
+    />
+  );
+
+  return embedded ? section : (
     <SettingsStack>
       <Separator />
-      <CloudProvidersSection
-        actionError={actionError}
-        actionId={actionId}
-        actionKind={actionKind}
-        busy={busy}
-        rows={rows}
-        onImport={importProvider}
-        onRefresh={refresh}
-        onRemove={undefined}
-        onSync={syncProvider}
-      />
+      {section}
     </SettingsStack>
   );
 }

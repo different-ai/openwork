@@ -9,7 +9,7 @@ import {
 import { reconcileTranscriptMessages } from "../src/react-app/domains/session/sync/transcript-reconcile";
 
 function snapshotWithMessages(
-  messages: Array<{ id: string; role: "user" | "assistant"; text: string }>,
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string; created?: number }>,
   sessionId = "ses_test",
 ): OpenworkSessionSnapshot {
   return {
@@ -26,7 +26,7 @@ function snapshotWithMessages(
         id: message.id,
         role: message.role,
         sessionID: sessionId,
-        time: { created: index + 1 },
+        time: { created: message.created ?? index + 1 },
       },
       parts: [
         {
@@ -43,10 +43,11 @@ function snapshotWithMessages(
   } as unknown as OpenworkSessionSnapshot;
 }
 
-function uiMessage(id: string, role: "user" | "assistant", text: string): UIMessage {
+function uiMessage(id: string, role: "user" | "assistant", text: string, created?: number): UIMessage {
   return {
     id,
     role,
+    ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
     parts: [{ type: "text", text, state: "done" }],
   };
 }
@@ -134,6 +135,32 @@ describe("reconcileTranscriptMessages", () => {
 
     expect(merged[1]?.parts[0]).toMatchObject({ text: "finished answer" });
   });
+
+  it("inserts cached-only message blocks by timestamp instead of appending them", () => {
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block2", "assistant", "block 2", 2),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+        uiMessage("msg_streaming", "assistant", "streaming", 5),
+      ],
+      snapshotMessages: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+      ],
+      reason: "snapshot",
+    });
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "msg_block1",
+      "msg_block2",
+      "msg_block3",
+      "msg_block4",
+      "msg_streaming",
+    ]);
+  });
 });
 
 describe("deriveRenderedSessionMessages", () => {
@@ -150,22 +177,20 @@ describe("deriveRenderedSessionMessages", () => {
     });
   });
 
-  it("keeps live transcript cache when it covers the snapshot", () => {
+  it("keeps longer live text when the cache covers the snapshot", () => {
     const cached: UIMessage[] = [
-      {
-        id: "msg_user",
-        role: "assistant",
-        parts: [{ type: "text", text: "live text", state: "done" }],
-      },
+      uiMessage("msg_user", "user", "snapshot text plus live tail", 1),
     ];
 
-    expect(deriveRenderedSessionMessages({
+    const messages = deriveRenderedSessionMessages({
       transcriptState: cached,
       snapshot: snapshotWithText("snapshot text"),
-    })).toBe(cached);
+    });
+
+    expect(messages[0]?.parts[0]).toMatchObject({ text: "snapshot text plus live tail" });
   });
 
-  it("renders the canonical live cache without merging snapshot history", () => {
+  it("keeps snapshot history visible when the live cache only has the active turn", () => {
     const messages = deriveRenderedSessionMessages({
       transcriptState: [
         {
@@ -186,12 +211,14 @@ describe("deriveRenderedSessionMessages", () => {
     });
 
     expect(messages.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
       "msg_current_user",
       "msg_current_assistant",
     ]);
   });
 
-  it("keeps live-only tail messages instead of merging a stale snapshot during render", () => {
+  it("keeps live-only tail messages after the stream flips idle before the snapshot catches up", () => {
     const messages = deriveRenderedSessionMessages({
       transcriptState: [
         uiMessage("msg_current_user", "user", "latest prompt"),
@@ -204,8 +231,35 @@ describe("deriveRenderedSessionMessages", () => {
     });
 
     expect(messages.map((message) => message.id)).toEqual([
+      "msg_old_user",
+      "msg_old_assistant",
       "msg_current_user",
       "msg_current_assistant",
+    ]);
+  });
+
+  it("renders cached-only message blocks by timestamp instead of appending them", () => {
+    const messages = deriveRenderedSessionMessages({
+      transcriptState: [
+        uiMessage("msg_block1", "user", "block 1", 1),
+        uiMessage("msg_block2", "assistant", "block 2", 2),
+        uiMessage("msg_block3", "user", "block 3", 3),
+        uiMessage("msg_block4", "assistant", "block 4", 4),
+        uiMessage("msg_streaming", "assistant", "streaming", 5),
+      ],
+      snapshot: snapshotWithMessages([
+        { id: "msg_block1", role: "user", text: "block 1", created: 1 },
+        { id: "msg_block3", role: "user", text: "block 3", created: 3 },
+        { id: "msg_block4", role: "assistant", text: "block 4", created: 4 },
+      ]),
+    });
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "msg_block1",
+      "msg_block2",
+      "msg_block3",
+      "msg_block4",
+      "msg_streaming",
     ]);
   });
 

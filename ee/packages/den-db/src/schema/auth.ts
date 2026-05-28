@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto"
 import { sql } from "drizzle-orm"
-import { bigint, boolean, index, int, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn } from "../columns"
+import { bigint, boolean, index, int, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { denTypeIdColumn, encryptedTextColumn } from "../columns"
 
 export const AuthUserTable = mysqlTable(
   "user",
@@ -232,6 +232,109 @@ export const OAuthConsentTable = mysqlTable(
   ],
 )
 
+export const ScimProviderTable = mysqlTable(
+  "scim_provider",
+  {
+    id: denTypeIdColumn("scimProvider", "id").notNull().primaryKey(),
+    providerId: varchar("provider_id", { length: 255 }).notNull(),
+    scimToken: encryptedTextColumn("scim_token").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    uniqueIndex("scim_provider_provider_id").on(table.providerId),
+    uniqueIndex("scim_provider_organization_id").on(table.organizationId),
+  ],
+)
+
+export const SsoProviderTable = mysqlTable(
+  "sso_provider",
+  {
+    id: denTypeIdColumn("ssoProvider", "id").notNull().primaryKey(),
+    issuer: varchar("issuer", { length: 2048 }).notNull(),
+    domain: varchar("domain", { length: 255 }).notNull(),
+    oidcConfig: encryptedTextColumn("oidc_config"),
+    samlConfig: encryptedTextColumn("saml_config"),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    providerId: varchar("provider_id", { length: 255 }).notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    domainVerified: boolean("domain_verified").notNull().default(false),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    uniqueIndex("sso_provider_provider_id").on(table.providerId),
+    index("sso_provider_domain").on(table.domain),
+    index("sso_provider_organization_id").on(table.organizationId),
+    index("sso_provider_user_id").on(table.userId),
+  ],
+)
+
+export const SsoConnectionTable = mysqlTable(
+  "sso_connection",
+  {
+    id: denTypeIdColumn("ssoConnection", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    providerId: varchar("provider_id", { length: 255 }).notNull(),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    issuer: varchar("issuer", { length: 2048 }).notNull(),
+    domain: varchar("domain", { length: 255 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull().default("enabled"),
+    signInPath: varchar("sign_in_path", { length: 2048 }).notNull(),
+    lastTestedAt: timestamp("last_tested_at", { fsp: 3 }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    uniqueIndex("sso_connection_organization_id").on(table.organizationId),
+    uniqueIndex("sso_connection_provider_id").on(table.providerId),
+    index("sso_connection_domain").on(table.domain),
+  ],
+)
+
+export const ExternalIdentityTable = mysqlTable(
+  "external_identity",
+  {
+    id: denTypeIdColumn("externalIdentity", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    source: varchar("source", { length: 32 }).notNull(),
+    scimProviderId: varchar("scim_provider_id", { length: 255 }),
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }),
+    remoteId: varchar("remote_id", { length: 191 }),
+    externalId: varchar("external_id", { length: 191 }),
+    userName: varchar("user_name", { length: 191 }),
+    email: varchar("email", { length: 191 }),
+    displayName: varchar("display_name", { length: 191 }),
+    nameJson: json("name_json").$type<Record<string, unknown> | null>(),
+    emailsJson: json("emails_json").$type<unknown[] | null>(),
+    attributesJson: json("attributes_json").$type<Record<string, unknown> | null>(),
+    active: boolean("active").notNull().default(true),
+    lastScimSyncAt: timestamp("last_scim_sync_at", { fsp: 3 }),
+    lastSsoLoginAt: timestamp("last_sso_login_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    uniqueIndex("external_identity_org_user").on(table.organizationId, table.userId),
+    uniqueIndex("external_identity_org_sso_remote").on(table.organizationId, table.ssoProviderId, table.remoteId),
+    uniqueIndex("external_identity_org_scim_external").on(table.organizationId, table.scimProviderId, table.externalId),
+    index("external_identity_org_email").on(table.organizationId, table.email),
+    index("external_identity_sso_provider").on(table.ssoProviderId),
+    index("external_identity_scim_provider").on(table.scimProviderId),
+  ],
+)
+
 export const user = AuthUserTable
 export const session = AuthSessionTable
 export const account = AuthAccountTable
@@ -242,3 +345,7 @@ export const oauthClient = OAuthClientTable
 export const oauthRefreshToken = OAuthRefreshTokenTable
 export const oauthAccessToken = OAuthAccessTokenTable
 export const oauthConsent = OAuthConsentTable
+export const scimProvider = ScimProviderTable
+export const ssoProvider = SsoProviderTable
+export const ssoConnection = SsoConnectionTable
+export const externalIdentity = ExternalIdentityTable

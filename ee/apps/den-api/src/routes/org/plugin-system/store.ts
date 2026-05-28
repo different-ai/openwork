@@ -338,13 +338,75 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: PluginMarketplaceSummary[] = []) {
+function extensionResourceTypeForConfigObject(objectType: string) {
+  switch (objectType) {
+    case "skill":
+    case "agent":
+    case "command":
+    case "tool":
+    case "mcp":
+    case "hook":
+    case "context":
+      return objectType
+    default:
+      return "file"
+  }
+}
+
+function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
+  const sourceFormat = "claude-plugin"
+  const description = row.description?.trim() || `${row.name} extension`
+  const resources = Object.entries(componentCounts).flatMap(([objectType, count]) => {
+    if (count <= 0) return []
+    const resourceType = extensionResourceTypeForConfigObject(objectType)
+    return [{
+      type: resourceType,
+      id: `${row.id}:${objectType}`,
+      label: `${count} ${objectType}${count === 1 ? "" : "s"}`,
+      required: true,
+    }]
+  })
+  return {
+    description: row.description,
+    id: row.id,
+    manifest: {
+      schemaVersion: 1,
+      id: row.id,
+      name: row.name,
+      description,
+      source: {
+        format: sourceFormat,
+        origin: "den" as const,
+        reference: row.id,
+        trusted: false,
+      },
+      resources,
+      contributions: [{
+        type: "setup-instructions",
+        ref: "den.claudePlugin.setup",
+        label: "Claude-compatible plugin import",
+        location: "settings-detail",
+      }],
+      setup: {
+        instructions: "Imported from a Claude-compatible plugin. OpenWork installs its resources into this workspace as extension components.",
+      },
+      lifecycle: {
+        detection: Object.keys(componentCounts).map((objectType) => `${objectType}:${row.id}`),
+      },
+    },
+    name: row.name,
+    sourceFormat,
+  }
+}
+
+function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: PluginMarketplaceSummary[] = [], componentCounts: Record<string, number> = {}) {
   return {
     createdAt: row.createdAt.toISOString(),
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
     id: row.id,
+    extension: serializePluginExtension(row, componentCounts),
     marketplaces,
     memberCount,
     name: row.name,
@@ -1536,10 +1598,13 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
     counts.set(objectType, (counts.get(objectType) ?? 0) + 1)
   }
 
-  const plugins = pluginRows.map((row) => ({
-    ...serializePlugin(row, memberCounts.get(row.id) ?? 0),
-    componentCounts: Object.fromEntries(componentCountsByPlugin.get(row.id) ?? new Map()),
-  }))
+  const plugins = pluginRows.map((row) => {
+    const componentCounts = Object.fromEntries(componentCountsByPlugin.get(row.id) ?? new Map())
+    return {
+      ...serializePlugin(row, memberCounts.get(row.id) ?? 0, [], componentCounts),
+      componentCounts,
+    }
+  })
 
   let source: MarketplaceResolvedSource = null
   if (pluginIds.length > 0) {
@@ -2062,11 +2127,14 @@ export async function getConnectorInstanceConfiguration(input: { connectorInstan
 
   return {
     autoImportNewPlugins: typeof savedAutoImport === "boolean" ? savedAutoImport : true,
-    configuredPlugins: pluginRows.map((row) => ({
-      ...serializePlugin(row, membershipCounts.get(row.id) ?? 0),
-      componentCounts: Object.fromEntries(pluginComponentCounts.get(row.id) ?? new Map()),
-      rootPath: pluginRootPaths.get(row.id) ?? null,
-    })),
+    configuredPlugins: pluginRows.map((row) => {
+      const componentCounts = Object.fromEntries(pluginComponentCounts.get(row.id) ?? new Map())
+      return {
+        ...serializePlugin(row, membershipCounts.get(row.id) ?? 0, [], componentCounts),
+        componentCounts,
+        rootPath: pluginRootPaths.get(row.id) ?? null,
+      }
+    }),
     connectorInstance: serializeConnectorInstance(instance),
     importedConfigObjectCount: configObjectRows.length,
     mappingCount: mappings.length,

@@ -29,7 +29,6 @@ import {
   deriveOnboardingWorkerName,
   getAuthInfoForMode,
   getBillingSummary,
-  getCheckoutUrl,
   getEmailDomain,
   getErrorMessage,
   getOrgLimitError,
@@ -62,8 +61,8 @@ import {
   parseOrgListPayload,
 } from "../_lib/den-org";
 
-type LaunchWorkerResult = "success" | "checkout" | "limit" | "error";
-type AuthNavigationResult = "dashboard" | "checkout" | "join-org" | null;
+type LaunchWorkerResult = "success" | "limit" | "error";
+type AuthNavigationResult = "dashboard" | "join-org" | null;
 
 type DenFlowContextValue = {
   authMode: AuthMode;
@@ -94,15 +93,10 @@ type DenFlowContextValue = {
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
   billingBusy: boolean;
-  billingCheckoutBusy: boolean;
-  billingSubscriptionBusy: boolean;
   billingError: string | null;
-  effectiveCheckoutUrl: string | null;
   orgLimitError: OrgLimitError | null;
   clearOrgLimitError: () => void;
-  refreshBilling: (options?: { includeCheckout?: boolean; quiet?: boolean }) => Promise<BillingSummary | null>;
-  handleSubscriptionCancellation: (cancelAtPeriodEnd: boolean) => Promise<void>;
-  refreshCheckoutReturn: (sessionTokenPresent: boolean) => Promise<string>;
+  refreshBilling: (options?: { quiet?: boolean }) => Promise<BillingSummary | null>;
   onboardingPending: boolean;
   onboardingDecisionBusy: boolean;
   workers: WorkerListItem[];
@@ -192,10 +186,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
-  const [billingCheckoutBusy, setBillingCheckoutBusy] = useState(false);
-  const [billingSubscriptionBusy, setBillingSubscriptionBusy] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [billingLoadedOnce, setBillingLoadedOnce] = useState(false);
   const [orgLimitError, setOrgLimitError] = useState<OrgLimitError | null>(null);
@@ -264,9 +255,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
   const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
-  const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const onboardingPending = Boolean(onboardingIntent?.shouldLaunch && !onboardingIntent.completed);
-  const onboardingDecisionBusy = onboardingPending && !billingLoadedOnce && (billingBusy || billingCheckoutBusy || !sessionHydrated);
+  const onboardingDecisionBusy = onboardingPending && !billingLoadedOnce && (billingBusy || !sessionHydrated);
 
   const filteredWorkers = workers.filter((item) => {
     const query = workerQuery.trim().toLowerCase();
@@ -350,6 +340,31 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setVerificationCode("");
     setAuthInfo(getAuthInfoForMode(authMode));
     setAuthError(null);
+  }
+
+  async function redirectToRequiredSso(trimmedEmail: string) {
+    const { response, payload } = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
+
+    if (response.status === 204) {
+      return false;
+    }
+
+    if (!response.ok) {
+      throw new Error(getErrorMessage(payload, `Could not resolve workspace SSO (${response.status}).`));
+    }
+
+    const signInUrl = typeof (payload as { signInUrl?: unknown } | null)?.signInUrl === "string"
+      ? (payload as { signInUrl: string }).signInUrl
+      : "";
+    if (!signInUrl) {
+      return false;
+    }
+
+    const nextUrl = new URL(signInUrl, window.location.origin);
+    nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl());
+    nextUrl.searchParams.set("loginHint", trimmedEmail);
+    window.location.assign(nextUrl.toString());
+    return true;
   }
 
   async function finalizeEmailPasswordSignIn(
@@ -779,7 +794,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshBilling(options: { includeCheckout?: boolean; quiet?: boolean } = {}) {
+  async function refreshBilling(options: { quiet?: boolean } = {}) {
     if (!user) {
       setBillingSummary(null);
       if (!options.quiet) {
@@ -788,23 +803,16 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const includeCheckout = options.includeCheckout === true;
     const quiet = options.quiet === true;
-
-    if (includeCheckout) {
-      setBillingCheckoutBusy(true);
-    } else {
-      setBillingBusy(true);
-    }
+    setBillingBusy(true);
 
     if (!quiet) {
       setBillingError(null);
     }
 
     try {
-      const query = includeCheckout ? "?includeCheckout=1" : "";
       const { response, payload } = await requestJson(
-        `/v1/workers/billing${query}`,
+        "/v1/billing",
         {
           method: "GET",
           headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
@@ -832,11 +840,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       setBillingSummary(summary);
       setBillingLoadedOnce(true);
-      if (summary.checkoutUrl) {
-        setCheckoutUrl(summary.checkoutUrl);
-      } else if (!summary.checkoutRequired) {
-        setCheckoutUrl(null);
-      }
 
       return summary;
     } catch (error) {
@@ -847,73 +850,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
       return null;
     } finally {
-      if (includeCheckout) {
-        setBillingCheckoutBusy(false);
-      } else {
-        setBillingBusy(false);
-      }
-    }
-  }
-
-  async function handleSubscriptionCancellation(cancelAtPeriodEnd: boolean) {
-    if (!user || billingSubscriptionBusy) {
-      return;
-    }
-
-    if (cancelAtPeriodEnd && typeof window !== "undefined") {
-      const confirmed = window.confirm("Cancel subscription at period end? You can still use your current billing period.");
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    setBillingSubscriptionBusy(true);
-    setBillingError(null);
-
-    try {
-      const { response, payload } = await requestJson(
-        "/v1/workers/billing/subscription",
-        {
-          method: "POST",
-          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-          body: JSON.stringify({ cancelAtPeriodEnd })
-        },
-        12000
-      );
-
-      if (!response.ok) {
-        const message = getErrorMessage(payload, `Subscription update failed (${response.status}).`);
-        setBillingError(message);
-        appendEvent("error", "Subscription update failed", message);
-        return;
-      }
-
-      const summary = getBillingSummary(payload);
-      if (!summary) {
-        setBillingError("Subscription updated, but billing details could not be refreshed.");
-        appendEvent("warning", "Subscription updated", "Billing summary missing");
-        return;
-      }
-
-      setBillingSummary(summary);
-      setBillingLoadedOnce(true);
-      if (summary.checkoutUrl) {
-        setCheckoutUrl(summary.checkoutUrl);
-      } else if (!summary.checkoutRequired) {
-        setCheckoutUrl(null);
-      }
-
-      appendEvent(
-        "success",
-        cancelAtPeriodEnd ? "Subscription will cancel at period end" : "Subscription auto-renew resumed",
-        user.email
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown network error";
-      setBillingError(message);
-      appendEvent("error", "Subscription update failed", message);
-    } finally {
-      setBillingSubscriptionBusy(false);
+      setBillingBusy(false);
     }
   }
 
@@ -1068,6 +1005,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     try {
       const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
+      if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
+        return null;
+      }
       const body =
         authMode === "sign-up"
           ? {
@@ -1144,6 +1084,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     });
 
     try {
+      const trimmedEmail = email.trim();
+      if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
+        }
+        return;
+      }
       const callbackURL = getSocialCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
@@ -1217,13 +1164,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setWorkerLookupId("");
     setWorkersError(null);
     setLaunchError(null);
-    setCheckoutUrl(null);
     setBillingSummary(null);
     setBillingError(null);
     setOrgLimitError(null);
     setBillingBusy(false);
-    setBillingCheckoutBusy(false);
-    setBillingSubscriptionBusy(false);
     setBillingLoadedOnce(false);
     setTokenFetchedForWorkerId(null);
     setDeleteBusyWorkerId(null);
@@ -1266,7 +1210,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setLaunchBusy(true);
     setLaunchError(null);
     setOrgLimitError(null);
-    setCheckoutUrl(null);
     setLaunchStatus(options.source === "signup_auto" ? "Creating your first worker..." : "Checking worker billing and launch eligibility...");
     appendEvent("info", "Launch requested", resolvedLaunchName);
 
@@ -1294,8 +1237,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
 
       if (response.status === 402) {
-        const url = getCheckoutUrl(payload);
-        setCheckoutUrl(url);
         setBillingSummary((current) => {
           if (!current) {
             return current;
@@ -1305,16 +1246,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
             ...current,
             hasActivePlan: false,
             checkoutRequired: true,
-            checkoutUrl: url ?? current.checkoutUrl
           };
         });
-        setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
-        setLaunchError(url ? null : "Checkout URL missing from paywall response.");
-        appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
-        if (!url) {
-          void refreshBilling({ includeCheckout: true, quiet: true });
-        }
-        return "checkout" as const;
+        const message = getErrorMessage(payload, "New cloud worker launches are not available for this account.");
+        setLaunchStatus(message);
+        setLaunchError(message);
+        appendEvent("warning", "Worker launch unavailable", message);
+        return "error" as const;
       }
 
       if (!response.ok) {
@@ -1337,7 +1275,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       setWorker(resolvedWorker);
       setWorkerLookupId(parsedWorker.workerId);
       setPendingRestoredWorkerId(null);
-      setCheckoutUrl(null);
 
       if (resolvedWorker.status === "provisioning") {
         setLaunchStatus("Provisioning started. We will keep checking automatically.");
@@ -1681,7 +1618,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     setRedeployBusyWorkerId(workerId);
     setLaunchError(null);
-    setCheckoutUrl(null);
     setLaunchStatus(`Redeploying ${workerLabel}...`);
     appendEvent("info", "Redeploy requested", workerLabel);
 
@@ -1706,29 +1642,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       setRedeployBusyWorkerId(null);
       void refreshWorkers({ keepSelection: true });
     }
-  }
-
-  async function refreshCheckoutReturn(sessionTokenPresent: boolean) {
-    if (sessionTokenPresent) {
-      setCheckoutUrl(null);
-      setLaunchStatus("Checkout return detected. Billing is refreshing now.");
-      appendEvent("success", "Returned from checkout", sessionTokenPresent ? "Polar session token received" : "Return detected");
-      trackPosthogEvent("den_paywall_checkout_returned", {
-        source: "polar",
-        session_token_present: sessionTokenPresent
-      });
-    }
-
-    const summary = await refreshBilling({ includeCheckout: false, quiet: true });
-    if (!summary) {
-      return "/checkout" as const;
-    }
-
-    if (!summary.featureGateEnabled || summary.hasActivePlan) {
-      return (await resolveUserLandingRoute()) ?? "/organization";
-    }
-
-    return "/checkout" as const;
   }
 
   function selectWorker(item: WorkerListItem) {
@@ -2051,15 +1964,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     resolveUserLandingRoute,
     billingSummary,
     billingBusy,
-    billingCheckoutBusy,
-    billingSubscriptionBusy,
     billingError,
-    effectiveCheckoutUrl,
     orgLimitError,
     clearOrgLimitError: () => setOrgLimitError(null),
     refreshBilling,
-    handleSubscriptionCancellation,
-    refreshCheckoutReturn,
     onboardingPending,
     onboardingDecisionBusy,
     workers,

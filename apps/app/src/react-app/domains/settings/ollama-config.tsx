@@ -46,16 +46,19 @@ import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { OLLAMA_PROVIDER_CONFIG } from "./openai-image-extension";
-import { registerExtensionConfig } from "./extension-registry";
+import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
 
-registerExtensionConfig("ollama", (ctx) => (
+const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
   <OllamaConfig
     busy={ctx.localProvider.busy}
     status={ctx.localProvider.status}
     error={ctx.localProvider.error}
     onInstall={ctx.localProvider.onInstall}
   />
-));
+);
+
+registerExtensionConfig("openwork.ollama.settings", ollamaConfigFactory);
+registerExtensionConfig("ollama", ollamaConfigFactory);
 
 type OllamaModel = {
   name: string;

@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, getOrgBillingSummary } from "../../stripe-billing.js"
 import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -50,13 +51,26 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     requireUserMiddleware,
     resolveOrganizationContextMiddleware,
     async (c) => {
+      const user = c.get("user")
       const payload = c.get("organizationContext")
+      const email = getRequiredUserEmail(user)
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
         includePortalUrl: true,
         returnUrl: billingReturnUrl(c),
       })
-      return c.json({ billing })
+      const polar = email
+        ? await getCloudWorkerBillingStatus({
+            userId: user.id,
+            email,
+            name: user.name ?? email,
+          }, {
+            includePortalUrl: true,
+            includeInvoices: false,
+          }).catch(() => null)
+        : null
+
+      return c.json({ billing: { ...billing, polar } })
     },
   )
 

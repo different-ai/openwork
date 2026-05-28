@@ -17,7 +17,7 @@ export type ServeOptions = {
 
 export type ServeResult = {
   port: number;
-  stop: () => void;
+  stop: () => void | Promise<void>;
 };
 
 function isResponseWritable(nodeRes: ServerResponse): boolean {
@@ -28,6 +28,19 @@ function isWriteAfterEndError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ERR_STREAM_WRITE_AFTER_END" || error.message.includes("write after end");
+}
+
+function isExpectedConnectionAbort(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  const causeCode = (error as { cause?: { code?: string } }).cause?.code;
+  return (
+    code === "ECONNRESET" ||
+    code === "UND_ERR_SOCKET" ||
+    causeCode === "UND_ERR_SOCKET" ||
+    error.name === "AbortError" ||
+    error.message === "terminated"
+  );
 }
 
 function endResponse(nodeRes: ServerResponse, chunk?: string): void {
@@ -159,6 +172,12 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       const webRes = await fetchHandler(webReq);
       await writeWebResponse(webRes, nodeRes);
     } catch (error) {
+      if (isExpectedConnectionAbort(error)) {
+        if (isResponseWritable(nodeRes) && !nodeRes.headersSent) {
+          nodeRes.destroy();
+        }
+        return;
+      }
       console.error("[serve-node] Unhandled error:", error);
       if (!isResponseWritable(nodeRes)) return;
       if (!nodeRes.headersSent) {
@@ -182,11 +201,26 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       if (addr && typeof addr === "object") {
         boundPort = addr.port;
       }
+      let stopPromise: Promise<void> | null = null;
       resolve({
         port: boundPort,
         stop: () => {
-          server.close();
-          server.closeAllConnections();
+          if (stopPromise) return stopPromise;
+          stopPromise = new Promise<void>((stopResolve, stopReject) => {
+            server.close((error) => {
+              if (error) {
+                if (String(error).includes("ERR_SERVER_NOT_RUNNING") || String(error).includes("Server is not running")) {
+                  stopResolve();
+                  return;
+                }
+                stopReject(error);
+                return;
+              }
+              stopResolve();
+            });
+            server.closeAllConnections();
+          });
+          return stopPromise;
         },
       });
     });

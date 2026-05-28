@@ -1,5 +1,5 @@
-import { DashboardOverviewScreen } from "./_components/dashboard-overview-screen";
+import { DashboardHomeScreen } from "./_components/dashboard-home-screen";
 
 export default function OrgDashboardPage() {
-  return <DashboardOverviewScreen />;
+  return <DashboardHomeScreen />;
 }

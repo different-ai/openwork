@@ -32,6 +32,7 @@ import {
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
+import { decodeComposerMentionValue, encodeComposerMentionValue } from "./mention-encoding";
 
 type EditorProps = {
   value: string;
@@ -85,7 +86,7 @@ class ComposerMentionNode extends TextNode {
   }
 
   constructor(value = "", kind: "agent" | "file" = "file", key?: NodeKey) {
-    super(`@${value}`, key);
+    super(`@${encodeComposerMentionValue(value)}`, key);
     this.__value = value;
     this.__kind = kind;
   }
@@ -407,7 +408,7 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
       }
     }
     if (segment.startsWith("@")) {
-      const token = segment.slice(1);
+      const token = decodeComposerMentionValue(segment.slice(1));
       const kind = mentions[token];
       if (kind) {
         paragraph.append($createComposerMentionNode(token, kind));

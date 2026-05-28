@@ -25,6 +25,14 @@ type StripeBilling = {
   } | null;
 };
 
+type PolarBilling = {
+  hasActivePlan: boolean;
+  portalUrl: string | null;
+  subscription: {
+    status: string;
+  } | null;
+};
+
 function parseStripeBilling(payload: unknown): StripeBilling | null {
   if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
   const billing = (payload as { billing?: unknown }).billing;
@@ -52,19 +60,29 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
   };
 }
 
+function parsePolarBilling(payload: unknown): PolarBilling | null {
+  if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
+  const billing = (payload as { billing?: unknown }).billing;
+  if (!billing || typeof billing !== "object" || !("polar" in billing)) return null;
+  const polar = (billing as { polar?: unknown }).polar;
+  if (!polar || typeof polar !== "object") return null;
+  const value = polar as Partial<PolarBilling>;
+  return {
+    hasActivePlan: value.hasActivePlan === true,
+    portalUrl: typeof value.portalUrl === "string" ? value.portalUrl : null,
+    subscription: value.subscription && typeof value.subscription === "object"
+      ? {
+          status: typeof value.subscription.status === "string" ? value.subscription.status : "active",
+        }
+      : null,
+  };
+}
+
 export function BillingDashboardScreen() {
-  const {
-    sessionHydrated,
-    user,
-    billingSummary,
-    billingBusy,
-    billingCheckoutBusy,
-    billingError,
-    effectiveCheckoutUrl,
-    refreshBilling,
-  } = useDenFlow();
+  const { sessionHydrated, user } = useDenFlow();
   const { orgContext } = useOrgDashboard();
   const [stripeBilling, setStripeBilling] = useState<StripeBilling | null>(null);
+  const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
   const [stripeActionBusy, setStripeActionBusy] = useState<"checkout" | "portal" | null>(null);
   const [stripeError, setStripeError] = useState<string | null>(null);
@@ -80,6 +98,7 @@ export function BillingDashboardScreen() {
       const parsed = parseStripeBilling(payload);
       if (!parsed) throw new Error("Stripe billing response was incomplete.");
       setStripeBilling(parsed);
+      setPolarBilling(parsePolarBilling(payload));
       return parsed;
     } catch (error) {
       if (!quiet) setStripeError(error instanceof Error ? error.message : "Could not load Stripe billing.");
@@ -88,11 +107,6 @@ export function BillingDashboardScreen() {
       setStripeBusy(false);
     }
   }
-
-  useEffect(() => {
-    if (!sessionHydrated || !user || billingSummary || billingBusy || billingCheckoutBusy) return;
-    void refreshBilling({ includeCheckout: true, quiet: true });
-  }, [billingBusy, billingCheckoutBusy, billingSummary, refreshBilling, sessionHydrated, user]);
 
   useEffect(() => {
     if (!sessionHydrated || !user) return;
@@ -131,7 +145,7 @@ export function BillingDashboardScreen() {
     }
   }
 
-  const showPolar = billingSummary?.featureGateEnabled === true && billingSummary?.hasActivePlan === true;
+  const showPolar = polarBilling?.hasActivePlan === true && Boolean(polarBilling.portalUrl);
   const stripePrice = formatMoneyMinor(stripeBilling?.unitAmount ?? 1000, stripeBilling?.currency ?? "usd");
 
   return (
@@ -141,9 +155,9 @@ export function BillingDashboardScreen() {
       description="Manage workspace billing for cloud workers and OpenWork Models. Only workspace owners can manage billing."
       colors={["#EFF6FF", "#1E3A5F", "#3B82F6", "#93C5FD"]}
     >
-      {billingError || stripeError ? (
+      {stripeError ? (
         <div className="mb-6 rounded-[20px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
-          {stripeError ?? billingError}
+          {stripeError}
         </div>
       ) : null}
 
@@ -160,16 +174,12 @@ export function BillingDashboardScreen() {
               <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">Polar</p>
               <h2 className="text-[18px] font-medium text-gray-950">Cloud worker plan</h2>
               <p className="mt-2 text-[14px] text-gray-500">
-                Your existing Polar subscription is {formatSubscriptionStatus(billingSummary?.subscription?.status ?? "active").toLowerCase()}.
+                Your existing Polar subscription is {formatSubscriptionStatus(polarBilling?.subscription?.status ?? "active").toLowerCase()}.
               </p>
             </div>
-            {billingSummary?.portalUrl ? (
-              <a href={billingSummary.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
+            {polarBilling?.portalUrl ? (
+              <a href={polarBilling.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
                 Open Polar portal
-              </a>
-            ) : effectiveCheckoutUrl ? (
-              <a href={effectiveCheckoutUrl} rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
-                Manage Polar plan
               </a>
             ) : null}
           </div>

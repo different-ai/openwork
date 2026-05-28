@@ -49,7 +49,7 @@ const pricingSummary = {
         "Skill Hub Manager",
         "Bring your own LLM keys, distributed to your team",
       ],
-      cta: { label: "Start team plan", href: "https://app.openworklabs.com/checkout" },
+      cta: { label: "Start team plan", href: "https://app.openworklabs.com/dashboard/billing" },
     },
     {
       id: "enterprise",

@@ -30,7 +30,6 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { readHiddenModels } from "@/react-app/domains/session/modals/model-picker-modal";
 import { Settings2 } from "lucide-react";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
 import { newProvidersEvent } from "@/app/lib/provider-events";
@@ -128,10 +127,12 @@ function groupByProvider(modelOptions: ModelOption[]) {
     groups.set(providerLabel, [option]);
   }
 
-  return [...groups.entries()].map(([providerLabel, options]) => ({
-    value: providerLabel,
-    items: options,
-  }));
+  return [...groups.entries()]
+    .map(([providerLabel, options]) => ({
+      value: providerLabel,
+      items: [...options].sort((a, b) => a.title.localeCompare(b.title)),
+    }))
+    .sort((a, b) => a.value.localeCompare(b.value));
 }
 
 function isSameModel(a: ModelRef, b: ModelRef) {
@@ -185,20 +186,9 @@ export function ModelSelect({
     }),
   );
 
-  // Filter out models the user has hidden via the "Available models" tab.
-  // Re-read localStorage when the popover opens so changes from the
-  // model picker modal are picked up immediately.
-  const visibleOptions = React.useMemo(() => {
-    const hidden = readHiddenModels();
-    if (hidden.size === 0) return modelOptions ?? [];
-    return (modelOptions ?? []).filter(
-      (opt) => !hidden.has(`${opt.providerID}/${opt.modelID}`),
-    );
-  }, [modelOptions, open]);
-
   const groups = React.useMemo(
-    () => groupByProvider(visibleOptions),
-    [visibleOptions],
+    () => groupByProvider(modelOptions ?? []),
+    [modelOptions],
   );
 
   const handleSelect = (option: ModelOption) => {
