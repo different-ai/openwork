@@ -1,12 +1,18 @@
 /** @jsxImportSource react */
-import type { UIMessage, UIMessageChunk, ChatTransport, DynamicToolUIPart } from "ai";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { UIMessage, UIMessageChunk, ChatTransport } from "ai";
+import type { FilePart, Part, ReasoningPart, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import { abortSessionSafe } from "../../../../app/lib/opencode-session";
-import type { OpenworkSessionMessage, OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
 import { normalizeEvent, safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent } from "../../../../app/types";
 import { createClient } from "../../../../app/lib/opencode";
+import {
+  parseDynamicToolUIPart,
+  parseStructuredOutputUIPart,
+  shouldDeferInProgressTool,
+  STRUCTURED_OUTPUT_TOOL,
+} from "./parse-tool-parts";
 
 type TransportOptions = {
   baseUrl: string;
@@ -41,12 +47,6 @@ type InternalPartState = {
   assistantMessageId: string | null;
   streamFinished: boolean;
 };
-
-type ToolPart = Extract<Part, { type: "tool" }>;
-type TextPart = Extract<Part, { type: "text" | "reasoning" }>;
-type FilePart = Extract<Part, { type: "file" }>;
-
-const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
 
 function recordValue(value: unknown, key: string) {
   if (!value || typeof value !== "object") return undefined;
@@ -145,7 +145,7 @@ function getTextPartValue(part: Part) {
   return "";
 }
 
-function getTextPartDelta(part: TextPart, delta: string, values: Map<string, string>) {
+function getTextPartDelta(part: TextPart | ReasoningPart, delta: string, values: Map<string, string>) {
   const nextText = part.text;
   if (delta) {
     const previous = values.get(part.id);
@@ -202,42 +202,20 @@ function mapFileParts(part: FilePart): UIMessage["parts"] {
   return [mapFilePart(part)];
 }
 
-function mapToolPart(part: ToolPart): DynamicToolUIPart {
-  const toolName = part.tool;
-  const input = part.state.input;
-
-  if (part.state.status === "error") {
-    return {
-      type: "dynamic-tool",
-      toolName,
-      toolCallId: part.callID,
-      state: "output-error",
-      input,
-      callProviderMetadata: { opencode: { partId: part.id } },
-      errorText: part.state.error,
-    };
+function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
+  if (part.tool === STRUCTURED_OUTPUT_TOOL) {
+    const mapped = parseStructuredOutputUIPart(part);
+    return mapped ? [mapped] : [];
   }
 
-  if (part.state.status === "completed") {
-    return {
-      type: "dynamic-tool",
-      toolName,
-      toolCallId: part.callID,
-      state: "output-available",
-      input,
-      callProviderMetadata: { opencode: { partId: part.id } },
-      output: part.state.output,
-    };
+  const mapped = parseDynamicToolUIPart(part);
+  if (!mapped) return [];
+
+  if (part.state.status === "completed" && part.state.attachments) {
+    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
   }
 
-  return {
-    type: "dynamic-tool",
-    toolName,
-    toolCallId: part.callID,
-    state: "input-available",
-    input,
-    callProviderMetadata: { opencode: { partId: part.id } },
-  };
+  return [mapped];
 }
 
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
@@ -269,24 +247,7 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
           return mapFileParts(part);
         }
         if (part.type === "tool") {
-          if (part.tool === STRUCTURED_OUTPUT_TOOL) {
-            if (part.state.status === "error") return [];
-            const text = safeStringify(part.state.input);
-            if (text === "{}" && part.state.status !== "completed") return [];
-            const partId = `structured-output-${part.callID}`;
-            let state: "done" | "streaming" = "streaming";
-            if (part.state.status === "completed") state = "done";
-            return [{
-              type: "text",
-              text,
-              state,
-              providerMetadata: { opencode: { partId, toolPartId: part.id } },
-            }];
-          }
-          if (part.state.status === "completed" && part.state.attachments) {
-            return [mapToolPart(part), ...part.state.attachments.flatMap(mapFileParts)];
-          }
-          return [mapToolPart(part)];
+          return mapSnapshotToolParts(part);
         }
         if (part.type === "agent") {
           return [{
@@ -415,7 +376,7 @@ function enqueueTextDelta(
 function flushPendingDeltas(
   controller: ReadableStreamDefaultController<UIMessageChunk>,
   state: InternalPartState,
-  part: TextPart,
+  part: TextPart | ReasoningPart,
 ) {
   const pending = state.pendingDeltas.get(part.id);
   if (!pending) return;
@@ -452,7 +413,7 @@ function handleToolPart(
   };
   const inputText = safeStringify(part.state.input);
 
-  if (!toolState.inputSent || inputText !== toolState.inputText) {
+  if (!shouldDeferInProgressTool(part) && (!toolState.inputSent || inputText !== toolState.inputText)) {
     controller.enqueue({
       type: "tool-input-available",
       toolCallId: part.callID,

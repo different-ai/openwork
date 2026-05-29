@@ -44,6 +44,7 @@ import { SessionTranscript } from "./message-list";
 import { useLocal } from "../../../kernel/local-provider";
 import { deriveSessionRenderModel } from "../sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
+import { SessionScrollOverlay } from "./scroll-overlay";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { PermissionApprovalPanel } from "../chat/permission-approval-modal";
 import { QuestionPanel } from "../modals/question-modal";
@@ -62,6 +63,10 @@ import {
   getComposerPasteParts,
   useComposerStateStore,
 } from "./composer-state-store";
+import { MessageList } from "@/components/chat/message-list";
+import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import { OpenTargetProvider } from "@/lib/target-provider";
+import type { ThreadStatus } from "@/lib/messages";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -600,6 +605,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const status = useMemo((): ThreadStatus => {
+    if (sending) {
+      return "submitted";
+    }
+
+    if (liveStatus.type === "busy") {
+      return "streaming";
+    }
+
+    if (liveStatus.type === "retry") {
+      return "retrying";
+    }
+
+    return "ready";
+  }, [liveStatus, sending]);
   const renderedMessages = useMemo(
     () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
     [snapshot, transcriptState],
@@ -798,13 +818,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       setError(parsed);
-      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId);
+      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
+      setComposerDraft(props.sessionId, "");
       setAwaitingAssistantBaseline(null);
       setNoVisibleAssistantOutputBaseline(null);
       setSending(false);
       throw nextError;
     }
-  }, [props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1131,6 +1152,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     contentRef,
   });
 
+  const handleMessageListDispatchAction = useCallback((action: DispatchAction) => {
+    if (action.target === "settings" && action.action === "open") {
+      props.onOpenSettingsSection?.(action.section);
+    }
+  }, [props.onOpenSettingsSection]);
+
+  const handleMessageListSetPrompt = useCallback((prompt: string) => {
+    void typeComposerText(prompt);
+  }, [typeComposerText]);
+
+  const handleRevertToUserMessage = useCallback((messageId: string) => {
+    props.onRevertToMessage?.(messageId);
+  }, [props.onRevertToMessage]);
+
+  const handleForkAtMessage = useCallback((messageId: string) => {
+    props.onForkAtMessage?.(messageId);
+  }, [props.onForkAtMessage]);
+
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
     label: "Go to the top of the session",
@@ -1262,60 +1301,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <div className="px-6 py-12">
                 <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
-            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
-              error ? (
-                <SessionErrorCard
-                  error={error}
-                  onDismiss={handleDismissError}
-                  onChangeModel={props.onChangeModel}
-                  onOpenModelPicker={props.onModelClick}
-                />
-              ) : shellConfig.starterCards ? (
-                <div className="flex flex-1 flex-col items-center justify-end px-6 pb-4">
-                  <div className="w-full max-w-[640px]">
-                    <p className="mb-3 text-xs text-dls-secondary">Try one of these:</p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => void typeComposerText("Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.")}
-                      >
-                        <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Edit a CSV</div>
-                          <div className="text-[11px] text-dls-secondary">Create a sample spreadsheet</div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => void typeComposerText("Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.")}
-                      >
-                        <img src="/openwork-mark.svg" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Browse the web</div>
-                          <div className="text-[11px] text-dls-secondary">Search Craigslist for couches</div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => props.onOpenSettingsSection?.("mcps")}
-                      >
-                        <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Connect an extension</div>
-                          <div className="text-[11px] text-dls-secondary">Add MCPs and integrations</div>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null
+            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
+              <SessionErrorCard
+                error={error}
+                onDismiss={handleDismissError}
+                onChangeModel={props.onChangeModel}
+                onOpenModelPicker={props.onModelClick}
+              />
             ) : (
               <DevProfiler id="SessionTranscript">
                 <>
-                  <SessionTranscript
+                  <OpenTargetProvider
+                    openTargets={verifiedOpenTargets}
+                    onOpenTarget={props.onOpenTarget}
+                  >
+                    <MessageListProvider
+                      workspaceId={props.workspaceId}
+                      sessionId={props.sessionId}
+                      showThinking={showThinking}
+                      developerMode={props.developerMode}
+                      displaySuggestions={shellConfig.starterCards}
+                      dispatchAction={handleMessageListDispatchAction}
+                      setPrompt={handleMessageListSetPrompt}
+                      onRevertToUserMessage={handleRevertToUserMessage}
+                      onForkAtMessage={handleForkAtMessage}
+                    >
+                      <MessageList messages={renderedMessages} status={status} />
+                    </MessageListProvider>
+                  </OpenTargetProvider>
+                  {/* <SessionTranscript
                     messages={renderedMessages}
                     isStreaming={chatStreaming}
                     developerMode={props.developerMode}
@@ -1333,41 +1347,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onDismiss={handleDismissError}
                       onChangeModel={props.onChangeModel}
                       onOpenModelPicker={props.onModelClick}
-                    />
-                  ) : null}
+                    /> */}
+                  {/* ) : null} */}
                 </>
               </DevProfiler>
             )}
           </div>
         </div>
-        {!sessionScroll.isAtBottom || (!chatStreaming && sessionScroll.topClippedMessageId) ? (
-          <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 justify-center">
-            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
-              {!chatStreaming && sessionScroll.topClippedMessageId ? (
-                <button
-                  type="button"
-                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
-                  onClick={() => {
-                    sessionScroll.jumpToStartOfMessage("smooth");
-                  }}
-                >
-                  Jump to start
-                </button>
-              ) : null}
-              {!sessionScroll.isAtBottom ? (
-                <button
-                  type="button"
-                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
-                  onClick={() => {
-                    sessionScroll.jumpToLatest("smooth");
-                  }}
-                >
-                  Jump to latest
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        <SessionScrollOverlay
+          sessionId={props.sessionId}
+          isStreaming={chatStreaming}
+          onJumpToLatest={sessionScroll.jumpToLatest}
+          onJumpToStartOfMessage={sessionScroll.jumpToStartOfMessage}
+        />
       </div>
 
       <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">

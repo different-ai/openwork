@@ -1,14 +1,21 @@
 import type { UIMessage } from "ai";
-import type { Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { createClient } from "@/app/lib/opencode";
-import { normalizeEvent, safeStringify } from "@/app/utils";
+import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import { createSessionErrorUIMessage, describeOpencodeSessionError, snapshotToUIMessages } from "./usechat-adapter";
+import {
+  parseDynamicToolUIPart,
+  parseStructuredOutputUIPart,
+  STRUCTURED_OUTPUT_TOOL,
+} from "./parse-tool-parts";
 import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { reconcileTranscriptMessages } from "./transcript-reconcile";
-import { useSessionActivityStore } from "../status/session-activity-store";
+import {
+  useSessionActivityStore,
+} from "../status/session-activity-store";
 
 type SyncOptions = {
   workspaceId: string;
@@ -281,10 +288,6 @@ export function seedQuestionState(
   });
 }
 
-type FilePart = Extract<Part, { type: "file" }>;
-
-const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
-
 function fileProviderMetadata(part: FilePart) {
   if (part.source) {
     return { opencode: { partId: part.id, source: part.source } };
@@ -355,48 +358,9 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
   }
   if (part.type === "tool") {
     if (part.tool === STRUCTURED_OUTPUT_TOOL) {
-      if (part.state.status === "error") return null;
-      const text = safeStringify(part.state.input);
-      if (text === "{}" && part.state.status !== "completed") return null;
-      let state: "done" | "streaming" = "streaming";
-      if (part.state.status === "completed") state = "done";
-      return {
-        type: "text",
-        text,
-        state,
-        providerMetadata: { opencode: { partId: `structured-output-${part.callID}`, toolPartId: part.id } },
-      };
+      return parseStructuredOutputUIPart(part);
     }
-    if (part.state.status === "error") {
-      return {
-        type: "dynamic-tool",
-        toolName: part.tool,
-        toolCallId: part.callID,
-        state: "output-error",
-        input: part.state.input,
-        errorText: part.state.error,
-        callProviderMetadata: { opencode: { partId: part.id } },
-      };
-    }
-    if (part.state.status === "completed") {
-      return {
-        type: "dynamic-tool",
-        toolName: part.tool,
-        toolCallId: part.callID,
-        state: "output-available",
-        input: part.state.input,
-        output: part.state.output,
-        callProviderMetadata: { opencode: { partId: part.id } },
-      };
-    }
-    return {
-      type: "dynamic-tool",
-      toolName: part.tool,
-      toolCallId: part.callID,
-      state: "input-available",
-      input: part.state.input,
-      callProviderMetadata: { opencode: { partId: part.id } },
-    };
+    return parseDynamicToolUIPart(part);
   }
   if (part.type === "agent") {
     return {
@@ -598,9 +562,9 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.error") {
     const sessionId = sessionIdFromProperties(event.properties);
     if (sessionId) {
-      useSessionActivityStore.getState().setError(workspaceId, sessionId);
+      const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
+      useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
       if (isTrackedSession(entry, sessionId)) {
-        const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
         queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
           // Key the error to the latest assistant turn so it lands beside the
           // turn that failed and a later turn's error becomes its own message

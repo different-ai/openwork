@@ -50,6 +50,7 @@ const WRITE_TOOL_NAMES = new Set([
 const FILE_METADATA_KEYS = ["path", "file", "filePath", "filepath"];
 const PATCH_FILE_PATTERN = /^\*\*\* (?:Add File|Update File):\s*(.+)$/gmi;
 const PATCH_MOVE_TO_PATTERN = /^\*\*\* Move to:\s*(.+)$/gmi;
+const URI_PATTERN = /^(?:https?|wss?|file):\/\//i;
 
 type DeriveOpenTargetsOptions = {
   includeFileMentions?: boolean;
@@ -240,6 +241,18 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
         scanText(targets, part.text, message.role === "assistant" ? 65 : 40, "message", {
           includeFiles: options.includeFileMentions === true,
         });
+        continue;
+      }
+
+      if (part.type === "source-document") {
+        addTarget(
+          targets,
+          part.filename
+            ? targetFromFile(part.filename, 95, "attachment source")
+            : URI_PATTERN.test(part.title)
+              ? targetFromUrl(part.title, 95, "attachment source")
+              : targetFromFile(part.title, 95, "attachment source"),
+        );
         continue;
       }
 

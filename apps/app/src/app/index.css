@@ -434,7 +434,7 @@ select:disabled {
   --card-foreground: var(--slate-12);
   --popover: var(--slate-1);
   --popover-foreground: var(--slate-12);
-  --primary: var(--blue-8);
+  --primary: var(--blue-10);
   --primary-foreground: var(--slate-12);
   --secondary: var(--slate-3);
   --secondary-foreground: var(--slate-12);

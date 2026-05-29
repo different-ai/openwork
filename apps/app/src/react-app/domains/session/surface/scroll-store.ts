@@ -88,6 +88,20 @@ export function getSessionScrollState(
   return sessions[sessionId] ?? INITIAL_SESSION_SCROLL_STATE;
 }
 
+export function selectSessionIsStickyBottom(
+  sessions: SessionScrollStateById,
+  sessionId: string | null | undefined,
+): boolean {
+  return getSessionScrollState(sessions, sessionId).mode === "stickyBottom";
+}
+
+export function selectSessionTopClippedMessageId(
+  sessions: SessionScrollStateById,
+  sessionId: string | null | undefined,
+): string | null {
+  return getSessionScrollState(sessions, sessionId).topClippedMessageId;
+}
+
 function setSessionStickyBottom(
   sessions: SessionScrollStateById,
   sessionId: string | null | undefined,
