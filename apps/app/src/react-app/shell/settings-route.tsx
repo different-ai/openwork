@@ -76,7 +76,6 @@ import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/se
 import { usePlatform } from "../kernel/platform";
 import { useLocal } from "../kernel/local-provider";
 import {
-  desktopFetch,
   openworkServerInfo,
   openworkServerRestart,
   engineStart,
@@ -131,12 +130,8 @@ import { getReactQueryClient } from "../infra/query-client";
 import { ensureProviderListQuery, getConnectedProviderItems, refreshProviderListQueries } from "../domains/connections/provider-list-query";
 import { openModelPickerEvent, pendingModelPickerProviderIdsKey } from "./new-providers-toast";
 import {
-  IMAGE_GENERATION_EXTENSION_CONFIG_PATH,
-  IMAGE_GENERATION_PLUGIN_CONTENT,
-  IMAGE_GENERATION_PLUGIN_PATH,
+  OPENAI_IMAGE_EXTENSION_ID,
   OPENAI_IMAGE_MODEL,
-  openAiImageResponseToArrayBuffer,
-  slugifyImageArtifactName,
 } from "../domains/settings/openai-image-extension";
 import { OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "../domains/settings/openai-image-extension";
 
@@ -192,26 +187,6 @@ function describeWorkspaceCreateError(error: unknown) {
     return `${message}\n\nOpenWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
   }
   return message;
-}
-
-async function requestOpenAiImage(input: { apiKey: string; prompt: string }) {
-  const response = await desktopFetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: OPENAI_IMAGE_MODEL,
-      prompt: input.prompt,
-    }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.message || "OpenAI image generation failed.";
-    throw Object.assign(new Error(message), { payload, status: response.status, model: OPENAI_IMAGE_MODEL });
-  }
-  return payload;
 }
 
 function mergeRouteWorkspaces(
@@ -926,32 +901,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [opencodeClient]);
 
   useEffect(() => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
-    const workspaceId = runtimeWorkspaceId?.trim() ?? "";
-    if (!client || !workspaceId) {
-      setImageExtensionInstalled(false);
-      return;
-    }
-
-    let cancelled = false;
-    void client.listPlugins(workspaceId, { includeGlobal: false })
-      .then((result) => {
-        if (cancelled) return;
-        setImageExtensionInstalled(
-          result.items.some((item) =>
-            item.spec.includes("openwork-image-generation") ||
-            item.path?.includes("openwork-image-generation") === true,
-          ),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setImageExtensionInstalled(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+    setImageExtensionInstalled(
+      userEnvKeys.includes("OPENAI_API_KEY") ||
+      userEnvKeys.includes("OPENWORK_OPENAI_IMAGE_API_KEY") ||
+      providers.some((provider) => provider.id === "openai" && provider.source === "env") ||
+      providerConnectedIds.includes("openai"),
+    );
+  }, [providerConnectedIds, providers, userEnvKeys]);
 
   useEffect(() => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
@@ -987,11 +943,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [openworkClient]);
 
   const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
-    const workspaceClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
-    const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     const resolvedApiKey = apiKey.trim();
-    if (!workspaceClient || !workspaceId) {
-      setImageExtensionError("OpenWork server is not connected for this workspace.");
+    if (!openworkClient) {
+      setImageExtensionError("OpenWork server is not connected.");
       return;
     }
     if (!resolvedApiKey) {
@@ -1003,43 +957,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setImageExtensionStatus(null);
     setImageExtensionError(null);
     try {
-      const encoder = new TextEncoder();
-      await workspaceClient.writeWorkspaceBinaryFile(workspaceId, {
-        path: IMAGE_GENERATION_PLUGIN_PATH,
-        data: encoder.encode(IMAGE_GENERATION_PLUGIN_CONTENT).buffer,
-        force: true,
-      });
-      await workspaceClient.writeWorkspaceBinaryFile(workspaceId, {
-        path: IMAGE_GENERATION_EXTENSION_CONFIG_PATH,
-        data: encoder.encode(JSON.stringify({
-          id: "openai-image-generation",
-          name: "OpenAI Image Generation",
-          type: "openwork-extension",
-          model: OPENAI_IMAGE_MODEL,
-          apiKey: resolvedApiKey,
-          env: ["OPENAI_API_KEY"],
-        }, null, 2)).buffer,
-        force: true,
-      });
-      await workspaceClient.writeWorkspaceBinaryFile(workspaceId, {
-        path: ".opencode/package.json",
-        data: encoder.encode(JSON.stringify({ dependencies: { "@opencode-ai/plugin": "1.15.12" } }, null, 2)).buffer,
-        force: true,
-      });
-      // upsertUserEnv requires the host token; use openworkClient which carries it.
-      if (openworkClient) {
-        await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
-        setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      }
-      reloadCoordinator.markReloadRequired("plugins", { type: "plugin", name: "openwork-image-generation", action: "added" });
+      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
+      setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
       setImageExtensionInstalled(true);
-      setImageExtensionStatus("Installed OpenAI image_generate and saved OPENAI_API_KEY through OpenWork environment variables.");
+      setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use OpenWork extension actions for image generation.");
     } catch (error) {
       setImageExtensionError(describeRouteError(error));
     } finally {
       setImageExtensionBusy(false);
     }
-  }, [openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  }, [openworkClient]);
 
   const generateOpenAiTestImage = useCallback(async (input: { apiKey: string; prompt: string }) => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
@@ -1063,17 +990,28 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setImageGenerationStatus(null);
     setImageGenerationError(null);
     try {
-      const payload = await requestOpenAiImage({ apiKey, prompt });
-      const data = await openAiImageResponseToArrayBuffer(payload);
-      const fileName = `${slugifyImageArtifactName(prompt)}.png`;
-      await client.writeWorkspaceBinaryFile(workspaceId, { path: `artifacts/${fileName}`, data, force: true });
-      setImageGenerationStatus(`Generated artifacts/${fileName} with ${OPENAI_IMAGE_MODEL}.`);
+      if (openworkClient) {
+        await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: apiKey }]);
+        setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
+        setImageExtensionInstalled(true);
+      }
+      const response = await client.callExtensionAction({
+        extensionId: OPENAI_IMAGE_EXTENSION_ID,
+        action: "image_generate",
+        args: { prompt },
+        context: { directory: selectedWorkspaceRoot || undefined },
+      });
+      const result = response.result;
+      const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
+        ? result.path
+        : "an artifact";
+      setImageGenerationStatus(`Generated ${path} with ${OPENAI_IMAGE_MODEL}.`);
     } catch (error) {
       setImageGenerationError(describeRouteError(error));
     } finally {
       setImageGenerationBusy(false);
     }
-  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
 
   const saveVoiceApiKey = useCallback(async (apiKey: string) => {
     const resolvedApiKey = apiKey.trim();
@@ -1694,8 +1632,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const connectedProviders = new Set(providerConnectedIds);
     const configuredEnvKeys = new Set(userEnvKeys);
     const loadedPlugins = new Set<string>();
-    // imageExtensionInstalled is derived from listPlugins — add it to the set.
-    if (imageExtensionInstalled) loadedPlugins.add("openwork-image-generation");
     // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
     // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
     // be refined when we add a real plugin-loaded signal from the engine.
@@ -1717,7 +1653,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return match ? isOpenWorkExtensionEnabled(match) : false;
       },
     };
-  }, [connectionsSnapshot, providerConnectedIds, userEnvKeys, imageExtensionInstalled]);
+  }, [connectionsSnapshot, providerConnectedIds, userEnvKeys]);
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."

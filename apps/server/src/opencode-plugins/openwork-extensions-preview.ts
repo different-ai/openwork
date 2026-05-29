@@ -100,7 +100,7 @@ function contextPayload(context: OpenCodeContext) {
 export const OpenWorkExtensionsPreview = async () => ({
   tool: {
     openwork_extension_list_actions: {
-      description: "List extension actions currently exposed by OpenWork, including Google Workspace preview actions.",
+      description: "List extension actions currently exposed by OpenWork.",
       args: listActionsArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = listActionsArgsSchema.parse(rawArgs);

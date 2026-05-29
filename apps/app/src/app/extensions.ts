@@ -236,16 +236,16 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     icon: { src: "/ext-openai.svg" },
     composer: { prompt: "Use the OpenAI Image Gen extension to " },
     setup: {
-      instructions: "Add an OpenAI API key, then OpenWork installs an OpenCode plugin that exposes image_generate.",
+      instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions.",
       primaryCta: "Enable image generation",
       secondaryCta: "Generate test image",
       requiredEnv: ["OPENAI_API_KEY"],
       testActionRef: "openwork.imageGen.testGenerate",
     },
     resources: [
-      { type: "opencode-plugin", id: "openwork-image-generation", path: ".opencode/plugins/openwork-image-generation.ts", required: true },
       { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "file", id: "openai-image-config", path: ".opencode/openwork-extensions/openai-image-generation.json", required: true },
+      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
+      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
     ],
     contributions: [
       { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
@@ -253,10 +253,9 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
     ],
     enablement: [
-      { type: "plugin-loaded", ref: "openwork-image-generation", label: "Image plugin installed" },
       { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
     ],
-    lifecycle: { reload: ["plugins"], detection: ["plugin:openwork-image-generation"] },
+    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
   },
   {
     schemaVersion: 1,

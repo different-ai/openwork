@@ -334,6 +334,21 @@ export type GoogleWorkspaceConnectStatus = {
   googleWorkspace: GoogleWorkspaceAuthStatus | null;
 };
 
+export type OpenworkExtensionActionCall = {
+  extensionId: string;
+  action: string;
+  args?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+};
+
+export type OpenworkExtensionActionResult = {
+  ok: boolean;
+  extensionId: string;
+  action: string;
+  result: unknown;
+  context?: Record<string, unknown>;
+};
+
 export type OpenworkResolvedArtifactTarget = {
   id: string;
   kind: "file" | "url";
@@ -949,6 +964,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     googleWorkspaceDisconnect: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
     googleWorkspaceTestConnection: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/test", { token, hostToken, method: "POST", timeoutMs: 60_000 }),
     googleWorkspaceRunScopeSmokeTest: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/smoke-test", { token, hostToken, method: "POST", timeoutMs: 120_000 }),
+    callExtensionAction: (payload: OpenworkExtensionActionCall) =>
+      requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.binary,
+      }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {

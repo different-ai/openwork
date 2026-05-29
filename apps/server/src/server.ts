@@ -1922,7 +1922,7 @@ function createRoutes(
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, body));
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body));
   });
 
   addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async () => {
