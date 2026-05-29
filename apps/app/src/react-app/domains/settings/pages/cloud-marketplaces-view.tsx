@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
 import * as React from "react";
 
+import type { McpDirectoryInfo } from "../../../../app/constants";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
+import { evaluateEnablement, type EnablementContext } from "../../../../app/enablement";
 import type { DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -46,6 +48,7 @@ type DenSettingsExtensionsStore = {
 };
 
 type MarketplacePackageRow = {
+  source: "cloud";
   marketplaceId: string;
   marketplaceName: string;
   plugin: DenOrgPlugin;
@@ -56,11 +59,29 @@ type MarketplacePackageRow = {
   searchableText: string;
 };
 
+type BuiltInMarketplaceRow = {
+  source: "built-in";
+  marketplaceId: "openwork-builtins";
+  marketplaceName: string;
+  entry: McpDirectoryInfo;
+  status: MarketplacePackageStatus;
+  active: boolean;
+  searchableText: string;
+};
+
+type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow;
+
 export type CloudMarketplacesViewProps = {
   extensions: DenSettingsExtensionsStore;
   embedded?: boolean;
   onOpenAccount: () => void;
   session: CloudMarketplacesSession;
+  builtInEntries?: McpDirectoryInfo[];
+  enablementContext?: EnablementContext;
+  builtInExtensionsDisabled?: boolean;
+  builtInConnectingName?: string | null;
+  configSlotForBuiltIn?: (entry: McpDirectoryInfo) => React.ReactNode | null;
+  isBuiltInConnected?: (entry: McpDirectoryInfo) => boolean;
 };
 
 function pluginCounts(plugin: DenOrgPlugin) {
@@ -109,6 +130,12 @@ export function CloudMarketplacesView({
   embedded = false,
   onOpenAccount,
   session,
+  builtInEntries = [],
+  enablementContext,
+  builtInExtensionsDisabled = false,
+  builtInConnectingName = null,
+  configSlotForBuiltIn,
+  isBuiltInConnected,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const { showToast } = useStatusToasts();
@@ -118,7 +145,7 @@ export function CloudMarketplacesView({
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<MarketplaceStatusFilter>("all");
   const [marketplaceFilter, setMarketplaceFilter] = React.useState("all");
-  const [detailRow, setDetailRow] = React.useState<MarketplacePackageRow | null>(null);
+  const [detailRow, setDetailRow] = React.useState<MarketplaceRow | null>(null);
   const [resolvedPlugins, setResolvedPlugins] = React.useState<Record<string, DenOrgPluginResolved>>({});
   const [detailLoadingId, setDetailLoadingId] = React.useState<string | null>(null);
   const [detailError, setDetailError] = React.useState<string | null>(null);
@@ -126,14 +153,15 @@ export function CloudMarketplacesView({
 
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
-  const lastRowsRef = React.useRef<MarketplacePackageRow[]>([]);
-  const rows = React.useMemo<MarketplacePackageRow[]>(() => {
+  const lastRowsRef = React.useRef<MarketplaceRow[]>([]);
+  const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
     return marketplaces.flatMap((marketplace) => marketplace.plugins.map((plugin) => {
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
       const status = pluginStatus(imported, plugin);
       return {
+        source: "cloud",
         marketplaceId: marketplace.marketplace.id,
         marketplaceName: marketplace.marketplace.name,
         plugin,
@@ -152,6 +180,31 @@ export function CloudMarketplacesView({
     }));
   }, [importedPlugins, marketplaces]);
 
+  const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
+    return builtInEntries.map((entry) => {
+      const enablement = entry.extensionManifest?.enablement && enablementContext
+        ? evaluateEnablement(entry.extensionManifest.enablement, enablementContext)
+        : null;
+      const active = enablement?.active ?? isBuiltInConnected?.(entry) ?? false;
+      return {
+        source: "built-in",
+        marketplaceId: "openwork-builtins",
+        marketplaceName: "OpenWork Built-ins",
+        entry,
+        active,
+        status: active ? "installed" : "available",
+        searchableText: [
+          entry.name,
+          entry.description,
+          entry.extensionManifest?.setup?.instructions ?? "",
+          ...(entry.extensionManifest?.resources.map((resource) => `${resource.id} ${resource.label ?? ""}`) ?? []),
+        ].join(" ").toLowerCase(),
+      };
+    });
+  }, [builtInEntries, enablementContext, isBuiltInConnected]);
+
+  const rows = React.useMemo<MarketplaceRow[]>(() => [...builtInRows, ...cloudRows], [builtInRows, cloudRows]);
+
   React.useEffect(() => {
     if (rows.length > 0) lastRowsRef.current = rows;
   }, [rows]);
@@ -159,8 +212,11 @@ export function CloudMarketplacesView({
   const displayRows = rows.length > 0 ? rows : busy ? lastRowsRef.current : rows;
 
   const marketplaceOptions = React.useMemo(
-    () => marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })),
-    [marketplaces],
+    () => [
+      ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "OpenWork Built-ins" }] : []),
+      ...marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })),
+    ],
+    [builtInRows.length, marketplaces],
   );
 
   const visibleRows = React.useMemo(() => {
@@ -216,7 +272,7 @@ export function CloudMarketplacesView({
   }, [activeOrgId, refresh, user]);
 
   React.useEffect(() => {
-    if (!detailRow || !isSignedIn || !activeOrgId) return;
+    if (!detailRow || detailRow.source !== "cloud" || !isSignedIn || !activeOrgId) return;
     if (resolvedPlugins[detailRow.plugin.id]) return;
 
     let cancelled = false;
@@ -279,22 +335,13 @@ export function CloudMarketplacesView({
     [actionId, extensions, showToast],
   );
 
-  const content = !isSignedIn ? (
-    <SettingsNotice>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <span>Sign in to OpenWork Cloud to browse organization marketplace extensions.</span>
-        <Button size="sm" onClick={onOpenAccount}>
-          {t("skills.share_team_sign_in")}
-        </Button>
-      </div>
-    </SettingsNotice>
-  ) : (
+  const content = (
     <SettingsSection>
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>Extension Marketplace</SettingsSectionHeaderTitle>
           <SettingsSectionHeaderDescription>
-            Add extensions from OpenWork Cloud. Claude-compatible plugins are normalized into OpenWork extensions with installable resources such as skills, MCPs, commands, or tools.
+            Browse built-in OpenWork extensions and organization marketplace extensions. Claude-compatible plugins are normalized into OpenWork extensions with installable resources such as skills, MCPs, commands, or tools.
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
@@ -307,6 +354,17 @@ export function CloudMarketplacesView({
           </RefreshButton>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
+
+      {!isSignedIn ? (
+        <SettingsNotice>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Sign in to OpenWork Cloud to browse organization marketplace extensions. Built-ins are still available.</span>
+            <Button size="sm" onClick={onOpenAccount}>
+              {t("skills.share_team_sign_in")}
+            </Button>
+          </div>
+        </SettingsNotice>
+      ) : null}
 
       {actionError ?? extensions.cloudOrgMarketplacesStatus() ? (
         <SettingsNotice tone="error">{actionError ?? extensions.cloudOrgMarketplacesStatus()}</SettingsNotice>
@@ -369,17 +427,19 @@ export function CloudMarketplacesView({
       {visibleRows.length > 0 ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">
           {visibleRows.map((row) => (
-            <MarketplacePackageCard
-              key={`${row.marketplaceId}:${row.plugin.id}`}
+            <MarketplaceCard
+              key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : `${row.marketplaceId}:${row.entry.id ?? row.entry.name}`}
               actionId={actionId}
               row={row}
               onOpenDetail={setDetailRow}
+              builtInDisabled={builtInExtensionsDisabled}
+              builtInConnectingName={builtInConnectingName}
             />
           ))}
         </div>
       ) : null}
 
-      {detailRow ? (
+      {detailRow?.source === "cloud" ? (
         <MarketplacePackageDetailModal
           actionId={actionId}
           row={detailRow}
@@ -389,6 +449,14 @@ export function CloudMarketplacesView({
           onClose={() => setDetailRow(null)}
           onImportPlugin={importPlugin}
           onRemovePlugin={removePlugin}
+        />
+      ) : detailRow?.source === "built-in" ? (
+        <BuiltInMarketplaceDetailModal
+          row={detailRow}
+          disabled={builtInExtensionsDisabled}
+          connecting={builtInConnectingName === detailRow.entry.name}
+          configSlot={configSlotForBuiltIn?.(detailRow.entry) ?? null}
+          onClose={() => setDetailRow(null)}
         />
       ) : null}
     </SettingsSection>
@@ -413,12 +481,36 @@ function actionLabelForStatus(status: MarketplacePackageStatus) {
   }
 }
 
-function MarketplacePackageCard(props: {
+function MarketplaceCard(props: {
   actionId: string | null;
-  row: MarketplacePackageRow;
-  onOpenDetail: (row: MarketplacePackageRow) => void;
+  row: MarketplaceRow;
+  onOpenDetail: (row: MarketplaceRow) => void;
+  builtInDisabled: boolean;
+  builtInConnectingName: string | null;
 }) {
   const { actionId, row, onOpenDetail } = props;
+
+  if (row.source === "built-in") {
+    const actionBusy = props.builtInConnectingName === row.entry.name;
+    return (
+      <ExtensionCard
+        name={row.entry.name}
+        description={row.entry.description}
+        iconSlug={row.entry.iconSlug}
+        iconSrc={row.entry.iconSrc}
+        kind={row.entry.kind ?? "extension"}
+        preview={row.entry.preview}
+        connected={row.active}
+        connectedLabel="Active"
+        connecting={actionBusy}
+        disabled={props.builtInDisabled}
+        disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
+        actionLabel={row.active ? "Manage" : "View setup"}
+        onClick={() => onOpenDetail(row)}
+      />
+    );
+  }
+
   const actionBusy = actionId === row.plugin.id;
 
   return (
@@ -431,6 +523,39 @@ function MarketplacePackageCard(props: {
       connecting={actionBusy}
       actionLabel={actionBusy ? "Working..." : actionLabelForStatus(row.status)}
       onClick={() => onOpenDetail(row)}
+    />
+  );
+}
+
+function BuiltInMarketplaceDetailModal(props: {
+  row: BuiltInMarketplaceRow;
+  disabled: boolean;
+  connecting: boolean;
+  configSlot: React.ReactNode | null;
+  onClose: () => void;
+}) {
+  const { row, disabled, connecting, configSlot, onClose } = props;
+  const entry = row.entry;
+  return (
+    <ExtensionDetailModal
+      open
+      onClose={onClose}
+      name={entry.name}
+      description={entry.description}
+      iconSlug={entry.iconSlug}
+      iconSrc={entry.iconSrc}
+      kind={entry.kind ?? "extension"}
+      connected={row.active}
+      connectedLabel="Active"
+      disconnectedLabel="Needs setup"
+      connecting={connecting}
+      preview={entry.preview}
+      disabledReason={disabled ? "Disabled by organization" : null}
+      setupInstructions={entry.extensionManifest?.setup?.instructions}
+      resourceLabels={entry.extensionManifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
+      contributionLabels={entry.extensionManifest?.contributions?.map((contribution) => contribution.label ?? contribution.ref ?? contribution.type) ?? []}
+      configSlot={configSlot}
+      showEnablementCard={false}
     />
   );
 }
