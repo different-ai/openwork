@@ -501,7 +501,7 @@ function MarketplaceCard(props: {
         kind={row.entry.kind ?? "extension"}
         preview={row.entry.preview}
         connected={row.active}
-        connectedLabel="Active"
+        connectedLabel={row.entry.defaultEnabled ? "Ready" : "Active"}
         connecting={actionBusy}
         disabled={props.builtInDisabled}
         disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
@@ -546,7 +546,7 @@ function BuiltInMarketplaceDetailModal(props: {
       iconSrc={entry.iconSrc}
       kind={entry.kind ?? "extension"}
       connected={row.active}
-      connectedLabel="Active"
+      connectedLabel={entry.defaultEnabled ? "Ready" : "Active"}
       disconnectedLabel="Needs setup"
       connecting={connecting}
       preview={entry.preview}

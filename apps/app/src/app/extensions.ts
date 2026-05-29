@@ -158,7 +158,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     composer: { prompt: "Use the OpenWork Browser extension to " },
     setup: {
       instructions: "OpenWork Browser is ready by default in desktop workspaces.",
-      primaryCta: "Enable browser automation",
     },
     resources: [
       {
@@ -175,7 +174,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     ],
     enablement: [
       { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
-      { type: "plugin-loaded", ref: "opencode-chrome-devtools", label: "Browser plugin loaded" },
     ],
     lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
     defaultEnabled: true,

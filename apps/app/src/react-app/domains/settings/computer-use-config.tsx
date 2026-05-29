@@ -32,6 +32,7 @@ type ComputerUseConfigProps = {
   connecting: boolean;
   onConnect?: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
+  onPermissionsChange?: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ registerExtensionConfig("computer-use", (ctx) => (
     connecting={ctx.computerUse?.connecting ?? false}
     onConnect={ctx.computerUse?.onConnect}
     onRefresh={ctx.computerUse?.onRefresh}
+    onPermissionsChange={ctx.computerUse?.onPermissionsChange}
   />
 ));
 
@@ -79,6 +81,7 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
   const [result, setResult] = useState<PermissionResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { onPermissionsChange } = props;
 
   // Spawn --check → fresh TCC read. Works whether or not the GUI is open.
   const verify = useCallback(async () => {
@@ -92,13 +95,14 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
       const raw = await desktopBridge.checkComputerUsePermissions();
       const next = normalize(raw);
       setResult(next);
+      onPermissionsChange?.({ accessibility: next.accessibility, screenRecording: next.screenRecording });
       if (next.error) setError(next.error);
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [onPermissionsChange]);
 
   // Check on mount.
   useEffect(() => { void verify(); }, [verify]);
@@ -115,6 +119,7 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
       const raw = await desktopBridge.openComputerUsePermissionSetup();
       const next = normalize(raw);
       setResult(next);
+      onPermissionsChange?.({ accessibility: next.accessibility, screenRecording: next.screenRecording });
       if (next.error) setError(next.error);
     } catch (e) {
       setError(errMsg(e));

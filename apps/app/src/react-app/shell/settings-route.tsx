@@ -519,6 +519,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [imageExtensionBusy, setImageExtensionBusy] = useState(false);
   const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
   const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
+  const [computerUsePermissions, setComputerUsePermissions] = useState<{ accessibility: boolean; screenRecording: boolean } | null>(null);
   const [imageGenerationBusy, setImageGenerationBusy] = useState(false);
   const [imageGenerationStatus, setImageGenerationStatus] = useState<string | null>(null);
   const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
@@ -1634,6 +1635,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       loadedPlugins,
       connectedProviders,
       configuredEnvKeys,
+      permissions: computerUsePermissions ?? undefined,
       // Toggle state reader for extensions with defaultEnabled / explicit toggle.
       isToggleEnabled: (ref: string) => {
         const catalog = connectionsStore.quickConnect;
@@ -1641,25 +1643,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return match ? isOpenWorkExtensionEnabled(match) : false;
       },
     };
-  }, [connectionsSnapshot, providerConnectedIds, userEnvKeys]);
+  }, [computerUsePermissions, connectionsSnapshot, providerConnectedIds, userEnvKeys]);
   const builtInExtensionsDisabled = checkDesktopRestriction({ restriction: "allowBuiltInExtensions" });
   const builtInMarketplaceEntries = useMemo(
     () => connectionsStore.quickConnect.filter(isBuiltInOpenWorkExtension),
     [connectionsStore.quickConnect],
-  );
-  const installedCatalogEntries = useMemo(
-    () => connectionsStore.quickConnect.filter((entry) => {
-      if (isBuiltInOpenWorkExtension(entry)) return false;
-      const serverName = getMcpServerName(entry);
-      return connectionsSnapshot.mcpServers.some((server) => server.name === serverName);
-    }),
-    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect],
   );
   const extensionController = useSettingsExtensionController({
     openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
     enablementContext,
     mcpServers: connectionsSnapshot.mcpServers,
     mcpConnectingName: connectionsSnapshot.mcpConnectingName,
+    onComputerUsePermissionsChange: setComputerUsePermissions,
     googleWorkspaceConnected,
     setGoogleWorkspaceConnected,
     connectMcp: (entry) => connectionsStore.connectMcp(entry),
@@ -1688,6 +1683,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       onInstall: installLocalProvider,
     },
   });
+  const installedCatalogEntries = useMemo(
+    () => connectionsStore.quickConnect.filter((entry) => {
+      if (isBuiltInOpenWorkExtension(entry)) return extensionController.isConnected(entry);
+      const serverName = getMcpServerName(entry);
+      return connectionsSnapshot.mcpServers.some((server) => server.name === serverName);
+    }),
+    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, extensionController],
+  );
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
