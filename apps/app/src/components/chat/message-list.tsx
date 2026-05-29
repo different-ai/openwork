@@ -309,6 +309,28 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
+const USER_SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/
+
+function UserSkillChip(props: { name: string }) {
+  return (
+    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
+      {props.name}
+    </span>
+  )
+}
+
+function renderUserTextWithSkillChips(text: string) {
+  if (!USER_SKILL_TOKEN_RE.test(text)) return text
+  let offset = 0
+  return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
+    const key = `${offset}:${segment}`
+    offset += segment.length
+    const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
+    if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
+    return <React.Fragment key={key}>{segment}</React.Fragment>
+  })
+}
+
 export const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
@@ -328,7 +350,7 @@ export const UserMessage = React.memo(
               layoutId={message.id}
               className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
             >
-              {message.parts.map((part) => (part.type === "text" ? part.text : "")).join("")}
+              {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""))}
             </MessageContent>
           ) : null}
           {!isStreaming && (
