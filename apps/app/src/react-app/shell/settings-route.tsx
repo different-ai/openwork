@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { getMcpServerName, isBuiltInOpenWorkExtension, SUGGESTED_PLUGINS } from "../../app/constants";
+import { isBuiltInOpenWorkExtension, SUGGESTED_PLUGINS } from "../../app/constants";
 import type { EnablementContext } from "../../app/enablement";
 import { createClient } from "../../app/lib/opencode";
 import {
@@ -45,6 +45,7 @@ import "../domains/settings/browser-extension-config";
 import "../domains/settings/openwork-voice-config";
 import "../domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "../domains/settings/settings-extension-controller";
+import { buildExtensionItems } from "../domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
 import { PreferencesView } from "../domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
@@ -85,6 +86,7 @@ import {
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
+  desktopBridge,
   type WorkspaceInfo,
   type WorkspaceList,
   revealDesktopItemInDir,
@@ -187,6 +189,14 @@ function describeWorkspaceCreateError(error: unknown) {
     return `${message}\n\nOpenWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
   }
   return message;
+}
+
+function normalizeComputerUsePermissions(value: unknown) {
+  if (typeof value !== "object" || value === null) return null;
+  return {
+    accessibility: "accessibility" in value && value.accessibility === true,
+    screenRecording: "screenRecording" in value && value.screenRecording === true,
+  };
 }
 
 function mergeRouteWorkspaces(
@@ -899,6 +909,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     setActiveClient(opencodeClient);
   }, [opencodeClient]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime() || !isMacPlatform()) return;
+    let cancelled = false;
+    void desktopBridge.checkComputerUsePermissions()
+      .then((result) => {
+        if (cancelled) return;
+        const permissions = normalizeComputerUsePermissions(result);
+        if (permissions) setComputerUsePermissions(permissions);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
@@ -1683,13 +1708,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       onInstall: installLocalProvider,
     },
   });
-  const installedCatalogEntries = useMemo(
-    () => connectionsStore.quickConnect.filter((entry) => {
-      if (isBuiltInOpenWorkExtension(entry)) return extensionController.isConnected(entry);
-      const serverName = getMcpServerName(entry);
-      return connectionsSnapshot.mcpServers.some((server) => server.name === serverName);
+  const extensionItems = useMemo(
+    () => buildExtensionItems({
+      quickConnect: connectionsStore.quickConnect,
+      mcpServers: connectionsSnapshot.mcpServers,
+      installedSkills: extensionsStore.skills(),
+      importedCloudPlugins: extensionsStore.importedCloudPlugins(),
+      cloudMarketplaces: extensionsStore.cloudOrgMarketplaces(),
+      enablementContext,
+      isBuiltInConnected: extensionController.isConnected,
     }),
-    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, extensionController],
+    [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsStore],
   );
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
@@ -2113,7 +2142,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 mcpConnectingName={connectionsSnapshot.mcpConnectingName}
                 selectedMcp={connectionsSnapshot.selectedMcp}
                 setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
-                quickConnect={installedCatalogEntries}
+                quickConnect={extensionItems.installedMcpEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
                 connectMcp={(entry) => {
@@ -2134,8 +2163,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                     : undefined
                 }
                 readConfigFile={(scope) => connectionsStore.readMcpConfigFile(scope)}
-                installedSkills={extensionsStore.skills()}
-                installedPlugins={Object.values(extensionsStore.importedCloudPlugins())}
+                installedSkills={extensionItems.installedSkills}
+                installedPlugins={extensionItems.installedCloudPlugins}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 readSkill={(name) => extensionsStore.readSkill(name)}
@@ -2155,6 +2184,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 builtInConnectingName={connectionsSnapshot.mcpConnectingName}
                 configSlotForBuiltIn={extensionController.configSlotForEntry}
                 isBuiltInConnected={extensionController.isConnected}
+                extensionItems={extensionItems.items}
               />
             }
           />
@@ -2178,6 +2208,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             builtInConnectingName={connectionsSnapshot.mcpConnectingName}
             configSlotForBuiltIn={extensionController.configSlotForEntry}
             isBuiltInConnected={extensionController.isConnected}
+            extensionItems={extensionItems.items}
           />
         );
       case "cloud-workers":

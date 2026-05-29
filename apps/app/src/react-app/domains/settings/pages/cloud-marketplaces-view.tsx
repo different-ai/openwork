@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
+import type { ExtensionItem } from "../extension-items";
 import { useStatusToasts } from "../../shell-feedback/status-toasts";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -82,6 +83,7 @@ export type CloudMarketplacesViewProps = {
   builtInConnectingName?: string | null;
   configSlotForBuiltIn?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   isBuiltInConnected?: (entry: McpDirectoryInfo) => boolean;
+  extensionItems?: ExtensionItem[];
 };
 
 function pluginCounts(plugin: DenOrgPlugin) {
@@ -136,6 +138,7 @@ export function CloudMarketplacesView({
   builtInConnectingName = null,
   configSlotForBuiltIn,
   isBuiltInConnected,
+  extensionItems = [],
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const { showToast } = useStatusToasts();
@@ -153,13 +156,20 @@ export function CloudMarketplacesView({
 
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
+  const extensionItemsByBuiltInId = React.useMemo(() => new Map(
+    extensionItems.flatMap((item) => item.builtInEntry ? [[item.builtInEntry.id ?? item.builtInEntry.serverName ?? item.builtInEntry.name, item] as const] : []),
+  ), [extensionItems]);
+  const extensionItemsByPluginId = React.useMemo(() => new Map(
+    extensionItems.flatMap((item) => item.plugin ? [[item.plugin.id, item] as const] : []),
+  ), [extensionItems]);
   const lastRowsRef = React.useRef<MarketplaceRow[]>([]);
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
     return marketplaces.flatMap((marketplace) => marketplace.plugins.map((plugin) => {
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
-      const status = pluginStatus(imported, plugin);
+      const item = extensionItemsByPluginId.get(plugin.id);
+      const status = item?.installState ?? pluginStatus(imported, plugin);
       return {
         source: "cloud",
         marketplaceId: marketplace.marketplace.id,
@@ -178,21 +188,22 @@ export function CloudMarketplacesView({
         ].join(" ").toLowerCase(),
       };
     }));
-  }, [importedPlugins, marketplaces]);
+  }, [extensionItemsByPluginId, importedPlugins, marketplaces]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
+      const item = extensionItemsByBuiltInId.get(entry.id ?? entry.serverName ?? entry.name);
       const enablement = entry.extensionManifest?.enablement && enablementContext
         ? evaluateEnablement(entry.extensionManifest.enablement, enablementContext)
         : null;
-      const active = enablement?.active ?? isBuiltInConnected?.(entry) ?? false;
+      const active = item?.active ?? enablement?.active ?? isBuiltInConnected?.(entry) ?? false;
       return {
         source: "built-in",
         marketplaceId: "openwork-builtins",
         marketplaceName: "OpenWork Built-ins",
         entry,
         active,
-        status: active ? "installed" : "available",
+        status: item?.installState ?? (active ? "installed" : "available"),
         searchableText: [
           entry.name,
           entry.description,
@@ -201,7 +212,7 @@ export function CloudMarketplacesView({
         ].join(" ").toLowerCase(),
       };
     });
-  }, [builtInEntries, enablementContext, isBuiltInConnected]);
+  }, [builtInEntries, enablementContext, extensionItemsByBuiltInId, isBuiltInConnected]);
 
   const rows = React.useMemo<MarketplaceRow[]>(() => [...builtInRows, ...cloudRows], [builtInRows, cloudRows]);
 
