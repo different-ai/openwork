@@ -9,7 +9,7 @@
 - Paylaşım önemlidir: localhost'ta tek başınıza başlayın, ardından ihtiyacınız olduğunda uzaktan paylaşıma açıkça geçin.
 
 <p align="center">
-  <img src="./app-demo.gif" alt="OpenWork demo" width="800" />
+  <img src="../app-demo.gif" alt="OpenWork demo" width="800" />
 </p>
 
 OpenWork, ajanslı iş akışlarınızı takımınız için tekrarlanabilir, ürünleştirilmiş bir süreç olarak kolayca yayınlamanızı sağlayan bir fikir etrafında tasarlanmıştır.
@@ -23,7 +23,7 @@ OpenWork, ajanslı iş akışlarınızı takımınız için tekrarlanabilir, ür
 - **OpenWork Orchestrator (CLI sunucusu)**: masaüstü arayüzü olmadan OpenCode + OpenWork sunucusunu çalıştırın.
   - kurulum: `npm install -g openwork-orchestrator`
   - çalıştırma: `openwork start --workspace /path/to/workspace --approval auto`
-  - belgeler: [apps/orchestrator/README.md](./apps/orchestrator/README.md)
+  - belgeler: [apps/orchestrator/README.md](../apps/orchestrator/README.md)
 
 ## Quick start
 
@@ -228,7 +228,7 @@ Topluluk belgeleri:
 
 ## Supported Languages
 
-Çevrilmiş README'ler: [`translated_readmes/`](./translated_readmes/README.md), İngilizce, 简体中文, 繁體中文, 日本語 ve Türkçe olarak mevcuttur.
+Çevrilmiş README'ler: [`translated_readmes/`](./README.md), İngilizce, 简体中文, 繁體中文, 日本語 ve Türkçe olarak mevcuttur.
 
 Uygulama şu dillerde kullanılabilir:
 - English (`en`)
