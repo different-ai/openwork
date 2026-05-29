@@ -460,7 +460,7 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
       continue;
     }
     if (part.type === "skill") {
-      parts.push({ type: "text", text: `the \"${part.name}\" skill` });
+      parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
       continue;
     }
     if (part.type === "file") {

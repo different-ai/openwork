@@ -521,6 +521,7 @@ function PastedTextChip(props: { label: string; text: string }) {
 }
 
 const PASTE_TOKEN_RE = /(\[pasted text [^\]]+\])/;
+const SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/;
 
 function HighlightedPlainText(props: {
   text: string;
@@ -541,8 +542,11 @@ function HighlightedPlainText(props: {
     });
   }, [props.highlightQuery, props.text]);
 
-  // If no paste tokens present, render as plain text (fast path).
-  if (!props.pastedTextMap?.size || !PASTE_TOKEN_RE.test(props.text)) {
+  const hasPasteTokens = Boolean(props.pastedTextMap?.size) && PASTE_TOKEN_RE.test(props.text);
+  const hasSkillTokens = SKILL_TOKEN_RE.test(props.text);
+
+  // If no inline tokens present, render as plain text (fast path).
+  if (!hasPasteTokens && !hasSkillTokens) {
     return (
       <div ref={rootRef} className={props.className}>
         {props.text}
@@ -550,8 +554,8 @@ function HighlightedPlainText(props: {
     );
   }
 
-  // Split on paste tokens and render chips inline.
-  const segments = props.text.split(PASTE_TOKEN_RE);
+  // Split on inline tokens and render chips inline.
+  const segments = props.text.split(/(\[pasted text [^\]]+\]|Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/);
   let segmentOffset = 0;
   return (
     <div ref={rootRef} className={props.className}>
@@ -565,9 +569,21 @@ function HighlightedPlainText(props: {
             return <PastedTextChip key={key} label={match[1]} text={pastedBody} />;
           }
         }
+        const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/);
+        if (skillMatch?.[1]) {
+          return <SkillChip key={key} name={skillMatch[1]} />;
+        }
         return <span key={key}>{segment}</span>;
       })}
     </div>
+  );
+}
+
+function SkillChip(props: { name: string }) {
+  return (
+    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
+      {props.name}
+    </span>
   );
 }
 

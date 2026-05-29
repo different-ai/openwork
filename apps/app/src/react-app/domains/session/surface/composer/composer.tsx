@@ -728,7 +728,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const applySkillSelection = (name: string) => {
-    props.onDraftChange(`Load [skill ${name}] and follow its instructions. `);
+    props.onDraftChange(`[skill ${name}] `);
     setSlashOpen(false);
     setToolMenuOpen(false);
   };
