@@ -1,0 +1,62 @@
+apps/app/src/components/chat/utils.ts
+  s_31c24e0d17f4f4::t_a330d3eb9d439e 1
+  h_2169b0bd9b5c87 32-51,89,142-146
+apps/app/src/components/chat/message-list.tsx
+  s_2713c5d987a4e7::t_c4f7430f747877 414-426
+  s_2713c5d987a4e7::t_40b2a943cc5754 17
+  h_2169b0bd9b5c87 8,20,22,41-47,49,79,142-163,165-181,283-290,324-327,332,334,454,456,484,522,542,565
+  s_2713c5d987a4e7::t_66cbbd72b16d81 427
+  s_31c24e0d17f4f4::t_78cff2b957d928 576
+apps/app/src/components/ui/response-stream.tsx
+  s_84ee96902e9e8c::t_9c1a3fd395695c 55-227
+.gitignore
+  h_2169b0bd9b5c87 62-63
+apps/app/scripts/open-target.test.ts
+  s_84ee96902e9e8c::t_277a0a3fc547d6 96-112
+apps/app/src/lib/websearch-results.ts
+  s_84ee96902e9e8c::t_5936632b6ae210 9
+apps/app/src/react-app/domains/session/artifacts/open-target.ts
+  s_84ee96902e9e8c::t_40c36af89f2bdc 53
+  s_84ee96902e9e8c::t_a2d6173b49ad41 248-255
+apps/app/src/components/ui/code-block.tsx
+  s_84ee96902e9e8c::t_35e89273d5992e 42-62
+apps/app/src/components/markdown/text-highlights.ts
+  s_84ee96902e9e8c::t_fe0c38de36dd68 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "958cc171cbdb7041249c22fe16c8982ef0492b16",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_2713c5d987a4e7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "404d5a40-9110-4731-9510-4d867fcc4264",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null
+    },
+    "s_31c24e0d17f4f4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ad790952-3093-47b3-b9e9-bcce3d9a890b",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_84ee96902e9e8c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bbfd4919-77a8-4659-ae7d-df4f36f73136",
+        "model": "gpt-5.5-high-fast"
+      },
+      "human_author": null
+    }
+  }
+}
