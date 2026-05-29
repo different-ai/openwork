@@ -36,6 +36,7 @@ const URL_PATTERN = /https?:\/\/[^\s)\]}>"'`]+/gi;
 const SOCKET_PATTERN = /(?:ws|wss):\/\/[^\s)\]}>"'`]+/gi;
 const ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "image", "pdf", "html"]);
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
+const ARTIFACT_METADATA_TOOL_NAMES = new Set(["openwork_extension_call"]);
 const WRITE_TOOL_NAMES = new Set([
   "apply_patch",
   "edit",
@@ -194,6 +195,10 @@ function isWriteTool(toolName: string) {
   return WRITE_TOOL_NAMES.has(normalizedToolName(toolName));
 }
 
+function isArtifactMetadataTool(toolName: string) {
+  return ARTIFACT_METADATA_TOOL_NAMES.has(normalizedToolName(toolName));
+}
+
 function collectFileMetadataValues(value: unknown) {
   if (!isObject(value)) return [];
   const values: string[] = [];
@@ -208,6 +213,11 @@ function collectFileMetadataValues(value: unknown) {
     }
   }
   return values;
+}
+
+function collectNestedFileMetadataValues(value: unknown) {
+  if (!isObject(value)) return [];
+  return [value, value.result].flatMap(collectFileMetadataValues);
 }
 
 function collectPatchFileValues(value: unknown) {
@@ -262,6 +272,7 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
 
       const discoveryTool = isDiscoveryTool(part.toolName);
       const writeTool = isWriteTool(part.toolName);
+      const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
 
       if (writeTool) {
         addFileValues(
@@ -274,6 +285,15 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
         if (typeof part.output === "string") {
           scanText(targets, part.output, 90, "write tool output", { includeFiles: true });
         }
+      }
+
+      if (artifactMetadataTool) {
+        addFileValues(
+          targets,
+          [part.input, part.output].flatMap(collectNestedFileMetadataValues),
+          95,
+          "artifact tool metadata",
+        );
       }
 
       if (!discoveryTool) {

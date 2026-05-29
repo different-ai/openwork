@@ -189,11 +189,13 @@ export async function callOpenAiImageGenerationExtensionAction(config: ServerCon
     };
   }
   if (action === "image_generate") {
+    const result = await generateOpenAiImageArtifact(config, env, args, context);
     return {
       ok: true,
       extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
       action,
-      result: await generateOpenAiImageArtifact(config, env, args, context),
+      path: result.path,
+      result,
       context,
     };
   }

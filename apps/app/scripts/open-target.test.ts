@@ -75,6 +75,27 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
   });
 
+  it("extracts artifact paths from OpenWork extension call metadata", () => {
+    const targets = deriveOpenTargets([
+      toolMessage("msg_tool", "openwork_extension_call", {
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+      }, {
+        ok: true,
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+        path: "artifacts/potato.png",
+        result: {
+          path: "artifacts/potato.png",
+          bytes: 12345,
+          model: "gpt-image-2",
+        },
+      }),
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "artifacts/potato.png", preview: "image", confidence: 95 });
+  });
+
   it("extracts artifact targets from attachment sources", () => {
     const targets = deriveOpenTargets([
       {
