@@ -47,6 +47,10 @@ export type ExtensionItemBuildInput = {
 
 const MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
 
+export function isToggleControlledExtension(entry: McpDirectoryInfo) {
+  return entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
+}
+
 function setupStateFromEnablement(enablement: { active: boolean; results: EnablementResult[] } | null): ExtensionSetupState {
   if (!enablement || enablement.results.length === 0) return "needs_setup";
   if (enablement.active) return "ready";
@@ -203,7 +207,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     builtInItems,
     cloudPluginItems: [...cloudPluginItems, ...importedPluginItems],
     installedMcpEntries: [
-      ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
+      ...builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
     ],
     installedSkills: standaloneSkillItems.flatMap((item) => item.skill ? [item.skill] : []),

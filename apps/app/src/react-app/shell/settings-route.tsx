@@ -46,7 +46,7 @@ import "../domains/settings/openwork-voice-config";
 import "../domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "../domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "../domains/settings/extension-items";
-import { isOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
+import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
 import { PreferencesView } from "../domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "../domains/settings/pages/general-view";
@@ -530,6 +530,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
   const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
   const [computerUsePermissions, setComputerUsePermissions] = useState<{ accessibility: boolean; screenRecording: boolean } | null>(null);
+  const [extensionStateVersion, setExtensionStateVersion] = useState(0);
   const [imageGenerationBusy, setImageGenerationBusy] = useState(false);
   const [imageGenerationStatus, setImageGenerationStatus] = useState<string | null>(null);
   const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
@@ -909,6 +910,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     setActiveClient(opencodeClient);
   }, [opencodeClient]);
+
+  useEffect(() => {
+    const refresh = () => setExtensionStateVersion((value) => value + 1);
+    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isDesktopRuntime() || !isMacPlatform()) return;
@@ -1668,7 +1679,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return match ? isOpenWorkExtensionEnabled(match) : false;
       },
     };
-  }, [computerUsePermissions, connectionsSnapshot, providerConnectedIds, userEnvKeys]);
+  }, [computerUsePermissions, connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
   const builtInExtensionsDisabled = checkDesktopRestriction({ restriction: "allowBuiltInExtensions" });
   const builtInMarketplaceEntries = useMemo(
     () => connectionsStore.quickConnect.filter(isBuiltInOpenWorkExtension),
@@ -2185,6 +2196,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 configSlotForBuiltIn={extensionController.configSlotForEntry}
                 isBuiltInConnected={extensionController.isConnected}
                 extensionItems={extensionItems.items}
+                setBuiltInEnabled={setOpenWorkExtensionEnabled}
               />
             }
           />
@@ -2209,6 +2221,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             configSlotForBuiltIn={extensionController.configSlotForEntry}
             isBuiltInConnected={extensionController.isConnected}
             extensionItems={extensionItems.items}
+            setBuiltInEnabled={setOpenWorkExtensionEnabled}
           />
         );
       case "cloud-workers":

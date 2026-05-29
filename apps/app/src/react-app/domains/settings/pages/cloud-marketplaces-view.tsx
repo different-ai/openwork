@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
-import type { ExtensionItem } from "../extension-items";
+import { isToggleControlledExtension, type ExtensionItem } from "../extension-items";
 import { useStatusToasts } from "../../shell-feedback/status-toasts";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -84,6 +84,7 @@ export type CloudMarketplacesViewProps = {
   configSlotForBuiltIn?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   isBuiltInConnected?: (entry: McpDirectoryInfo) => boolean;
   extensionItems?: ExtensionItem[];
+  setBuiltInEnabled?: (entry: McpDirectoryInfo, enabled: boolean) => void;
 };
 
 function pluginCounts(plugin: DenOrgPlugin) {
@@ -139,6 +140,7 @@ export function CloudMarketplacesView({
   configSlotForBuiltIn,
   isBuiltInConnected,
   extensionItems = [],
+  setBuiltInEnabled,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const { showToast } = useStatusToasts();
@@ -467,6 +469,7 @@ export function CloudMarketplacesView({
           disabled={builtInExtensionsDisabled}
           connecting={builtInConnectingName === detailRow.entry.name}
           configSlot={configSlotForBuiltIn?.(detailRow.entry) ?? null}
+          onSetEnabled={setBuiltInEnabled}
           onClose={() => setDetailRow(null)}
         />
       ) : null}
@@ -543,10 +546,12 @@ function BuiltInMarketplaceDetailModal(props: {
   disabled: boolean;
   connecting: boolean;
   configSlot: React.ReactNode | null;
+  onSetEnabled?: (entry: McpDirectoryInfo, enabled: boolean) => void;
   onClose: () => void;
 }) {
-  const { row, disabled, connecting, configSlot, onClose } = props;
+  const { row, disabled, connecting, configSlot, onClose, onSetEnabled } = props;
   const entry = row.entry;
+  const toggleControlled = isToggleControlledExtension(entry);
   return (
     <ExtensionDetailModal
       open
@@ -567,6 +572,11 @@ function BuiltInMarketplaceDetailModal(props: {
       contributionLabels={entry.extensionManifest?.contributions?.map((contribution) => contribution.label ?? contribution.ref ?? contribution.type) ?? []}
       configSlot={configSlot}
       showEnablementCard={false}
+      connectLabel="Enable"
+      connectingLabel="Enabling..."
+      uninstallLabel="Disable"
+      onConnect={!disabled && toggleControlled && !row.active && onSetEnabled ? () => onSetEnabled(entry, true) : undefined}
+      onUninstall={!disabled && toggleControlled && row.active && onSetEnabled ? () => onSetEnabled(entry, false) : undefined}
     />
   );
 }
