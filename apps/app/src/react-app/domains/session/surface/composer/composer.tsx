@@ -718,7 +718,17 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [menuIndex, activeItems.length]);
 
   const applyCommandSelection = (command: SlashCommandOption) => {
+    if (command.source === "skill") {
+      applySkillSelection(command.name);
+      return;
+    }
     props.onDraftChange(`/${command.name} `);
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
+  const applySkillSelection = (name: string) => {
+    props.onDraftChange(`Load [skill ${name}] and follow its instructions. `);
     setSlashOpen(false);
     setToolMenuOpen(false);
   };
@@ -726,10 +736,11 @@ export function ReactSessionComposer(props: ComposerProps) {
   const applyPluginFileSelection = (file: CloudImportedPluginFile) => {
     const commandName = pluginSlashCommandName(file);
     if (commandName) {
-      applyCommandSelection({
+      if (file.objectType === "skill") applySkillSelection(commandName);
+      else applyCommandSelection({
         id: `plugin:${file.configObjectId}`,
         name: commandName,
-        source: file.objectType === "skill" ? "skill" : "command",
+        source: "command",
       });
       return;
     }

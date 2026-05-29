@@ -95,6 +95,7 @@ export type PromptMode = "prompt" | "shell";
 export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
+  | { type: "skill"; name: string }
   | { type: "file"; path: string; label?: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 

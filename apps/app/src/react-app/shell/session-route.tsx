@@ -459,6 +459,10 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
       parts.push({ type: "agent", name: part.name });
       continue;
     }
+    if (part.type === "skill") {
+      parts.push({ type: "text", text: `the \"${part.name}\" skill` });
+      continue;
+    }
     if (part.type === "file") {
       const absolute = toAbsolutePath(part.path);
       if (!absolute) continue;

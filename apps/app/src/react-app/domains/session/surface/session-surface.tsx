@@ -753,7 +753,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
       if (pasteMatch) {
@@ -761,6 +761,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (target) {
           return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines }];
         }
+      }
+      const skillMatch = segment.match(/^\[skill (.+)\]$/);
+      if (skillMatch?.[1]) {
+        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
@@ -776,6 +780,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     for (const part of pasteParts) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
+    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
     for (const value of Object.keys(mentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
