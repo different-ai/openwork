@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
-import { evaluateEnablement, defaultMcpEnablement } from "../../../../app/enablement";
+import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import { ExtensionCard } from "../../../design-system/extension-card";
@@ -396,13 +396,6 @@ export function McpView(props: McpViewProps) {
     const manifest = entry.extensionManifest;
     if (manifest?.enablement && props.enablementContext) {
       return evaluateEnablement(manifest.enablement, props.enablementContext);
-    }
-    // For plain MCP entries, use default mcp-connected enablement.
-    if (entry.kind === "mcp" || entry.kind === "ui-control" || isMcpBackedExtension(entry)) {
-      const serverName = getMcpIdentityKey(entry);
-      if (props.enablementContext) {
-        return evaluateEnablement(defaultMcpEnablement(serverName), props.enablementContext);
-      }
     }
     return null;
   };
