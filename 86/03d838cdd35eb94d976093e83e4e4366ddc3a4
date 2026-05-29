@@ -1,0 +1,131 @@
+apps/app/src/components/ui/steps.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-120
+apps/app/src/react-app/domains/session/surface/scroll-controller.ts
+  s_3b75aaba249c69::t_1843a61f068585 3-11,99-100,242,249,252,257,279,289
+apps/app/src/components/tools/lsp.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-62
+apps/app/src/app/index.css
+  s_3b75aaba249c69::t_1843a61f068585 412
+apps/app/src/lib/target-provider.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-43
+apps/app/src/components/chat/message-list-provider.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-97
+apps/app/scripts/open-target.test.ts
+  s_3b75aaba249c69::t_1843a61f068585 78-112
+apps/app/src/components/tools/file.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-228
+apps/app/src/components/ui/reasoning.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-174
+apps/app/scripts/artifacts.test.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-36
+apps/app/src/components/ui/code-block.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-103
+apps/app/src/components/ui/image.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-76
+apps/app/src/components/chat/artifact.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-67
+apps/app/src/components/tools/bash.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-39
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_3b75aaba249c69::t_1843a61f068585 47,65-68,424,575-589,795,1055-1072,1204-1210,1214-1232,1250-1251,1257-1262
+apps/app/package.json
+  s_3b75aaba249c69::t_1843a61f068585 58,67,79,82-83,86
+apps/app/tests/session-sync-tool-parts.test.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-165
+apps/app/src/components/tools/glob.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-47
+apps/app/src/components/tools/collapsible-tool.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-144
+apps/app/src/components/tools/edit.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-27
+apps/app/src/react-app/domains/session/surface/scroll-store.ts
+  s_3b75aaba249c69::t_1843a61f068585 91-104
+apps/app/src/components/chat/utils.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-156
+apps/app/src/lib/artifacts.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-278
+apps/app/components.json
+  s_3b75aaba249c69::t_1843a61f068585 15-16,24-26
+apps/app/src/components/chat/task-suggestions.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-76
+.gitignore
+  s_3b75aaba249c69::t_1843a61f068585 62-63
+apps/app/src/components/markdown/markdown.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-335
+apps/app/src/components/tools/apply-patch.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-29
+apps/app/src/components/tools/grep.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-47
+apps/app/src/components/tools/websearch.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-56
+apps/app/src/components/ui/avatar.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-107
+apps/app/src/components/tools/question.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-67
+apps/app/src/components/tools/todowrite.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-28
+apps/app/src/components/markdown/text-highlights.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-99
+apps/app/src/lib/messages.ts
+  s_3b75aaba249c69::t_1843a61f068585 1
+apps/app/src/components/chat/artifact-icon.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-54
+apps/app/src/components/ui/hover-card.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-49
+apps/app/src/components/ui/badge.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-52
+apps/app/src/components/tools/path.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-22
+apps/app/src/lib/websearch-results.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-33
+apps/app/src/react-app/domains/session/sync/parse-tool-parts.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-78
+apps/app/src/react-app/domains/session/artifacts/open-target.ts
+  s_3b75aaba249c69::t_1843a61f068585 53,247-255
+apps/app/src/react-app/domains/session/status/session-activity-store.ts
+  s_3b75aaba249c69::t_1843a61f068585 15,34,42,48-69,75,162-177,199,223,242,297,304,317,328
+apps/app/src/components/tools/webfetch.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-68
+apps/app/src/react-app/domains/session/surface/scroll-overlay.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-93
+apps/app/src/components/ui/chain-of-thought.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-148
+apps/app/src/components/chat/message-list.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-619
+apps/app/src/components/ui/tool.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-196
+apps/app/src/components/tools/skill.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-26
+apps/app/src/components/descriptive-button.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-58
+apps/app/src/components/ui/message.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-127
+apps/app/src/components/chat/message-sources.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-121
+apps/app/src/lib/build-in-tools.ts
+  s_3b75aaba249c69::t_1843a61f068585 1-370
+apps/app/src/components/ui/response-stream.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-394
+apps/app/src/components/ai-elements/chain-of-thought.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-222
+apps/app/src/components/ui/markdown.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-110
+apps/app/src/components/ui/source.tsx
+  s_3b75aaba249c69::t_1843a61f068585 1-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8603d838cdd35eb94d976093e83e4e4366ddc3a4",
+  "prompts": {},
+  "sessions": {
+    "s_3b75aaba249c69": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "07896a27-c46b-4aa6-89ca-f38d5a27363b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
