@@ -25,6 +25,9 @@ const callArgsSchema = z.object({
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });
 
+const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
+  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
+
 function serverUrl(): string {
   return String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "");
 }
@@ -98,9 +101,12 @@ function contextPayload(context: OpenCodeContext) {
 }
 
 export const OpenWorkExtensionsPreview = async () => ({
+  "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
+    output.system.push(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  },
   tool: {
     openwork_extension_list_actions: {
-      description: "List extension actions currently exposed by OpenWork.",
+      description: `List extension actions currently exposed by OpenWork. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
       args: listActionsArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = listActionsArgsSchema.parse(rawArgs);
@@ -115,7 +121,7 @@ export const OpenWorkExtensionsPreview = async () => ({
       },
     },
     openwork_extension_call: {
-      description: "Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas.",
+      description: `Call an OpenWork extension action. Use openwork_extension_list_actions first to inspect available actions and schemas. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`,
       args: callArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const args = callArgsSchema.parse(rawArgs);
