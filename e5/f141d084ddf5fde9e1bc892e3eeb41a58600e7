@@ -1,0 +1,92 @@
+apps/app/src/react-app/domains/session/artifacts/asset-item.ts
+  s_3e55625e281269::t_98509a7acb738f 159-162,319-320
+apps/app/src/react-app/domains/session/artifacts/artifact-store.ts
+  s_43988882a2534d::t_6941b9a47b1ff7 5-9,11,13-15,18-19,21-22,25-45,53-56,59,62-72,79-105,108-110,112-120,123-125,128-130,132-135,138-143,146-147,149-157,166,169,171-179
+apps/app/src/components/markdown/text-highlights.ts
+  s_3e55625e281269::t_06bb742723c4e8 11
+apps/app/src/react-app/domains/session/panel/side-panel.tsx
+  s_43988882a2534d::t_11f17c97db18a6 399,402,406-423,427,431
+  s_43988882a2534d::t_f00d2a0d2f6e48 28-32,60,62-63,66,72,79-82,91-92,99,107-108,110-113,119,121,125-126,134,139,143,153,155,296,312,330,390,393-397,400-401,403-404,424-426,428-430,432-434,443-444,446,448-449,451-452,464
+  s_43988882a2534d::t_acc08f69a73568 24,505
+  s_43988882a2534d::t_4e87ccf13e3ed3 214,219,268
+  s_43988882a2534d::t_890b8108d38d17 33,391,450,476,479-481,485
+apps/app/src/components/ui/response-stream.tsx
+  s_3e55625e281269::t_a795e5a88080bd 55,67-68,135,224,227
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_43988882a2534d::t_da6d63787a8734 623-638
+  s_43988882a2534d::t_311410da9064e5 1165-1168
+  s_43988882a2534d::t_f00d2a0d2f6e48 722-724,856-858,893-895,936,953,967
+  s_43988882a2534d::t_eb40b7377c80e2 51
+  s_43988882a2534d::t_3f21f8ad1d214b 50,73-77,205-232
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_43988882a2534d::t_9e6e5811f0fca1 3
+  s_43988882a2534d::t_f00d2a0d2f6e48 51,199-200,297-298
+  s_43988882a2534d::t_eb40b7377c80e2 52
+  s_43988882a2534d::t_95965dafd88f0d 300-301
+  s_43988882a2534d::t_ed869d2170c165 198,202-203,234-237,255-258,260-264,266-269
+  s_43988882a2534d::t_2ae424390ee7bd 259
+  s_43988882a2534d::t_796fd610412087 48-50
+apps/app/scripts/websearch-results.test.ts
+  s_3e55625e281269::t_3e839cdcf34ee6 1-20
+apps/app/src/lib/asset-provider.ts
+  s_43988882a2534d::t_f00d2a0d2f6e48 45-46
+  s_43988882a2534d::t_eb40b7377c80e2 10
+apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
+  s_43988882a2534d::t_eeba7f8f993d90 108-111,161-165,187,241,278-279,292-299,309-315,362-366
+  s_43988882a2534d::t_1b884f38414c2b 11
+  s_43988882a2534d::t_f00d2a0d2f6e48 24,78-79
+apps/app/scripts/asset-item.test.ts
+  s_3e55625e281269::t_29ab3d8929aa59 96-112
+apps/app/src/app/lib/openwork-server.ts
+  s_43988882a2534d::t_091238b11dfe3f 830,841,1461,1466
+apps/app/scripts/artifact-store.test.ts
+  s_43988882a2534d::t_860aedcc029816 1,3,5-12,14-21,25-62,64-65,67-68,70-76
+apps/app/src/app/lib/desktop.ts
+  s_43988882a2534d::t_86b0f5b3e4c0b0 163-165,173-175
+  s_43988882a2534d::t_eb40b7377c80e2 28
+  s_43988882a2534d::t_f00d2a0d2f6e48 32,113-114
+  s_43988882a2534d::t_78472158b6b117 162,172,178,304-305,311-312
+apps/app/src/components/ui/image.tsx
+  s_decb426c130deb::t_ee90a52901dc27 2,12,35,37
+apps/app/src/lib/websearch-results.ts
+  s_3e55625e281269::t_164eaca373f748 9
+apps/app/src/components/ui/code-block.tsx
+  s_3e55625e281269::t_dd9ffd71d8869c 42-43,51-55,58,60-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e5f141d084ddf5fde9e1bc892e3eeb41a58600e7",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_3e55625e281269": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d3e491ca-8ca8-4943-95a3-305362c86e10",
+        "model": "gpt-5.5-high-fast"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_43988882a2534d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7159-53fc-7b31-88d1-90286edd254e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_decb426c130deb": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "67149475-7e28-4a68-a834-50427a0bcf32",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
