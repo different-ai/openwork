@@ -371,33 +371,13 @@ export function SessionPage(props: SessionPageProps) {
   }, [toggleCurrentSidePanel]);
   const openArtifactRailPane = useCallback(() => {
     if (!hasArtifactTargets || !props.selectedSessionId) return;
-    const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);
-    const artifactTargetIds = new Set(artifactFileTargets.map((target) => target.id));
-    const artifactTab = sessionPanelState.tabs.find((tab) => (
-      tab.type === "artifact" && artifactTargetIds.has(tab.id)
-    ));
-    const firstArtifact = artifactFileTargets[0];
-    if (panelRailActive && activeTab?.type === "artifact") {
+    if (panelRailActive) {
       toggleCurrentSidePanel("panel");
       return;
     }
-    if (!panelRailActive) {
-      preserveSidePanelOnPanelOpenRef.current = true;
-    }
-    if (artifactTab) {
-      selectTab(props.selectedSessionId, artifactTab.id);
-    } else if (firstArtifact) {
-      openTab(props.selectedSessionId, {
-        id: firstArtifact.id,
-        type: "artifact",
-        label: firstArtifact.name,
-        preview: firstArtifact.preview,
-      });
-    }
-    if (!panelRailActive) {
-      toggleCurrentSidePanel("panel");
-    }
-  }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, toggleCurrentSidePanel]);
+    preserveSidePanelOnPanelOpenRef.current = true;
+    toggleCurrentSidePanel("panel");
+  }, [hasArtifactTargets, panelRailActive, props.selectedSessionId, toggleCurrentSidePanel]);
   const openExtensionsRailPane = useCallback(() => {
     toggleCurrentSidePanel("extensions");
   }, [toggleCurrentSidePanel]);

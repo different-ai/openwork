@@ -20,13 +20,16 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatFileSize } from "@/lib/utils";
 
+import { isCollectibleArtifactTarget, type OpenTarget } from "../artifacts/open-target";
 import { ArtifactIcon } from "../artifacts/artifact-icon";
 import { ArtifactPanel } from "../artifacts/artifact-panel";
 import {
   type BrowserPanelTab,
   type PanelTab as PanelTabEntry,
   useActivePanelTab,
+  usePanelTabStore,
   useSessionPanelState,
 } from "./panel-tab-store";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
@@ -433,7 +436,7 @@ export function SidePanel({
           </div>
         </div>
         {!activeTab ? (
-          <PanelEmpty />
+          <ArtifactList sessionId={sessionId} />
         ) : null}
         {activeTab?.type === "browser" ? (
           <BrowserPanelContent tab={activeTab} onClose={onClose} />
@@ -452,6 +455,52 @@ export function SidePanel({
         ) : null}
       </div>
     </TooltipProvider>
+  );
+}
+
+function ArtifactList({ sessionId }: { sessionId: string }) {
+  const openTab = usePanelTabStore((state) => state.openTab);
+  const targets = usePanelTabStore((state) =>
+    (state.transcriptArtifactTargets[sessionId] ?? []).filter(isCollectibleArtifactTarget)
+  );
+
+  if (targets.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center p-4 text-center">
+        <p className="text-sm text-muted-foreground">No artifacts yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="shrink-0 px-3 py-2">
+        <p className="text-xs font-medium text-muted-foreground">Artifacts ({targets.length})</p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+        {targets.map((target) => (
+          <button
+            key={target.id}
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/50 focus:bg-accent/50 focus:outline-none"
+            onClick={() => {
+              openTab(sessionId, {
+                id: target.id,
+                type: "artifact",
+                label: target.name,
+                preview: target.preview,
+              });
+            }}
+          >
+            <ArtifactIcon type={target.preview} />
+            <span className="min-w-0 flex-1 truncate">{target.name}</span>
+            {target.size !== undefined ? (
+              <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(target.size)}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
