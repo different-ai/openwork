@@ -19,6 +19,7 @@ import {
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
+  TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
@@ -645,6 +646,66 @@ async function getConnectorSyncEventRow(organizationId: OrganizationId, connecto
   return rows[0]?.event ?? null
 }
 
+// Verifies the target resource exists AND belongs to the caller's active
+// organization, returning 404 otherwise. This must run before any role check on
+// access-grant endpoints: resolvePluginArchResourceRole short-circuits to
+// "manager" for org admins without binding the resource to the org, so without
+// this guard an admin in org A could read/add/revoke grants on org B resources
+// by supplying a foreign resourceId.
+async function ensureResourceInOrganization(context: PluginArchActorContext, target: ResourceTarget) {
+  const organizationId = context.organizationContext.organization.id
+  if (target.resourceKind === "config_object") {
+    if (!(await getConfigObjectRow(organizationId, target.resourceId))) {
+      throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+    }
+    return
+  }
+  if (target.resourceKind === "plugin") {
+    if (!(await getPluginRow(organizationId, target.resourceId))) {
+      throw new PluginArchRouteFailure(404, "plugin_not_found", "Plugin not found.")
+    }
+    return
+  }
+  if (target.resourceKind === "marketplace") {
+    if (!(await getMarketplaceRow(organizationId, target.resourceId))) {
+      throw new PluginArchRouteFailure(404, "marketplace_not_found", "Marketplace not found.")
+    }
+    return
+  }
+  if (!(await getConnectorInstanceRow(organizationId, target.resourceId))) {
+    throw new PluginArchRouteFailure(404, "connector_instance_not_found", "Connector instance not found.")
+  }
+}
+
+// Validates that a grant's target member/team belong to the caller's active
+// organization, so a manager cannot grant access to a foreign org's member or
+// team id by smuggling it through the request body.
+async function ensureGrantTargetsInOrganization(context: PluginArchActorContext, value: AccessGrantWrite) {
+  const organizationId = context.organizationContext.organization.id
+
+  if (value.orgMembershipId) {
+    const member = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, value.orgMembershipId)))
+      .limit(1)
+    if (!member[0]) {
+      throw new PluginArchRouteFailure(404, "member_not_found", "Member not found.")
+    }
+  }
+
+  if (value.teamId) {
+    const team = await db
+      .select({ id: TeamTable.id })
+      .from(TeamTable)
+      .where(and(eq(TeamTable.organizationId, organizationId), eq(TeamTable.id, value.teamId)))
+      .limit(1)
+    if (!team[0]) {
+      throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
+    }
+  }
+}
+
 async function ensureVisibleConfigObject(context: PluginArchActorContext, configObjectId: ConfigObjectId) {
   const row = await getConfigObjectRow(context.organizationContext.organization.id, configObjectId)
   if (!row) {
@@ -1243,6 +1304,7 @@ export async function removeConfigObjectFromPlugin(input: { context: PluginArchA
 }
 
 export async function listResourceAccess(input: { context: PluginArchActorContext } & ResourceTarget) {
+  await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
 
   if (input.resourceKind === "config_object") {
@@ -1262,11 +1324,14 @@ export async function listResourceAccess(input: { context: PluginArchActorContex
 }
 
 export async function createResourceAccessGrant(input: { context: PluginArchActorContext; value: AccessGrantWrite } & ResourceTarget) {
+  await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
+  await ensureGrantTargetsInOrganization(input.context, input.value)
   return upsertGrant(input)
 }
 
 export async function deleteResourceAccessGrant(input: { context: PluginArchActorContext } & GrantTarget) {
+  await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
   return removeGrant(input)
 }
