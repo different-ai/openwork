@@ -12,12 +12,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionRuntime } from "./extension-registry";
 
-type BusyAction = "status" | "connect" | "disconnect" | "test" | "smoke-test";
+type BusyAction = "status" | "connect" | "disconnect" | "test" | "smoke-test" | "save-secret";
 type GoogleWorkspaceCommand = () => Promise<unknown>;
 const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
 const CONNECT_POLL_INTERVAL_MS = 1_000;
@@ -34,11 +35,19 @@ function normalizeStringList(value: unknown): string[] {
 function normalizeGoogleWorkspaceAccount(value: unknown): GoogleWorkspaceAuthStatus["account"] {
   if (!isRecord(value)) return null;
   return {
+    accountId: typeof value.accountId === "string" ? value.accountId : null,
     email: typeof value.email === "string" ? value.email : null,
     name: typeof value.name === "string" ? value.name : null,
     picture: typeof value.picture === "string" ? value.picture : null,
     sub: typeof value.sub === "string" ? value.sub : null,
+    scopes: normalizeStringList(value.scopes),
+    connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
   };
+}
+
+function normalizeGoogleWorkspaceAccounts(value: unknown): GoogleWorkspaceAuthStatus["accounts"] {
+  if (!Array.isArray(value)) return [];
+  return value.map(normalizeGoogleWorkspaceAccount).filter((item): item is NonNullable<GoogleWorkspaceAuthStatus["account"]> => item !== null);
 }
 
 function normalizeGoogleWorkspaceSmokeTest(value: unknown): GoogleWorkspaceAuthStatus["smokeTest"] {
@@ -59,6 +68,8 @@ function normalizeGoogleWorkspaceAuthStatus(value: unknown): GoogleWorkspaceAuth
     vault,
     connected: record.connected === true,
     account: normalizeGoogleWorkspaceAccount(record.account),
+    accounts: normalizeGoogleWorkspaceAccounts(record.accounts),
+    activeAccountId: typeof record.activeAccountId === "string" ? record.activeAccountId : null,
     scopes: normalizeStringList(record.scopes),
     connectedAt: typeof record.connectedAt === "string" ? record.connectedAt : null,
     error: typeof record.error === "string" ? record.error : null,
@@ -83,11 +94,12 @@ async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, fl
   throw new Error("Google Workspace OAuth timed out.");
 }
 
-function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChange }: ExtensionConfigContext) {
+function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChange, restartLocalServer }: ExtensionConfigContext) {
   const platform = usePlatform();
   const [status, setStatus] = useState<GoogleWorkspaceAuthStatus | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clientSecret, setClientSecret] = useState("");
   const serverAvailable = Boolean(openworkServerClient);
   const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
   const canTest = serverAvailable && status?.connected === true;
@@ -140,6 +152,35 @@ function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChan
     return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
   };
 
+  const saveGoogleClientSecret = async () => {
+    if (!openworkServerClient) return;
+    const value = clientSecret.trim();
+    if (!value) {
+      setError("Enter the client secret from your Google OAuth desktop client.");
+      return;
+    }
+    setBusyAction("save-secret");
+    setError(null);
+    try {
+      await openworkServerClient.upsertUserEnv([{ key: "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value }]);
+      await openworkServerClient.setUserEnvPendingChanges(true);
+      setClientSecret("");
+      if (restartLocalServer) {
+        const restarted = await restartLocalServer();
+        if (!restarted) setError("Saved Google OAuth settings. Restart OpenWork to apply them.");
+      } else {
+        setError("Saved Google OAuth settings. Restart OpenWork to apply them.");
+      }
+      await loadStatus({ clearError: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Google OAuth settings.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const connectedAccounts = status?.accounts.length ? status.accounts : status?.account ? [status.account] : [];
+
   return (
     <div className="space-y-4">
       {!serverAvailable ? (
@@ -155,7 +196,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChan
           <CheckCircle2 />
           <AlertTitle>Connected to Google Workspace</AlertTitle>
           <AlertDescription>
-            {status.account?.email ? `Signed in as ${status.account.email}.` : "Your Google account is connected."}
+            {connectedAccounts.length === 1 && connectedAccounts[0]?.email ? `Signed in as ${connectedAccounts[0].email}.` : `${connectedAccounts.length} Google accounts connected.`}
             {status.testStatus ? ` ${status.testStatus}` : ""}
           </AlertDescription>
         </Alert>
@@ -173,8 +214,37 @@ function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChan
         <Alert variant="warning">
           <XCircle />
           <AlertTitle>Google OAuth client not configured</AlertTitle>
-          <AlertDescription>Google Workspace is not configured in this build.</AlertDescription>
+          <AlertDescription>Add your Google OAuth desktop client secret to connect Google Workspace.</AlertDescription>
         </Alert>
+      ) : null}
+
+      {status && !status.configured ? (
+        <Card variant="outline" size="sm">
+          <CardHeader>
+            <CardTitle>Set up Google OAuth</CardTitle>
+            <CardDescription>
+              Use a Google Cloud OAuth desktop client. OpenWork already includes the desktop client ID; paste the matching client secret here.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Input
+              type="password"
+              value={clientSecret}
+              onChange={(event) => setClientSecret(event.target.value)}
+              placeholder="Google OAuth desktop client secret"
+              autoComplete="off"
+            />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              The secret is saved locally in OpenWork environment settings and applied after the local server restarts.
+            </p>
+          </CardContent>
+          <CardFooter>
+            <Button disabled={busyAction === "save-secret" || !clientSecret.trim()} onClick={() => void saveGoogleClientSecret()}>
+              {busyAction === "save-secret" ? <Loader2 className="size-4 animate-spin" /> : null}
+              Save and apply
+            </Button>
+          </CardFooter>
+        </Card>
       ) : null}
 
       {status?.vault === "unavailable" ? (
@@ -228,19 +298,33 @@ function GoogleWorkspaceConfig({ openworkServerClient, onExtensionConnectionChan
       </Card>
 
       <Card variant="outline" size="sm">
+        {connectedAccounts.length > 0 ? (
+          <CardContent className="space-y-2 pt-6">
+            {connectedAccounts.map((account) => (
+              <div key={account.accountId ?? account.email ?? account.sub ?? "google-account"} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-card-foreground">{account.email ?? account.name ?? "Google account"}</div>
+                  <div className="text-xs text-muted-foreground">{account.accountId === status?.activeAccountId ? "Default for extension actions" : "Connected"}</div>
+                </div>
+                <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
+                  Disconnect
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        ) : null}
         <CardFooter className="flex-wrap gap-2 justify-between">
           <div className="flex flex-wrap gap-2">
-            {status?.connected ? (
+            <Button disabled={Boolean(busyAction) || !canConnect} onClick={() => void runDesktopAction("connect", connectGoogleWorkspace)}>
+              {busyAction === "connect" ? <Loader2 className="size-4 animate-spin" /> : null}
+              {status?.connected ? "Add another Google account" : "Connect with Google"}
+            </Button>
+            {connectedAccounts.length > 1 ? (
               <Button variant="destructive" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect() ?? Promise.resolve(null))}>
                 {busyAction === "disconnect" ? <Loader2 className="size-4 animate-spin" /> : null}
-                Disconnect
+                Disconnect all
               </Button>
-            ) : (
-              <Button disabled={Boolean(busyAction) || !canConnect} onClick={() => void runDesktopAction("connect", connectGoogleWorkspace)}>
-                {busyAction === "connect" ? <Loader2 className="size-4 animate-spin" /> : null}
-                Connect with Google
-              </Button>
-            )}
+            ) : null}
             <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("test", () => openworkServerClient?.googleWorkspaceTestConnection() ?? Promise.resolve(null))}>
               {busyAction === "test" ? <Loader2 className="size-4 animate-spin" /> : null}
               Test connection

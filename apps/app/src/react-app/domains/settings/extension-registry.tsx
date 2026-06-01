@@ -12,6 +12,7 @@ export type ExtensionConfigContext = {
   openworkServerClient?: OpenworkServerClient | null;
   extensionConnections?: Record<string, boolean>;
   onExtensionConnectionChange?: (extensionId: string, connected: boolean) => void;
+  restartLocalServer?: () => Promise<boolean>;
   computerUse?: {
     connected: boolean;
     connecting: boolean;

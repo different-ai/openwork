@@ -131,7 +131,7 @@ function googleWorkspaceCredentials() {
   const tokenBrokerUrl = process.env[GOOGLE_WORKSPACE_TOKEN_BROKER_URL_ENV]?.trim() || process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL?.trim() || "";
   const missing: string[] = [];
   if (!clientId) missing.push(GOOGLE_WORKSPACE_CLIENT_ID_ENV);
-  if (!clientSecret && !tokenBrokerUrl) missing.push(`${GOOGLE_WORKSPACE_CLIENT_SECRET_ENV} or ${GOOGLE_WORKSPACE_TOKEN_BROKER_URL_ENV}`);
+  if (!clientSecret && !tokenBrokerUrl) missing.push(GOOGLE_WORKSPACE_CLIENT_SECRET_ENV);
   return { clientId, clientSecret, tokenBrokerUrl, missing };
 }
 
@@ -245,6 +245,7 @@ async function removeGoogleWorkspaceVault(config: ServerConfig): Promise<void> {
 function googleWorkspaceSafeAccount(account: unknown) {
   if (!isRecord(account)) return null;
   return {
+    accountId: googleWorkspaceAccountId({ account }),
     email: typeof account.email === "string" ? account.email : null,
     name: typeof account.name === "string" ? account.name : null,
     picture: typeof account.picture === "string" ? account.picture : null,
@@ -252,17 +253,71 @@ function googleWorkspaceSafeAccount(account: unknown) {
   };
 }
 
+function googleWorkspaceAccountId(record: unknown): string | null {
+  if (!isRecord(record)) return null;
+  const account = isRecord(record.account) ? record.account : null;
+  const sub = typeof account?.sub === "string" && account.sub.trim() ? account.sub.trim() : null;
+  const email = typeof account?.email === "string" && account.email.trim() ? account.email.trim().toLowerCase() : null;
+  return sub ?? email;
+}
+
+function googleWorkspaceAccountRecords(record: Record<string, unknown> | null): Record<string, unknown>[] {
+  if (!record) return [];
+  if (Array.isArray(record.accounts)) return record.accounts.filter(isRecord);
+  return isRecord(record.token) ? [record] : [];
+}
+
+function googleWorkspacePrimaryRecord(record: Record<string, unknown> | null): Record<string, unknown> | null {
+  const accounts = googleWorkspaceAccountRecords(record);
+  if (accounts.length === 0) return null;
+  const activeAccountId = typeof record?.activeAccountId === "string" ? record.activeAccountId : "";
+  return accounts.find((account) => googleWorkspaceAccountId(account) === activeAccountId) ?? accounts[0] ?? null;
+}
+
+function googleWorkspacePublicAccounts(record: Record<string, unknown> | null) {
+  return googleWorkspaceAccountRecords(record).map((entry) => ({
+    ...googleWorkspaceSafeAccount(entry.account),
+    accountId: googleWorkspaceAccountId(entry),
+    scopes: Array.isArray(entry.scopes) ? entry.scopes.filter((item): item is string => typeof item === "string") : [],
+    connectedAt: typeof entry.connectedAt === "string" ? entry.connectedAt : null,
+  })).filter((entry) => entry.accountId !== null);
+}
+
+async function writeGoogleWorkspaceAccountsVault(config: ServerConfig, accounts: Record<string, unknown>[], activeAccountId: string | null): Promise<void> {
+  if (accounts.length === 0) {
+    await removeGoogleWorkspaceVault(config);
+    return;
+  }
+  await writeGoogleWorkspaceVault(config, {
+    version: 2,
+    accounts,
+    activeAccountId,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function upsertGoogleWorkspaceAccount(config: ServerConfig, accountRecord: Record<string, unknown>): Promise<void> {
+  const accountId = googleWorkspaceAccountId(accountRecord);
+  if (!accountId) throw new Error("Google account identifier is unavailable.");
+  const current = await readGoogleWorkspaceVault(config);
+  const accounts = googleWorkspaceAccountRecords(current);
+  const nextAccounts = [accountRecord, ...accounts.filter((entry) => googleWorkspaceAccountId(entry) !== accountId)];
+  await writeGoogleWorkspaceAccountsVault(config, nextAccounts, accountId);
+}
+
 function googleWorkspaceStatusPayload(record: Record<string, unknown> | null = null, extra: Record<string, unknown> = {}) {
   const credentials = googleWorkspaceCredentials();
-  const token = isRecord(record?.token) ? record.token : null;
+  const primary = googleWorkspacePrimaryRecord(record);
   return {
     configured: credentials.missing.length === 0,
     missing: credentials.missing,
     vault: googleWorkspaceVaultMode(),
-    connected: Boolean(token?.refreshToken || token?.accessToken),
-    account: googleWorkspaceSafeAccount(record?.account),
-    scopes: Array.isArray(record?.scopes) ? record.scopes.filter((item): item is string => typeof item === "string") : [],
-    connectedAt: typeof record?.connectedAt === "string" ? record.connectedAt : null,
+    connected: googleWorkspaceAccountRecords(record).length > 0,
+    account: googleWorkspaceSafeAccount(primary?.account),
+    accounts: googleWorkspacePublicAccounts(record),
+    activeAccountId: googleWorkspaceAccountId(primary),
+    scopes: Array.isArray(primary?.scopes) ? primary.scopes.filter((item): item is string => typeof item === "string") : [],
+    connectedAt: typeof primary?.connectedAt === "string" ? primary.connectedAt : null,
     error: null,
     testStatus: null,
     smokeTest: null,
@@ -337,7 +392,7 @@ async function exchangeGoogleWorkspaceCode(input: { code: string; redirectUri: s
   });
 }
 
-async function refreshGoogleWorkspaceVault(config: ServerConfig, record: Record<string, unknown>) {
+async function refreshGoogleWorkspaceVault(record: Record<string, unknown>) {
   const token = isRecord(record.token) ? record.token : null;
   const expiresAt = Number(token?.expiresAt ?? 0);
   const accessToken = typeof token?.accessToken === "string" ? token.accessToken : "";
@@ -364,14 +419,19 @@ async function refreshGoogleWorkspaceVault(config: ServerConfig, record: Record<
     },
     updatedAt: new Date().toISOString(),
   };
-  await writeGoogleWorkspaceVault(config, next);
   return next;
 }
 
 async function googleWorkspaceAccessToken(config: ServerConfig): Promise<{ record: Record<string, unknown>; accessToken: string }> {
-  const record = await readGoogleWorkspaceVault(config);
+  const vault = await readGoogleWorkspaceVault(config);
+  const record = googleWorkspacePrimaryRecord(vault);
   if (!record) throw new ApiError(400, "google_workspace_not_connected", "Connect Google Workspace in OpenWork Settings to use this tool.");
-  const refreshed = await refreshGoogleWorkspaceVault(config, record);
+  const refreshed = await refreshGoogleWorkspaceVault(record);
+  const refreshedAccountId = googleWorkspaceAccountId(refreshed);
+  if (refreshedAccountId) {
+    const nextAccounts = googleWorkspaceAccountRecords(vault).map((entry) => googleWorkspaceAccountId(entry) === refreshedAccountId ? refreshed : entry);
+    await writeGoogleWorkspaceAccountsVault(config, nextAccounts, refreshedAccountId);
+  }
   const token = isRecord(refreshed.token) ? refreshed.token : null;
   const accessToken = typeof token?.accessToken === "string" ? token.accessToken : "";
   if (!accessToken) throw new Error("Google Workspace access token is unavailable. Reconnect Google Workspace.");
@@ -534,12 +594,17 @@ export async function googleWorkspaceRunScopeSmokeTest(config: ServerConfig) {
   });
 }
 
-export async function googleWorkspaceDisconnect(config: ServerConfig) {
-  const record = await readGoogleWorkspaceVault(config);
-  const token = isRecord(record?.token) ? record.token : null;
-  const revokeToken = typeof token?.refreshToken === "string" ? token.refreshToken : typeof token?.accessToken === "string" ? token.accessToken : "";
+export async function googleWorkspaceDisconnect(config: ServerConfig, accountId: string | null = null) {
+  const vault = await readGoogleWorkspaceVault(config);
+  const accounts = googleWorkspaceAccountRecords(vault);
+  const selectedAccounts = accountId
+    ? accounts.filter((entry) => googleWorkspaceAccountId(entry) === accountId)
+    : accounts;
   let revokeError: Error | null = null;
-  if (revokeToken) {
+  for (const record of selectedAccounts) {
+    const token = isRecord(record.token) ? record.token : null;
+    const revokeToken = typeof token?.refreshToken === "string" ? token.refreshToken : typeof token?.accessToken === "string" ? token.accessToken : "";
+    if (!revokeToken) continue;
     try {
       await fetchGoogleJson("https://oauth2.googleapis.com/revoke", {
         method: "POST",
@@ -550,8 +615,13 @@ export async function googleWorkspaceDisconnect(config: ServerConfig) {
       revokeError = error instanceof Error ? error : new Error(String(error));
     }
   }
-  await removeGoogleWorkspaceVault(config);
-  return googleWorkspaceStatusPayload(null, revokeError ? { error: `Local Google Workspace tokens were removed, but Google token revocation failed: ${revokeError.message}` } : { testStatus: "Google Workspace access revoked and local tokens removed." });
+  const remainingAccounts = accountId
+    ? accounts.filter((entry) => googleWorkspaceAccountId(entry) !== accountId)
+    : [];
+  const activeAccountId = remainingAccounts.length > 0 ? googleWorkspaceAccountId(remainingAccounts[0]) : null;
+  await writeGoogleWorkspaceAccountsVault(config, remainingAccounts, activeAccountId);
+  const nextVault = await readGoogleWorkspaceVault(config);
+  return googleWorkspaceStatusPayload(nextVault, revokeError ? { error: `Local Google Workspace tokens were removed, but Google token revocation failed: ${revokeError.message}` } : { testStatus: "Google Workspace access revoked and local tokens removed." });
 }
 
 function escapeHtml(value: string): string {
@@ -637,7 +707,7 @@ export function createGoogleWorkspaceConnectFlowManager(config: ServerConfig) {
               connectedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
             };
-            await writeGoogleWorkspaceVault(config, record);
+            await upsertGoogleWorkspaceAccount(config, record);
             flow.status = "connected";
             flow.account = account;
           } catch (exchangeError) {

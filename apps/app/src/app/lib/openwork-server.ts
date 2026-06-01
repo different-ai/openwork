@@ -297,10 +297,13 @@ export type OpenworkArtifactList = {
 };
 
 export type GoogleWorkspaceAccount = {
+  accountId: string | null;
   email: string | null;
   name: string | null;
   picture: string | null;
   sub: string | null;
+  scopes?: string[];
+  connectedAt?: string | null;
 };
 
 export type GoogleWorkspaceAuthStatus = {
@@ -309,6 +312,8 @@ export type GoogleWorkspaceAuthStatus = {
   vault: "encrypted" | "plaintext-dev" | "unavailable";
   connected: boolean;
   account: GoogleWorkspaceAccount | null;
+  accounts: GoogleWorkspaceAccount[];
+  activeAccountId: string | null;
   scopes: string[];
   connectedAt: string | null;
   error: string | null;
@@ -961,7 +966,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     googleWorkspaceConnectStart: () => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
     googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
-    googleWorkspaceDisconnect: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
+    googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),
     googleWorkspaceTestConnection: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/test", { token, hostToken, method: "POST", timeoutMs: 60_000 }),
     googleWorkspaceRunScopeSmokeTest: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/smoke-test", { token, hostToken, method: "POST", timeoutMs: 120_000 }),
     callExtensionAction: (payload: OpenworkExtensionActionCall) =>

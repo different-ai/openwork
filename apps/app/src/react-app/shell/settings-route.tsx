@@ -1685,6 +1685,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => connectionsStore.quickConnect.filter(isBuiltInOpenWorkExtension),
     [connectionsStore.quickConnect],
   );
+  const restartExtensionLocalServer = useCallback(async () => {
+    if (!isDesktopRuntime()) return false;
+    try {
+      await openworkServerRestart({
+        remoteAccessEnabled:
+          readOpenworkServerSettings().remoteAccessEnabled === true,
+      });
+      await openworkServerStore.reconnectOpenworkServer();
+      await refreshRouteState();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [openworkServerStore, refreshRouteState]);
   const extensionController = useSettingsExtensionController({
     openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
     enablementContext,
@@ -1693,6 +1707,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onComputerUsePermissionsChange: setComputerUsePermissions,
     googleWorkspaceConnected,
     setGoogleWorkspaceConnected,
+    restartLocalServer: restartExtensionLocalServer,
     connectMcp: (entry) => connectionsStore.connectMcp(entry),
     refreshMcpServers: () => connectionsStore.refreshMcpServers(),
     providers,

@@ -21,6 +21,7 @@ type SettingsExtensionControllerInput = {
   onComputerUsePermissionsChange: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
   googleWorkspaceConnected: boolean;
   setGoogleWorkspaceConnected: (connected: boolean) => void;
+  restartLocalServer?: () => Promise<boolean>;
   connectMcp: (entry: McpDirectoryInfo) => void | Promise<void>;
   refreshMcpServers: () => void | Promise<void>;
   providers: ProviderLike[];
@@ -59,6 +60,7 @@ function hasOpenAiEnv(input: Pick<SettingsExtensionControllerInput, "providers" 
 export function useSettingsExtensionController(input: SettingsExtensionControllerInput) {
   const configContextForEntry = useCallback((entry: McpDirectoryInfo): ExtensionConfigContext => ({
     openworkServerClient: input.openworkServerClient,
+    restartLocalServer: input.restartLocalServer,
     extensionConnections: {
       "google-workspace": input.googleWorkspaceConnected,
     },

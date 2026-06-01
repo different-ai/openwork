@@ -1940,7 +1940,9 @@ function createRoutes(
 
   addRoute(routes, "POST", "/experimental/google-workspace/disconnect", "client", async (ctx) => {
     if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot disconnect Google Workspace");
-    return jsonResponse(await googleWorkspaceDisconnect(config));
+    const body = await readOptionalJsonBody(ctx.request);
+    const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : null;
+    return jsonResponse(await googleWorkspaceDisconnect(config, accountId));
   });
 
   addRoute(routes, "POST", "/experimental/google-workspace/test", "client", async () => {
