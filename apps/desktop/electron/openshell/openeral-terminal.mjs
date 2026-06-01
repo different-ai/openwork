@@ -78,26 +78,47 @@ export async function launchExternalTerminalToSandbox(sandboxName, options = {})
 
 function launchWindowsTerminal(sandboxName, windowTitle) {
   // Try Windows Terminal first. The `wt.exe` shim accepts `--title`
-  // and runs `wsl.exe -d ... -- openshell sandbox connect <name>`
-  // directly as the command. If wt isn't installed (older Win11
-  // installs), fall back to cmd.exe /K so the window stays open after
-  // the connect command exits.
-  // `sandbox connect` doesn't accept a trailing command. Use `exec
-  // --tty -- openeral` so the external terminal launches Claude Code
-  // directly inside a real PTY (the terminal emulator allocates one
-  // for the wsl.exe child).
+  // and runs `wsl.exe -d ... -- bash -c '...'` as the command. If wt
+  // isn't installed (older Win11 installs), fall back to cmd.exe /K so
+  // the window stays open after the connect command exits.
+  //
+  // We wrap with `bash -c` for two reasons:
+  //   1. PATH: when wsl.exe runs a command directly (without bash) it
+  //      uses a minimal PATH that may not include the location where
+  //      openshell was installed (e.g. ~/.local/bin). A bash -c wrapper
+  //      runs through bash's own PATH lookup which sources the distro's
+  //      profile entries and reliably finds openshell.
+  //   2. Terminal setup: we need to read the current terminal dimensions
+  //      (stty size) and set raw mode (-icanon -echo) on the outer WSL
+  //      PTY before `openshell sandbox connect` starts, so `connect`
+  //      inherits the correct cols/rows and keystrokes pass through
+  //      immediately without line-buffering or echo artifacts.
+  const escapedName = sandboxName.replace(/'/g, "'\\''");
+  // Use `openshell sandbox connect` — the correct interactive command.
+  // `sandbox exec` only relays stdout/stderr and discards stdin; `connect`
+  // relays all three directions so Claude Code's TUI is fully interactive.
+  //
+  // Step 1: read the actual terminal size from the ConPTY-backed WSL PTY
+  //   so `connect` inherits correct cols/rows for the container PTY.
+  //   (Without this, the container PTY may start at 0×0 / cols=1, causing
+  //   Claude Code's output to render as vertical single-character lines.)
+  //   Uses awk to split "ROWS COLS" from `stty size`.
+  //
+  // Step 2: set the outer WSL PTY to raw mode (-icanon -echo) so keystrokes
+  //   flow through immediately without line-buffering or echo artifacts.
+  //
+  // IMPORTANT: use && not ; between commands — Windows Terminal (wt.exe)
+  //   uses semicolons as its own pane/tab separator. A semicolon in the
+  //   bash -c argument is seen by wt.exe even inside double quotes and
+  //   causes it to try to run `exec openshell ...` as a Windows binary
+  //   → error 0x80070002 "file not found". && is not a wt.exe separator.
   const wslArgs = [
     "-d",
     DISTRO_NAME,
     "--",
-    "openshell",
-    "sandbox",
-    "exec",
-    "--name",
-    sandboxName,
-    "--tty",
-    "--",
-    "openeral",
+    "bash",
+    "-c",
+    `COLS=$(stty size 2>/dev/null | awk '{print $2}') && ROWS=$(stty size 2>/dev/null | awk '{print $1}') && stty cols \${COLS:-80} rows \${ROWS:-24} -icanon -echo min 1 time 0 2>/dev/null && exec openshell sandbox connect '${escapedName}'`,
   ];
 
   const wtChild = spawn(
@@ -142,22 +163,16 @@ function launchMacOSTerminal(sandboxName, windowTitle) {
 async function launchLinuxTerminal(sandboxName, windowTitle) {
   // Linux is dev convenience only — banker laptops are Windows. Probe a
   // list of common terminal emulators in priority order.
-  // `sandbox connect` doesn't accept a trailing command. Use `exec
-  // --tty -- openeral` so the external terminal launches Claude Code
-  // directly inside a real PTY (the terminal emulator allocates one
-  // for the wsl.exe child).
+  // Wrap with bash -c for PATH reliability and to set raw mode on the
+  // outer WSL PTY (same rationale as launchWindowsTerminal above).
+  const escapedName = sandboxName.replace(/'/g, "'\\''");
   const wslArgs = [
     "-d",
     DISTRO_NAME,
     "--",
-    "openshell",
-    "sandbox",
-    "exec",
-    "--name",
-    sandboxName,
-    "--tty",
-    "--",
-    "openeral",
+    "bash",
+    "-c",
+    `COLS=$(stty size 2>/dev/null | awk '{print $2}') && ROWS=$(stty size 2>/dev/null | awk '{print $1}') && stty cols \${COLS:-80} rows \${ROWS:-24} -icanon -echo min 1 time 0 2>/dev/null && exec openshell sandbox connect '${escapedName}'`,
   ];
   const candidates = detectLinuxTerminal();
   for (const cand of candidates) {

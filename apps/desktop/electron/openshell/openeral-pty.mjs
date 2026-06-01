@@ -87,24 +87,34 @@ let spawnImpl = async ({ sandboxName, cols, rows, extraEnv }) => {
   const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
   // Two-layer stty strategy:
   //
-  // Layer 1 (WSL PTY): `stty cols X rows Y` on the WSL bash PTY BEFORE
-  // `openshell sandbox exec` runs. This ensures SSH's RequestPTY reads the
-  // correct TIOCGWINSZ when negotiating the container PTY. Fixes the racy
-  // ConPTY → WSL2 dimension propagation that can leave the linux-PTY at
-  // cols=1 at connection time.
+  // Layer 1 (WSL PTY): `stty cols X rows Y -icanon -echo min 1 time 0`
+  // on the WSL bash PTY BEFORE `openshell sandbox exec` runs.
   //
-  // Layer 2 (container PTY): wrap the remote command in `bash -c 'stty ...; exec openeral'`
-  // so that stty is also run INSIDE the container immediately after the SSH
-  // session starts, BEFORE openeral (and therefore setup.sh and Claude Code)
-  // reads TIOCGWINSZ. This is the critical layer: even if openshell's SSH
-  // RequestPTY allocated the container PTY with default/wrong dimensions
-  // (because it does not read from the controlling TTY, or because the
-  // dimension negotiation used a different source), the inner stty corrects
-  // the container PTY's stored size so Claude Code sees the right cols/rows.
+  //   • Dimension flags (cols/rows): ensure the PTY reports the correct
+  //     TIOCGWINSZ. Fixes the racy ConPTY → WSL2 dimension propagation
+  //     that can leave the linux-PTY at cols=1 at connection time.
+  //
+  //   • Raw-mode flags (-icanon -echo min 1 time 0): `openshell sandbox
+  //     connect` relays stdin bidirectionally over its SSH tunnel. For
+  //     each keystroke to arrive individually (not line-buffered) and to
+  //     avoid echo artifacts, the outer WSL PTY must be in raw mode
+  //     before connect starts. Setting -icanon removes line-buffering so
+  //     every keypress is sent immediately. -echo is OFF so xterm.js
+  //     initialization escape sequences (resize, capability queries,
+  //     focus-tracking requests) are not echoed back by the outer PTY
+  //     and re-processed by xterm.js as terminal commands (which would
+  //     produce junk characters and corrupt the TUI rendering).
+  //
+  // Layer 2: `openshell sandbox connect` starts the container's configured
+  // entrypoint (openeral → Claude Code) and relays stdin bidirectionally
+  // over its SSH/gRPC tunnel. This is the correct command for interactive
+  // sessions — `sandbox exec` only relays stdout/stderr and ignores the
+  // outer process's stdin, which is why pressing keys had no effect.
+  // `connect` reads TIOCGWINSZ from the outer WSL PTY (already set to
+  // cols/rows above) to size the container PTY correctly.
   const shellCmd =
-    `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
-    `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
-    `bash -c 'stty cols ${cols} rows ${rows} 2>/dev/null; exec openeral'`;
+    `stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; ` +
+    `exec openshell sandbox connect ${quotedName}`;
   return pty.spawn(
     "wsl.exe",
     ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],
@@ -283,9 +293,8 @@ export const __testing = {
       const pty = await import("node-pty");
       const quotedName = `'${sandboxName.replace(/'/g, "'\\''")}'`;
       const shellCmd =
-        `stty cols ${cols} rows ${rows} 2>/dev/null; ` +
-        `exec openshell sandbox exec --name ${quotedName} --tty -- ` +
-        `bash -c 'stty cols ${cols} rows ${rows} 2>/dev/null; exec openeral'`;
+        `stty cols ${cols} rows ${rows} -icanon -echo min 1 time 0 2>/dev/null; ` +
+        `exec openshell sandbox connect ${quotedName}`;
       return pty.spawn(
         "wsl.exe",
         ["-d", DISTRO_NAME, "--", "bash", "-c", shellCmd],

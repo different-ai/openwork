@@ -160,10 +160,58 @@ function parseSandboxList(stdout) {
 }
 
 /**
- * Poll `openshell sandbox list --json` until the named sandbox reports
- * a Ready/running phase, or until the timeout elapses. If the CLI does
- * not include phase information in the list (flat string arrays), we
- * optimistically assume the sandbox is ready and return immediately.
+ * Parse `openshell sandbox list` (plain-text table, no --json flag) to
+ * find the PHASE of a specific sandbox. Returns null when the sandbox is
+ * absent from the output or the phase column cannot be located.
+ *
+ * CLI 0.0.42 does NOT support `--json` for `sandbox list` — it exits 0
+ * but writes "unexpected argument '--json' found" to stdout. This helper
+ * uses the ANSI text table that plain `sandbox list` emits instead.
+ *
+ * Typical table format (with optional ANSI colour codes):
+ *   NAME                               CREATED        PHASE
+ *   openeral-test-workspace23edf4545   2 minutes ago  Provisioning
+ */
+function parseListTextPhase(stdout, sandboxName) {
+  // Strip ANSI escape sequences (colour, bold, cursor-movement codes).
+  const clean = stdout.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+  const lines = clean.split(/\r?\n/);
+
+  // Locate the header row to find the column offset of PHASE.
+  let phaseOffset = -1;
+  for (const line of lines) {
+    const up = line.toUpperCase();
+    if (up.includes("NAME") && up.includes("PHASE")) {
+      phaseOffset = up.indexOf("PHASE");
+      break;
+    }
+  }
+
+  // Scan every row for the sandbox name.
+  for (const line of lines) {
+    if (!line.includes(sandboxName)) continue;
+
+    // Use the column offset when the header was found.
+    if (phaseOffset >= 0 && line.length > phaseOffset) {
+      const phase = line.slice(phaseOffset).trim().split(/\s+/)[0];
+      if (phase) return phase;
+    }
+
+    // Fallback: split on 2+ consecutive spaces and take the last token
+    // (works for table formats where there is no fixed column alignment).
+    const parts = line.trim().split(/\s{2,}/);
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1].trim();
+      if (last) return last;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Poll `openshell sandbox list` until the named sandbox reports a
+ * Ready/running phase, or until the timeout elapses.
  *
  * @param {string} name
  * @param {{ timeoutMs?: number, pollMs?: number, onProgress?: Function }} [opts]
@@ -183,8 +231,12 @@ async function waitForSandboxReady(name, opts = {}) {
     // fires, so wsl.exe has time to exit before wslRun's own timer does.
     let r;
     try {
+      // Use plain `sandbox list` (no --json). CLI 0.0.42 does not support
+      // --json for this subcommand — it exits 0 but writes an error string
+      // to stdout, causing parseSandboxList to return null every time.
+      // parseListTextPhase reads the phase directly from the ANSI text table.
       r = await wslRun(
-        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list --json"],
+        ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 10 openshell sandbox list"],
         { timeout: 20_000 },
       );
     } catch {
@@ -195,42 +247,35 @@ async function waitForSandboxReady(name, opts = {}) {
       continue;
     }
     if (r.exitCode === 0) {
-      const list = parseSandboxList(r.stdout);
-      if (list) {
-        const entry = list.find((s) => {
-          if (typeof s === "string") return s === name;
-          return s?.name === name || s?.sandbox_name === name || s?.id === name;
-        });
-        if (entry !== undefined) {
-          // Flat string → no phase info, assume ready.
-          if (typeof entry === "string") return;
-          const phase = String(entry?.phase ?? entry?.status ?? entry?.state ?? "").toLowerCase();
-          if (!phase || /ready|running/i.test(phase)) return;
-          if (/error|failed/i.test(phase)) {
-            throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
-          }
-          // Detect sandboxes stuck in Provisioning. If the sandbox has been
-          // in a provisioning-like state for longer than the threshold, bail
-          // out early with a clear error so the renderer can offer a
-          // "Delete and start fresh" action rather than spinning forever.
-          if (/provision/i.test(phase)) {
-            if (!firstProvisioningAt) firstProvisioningAt = Date.now();
-            const stuckMs = Date.now() - firstProvisioningAt;
-            if (stuckMs > STUCK_PROVISIONING_THRESHOLD_MS) {
-              throw new Error(
-                `STUCK_PROVISIONING: Sandbox "${name}" has been in "${phase}" state for ` +
-                  `over ${Math.round(stuckMs / 1000)}s and appears stuck. ` +
-                  `Delete the sandbox and reconnect to create a fresh one. ` +
-                  `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
-              );
-            }
-          } else {
-            // Phase changed away from Provisioning — reset the timer.
-            firstProvisioningAt = null;
-          }
-          onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
+      const phase = parseListTextPhase(r.stdout, name)?.toLowerCase() ?? null;
+      if (phase !== null) {
+        // Sandbox is visible in the list — check its phase.
+        if (!phase || /ready|running/i.test(phase)) return;
+        if (/error|failed/i.test(phase)) {
+          throw new Error(`Sandbox ${name} is in error state (${phase}). Delete it and reconnect.`);
         }
+        // Detect sandboxes stuck in Provisioning. If the sandbox has been
+        // in a provisioning-like state for longer than the threshold, bail
+        // out early with a clear error so the renderer can offer a
+        // "Delete and start fresh" action rather than spinning forever.
+        if (/provision/i.test(phase)) {
+          if (!firstProvisioningAt) firstProvisioningAt = Date.now();
+          const stuckMs = Date.now() - firstProvisioningAt;
+          if (stuckMs > STUCK_PROVISIONING_THRESHOLD_MS) {
+            throw new Error(
+              `STUCK_PROVISIONING: Sandbox "${name}" has been in "${phase}" state for ` +
+                `over ${Math.round(stuckMs / 1000)}s and appears stuck. ` +
+                `Delete the sandbox and reconnect to create a fresh one. ` +
+                `If the error persists, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+            );
+          }
+        } else {
+          // Phase changed away from Provisioning — reset the timer.
+          firstProvisioningAt = null;
+        }
+        onProgress?.({ phase: "waiting", message: `Sandbox is ${phase} (attempt ${attempt}), waiting…` });
       }
+      // phase === null → sandbox not yet visible in the list, keep polling.
     }
     if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -268,10 +313,15 @@ export async function sandboxExists(name) {
   // Without the extra slack wsl.exe can outlive the bash timeout and
   // trigger wslRun's own timer — throwing a raw "wsl.exe timed out"
   // error before the exitCode === 124 check below is ever reached.
+  // CLI 0.0.42 does NOT support `--json` for `sandbox list` — it exits 0
+  // but writes "unexpected argument '--json' found" to stdout, which causes
+  // parseSandboxList to return null and the fallback text-includes check to
+  // miss the sandbox name (the error message doesn't contain it).
+  // `--names` outputs one sandbox name per line and is supported in 0.0.42.
   let r;
   try {
     r = await wslRun(
-      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --json"],
+      ["-d", DISTRO_NAME, "--", "bash", "-c", "timeout 15 openshell sandbox list --names"],
       { timeout: 25_000 },
     );
   } catch (err) {
@@ -292,27 +342,17 @@ export async function sandboxExists(name) {
     );
   }
   if (r.exitCode !== 0) return false;
-  const list = parseSandboxList(r.stdout);
-  if (!list) {
-    // parseSandboxList could not find an array in the JSON (completely
-    // unknown format). Fall back to a raw text search: if the sandbox
-    // name appears anywhere in the output it almost certainly exists.
-    // This prevents sandboxExists returning false (triggering an
-    // unnecessary create that then times out) just because the CLI
-    // changed its output format.
-    const found = r.stdout.includes(name);
-    console.warn(
-      `[sandboxExists] unrecognised sandbox list shape — ` +
-        `falling back to text search for "${name}": ${found ? "found" : "not found"}. ` +
-        `Raw output: ${r.stdout.slice(0, 300)}`,
-    );
-    return found;
+  // --names outputs one sandbox name per line (no JSON).
+  const names = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (names.includes(name)) return true;
+  // Fallback: if --names flag is not supported by a future CLI version and the
+  // output falls back to a text/JSON format, check whether the raw output
+  // contains the sandbox name anywhere (conservative — avoids a spurious create).
+  if (names.length === 0 && r.stdout.includes(name)) {
+    console.warn(`[sandboxExists] --names may be unsupported; found "${name}" via text search.`);
+    return true;
   }
-  return list.some((s) => {
-    if (typeof s === "string") return s === name;
-    // Try every plausible name key the CLI might use
-    return s?.name === name || s?.sandbox_name === name || s?.id === name;
-  });
+  return false;
 }
 
 /**
