@@ -1,0 +1,30 @@
+apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+  s_6c1971b1c288a9::t_2961cc3dd7956d 1439
+  s_5ffbbf246ee3c1::t_dc3b91e5c044ad 134,136-137,139
+  s_5ffbbf246ee3c1::t_13bf7d6bd9dd31 117,119-120,122
+  s_6c1971b1c288a9::t_1f600f0be42077 1415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "da70a79845ce9fa5dd1e0d24891082cf5655f4d7",
+  "prompts": {},
+  "sessions": {
+    "s_5ffbbf246ee3c1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "afd4c24f-cea4-41fb-ada7-4737c902198d",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_6c1971b1c288a9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "debf904e-6b80-478e-9220-b966e5ba5f09",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
