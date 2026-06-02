@@ -1,0 +1,48 @@
+tooling/eslint-config/base.js
+  s_64ed833becfa4d::t_edb1a49190ac95 7,28-29
+  s_64ed833becfa4d::t_8e346968b87425 1-6,8-27
+tooling/eslint-config/next.js
+  s_64ed833becfa4d::t_edb1a49190ac95 10
+  s_64ed833becfa4d::t_338a684232bc44 3,17
+  s_64ed833becfa4d::t_8e346968b87425 1-2,4-9,11-16,18-47
+tooling/eslint-config/package.json
+  s_64ed833becfa4d::t_8e346968b87425 1-13,15-26
+  s_64ed833becfa4d::t_82d5e75a56d998 14
+ee/apps/landing/eslint.config.mjs
+  s_64ed833becfa4d::t_8e346968b87425 1-3
+.github/workflows/lint.yml
+  s_64ed833becfa4d::t_594967ad9f44ab 15
+  s_64ed833becfa4d::t_8e346968b87425 1-14,16-40
+pnpm-workspace.yaml
+  s_64ed833becfa4d::t_8e346968b87425 10
+package.json
+  s_64ed833becfa4d::t_8e346968b87425 52-53
+tooling/eslint-config/react.js
+  s_64ed833becfa4d::t_338a684232bc44 2,13
+  s_64ed833becfa4d::t_edb1a49190ac95 7
+  s_64ed833becfa4d::t_8e346968b87425 1,3-6,8-12,14-34
+ee/apps/den-web/package.json
+  s_64ed833becfa4d::t_8e346968b87425 11,25,30
+ee/apps/landing/package.json
+  s_64ed833becfa4d::t_8e346968b87425 10,23,28
+ee/apps/den-web/eslint.config.mjs
+  s_64ed833becfa4d::t_8e346968b87425 1-3
+turbo.json
+  s_64ed833becfa4d::t_8e346968b87425 32-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9bac1e2694b85887915fade7f7b0a9aebf110fec",
+  "prompts": {},
+  "sessions": {
+    "s_64ed833becfa4d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e8830-3457-7a92-8570-c9f17da4b39f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
