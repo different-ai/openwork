@@ -72,6 +72,12 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
+  "minimax/minimax-m3": {
+    upstreamModel: "minimax/minimax-m3",
+    displayName: "OpenWork: MiniMax M3",
+    enabled: true,
+    usageFactor: 1,
+  },
   "minimax/minimax-m2.7": {
     upstreamModel: "minimax/minimax-m2.7",
     displayName: "OpenWork: MiniMax M2.7",
