@@ -38,7 +38,6 @@ import { useMessageList, useSessionErrorMessage } from "@/components/chat/messag
 import { ArtifactList } from "@/components/chat/artifact"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import {
-  DescriptiveButton,
   DescriptiveButtonContent,
   DescriptiveButtonDescription,
   DescriptiveButtonIcon,
@@ -141,10 +140,11 @@ const isEmptyMessage = (message: UIMessage): boolean => message.parts.length ===
 
 interface FileMessageProps {
   part: FileUIPart
-  tone: "assistant" | "user"
+  tone: "user" | "assistant"
 }
 
-function FileMessage({ part, tone }: FileMessageProps) {
+// TODO: Add tone to the file message
+function FileMessage({ part }: FileMessageProps) {
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && part.url
@@ -162,7 +162,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
   }
 
   return (
-    <DescriptiveButton className="px-2 py-1 items-center gap-2">
+    <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border ps-2 pe-4 py-1 text-left text-sm font-medium whitespace-normal">
       <DescriptiveButtonIcon>
         <FileIcon className="size-6 shrink-0" />
       </DescriptiveButtonIcon>
@@ -174,7 +174,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
           </DescriptiveButtonDescription>
         ) : null}
       </DescriptiveButtonContent>
-    </DescriptiveButton>
+    </div>
   )
 }
 
