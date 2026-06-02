@@ -1,0 +1,108 @@
+apps/app/src/i18n/locales/ru.ts
+  s_cc5115fba120e1::t_88db6dc1999080 1382-1388
+apps/app/src/i18n/locales/zh.ts
+  s_cc5115fba120e1::t_3d2b892b59bb34 265-271
+apps/app/src/react-app/domains/settings/pages/cloud-account-view.tsx
+  s_e4e04bdd1ac61a::t_6143b2aa7d8593 61
+  s_2a6425bd2925ce::t_77edf6ff389d1b 141
+  s_e4e04bdd1ac61a::t_f2edccfeba6fdc 100,102,124,128
+  s_cc5115fba120e1::t_fd83f362af169b 157-166,168-169,188-189,191
+  s_2a6425bd2925ce::t_82bd7e1ca45d2c 101
+  s_cc5115fba120e1::t_78cf722413f775 39,42,49-51,53,56-60,62-64,66,68-70,73,76-79,82-84,86-89,91,93-99
+  s_e4e04bdd1ac61a::t_db8f14e0de07a1 92
+  s_e4e04bdd1ac61a::t_a580a7a47d6e75 36,38,40-41,46
+  s_2a6425bd2925ce::t_2f18809fe1d2c4 106-111,173
+  s_2a6425bd2925ce::t_75bbdf9946428e 6
+  s_e4e04bdd1ac61a::t_6c010d864fcdaf 140
+  s_e4e04bdd1ac61a::t_62cf0449f202e2 171,187,190
+  s_cc5115fba120e1::t_80bf2336f06b4d 37
+  s_e4e04bdd1ac61a::t_b6fa9607c0c3b2 142
+  s_cc5115fba120e1::t_54b8dac35524eb 9-18
+  s_e4e04bdd1ac61a::t_04318f00ba2baa 22
+  s_cc5115fba120e1::t_89d7216de8fe3b 67,71-72,75,80
+  s_cc5115fba120e1::t_3da6afe0c6124e 74,81,85,90
+  s_e4e04bdd1ac61a::t_c4d6819adc964f 134
+  s_2a6425bd2925ce::t_25da52f0995384 3
+  s_2a6425bd2925ce::t_7257d3dcbf8420 174-185
+apps/app/src/react-app/domains/settings/cloud/dev-mode.tsx
+  s_8e37821975ebdb::t_3093847eeb4ce6 6-7
+  s_8e37821975ebdb::t_fd25e71c74f8e1 17-24,26-28
+  s_e4e04bdd1ac61a::t_317365198856d1 9,11,33-34,40-41,45
+apps/app/src/i18n/locales/ca.ts
+  s_cc5115fba120e1::t_f72bf7e2326d39 269-275
+apps/app/src/react-app/shell/settings-route.tsx
+  s_e4e04bdd1ac61a::t_0c47f700f6fc9f 57
+  s_e4e04bdd1ac61a::t_95a04043e9c5ef 2224-2226
+apps/app/src/i18n/locales/th.ts
+  s_cc5115fba120e1::t_80d289210e9411 262-268
+apps/app/src/i18n/locales/ja.ts
+  s_cc5115fba120e1::t_23b8997ac3e98c 261-267
+apps/app/src/i18n/locales/vi.ts
+  s_cc5115fba120e1::t_a9be844c15d569 262-268
+apps/app/src/i18n/locales/es.ts
+  s_cc5115fba120e1::t_bf40cdcad007b3 269-275
+apps/app/src/react-app/domains/settings/cloud/cloud-account-section.tsx
+  s_e4e04bdd1ac61a::t_b22e41f5a60fbf 7,9,11,13-14
+  s_e4e04bdd1ac61a::t_27601993ed35ee 37-38,41,46,48-52,56
+apps/app/src/components/organization-select.tsx
+  s_c87803f3d17a8a::t_c36a4fc6256c22 16-19
+  s_c87803f3d17a8a::t_fbbc45eb31514e 80-101
+apps/app/src/i18n/locales/en.ts
+  s_cc5115fba120e1::t_25d221f8fcc152 280-286
+apps/app/src/i18n/locales/fr.ts
+  s_cc5115fba120e1::t_08e4b78c0226d0 269-275
+apps/app/src/i18n/locales/pt-BR.ts
+  s_cc5115fba120e1::t_14014a991f9f57 262-268
+apps/app/src/react-app/domains/settings/cloud/cloud-account-provider.tsx
+  s_2a6425bd2925ce::t_30947453146e87 34
+  s_2a6425bd2925ce::t_d557eff501f003 51
+  s_e4e04bdd1ac61a::t_693158b53c511a 1-33,36-50,53-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b8d1bab1023758e64aa9613b3395a4265e72f451",
+  "prompts": {},
+  "sessions": {
+    "s_2a6425bd2925ce": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "57d28a47-b759-4f1e-ace4-c095e3fb0bd1",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_8e37821975ebdb": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "17893e41-0714-4a3e-a69a-216e7267d726",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_c87803f3d17a8a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "dc62551b-d434-4ece-b2bc-210d58b79e74",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_cc5115fba120e1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c6e8a40d-cb88-43b0-a5d2-4621e58590fe",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_e4e04bdd1ac61a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2a89127c-13b7-4ecc-be66-2e23d837d885",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
