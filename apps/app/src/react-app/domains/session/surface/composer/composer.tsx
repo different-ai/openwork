@@ -3,19 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { ArrowUp, ChevronRight, FileText, ListPlus, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
-import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "../../../../../app/constants";
-import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "../../../../../app/types";
-import { t } from "../../../../../i18n";
-import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "../../../settings/extension-state";
-import { useDesktopRestriction } from "../../../cloud/desktop-config-provider";
-import { ModelBehaviorSelect } from "../../../../../components/model-behavior-select";
-import { ModelSelect } from "../../../../../components/model-select";
+import { toast } from "@/components/ui/sonner";
+import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
+import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import { formatBytes } from "@/app/utils";
+import { t } from "@/i18n";
+import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { ModelBehaviorSelect } from "@/components/model-behavior-select";
+import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor } from "./editor";
-import {
-  ReactComposerNotice,
-  type ReactComposerNotice as ReactComposerNoticeData,
-} from "./notice";
 
 type MentionItem = {
   id: string;
@@ -85,13 +83,10 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: "agent" | "file", value: string) => void;
-  notice: ReactComposerNoticeData | null;
-  onNotice: (notice: ReactComposerNoticeData) => void;
   onPasteText: (text: string) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
   onExpandPastedText: (id: string) => void;
-  onRevealPastedText: (id: string) => void;
   onRemovePastedText: (id: string) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
@@ -133,12 +128,6 @@ function parseClipboardUriList(clipboard: DataTransfer) {
     links.push(normalized);
   }
   return links;
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function isImageAttachment(attachment: ComposerAttachment) {
@@ -894,10 +883,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const addAttachments = async (inputFiles: File[]) => {
     if (!inputFiles.length) return;
     if (!props.attachmentsEnabled) {
-      props.onNotice({
-        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"),
-        tone: "warning",
-      });
+      toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
       return;
     }
 
@@ -915,23 +901,14 @@ export function ReactSessionComposer(props: ComposerProps) {
 
     if (accepted.length) {
       props.onAttachFiles(accepted);
-      props.onNotice({
-        title:
-          accepted.length === 1
-            ? t("composer.uploaded_single_file", { name: accepted[0]?.name ?? t("composer.file_kind") })
-            : t("composer.uploaded_multiple_files", { count: accepted.length }),
-        tone: "success",
-      });
     }
 
     if (oversize.length) {
-      props.onNotice({
-        title:
-          oversize.length === 1
-            ? t("composer.file_exceeds_limit", { name: oversize[0] })
-            : `${oversize.length} files exceed the 8MB limit.`,
-        tone: "warning",
-      });
+      toast.warning(
+        oversize.length === 1
+          ? t("composer.file_exceeds_limit", { name: oversize[0] })
+          : `${oversize.length} files exceed the 8MB limit.`,
+      );
     }
 
   };
@@ -1068,7 +1045,6 @@ export function ReactSessionComposer(props: ComposerProps) {
           className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
-          <ReactComposerNotice notice={props.notice} />
 
           {renderMentionMenu()}
           {renderSlashMenu()}
@@ -1157,10 +1133,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                 if (uriList.length) {
                   event.preventDefault();
                   props.onUnsupportedFileLinks(uriList);
-                  props.onNotice({
-                    title: t("composer.inserted_links_unsupported"),
-                    tone: "info",
-                  });
                   return;
                 }
 
@@ -1178,16 +1150,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                   /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
                 ) {
                   const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                  props.onNotice({
-                    title: t("composer.remote_worker_paste_warning"),
-                    tone: "warning",
-                    actionLabel:
+                  toast.warning(t("composer.remote_worker_paste_warning"), {
+                    action:
                       props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? t("composer.upload_to_shared_folder")
-                        : undefined,
-                    onAction:
-                      props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? () => void props.onUploadInboxFiles?.(attachedFiles)
+                        ? {
+                            label: t("composer.upload_to_shared_folder"),
+                            onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
+                          }
                         : undefined,
                   });
                   // Intentionally no preventDefault — the notice is advisory,

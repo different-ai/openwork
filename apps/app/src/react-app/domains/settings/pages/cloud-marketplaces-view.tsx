@@ -1,19 +1,19 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { toast } from "@/components/ui/sonner";
 
-import type { McpDirectoryInfo } from "../../../../app/constants";
-import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
-import { evaluateEnablement, type EnablementContext } from "../../../../app/enablement";
-import type { DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "../../../../app/lib/den";
+import type { McpDirectoryInfo } from "@/app/constants";
+import type { CloudImportedPlugin } from "@/app/cloud/import-state";
+import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
+import type { DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { ExtensionCard } from "../../../design-system/extension-card";
-import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
-import { isToggleControlledExtension, type ExtensionItem } from "../extension-items";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { useCloudSession } from "../cloud/cloud-session-provider";
-import type { useDenSession } from "../cloud/use-den-session";
+import { ExtensionCard } from "@/react-app/design-system/extension-card";
+import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
+import { isToggleControlledExtension, type ExtensionItem } from "@/react-app/domains/settings/extension-items";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import {
   RefreshButton,
   SettingsNotice,
@@ -25,11 +25,11 @@ import {
   SettingsSectionHeaderDescription,
   SettingsSectionHeaderTitle,
   SettingsStack,
-} from "../settings-section";
+} from "@/react-app/domains/settings/settings-section";
 import {
   SettingsListEmptyState,
   SettingsListSearchInput,
-} from "../settings-list";
+} from "@/react-app/domains/settings/settings-list";
 
 type AsyncResult = { ok: boolean; message: string };
 type MarketplacePackageStatus = "available" | "installed" | "update_available";
@@ -143,7 +143,6 @@ export function CloudMarketplacesView({
   setBuiltInEnabled,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
-  const { showToast } = useStatusToasts();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -254,12 +253,11 @@ export function CloudMarketplacesView({
         await extensions.refreshCloudOrgMarketplaces({ force: true });
         if (!quiet) {
           const count = extensions.cloudOrgMarketplaces().reduce((total, marketplace) => total + marketplace.plugins.length, 0);
-          showToast({
-            title: count > 0
+          toast.info(
+            count > 0
               ? `Loaded ${count} marketplace extension${count === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
               : `No marketplace extensions are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
-            tone: "info",
-          });
+          );
         }
       } catch (error) {
         if (!quiet) {
@@ -275,7 +273,6 @@ export function CloudMarketplacesView({
       activeOrgId,
       authToken,
       session.syncCurrentDenSettings,
-      showToast,
     ],
   );
 
@@ -318,14 +315,14 @@ export function CloudMarketplacesView({
       try {
         const result = await extensions.importCloudOrgPlugin(marketplaceId, plugin);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: `${result.message} ${t("den.reload_workspace")}`, tone: "success" });
+        toast.success(result.message);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : `Failed to add ${plugin.name}.`);
       } finally {
         setActionId(null);
       }
     },
-    [actionId, extensions, showToast],
+    [actionId, extensions],
   );
 
   const removePlugin = React.useCallback(
@@ -338,14 +335,14 @@ export function CloudMarketplacesView({
       try {
         const result = await extensions.removeCloudOrgPlugin(pluginId);
         if (!result.ok) throw new Error(result.message);
-        showToast({ title: result.message, tone: "success" });
+        toast.success(result.message);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : `Failed to remove ${pluginName}.`);
       } finally {
         setActionId(null);
       }
     },
-    [actionId, extensions, showToast],
+    [actionId, extensions],
   );
 
   const content = (

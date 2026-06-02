@@ -4,15 +4,16 @@ import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
-import { createClient, unwrap } from "../../../../app/lib/opencode";
-import { abortSessionSafe } from "../../../../app/lib/opencode-session";
-import { t } from "../../../../i18n";
-import { readWorkspaceCloudImports, type CloudImportedPlugin } from "../../../../app/cloud/import-state";
+import { createClient, unwrap } from "@/app/lib/opencode";
+import { abortSessionSafe } from "@/app/lib/opencode-session";
+import { t } from "@/i18n";
+import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
-} from "../../../../app/lib/openwork-server";
+} from "@/app/lib/openwork-server";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -24,37 +25,35 @@ import type {
   PendingQuestion,
   SkillCard,
   TodoItem,
-} from "../../../../app/types";
+} from "@/app/types";
 import {
   publishInspectorSlice,
   recordInspectorEvent,
-} from "../../../shell/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+} from "@/react-app/shell/app-inspector";
+import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue } from "./composer/mention-encoding";
-import { DevProfiler } from "../../../shell/dev-profiler";
+import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
-import { OwDotTicker } from "../../../shell/dot-ticker";
-import { useShellConfig } from "../../../shell/shell-config";
-import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
-import type { ReactComposerNotice } from "./composer/notice";
+import { useShellConfig } from "@/react-app/shell/shell-config";
+import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
-import { useLocal } from "../../../kernel/local-provider";
-import { deriveSessionRenderModel } from "../sync/transition-controller";
+import { useLocal } from "@/react-app/kernel/local-provider";
+import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
-import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
-import { PermissionApprovalPanel } from "../chat/permission-approval-modal";
-import { QuestionPanel } from "../modals/question-modal";
-import { QueuedMessagesPanel } from "../modals/queued-messages-panel";
-import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "../artifacts/open-target";
-import { usePanelTabStore } from "../panel/panel-tab-store";
+import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
+import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
+import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
+import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
-} from "../sync/session-sync";
+} from "@/react-app/domains/session/sync/session-sync";
 import {
   getComposerAttachments,
   getComposerDraft,
@@ -107,7 +106,7 @@ export type SessionSurfaceProps = {
   selectedAgent: string | null;
   listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
   onSelectAgent: (agent: string | null) => void;
-  listCommands: () => Promise<import("../../../../app/types").SlashCommandOption[]>;
+  listCommands: () => Promise<import("@/app/types").SlashCommandOption[]>;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
@@ -399,7 +398,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
-  const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
   const [error, setError] = useState<SessionError | null>(null);
   const [sending, setSending] = useState(false);
   // Locally queued follow-up drafts. OpenCode has no server-side queue, so we
@@ -459,17 +457,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setAwaitingAssistantBaseline(null);
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
-    setNotice(null);
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
   }, [props.sessionId]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const id = window.setTimeout(() => setNotice(null), 2400);
-    return () => window.clearTimeout(id);
-  }, [notice]);
 
   // Publish a composer inspector slice so external drivers can read draft
   // state, attachments, mentions, and sending status from the running app.
@@ -494,7 +485,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })),
       sending,
       error,
-      hasNotice: Boolean(notice),
     }));
     return dispose;
   }, [
@@ -502,7 +492,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     draft,
     error,
     mentions,
-    notice,
     pasteParts,
     props.sessionId,
     props.workspaceId,
@@ -841,17 +830,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
-      setNotice({ title: props.attachmentsDisabledReason ?? "Attachments are unavailable.", tone: "warning" });
+      toast.warning(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
       return;
     }
     const oversized = files.filter((file) => file.size > 25 * 1024 * 1024);
     const accepted = files.filter((file) => file.size <= 25 * 1024 * 1024);
     if (oversized.length) {
-      setNotice({
-        title: oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
-        description: "Files over 25 MB were skipped.",
-        tone: "warning",
-      });
+      toast.warning(
+        oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
+        { description: "Files over 25 MB were skipped." },
+      );
     }
     if (!accepted.length) return;
     const next = accepted.map((file) => ({
@@ -864,10 +852,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
     }));
     setComposerAttachments(props.sessionId, [...attachments, ...next]);
-    setNotice({
-      title: next.length === 1 ? `Attached ${next[0]?.name ?? "file"}` : `Attached ${next.length} files`,
-      tone: "success",
-    });
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -888,16 +872,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
     setComposerPasteParts(props.sessionId, [...pasteParts, { id, label, text, lines: text.split(/\r?\n/).length }]);
     setComposerDraft(props.sessionId, `${draft}[pasted text ${label}]`);
-  };
-
-  const handleRevealPastedText = (id: string) => {
-    const part = pasteParts.find((item) => item.id === id);
-    if (!part) return;
-    setNotice({
-      title: `Pasted text · ${part.label}`,
-      description: part.text.slice(0, 800),
-      tone: "info",
-    });
   };
 
   const handleExpandPastedText = (id: string) => {
@@ -1033,25 +1007,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return plugins;
   };
 
-  const handleUploadInboxFiles = async (files: File[], options?: { notify?: boolean }) => {
+  const handleUploadInboxFiles = async (files: File[]) => {
     const input = files.filter(Boolean);
     if (!input.length) return;
     try {
       const results = await Promise.all(input.map((file) => props.client.uploadInbox(props.workspaceId, file)));
-      if (options?.notify !== false) {
-        const summary = results.map((item) => item.path.split("/").filter(Boolean).slice(-1)[0] ?? item.path).join(", ");
-        setNotice({
-          title: input.length === 1 ? "Uploaded to the shared folder." : `Uploaded ${input.length} files to the shared folder.`,
-          description: summary || undefined,
-          tone: "success",
-        });
-      }
       return results;
     } catch (nextError) {
-      setNotice({
-        title: nextError instanceof Error ? nextError.message : "Shared folder upload failed",
-        tone: "warning",
-      });
+      toast.warning(nextError instanceof Error ? nextError.message : "Shared folder upload failed");
       throw nextError;
     }
   };
@@ -1309,13 +1272,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
-        notice={notice}
-        onNotice={setNotice}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
-        onRevealPastedText={handleRevealPastedText}
         onRemovePastedText={handleRemovePastedText}
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}

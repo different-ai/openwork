@@ -21,6 +21,7 @@ import {
   Upload,
   Users,
 } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
 import {
   Dialog,
@@ -39,13 +40,13 @@ import {
   DEFAULT_DEN_BASE_URL,
   readDenSettings,
   type DenOrgSkillHubSummary,
-} from "../../../../app/lib/den";
+} from "@/app/lib/den";
 import type {
   DenOrgSkillCard,
   HubSkillCard,
   HubSkillRepo,
   SkillCard,
-} from "../../../../app/types";
+} from "@/app/types";
 import {
   modalNoticeErrorClass,
   modalNoticeSuccessClass,
@@ -54,18 +55,17 @@ import {
   pillSecondaryClass,
   surfaceCardClass,
   tagClass,
-} from "../../workspace/modal-styles";
+} from "@/react-app/domains/workspace/modal-styles";
 import { Button } from "@/components/ui/button";
-import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
+import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import {
   SelectMenu,
   type SelectMenuOption,
-} from "../../../design-system/select-menu";
+} from "@/react-app/design-system/select-menu";
 
 type InstallResult = { ok: boolean; message: string };
 type SkillsFilter = "all" | "installed" | "cloud" | "hub";
 type CloudSkillInstallState = "available" | "installed" | "update" | "missing_local";
-type ToastTone = "info" | "success" | "warning" | "error";
 
 const pageTitleClass = "text-[28px] font-semibold tracking-[-0.5px] text-dls-text";
 const sectionTitleClass = "text-[15px] font-medium tracking-[-0.2px] text-dls-text";
@@ -127,7 +127,6 @@ export type SkillsViewProps = {
   accessHint?: string | null;
   extensions: SkillsExtensionsStore;
   onOpenLink: (url: string) => void;
-  onToast?: (input: { title: string; tone?: ToastTone }) => void;
   createSessionAndOpen: (initialPrompt?: string) => Promise<string | undefined> | string | void;
 };
 
@@ -311,13 +310,6 @@ export function SkillsView(props: SkillsViewProps) {
   const setInstallingSkillCreator = (value: SetStateAction<boolean>) => setLocal("installingSkillCreator", value);
   const setInstallingHubSkill = (value: SetStateAction<string | null>) => setLocal("installingHubSkill", value);
   const setInstallingCloudSkillId = (value: SetStateAction<string | null>) => setLocal("installingCloudSkillId", value);
-
-  const showToast = useCallback(
-    (title: string, tone: ToastTone = "info") => {
-      props.onToast?.({ title, tone });
-    },
-    [props],
-  );
 
   const maskError = useCallback(
     (value: unknown) =>
@@ -535,12 +527,12 @@ export function SkillsView(props: SkillsViewProps) {
     (action: () => void | Promise<void>) => {
       if (props.busy) return;
       if (!props.canUseDesktopTools) {
-        showToast(t("skills.desktop_required"), "warning");
+        toast.warning(t("skills.desktop_required"));
         return;
       }
       void Promise.resolve(action());
     },
-    [props.busy, props.canUseDesktopTools, showToast],
+    [props.busy, props.canUseDesktopTools],
   );
 
   const refreshCatalogs = useCallback(() => {
@@ -553,20 +545,20 @@ export function SkillsView(props: SkillsViewProps) {
   const installSkillCreator = useCallback(async () => {
     if (props.busy || installingSkillCreator) return;
     if (!props.canInstallSkillCreator) {
-      showToast(props.accessHint ?? t("skills.host_only_error"), "warning");
+      toast.warning(props.accessHint ?? t("skills.host_only_error"));
       return;
     }
     setInstallingSkillCreator(true);
-    showToast(t("skills.installing_skill_creator"));
+    toast.info(t("skills.installing_skill_creator"));
     try {
       const result = await extensions.installSkillCreator();
-      showToast(result.message, "success");
+      toast.success(result.message);
     } catch (error) {
-      showToast(maskError(error), "error");
+      toast.error(maskError(error));
     } finally {
       setInstallingSkillCreator(false);
     }
-  }, [extensions, installingSkillCreator, maskError, props.accessHint, props.busy, props.canInstallSkillCreator, showToast]);
+  }, [extensions, installingSkillCreator, maskError, props.accessHint, props.busy, props.canInstallSkillCreator]);
 
   const installFromCloud = useCallback(
     async (skill: DenOrgSkillCard) => {
@@ -574,36 +566,40 @@ export function SkillsView(props: SkillsViewProps) {
       const state = cloudSkillInstallState(skill);
       if (state === "installed") return;
       setInstallingCloudSkillId(skill.id);
-      showToast(
+      toast.info(
         t(state === "update" ? "skills.cloud_updating" : "skills.cloud_installing", undefined, { title: skill.title }),
       );
       try {
         const result = await extensions.installCloudOrgSkill(skill);
-        showToast(result.message, result.ok ? "success" : "error");
+        if (result.ok) {
+          toast.success(result.message);
+        } else {
+          toast.error(result.message);
+        }
       } catch (error) {
-        showToast(maskError(error), "error");
+        toast.error(maskError(error));
       } finally {
         setInstallingCloudSkillId(null);
       }
     },
-    [cloudSkillInstallState, extensions, installingCloudSkillId, maskError, props.busy, showToast],
+    [cloudSkillInstallState, extensions, installingCloudSkillId, maskError, props.busy],
   );
 
   const installFromHub = useCallback(
     async (skill: HubSkillCard) => {
       if (props.busy || installingHubSkill) return;
       setInstallingHubSkill(skill.name);
-      showToast(`${t("skills.installing_prefix")} ${skill.name}...`);
+      toast.info(`${t("skills.installing_prefix")} ${skill.name}...`);
       try {
         const result = await extensions.installHubSkill(skill.name);
-        showToast(result.message, "success");
+        toast.success(result.message);
       } catch (error) {
-        showToast(maskError(error), "error");
+        toast.error(maskError(error));
       } finally {
         setInstallingHubSkill(null);
       }
     },
-    [extensions, installingHubSkill, maskError, props.busy, showToast],
+    [extensions, installingHubSkill, maskError, props.busy],
   );
 
   const handleNewSkill = useCallback(async () => {
@@ -924,7 +920,7 @@ export function SkillsView(props: SkillsViewProps) {
                             event.preventDefault();
                             event.stopPropagation();
                             if (props.busy || !props.canUseDesktopTools) {
-                              if (!props.canUseDesktopTools) showToast(t("skills.desktop_required"), "warning");
+                              if (!props.canUseDesktopTools) toast.warning(t("skills.desktop_required"));
                               return;
                             }
                             setUninstallTarget(skill);

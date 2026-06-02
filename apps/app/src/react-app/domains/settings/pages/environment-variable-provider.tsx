@@ -1,10 +1,10 @@
 import { createContext, use, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutateFunction } from "@tanstack/react-query";
+import { toast } from "@/components/ui/sonner";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-context";
+import { clearOpenworkEnvSystemContextCache } from "@/react-app/domains/session/sync/env-context";
 import type { EnvironmentVariableItem } from "./environment-variable-table";
 
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -92,7 +92,6 @@ interface EnvironmentVariableProviderProps {
 }
 
 export function EnvironmentVariableProvider({ children, client, runtimeKey, onApplyChanges }: EnvironmentVariableProviderProps) {
-  const { showToast } = useStatusToasts();
   const queryClient = useQueryClient();
 
   const { data } = useQuery({
@@ -111,16 +110,10 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
       clearOpenworkEnvSystemContextCache();
       queryClient.setQueryData(["settings", "environment", "pending-changes", runtimeKey], false);
       client?.setUserEnvPendingChanges(false, runtimeKey).catch(() => undefined);
-      showToast({
-        title: result?.statusMessage ?? t("settings.environment.apply_success"),
-        tone: "success",
-      });
+      toast.success(result?.statusMessage ?? t("settings.environment.apply_success"));
     },
     onError: (error) => {
-      showToast({
-        title: error.message,
-        tone: "error",
-      });
+      toast.error(error.message);
     },
   });
 
@@ -130,8 +123,8 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
     resetApply();
     client?.setUserEnvPendingChanges(true, runtimeKey).catch(() => undefined);
 
-    showToast({ title: t("settings.environment.restart_required"), tone: "info" });
-  }, [client, resetApply, queryClient, runtimeKey, showToast]);
+    toast.info(t("settings.environment.restart_required"));
+  }, [client, resetApply, queryClient, runtimeKey]);
 
   const { mutate: modifyAsync, isPending: isModifying, reset: resetModify, error: modifyError } = useMutation({
     mutationFn: async (nextEditor: EnvironmentEditorDraft) => {
@@ -183,10 +176,7 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
       });
     },
     onError: (error) => {
-      showToast({
-        title: error.message,
-        tone: "error",
-      });
+      toast.error(error.message);
     },
   });
   const value = useMemo<EnvironmentVariableContextValue>(() => ({

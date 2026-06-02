@@ -487,7 +487,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {props.mcpStatus ? (
-        <div className="whitespace-pre-wrap break-words rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+        <div className="whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
           {props.mcpStatus}
         </div>
       ) : null}

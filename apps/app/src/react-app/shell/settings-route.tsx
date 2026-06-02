@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { toast } from "@/components/ui/sonner";
 
-import { isBuiltInOpenWorkExtension, SUGGESTED_PLUGINS } from "../../app/constants";
-import type { EnablementContext } from "../../app/enablement";
-import { createClient } from "../../app/lib/opencode";
+import { isBuiltInOpenWorkExtension, SUGGESTED_PLUGINS } from "@/app/constants";
+import type { EnablementContext } from "@/app/enablement";
+import { createClient } from "@/app/lib/opencode";
 import {
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
@@ -12,14 +13,14 @@ import {
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
-} from "../../app/lib/openwork-server";
-import { resolveWorkspaceEndpoint } from "../../app/lib/workspace-endpoint";
-import { buildOpenworkEnvRuntimeKey } from "../../app/lib/openwork-env-runtime";
+} from "@/app/lib/openwork-server";
+import { resolveWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
+import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
   getInitialThemeMode,
   setThemeMode as setAppThemeMode,
   type ThemeMode,
-} from "../../app/theme";
+} from "@/app/theme";
 import type {
   Client,
   ProviderListItem,
@@ -28,54 +29,54 @@ import type {
   WorkspaceDisplay,
   WorkspacePreset,
   WorkspaceSessionGroup,
-} from "../../app/types";
-import { getWorkspaceTaskLoadErrorDisplay } from "../../app/utils";
-import { currentLocale, t, setLocale, type Language } from "../../i18n";
-import { createConnectionsStore, useConnectionsStoreSnapshot } from "../domains/connections/store";
-import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "../domains/connections/openwork-server-store";
-import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "../domains/connections/provider-auth/store";
-import ProviderAuthModal from "../domains/connections/provider-auth/provider-auth-modal";
-import ConnectionsModals from "../domains/connections/modals";
-import { AiSettingsView } from "../domains/settings/pages/ai-view";
+} from "@/app/types";
+import { getWorkspaceTaskLoadErrorDisplay } from "@/app/utils";
+import { currentLocale, t, setLocale, type Language } from "@/i18n";
+import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
+import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
+import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
+import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import ConnectionsModals from "@/react-app/domains/connections/modals";
+import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
-import "../domains/settings/openai-image-gen-config";
-import "../domains/settings/ollama-config";
-import "../domains/settings/computer-use-config";
-import "../domains/settings/browser-extension-config";
-import "../domains/settings/openwork-voice-config";
-import "../domains/settings/google-workspace-config";
-import { useSettingsExtensionController } from "../domains/settings/settings-extension-controller";
-import { buildExtensionItems } from "../domains/settings/extension-items";
-import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "../domains/settings/extension-state";
-import { PreferencesView } from "../domains/settings/pages/preferences-view";
-import { ShellCustomizationView } from "../domains/settings/pages/shell-view";
-import { GeneralSettingsView } from "../domains/settings/pages/general-view";
-import { AuthorizedFoldersPanel } from "../domains/settings/panels/authorized-folders-panel";
-import { SettingsStack } from "../domains/settings/settings-section";
-import { AdvancedView } from "../domains/settings/pages/advanced-view";
-import { AppearanceView } from "../domains/settings/pages/appearance-view";
-import { CloudAccountView } from "../domains/settings/pages/cloud-account-view";
-import { CloudMarketplacesView } from "../domains/settings/pages/cloud-marketplaces-view";
-import { CloudProvidersView } from "../domains/settings/pages/cloud-providers-view";
-import { CloudWorkersView } from "../domains/settings/pages/cloud-workers-view";
-import { DebugView } from "../domains/settings/pages/debug-view";
-import { EnvironmentView } from "../domains/settings/pages/environment-view";
-import { ExtensionsView } from "../domains/settings/pages/extensions-view";
-import { McpView } from "../domains/settings/pages/mcp-view";
-import { RecoveryView } from "../domains/settings/pages/recovery-view";
-import { MessagingView } from "../domains/settings/pages/messaging-view";
-import { SkillsView } from "../domains/settings/pages/skills-view";
-import { UpdatesView } from "../domains/settings/pages/updates-view";
-import { useDebugViewModel } from "../domains/settings/state/debug-view-model";
-import { useMessagingViewProps } from "../domains/settings/state/messaging-view-state";
-import { useElectronUpdaterState } from "../domains/settings/state/electron-updater-state";
-import { CloudSessionProvider, useCloudSession } from "../domains/settings/cloud/cloud-session-provider";
-import { useDenSession } from "../domains/settings/cloud/use-den-session";
+import "@/react-app/domains/settings/openai-image-gen-config";
+import "@/react-app/domains/settings/ollama-config";
+import "@/react-app/domains/settings/computer-use-config";
+import "@/react-app/domains/settings/browser-extension-config";
+import "@/react-app/domains/settings/openwork-voice-config";
+import "@/react-app/domains/settings/google-workspace-config";
+import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
+import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
+import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED, setOpenWorkExtensionEnabled } from "@/react-app/domains/settings/extension-state";
+import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
+import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
+import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
+import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
+import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
+import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
+import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
+import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
+import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
+import { CloudWorkersView } from "@/react-app/domains/settings/pages/cloud-workers-view";
+import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
+import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
+import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
+import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
+import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
+import { MessagingView } from "@/react-app/domains/settings/pages/messaging-view";
+import { SkillsView } from "@/react-app/domains/settings/pages/skills-view";
+import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
+import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
+import { useMessagingViewProps } from "@/react-app/domains/settings/state/messaging-view-state";
+import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
+import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import { useBootState } from "./boot-state";
-import { SettingsShell } from "../domains/settings/shell/settings-shell";
-import { createExtensionsStore, useExtensionsStoreSnapshot } from "../domains/settings/state/extensions-store";
-import { usePlatform } from "../kernel/platform";
-import { useLocal } from "../kernel/local-provider";
+import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
+import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
+import { usePlatform } from "@/react-app/kernel/platform";
+import { useLocal } from "@/react-app/kernel/local-provider";
 import {
   openworkServerInfo,
   openworkServerRestart,
@@ -90,11 +91,11 @@ import {
   type WorkspaceInfo,
   type WorkspaceList,
   revealDesktopItemInDir,
-} from "../../app/lib/desktop";
-import { isDesktopProviderBlocked } from "../../app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction, useDesktopConfig } from "../domains/cloud/desktop-config-provider";
-import { useRestrictionNotice } from "../domains/cloud/restriction-notice-provider";
-import { useCloudProviderAutoSync } from "../domains/cloud/use-cloud-provider-auto-sync";
+} from "@/app/lib/desktop";
+import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
+import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
   isDesktopRuntime,
   isElectronRuntime,
@@ -103,39 +104,38 @@ import {
   resolveModelDisplayName,
   resolveProviderDisplayName,
   safeStringify,
-} from "../../app/utils";
-import { CreateRemoteWorkspaceModal } from "../domains/workspace/create-remote-workspace-modal";
-import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
-import { RenameWorkspaceModal } from "../domains/workspace/rename-workspace-modal";
-import { ShareWorkspaceModal } from "../domains/workspace/share-workspace-modal";
-import { useShareWorkspaceState } from "../domains/workspace/share-workspace-state";
-import { useRemoteWorkspaceConnectionEditor } from "../domains/workspace/use-remote-workspace-connection-editor";
-import { useStatusToasts } from "../domains/shell-feedback/status-toasts";
+} from "@/app/utils";
+import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
+import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
+import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
+import { ShareWorkspaceModal } from "@/react-app/domains/workspace/share-workspace-modal";
+import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
+import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
   testRemoteWorkspaceConnection,
-} from "../domains/workspace/remote-workspace-diagnostics";
-import { ModelPickerModal } from "../domains/session/modals/model-picker-modal";
-import type { ModelOption, ModelRef } from "../../app/types";
-import { workspaceSwatchColor } from "../domains/session/sidebar/utils";
+} from "@/react-app/domains/workspace/remote-workspace-diagnostics";
+import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
+import type { ModelOption, ModelRef } from "@/app/types";
+import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
 import { recordInspectorEvent } from "./app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
-import { abortSessionSafe } from "../../app/lib/opencode-session";
+import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
-import { buildFeedbackUrl } from "../../app/lib/feedback";
-import { getDenInferenceUrl } from "../../app/lib/den";
+import { buildFeedbackUrl } from "@/app/lib/feedback";
+import { getDenInferenceUrl } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
-import { getReactQueryClient } from "../infra/query-client";
-import { ensureProviderListQuery, getConnectedProviderItems, refreshProviderListQueries } from "../domains/connections/provider-list-query";
+import { getReactQueryClient } from "@/react-app/infra/query-client";
+import { ensureProviderListQuery, getConnectedProviderItems, refreshProviderListQueries } from "@/react-app/domains/connections/provider-list-query";
 import { openModelPickerEvent, pendingModelPickerProviderIdsKey } from "./new-providers-toast";
 import {
   OPENAI_IMAGE_EXTENSION_ID,
   OPENAI_IMAGE_MODEL,
-} from "../domains/settings/openai-image-extension";
-import { OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "../domains/settings/openai-image-extension";
+} from "@/react-app/domains/settings/openai-image-extension";
+import { OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "@/react-app/domains/settings/openai-image-extension";
 
 type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -477,7 +477,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [activeClient, setActiveClient] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [routeError, setRouteError] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const refreshInFlightRef = useRef(false);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
@@ -513,7 +512,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
-  const { showToast } = useStatusToasts();
   const [exportWorkspaceBusy, setExportWorkspaceBusy] = useState(false);
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
@@ -639,7 +637,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
     if (!openworkClient || !workspaceId) {
-      setRouteError(t("app.error_connect_first"));
+      toast.error(t("app.error_connect_first"));
       return false;
     }
 
@@ -789,7 +787,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setBusy,
         setBusyLabel,
         setBusyStartedAt: () => {},
-        setError: setRouteError,
+        setError: (message) => {
+          if (message) {
+            toast.error(message);
+          }
+        },
         markReloadRequired: reloadCoordinator.markReloadRequired,
       }),
     [openworkServerStore, reloadCoordinator.markReloadRequired],
@@ -865,7 +867,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     openworkServerSnapshot,
     runtimeWorkspaceId: selectedWorkspace?.id ?? null,
     selectedWorkspaceRoot,
-    setRouteError,
+    setRouteError: (message) => {
+      if (message) {
+        toast.error(message);
+      }
+    },
   });
   const onReleaseChannelChange = useCallback(
     (next: "stable" | "alpha") => {
@@ -879,7 +885,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     updateAutoCheck,
     updateAutoDownload,
     desktopConfig: desktopConfig.config,
-    setError: setRouteError,
+    setError: (message) => {
+      if (message) {
+        toast.error(message);
+      }
+    },
   });
 
   const workspaceSessionGroups = useMemo(
@@ -1203,7 +1213,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }
         setModelOptions(options);
       } catch (error) {
-        setRouteError(
+        toast.error(
           error instanceof Error
             ? error.message
             : t("app.unknown_error"),
@@ -1241,7 +1251,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
     setLoading(true);
-    setRouteError(null);
     let desktopList: WorkspaceList | null = null;
     let desktopWorkspaces = workspacesRef.current;
     try {
@@ -1357,7 +1366,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         message,
         preservedWorkspaceCount: desktopWorkspaces.length,
       });
-      setRouteError(message);
+      toast.error(message);
       if (desktopWorkspaces.length > 0) {
         setWorkspaces(desktopWorkspaces);
         setLegacySelectedWorkspaceId((current) => {
@@ -1491,7 +1500,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       allWorkspaces: workspaces,
     }).catch((error) => {
       const message = error instanceof Error ? error.message : describeRouteError(error);
-      setRouteError(message);
+      toast.error(message);
     });
   }, [loading, openworkClient, selectedWorkspace, workspaces]);
 
@@ -1752,6 +1761,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
     : null;
+  useEffect(() => {
+    if (notFoundRouteError) {
+      toast.error(notFoundRouteError);
+    }
+  }, [notFoundRouteError]);
   const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
     ? ROUTE_OPENWORK_CAPABILITIES
     : null;
@@ -1844,10 +1858,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setRenameWorkspaceBusy(true);
     try {
       if (!openworkClient) {
-        showToast({
-          title: "OpenWork server is unavailable. Reconnect the server before renaming workspaces.",
-          tone: "error",
-        });
+        toast.error("OpenWork server is unavailable. Reconnect the server before renaming workspaces.");
         return;
       }
       await openworkClient.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
@@ -1855,15 +1866,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setRenameWorkspaceTitle("");
       await refreshRouteState();
     } catch (error) {
-      showToast({
-        title: "Workspace rename failed",
+      toast.error("Workspace rename failed", {
         description: describeRouteError(error),
-        tone: "error",
       });
     } finally {
       setRenameWorkspaceBusy(false);
     }
-  }, [openworkClient, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle, showToast]);
+  }, [openworkClient, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
 
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2362,7 +2371,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         headerStatus={routeOpenworkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
-        error={routeError ?? notFoundRouteError}
         compact={props.embedded}
       >
         {settingsView}
