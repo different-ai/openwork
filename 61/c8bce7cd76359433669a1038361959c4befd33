@@ -1,0 +1,64 @@
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_1e25aed590b729::t_40af92e9b2ef4c 1010
+apps/app/src/components/ui/sonner.tsx
+  s_eb36549fbefa0b::t_cd106f5ebd9de6 80,88,92,95-96,98-99
+  s_eb36549fbefa0b::t_5970e608951595 2-4,6
+  s_eb36549fbefa0b::t_61d888495f2a62 56-79,81-87,89,101-113,115-162,170-184
+  s_eb36549fbefa0b::t_c3b1c4b77dcffc 90-91,93-94,97,100
+  s_05a28775583610::t_e2ddea7805a798 163-169
+  s_eb36549fbefa0b::t_320fc95117483a 114
+apps/app/src/react-app/shell/settings-route.tsx
+  s_240c93874faea2::t_5bcb34eba69a5f 640
+  s_240c93874faea2::t_8cbddc3a4c5bda 888-892
+  s_240c93874faea2::t_2308c2db2233d6 1369
+  s_240c93874faea2::t_c4c7f42c6494b9 790-794
+  s_240c93874faea2::t_c42affff559658 870-874
+  s_240c93874faea2::t_18f1ac19373270 1764-1768
+  s_240c93874faea2::t_57d9269739fd9c 1216
+  s_240c93874faea2::t_a87201e8314151 1503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "61c8bce7cd76359433669a1038361959c4befd33",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_05a28775583610": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d74d3e2b-5fec-48a7-a5f5-f0796ef81444",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_1e25aed590b729": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "93bda724-f75b-4db7-a5d5-1d2abd8b028f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_240c93874faea2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e6f94ab7-9924-40b8-b9b8-83247fb7ab76",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_eb36549fbefa0b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e7a9771f-ab31-4643-ac84-5a8d9da2f646",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
