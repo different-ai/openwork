@@ -1,0 +1,14 @@
+apps/app/src/react-app/domains/settings/computer-use-config.tsx
+  h_2169b0bd9b5c87 135-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "136f327a60d1b192104a8bfc502f5158947cb5cc",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
