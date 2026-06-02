@@ -402,12 +402,40 @@ export async function createOpenEralSandbox(opts) {
   // Short-circuit if the sandbox already exists (workspace reopen).
   // Wait for it to reach Ready state before returning so the subsequent
   // PTY exec doesn't fail with "phase: Provisioning".
+  //
+  // If the existing sandbox is in an error or stuck-provisioning state,
+  // auto-delete it and fall through to fresh creation below — this means
+  // the user never has to manually click "Delete & start fresh" just to
+  // recover from a broken container.  /home/agent data is in PostgreSQL
+  // and survives the container deletion.
   if (await sandboxExists(name)) {
-    onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; waiting for it to be ready…` });
-    await waitForSandboxReady(name, {
-      onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
-    });
-    return { name, profile, imageRef, existed: true };
+    onProgress?.({ phase: "exists", message: `Sandbox ${name} already exists; checking state…` });
+    let existingReady = false;
+    try {
+      await waitForSandboxReady(name, {
+        onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
+      });
+      existingReady = true;
+    } catch (waitErr) {
+      const waitMsg = waitErr?.message ?? "";
+      if (/is in error state|STUCK_PROVISIONING:/i.test(waitMsg)) {
+        // Broken container — silently delete so we can create a fresh one.
+        onProgress?.({
+          phase: "auto-recreate",
+          message: `Sandbox ${name} is broken (${/STUCK/.test(waitMsg) ? "stuck in Provisioning" : "error state"}); auto-deleting for fresh creation…`,
+        });
+        await deleteOpenEralSandbox(name).catch((e) =>
+          console.warn("[createOpenEralSandbox] auto-delete (broken existing):", e.message),
+        );
+        // existingReady stays false → fall through to full creation below.
+      } else {
+        throw waitErr;
+      }
+    }
+    if (existingReady) {
+      return { name, profile, imageRef, existed: true };
+    }
+    // Fall through to create a fresh sandbox.
   }
 
   // Validate credentials.
@@ -546,11 +574,31 @@ export async function createOpenEralSandbox(opts) {
           `[createOpenEralSandbox] create exited 1 with NotFound but ${name} found in list; treating as provisioning.`,
         );
         onProgress?.({ phase: "waiting", message: `Sandbox ${name} is provisioning; waiting for Ready state…` });
-        await waitForSandboxReady(name, {
-          timeoutMs: 5 * 60_000,
-          onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
-        });
-        return { name, profile, imageRef, existed: false };
+        try {
+          await waitForSandboxReady(name, {
+            timeoutMs: 5 * 60_000,
+            onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
+          });
+          return { name, profile, imageRef, existed: false };
+        } catch (waitErr) {
+          const waitMsg = waitErr?.message ?? "";
+          if (/is in error state|STUCK_PROVISIONING:/i.test(waitMsg)) {
+            // The post-create provisioning failed — auto-delete so the next
+            // "Launch session" click starts from a clean slate.
+            onProgress?.({
+              phase: "auto-recreate",
+              message: `Sandbox ${name} failed to provision; auto-deleting for next attempt…`,
+            });
+            await deleteOpenEralSandbox(name).catch((e) =>
+              console.warn("[createOpenEralSandbox] auto-delete (NotFound path, broken):", e.message),
+            );
+            throw new Error(
+              `Sandbox ${name} failed to provision and was automatically deleted. ` +
+                `Click "Launch session" to create a fresh sandbox.`,
+            );
+          }
+          throw waitErr;
+        }
       }
     }
     const cli = await getCliInfo().catch(() => null);
@@ -579,14 +627,35 @@ export async function createOpenEralSandbox(opts) {
   // `sandbox create -- /bin/true` exits 0 as soon as the gateway REGISTERS
   // the sandbox, but setup.sh inside the container may still be running.
   // Wait for Ready before returning so the PTY never connects to a
-  // still-Provisioning sandbox. Uses a 5-minute timeout; the 90-second
-  // stuck-Provisioning detection inside waitForSandboxReady will fire and
-  // show the "Delete & start fresh" button if the gateway is truly stuck.
+  // still-Provisioning sandbox.
   onProgress?.({ phase: "waiting", message: `Sandbox ${name} created; waiting for Ready state…` });
-  await waitForSandboxReady(name, {
-    timeoutMs: 5 * 60_000,
-    onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
-  });
+  try {
+    await waitForSandboxReady(name, {
+      timeoutMs: 5 * 60_000,
+      onProgress: (evt) => onProgress?.({ phase: evt.phase, message: evt.message }),
+    });
+  } catch (waitErr) {
+    const waitMsg = waitErr?.message ?? "";
+    if (/is in error state|STUCK_PROVISIONING:/i.test(waitMsg)) {
+      // The freshly-created sandbox failed during setup — auto-delete so the
+      // next "Launch session" click gets a clean start. If Docker or the image
+      // is the root cause, the user will see this error repeatedly and should
+      // restart the gateway from Settings → Sandbox → OpenShell health.
+      onProgress?.({
+        phase: "auto-recreate",
+        message: `New sandbox ${name} failed to reach Ready state; auto-deleting…`,
+      });
+      await deleteOpenEralSandbox(name).catch((e) =>
+        console.warn("[createOpenEralSandbox] auto-delete (fresh create broken):", e.message),
+      );
+      throw new Error(
+        `New sandbox ${name} failed to reach Ready state and was automatically deleted. ` +
+          `Click "Launch session" to try again. ` +
+          `If this keeps happening, restart the OpenShell gateway from Settings \u2192 Sandbox \u2192 OpenShell health.`,
+      );
+    }
+    throw waitErr;
+  }
   onProgress?.({ phase: "ready", message: `Sandbox ${name} ready.` });
   return { name, profile, imageRef, existed: false };
 }

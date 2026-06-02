@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, Loader2, MessageSquare, Pencil, RotateCcw, Settings, Trash2 } from "lucide-react";
 
 import type { SandboxProfile } from "../../../../app/lib/desktop";
@@ -57,6 +57,21 @@ type Phase =
   | "exited"
   | "error";
 
+/**
+ * Mirrors deriveOpenEralSandboxName() in openeral-terminal.mjs.
+ * Used to pre-populate lastKnownSandboxNameRef so deleteAndReconnect can
+ * delete a broken sandbox even when openeralEnsureSandbox throws before
+ * returning (i.e. before setSandboxName is ever called).
+ */
+function deriveExpectedSandboxName(workspaceId: string): string {
+  const trimmed = workspaceId
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+  return `openeral-${trimmed}`;
+}
+
 export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<TerminalType | null>(null);
@@ -84,21 +99,59 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
 
+  // Derived sandbox name from workspaceId — available immediately without
+  // waiting for openeralEnsureSandbox to return. Shown in the header from
+  // the very first render so the user never sees "(no sandbox)".
+  const expectedSandboxName = useMemo(
+    () => deriveExpectedSandboxName(props.workspaceId),
+    [props.workspaceId],
+  );
+
   // Stable callback for "reconnect" so the user can rebuild a dead PTY
   // without rerendering the whole component.
   const [reconnectKey, setReconnectKey] = useState(0);
   const reconnect = useCallback(() => setReconnectKey((k) => k + 1), []);
 
+  // True when the user deliberately cancelled a provisioning operation.
+  // While true, run() exits immediately to "exited" phase so the spinner
+  // disappears. handleLaunch clears this flag and increments reconnectKey.
+  const [userAborted, setUserAborted] = useState(false);
+  const lastAbortedWorkspaceRef = useRef<string | null>(null);
+
+  const handleAbort = useCallback(() => {
+    lastAbortedWorkspaceRef.current = props.workspaceId;
+    setUserAborted(true);
+    setReconnectKey((k) => k + 1); // triggers cleanup of the current run()
+  }, [props.workspaceId]);
+
+  const handleLaunch = useCallback(() => {
+    setUserAborted(false);
+    lastAbortedWorkspaceRef.current = null;
+    setReconnectKey((k) => k + 1);
+  }, []);
+
   // Track whether this component has ever reached "connected" phase so we
   // can show "Launch session" on first open vs "Reconnect" after a drop.
   const [hasEverConnected, setHasEverConnected] = useState(false);
 
+  // True when the current error message means the sandbox must be deleted
+  // before a retry can succeed (stuck-provisioning or container error state).
+  // Used to make the toolbar button call deleteAndReconnect instead of reconnect
+  // so the broken sandbox is removed even if the user skips the error card.
+  const errorNeedsDelete = Boolean(
+    errorMessage &&
+    (/STUCK_PROVISIONING:/i.test(errorMessage) || /is in error state/i.test(errorMessage))
+  );
+
   // Load/persist the user-facing display name from localStorage.
+  // Uses sandboxName (confirmed by backend) when available, falls back to
+  // expectedSandboxName (derived from workspaceId) so the header is
+  // populated from first render instead of showing "(no sandbox)".
   useEffect(() => {
-    if (!sandboxName) return;
-    const stored = localStorage.getItem(`openeral-display:${sandboxName}`);
-    setDisplayName(stored ?? sandboxName);
-  }, [sandboxName]);
+    const name = sandboxName ?? expectedSandboxName;
+    const stored = localStorage.getItem(`openeral-display:${name}`);
+    setDisplayName(stored ?? name);
+  }, [sandboxName, expectedSandboxName]);
 
   const commitRename = useCallback(() => {
     const effectiveName = sandboxName ?? lastKnownSandboxNameRef.current;
@@ -176,6 +229,24 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
 
     const run = async () => {
       try {
+        // If the user deliberately cancelled the previous provisioning attempt
+        // for this same workspace, stay in "exited" state and do nothing — the
+        // handleLaunch callback will reset userAborted + increment reconnectKey
+        // to start a fresh run when the user explicitly clicks "Launch session".
+        if (userAborted && lastAbortedWorkspaceRef.current === props.workspaceId) {
+          setPhase("exited");
+          return;
+        }
+
+        // Pre-populate the sandbox name ref from the workspace ID so that
+        // deleteAndReconnect can delete a broken sandbox even when
+        // openeralEnsureSandbox throws before returning (sandbox in error
+        // state, stuck-provisioning, etc.) — i.e. before setSandboxName
+        // is ever called. Only set if not already known from a prior run.
+        if (!lastKnownSandboxNameRef.current) {
+          lastKnownSandboxNameRef.current = deriveExpectedSandboxName(props.workspaceId);
+        }
+
         // 0. Subscribe to bootstrap progress events BEFORE calling
         // openeralEnsureSandbox so the founder sees the pull / stage /
         // create phases stream in. The session-progress channel is the
@@ -382,7 +453,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
     return () => {
       void cleanup();
     };
-  }, [props.workspaceId, props.profile, reconnectKey]);
+  }, [props.workspaceId, props.profile, reconnectKey, userAborted]);
 
   const popOut = useCallback(async () => {
     const name = sandboxName ?? lastKnownSandboxNameRef.current;
@@ -429,8 +500,8 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
         // "already exists" guard in createOpenEralSandbox handles partial state.
       }
     }
-    reconnect();
-  }, [sandboxName, reconnect]);
+    handleLaunch();
+  }, [sandboxName, handleLaunch]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -470,7 +541,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
                 setIsRenaming(true);
               }}
             >
-              <span className="font-mono text-gray-12 truncate">{displayName || sandboxName || "(no sandbox)"}</span>
+              <span className="font-mono text-gray-12 truncate">{displayName || sandboxName || expectedSandboxName}</span>
               <Pencil size={10} className="shrink-0 text-gray-8 opacity-0 group-hover:opacity-100 transition-opacity" />
             </button>
           )}
@@ -493,12 +564,31 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
             <Button
               variant="outline"
               className="h-7 rounded-full px-3 text-xs"
-              onClick={reconnect}
+              onClick={errorNeedsDelete ? () => void deleteAndReconnect() : handleLaunch}
               onMouseDown={(e) => e.preventDefault()}
-              title={hasEverConnected ? "Reconnect to the sandbox" : "Launch a new session"}
+              title={
+                errorNeedsDelete
+                  ? "Delete the broken sandbox and launch a fresh one"
+                  : hasEverConnected
+                    ? "Reconnect to the sandbox"
+                    : "Launch a new session"
+              }
             >
               <RotateCcw size={12} className="mr-1" />
-              {hasEverConnected ? "Reconnect" : "Launch session"}
+              {errorNeedsDelete ? "Delete & relaunch" : hasEverConnected ? "Reconnect" : "Launch session"}
+            </Button>
+          ) : phase !== "connected" ? (
+            /* During provisioning — show a Cancel button so the user is never
+               stuck at the spinner with no escape. Mirrors the "Close session"
+               button in Settings → Sandbox → Test session launch. */
+            <Button
+              variant="outline"
+              className="h-7 rounded-full px-3 text-xs"
+              onClick={handleAbort}
+              onMouseDown={(e) => e.preventDefault()}
+              title="Cancel provisioning and return to the launch screen"
+            >
+              Cancel
             </Button>
           ) : null}
           {props.onSwitchToChat ? (
@@ -529,6 +619,17 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
           >
             {popoutBusy ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
           </Button>
+          {props.onOpenSettings ? (
+            <Button
+              variant="outline"
+              className="h-7 w-7 !rounded-full !p-0 shrink-0"
+              onClick={props.onOpenSettings}
+              onMouseDown={(e) => e.preventDefault()}
+              title="Open Settings → Sandbox"
+            >
+              <Settings size={13} />
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             className="h-7 w-7 !rounded-full !p-0 shrink-0 border-red-7/50 text-red-12 hover:bg-red-2/30"
@@ -585,6 +686,7 @@ export function OpenEralTerminal(props: OpenEralTerminalProps) {
               phase={phase}
               bootstrapMessage={bootstrapMessage}
               existed={false}
+              onAbort={handleAbort}
             />
           </div>
         ) : null}
@@ -597,6 +699,10 @@ type BootstrapProgressProps = {
   phase: Phase;
   bootstrapMessage: string | null;
   existed: boolean;
+  /** When provided, renders a "Cancel provisioning" link inside the card.
+   *  Calling it sets userAborted=true so run() exits immediately, and the
+   *  user can re-launch manually via the toolbar "Launch session" button. */
+  onAbort?: () => void;
 };
 
 function BootstrapProgress(props: BootstrapProgressProps) {
@@ -641,6 +747,17 @@ function BootstrapProgress(props: BootstrapProgressProps) {
           {props.bootstrapMessage}
         </div>
       ) : null}
+      {props.onAbort ? (
+        <div className="flex justify-center pt-1">
+          <button
+            type="button"
+            className="text-xs text-gray-8 hover:text-gray-11 transition-colors underline-offset-2 hover:underline"
+            onClick={props.onAbort}
+          >
+            Cancel provisioning
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -656,13 +773,23 @@ type BootstrapErrorCardProps = {
 function BootstrapErrorCard(props: BootstrapErrorCardProps) {
   // Detect actionable errors so the founder sees a clear next step
   // instead of a raw stderr dump.
-  const stuckProvisioning = props.message.startsWith("STUCK_PROVISIONING:");
+  //
+  // NOTE: Electron IPC wraps thrown errors with the prefix
+  // "Error invoking remote method 'openwork:desktop': Error: " before the
+  // original message reaches the renderer. All pattern matches therefore
+  // use regex /test/ rather than String.startsWith so they work regardless
+  // of this wrapping.
+  const stuckProvisioning = /STUCK_PROVISIONING:/i.test(props.message);
+  // Sandbox reached the "error" phase (Docker container failed to start,
+  // setup.sh crashed, etc.). The sandbox must be deleted and recreated.
+  const sandboxErrorState = /is in error state/i.test(props.message);
   const missingDatabase = /DATABASE_URL is not configured/i.test(props.message);
   // Backend throws "ANTHROPIC_API_KEY is not configured" (not "is required")
   const missingApiKey = /ANTHROPIC_API_KEY is not configured/i.test(props.message);
   const openshellUnready = /OpenShell is not ready/i.test(props.message);
   const gatewayUnresponsive = /gateway is not responding|sandbox list timed out/i.test(props.message);
   const credentialIssue = missingDatabase || missingApiKey;
+  const needsDeleteAndRecreate = stuckProvisioning || sandboxErrorState;
 
   let title = "Could not start OpenEral session.";
   let detail = props.message;
@@ -672,6 +799,11 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
       "The sandbox has been provisioning for over 90 seconds and hasn't become ready. " +
       "This usually means the OpenShell gateway lost track of the container. " +
       "Click \"Delete & start fresh\" to remove the stuck sandbox and create a new one.";
+  } else if (sandboxErrorState) {
+    title = "Sandbox is in an error state.";
+    detail =
+      "The sandbox container failed to start or encountered a fatal error during setup. " +
+      "Click \"Delete & start fresh\" to delete the broken sandbox and create a new one.";
   } else if (missingDatabase) {
     title = "DATABASE_URL is not configured.";
     detail =
@@ -701,13 +833,13 @@ function BootstrapErrorCard(props: BootstrapErrorCardProps) {
         <span className="text-sm font-medium">{title}</span>
       </div>
       <div className="text-sm text-gray-11">{detail}</div>
-      {!credentialIssue && !stuckProvisioning ? (
+      {!credentialIssue && !needsDeleteAndRecreate ? (
         <div className="font-mono text-xs text-red-12 break-words">
           {props.message}
         </div>
       ) : null}
       <div className="flex items-center gap-2">
-        {stuckProvisioning && props.onDeleteAndReconnect ? (
+        {needsDeleteAndRecreate && props.onDeleteAndReconnect ? (
           <Button variant="primary" onClick={props.onDeleteAndReconnect}>
             <RotateCcw size={14} className="mr-1.5" />
             Delete &amp; start fresh
