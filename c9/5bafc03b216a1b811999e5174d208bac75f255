@@ -1,0 +1,152 @@
+apps/app/src/react-app/domains/cloud/use-cloud-provider-auto-sync.ts
+  s_2b0aa72b109883::t_2f0c33f5f0f534 6,67
+  s_2b0aa72b109883::t_08497a6a0253aa 59
+apps/app/src/react-app/shell/new-providers-toast.tsx
+  s_3d389fe63c5932::t_16912a91575975 6-9
+  s_2b0aa72b109883::t_e06d3fb0786de5 76,91,117
+  s_2b0aa72b109883::t_0de923b22bada3 77,87,92-93
+apps/app/src/react-app/shell/command-palette.tsx
+  s_2b0aa72b109883::t_df76f727e264c3 27,39
+apps/app/src/react-app/shell/session-route.tsx
+  s_2b0aa72b109883::t_d1a01f5c5c1833 280,1078,2833
+  s_2b0aa72b109883::t_f97890c89a9226 128,609,615
+  s_2b0aa72b109883::t_388676fe171f7f 1239,1259,3076,3083
+  s_2b0aa72b109883::t_56939248a4eb07 130,597,605,1922
+  s_3d389fe63c5932::t_5df1c9ea19079a 1817
+apps/app/src/components/model-select.tsx
+  s_2b0aa72b109883::t_ae93a56c81cf1a 34
+  s_2b0aa72b109883::t_e06d3fb0786de5 65,288
+apps/app/src/react-app/domains/cloud/forced-signin-page.tsx
+  s_3d389fe63c5932::t_7f6755f29c36a2 146,154
+  s_2b0aa72b109883::t_df67d473b4e30d 22,225,231,233,239,241,244
+  s_2b0aa72b109883::t_1d352bc3a90d2d 222
+apps/app/src/react-app/domains/settings/state/extensions-store.ts
+  s_2b0aa72b109883::t_a9fdcad838b79b 67,2766
+apps/app/src/lib/event-bus.ts
+  s_2b0aa72b109883::t_44c3024775aa16 79
+  s_2b0aa72b109883::t_cf89bb51e13695 78
+  s_2b0aa72b109883::t_8edffd2a92311a 1-3,41,51-74,80
+  s_2b0aa72b109883::t_ff1856e141f796 13-17
+  s_2b0aa72b109883::t_322a424b818372 28
+  s_2b0aa72b109883::t_de7ba6319d13d9 50
+  s_2b0aa72b109883::t_72d36f2e1dab9a 77
+apps/app/src/react-app/domains/settings/pages/skills-view.tsx
+  s_2b0aa72b109883::t_198ca983b5c4e3 64,336
+apps/app/src/react-app/domains/cloud/desktop-config-provider.tsx
+  s_2b0aa72b109883::t_93c8fc21bd2f16 28
+  s_fea6cb49f7ee96::t_17138b7246c252 252,263
+  s_fea6cb49f7ee96::t_83e0daf623bf3c 254-255
+apps/app/src/react-app/domains/session/chat/session-page.tsx
+  s_2b0aa72b109883::t_c568a1bbea6846 64,467
+  s_fea6cb49f7ee96::t_c89751a02d0ed5 443,453,461
+  s_fea6cb49f7ee96::t_cd043097d423af 463
+  s_fea6cb49f7ee96::t_beef073da3ccb1 450-452,458-460
+apps/app/src/react-app/domains/session/voice/voice-panel.tsx
+  s_2b0aa72b109883::t_8e6bc5442cc5f5 15,623
+apps/app/src/react-app/domains/connections/provider-auth/store.ts
+  s_3d389fe63c5932::t_c59a83b7cb49fd 1580
+  s_2b0aa72b109883::t_9bea0814e703ad 1741,1745
+  s_3d389fe63c5932::t_1a35d762e9759d 887
+  s_2b0aa72b109883::t_1d352bc3a90d2d 1800
+  s_2b0aa72b109883::t_3670e140a703c4 47
+apps/app/src/react-app/shell/welcome-route.tsx
+  s_2b0aa72b109883::t_4956dc868f3f2e 26
+  s_2b0aa72b109883::t_d1a01f5c5c1833 36
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_2b0aa72b109883::t_d1a01f5c5c1833 924
+  s_2b0aa72b109883::t_d3c26e67db88f0 46,930-931,940
+apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+  s_fea6cb49f7ee96::t_0aea7cafd1b6bb 805
+  s_fea6cb49f7ee96::t_62722c7dd74abf 798
+  s_fea6cb49f7ee96::t_cd5815129a53bc 800-803
+  s_2b0aa72b109883::t_038093f55e9574 19
+  s_b4b8c3c580d184::t_c3b04f04a730c6 797
+apps/app/src/react-app/shell/app-root.tsx
+  s_2b0aa72b109883::t_cd0952b0668273 21,109
+  s_2b0aa72b109883::t_08497a6a0253aa 31,94
+apps/app/src/react-app/domains/cloud/den-auth-provider.tsx
+  s_3d389fe63c5932::t_4d0047e5423f53 156
+  s_3d389fe63c5932::t_b16fe768c83ba5 146
+  s_2b0aa72b109883::t_34b32d0f4291b4 28
+  s_2b0aa72b109883::t_1d352bc3a90d2d 119
+apps/app/src/react-app/shell/settings-route.tsx
+  s_2b0aa72b109883::t_56939248a4eb07 133,1160
+  s_2b0aa72b109883::t_086d459fbd607e 134
+  s_2b0aa72b109883::t_75594e4b4e180f 1503,1505
+  s_2b0aa72b109883::t_d1a01f5c5c1833 651,1124
+apps/app/src/react-app/domains/settings/cloud/cloud-session-provider.tsx
+  s_2b0aa72b109883::t_23be2c66e9f48d 12
+  s_2b0aa72b109883::t_08497a6a0253aa 70
+apps/app/src/react-app/domains/session/sync/actions-store.ts
+  s_2b0aa72b109883::t_5437c972efc32a 35
+  s_2b0aa72b109883::t_6744e0b89ba1c6 479
+apps/app/src/app/lib/den.ts
+  s_3d389fe63c5932::t_2aad57055ef720 631
+  s_3d389fe63c5932::t_5a43aea9e984e3 768
+  s_3d389fe63c5932::t_0f13de44f9d306 748
+  s_3d389fe63c5932::t_ee34443a823b99 14
+apps/app/src/react-app/shell/desktop-local-openwork.ts
+  s_2b0aa72b109883::t_d1a01f5c5c1833 28
+  s_2b0aa72b109883::t_a749453d0a0dfe 11
+apps/app/src/react-app/shell/reload-coordinator.tsx
+  s_2b0aa72b109883::t_c81d8758cb50d3 81
+  s_2b0aa72b109883::t_37aa57a93dd4b1 18,82-83
+apps/app/src/react-app/domains/settings/cloud/use-den-session.tsx
+  s_2b0aa72b109883::t_7c93dded94a203 363
+  s_3d389fe63c5932::t_938e8ed5882824 397,406
+  s_3d389fe63c5932::t_536f9ee67429eb 20,22
+  s_3d389fe63c5932::t_e5874c77b8a3ea 178
+  s_2b0aa72b109883::t_1d352bc3a90d2d 338
+apps/app/src/react-app/domains/settings/state/debug-view-model.ts
+  s_2b0aa72b109883::t_f6d0888fe02a07 42
+  s_2b0aa72b109883::t_d1a01f5c5c1833 700
+apps/app/src/react-app/domains/cloud/org-onboarding-page.tsx
+  s_2b0aa72b109883::t_d0823b34bf22c6 64
+  s_2b0aa72b109883::t_c81d8758cb50d3 116,118
+apps/app/src/react-app/shell/desktop-runtime-boot.ts
+  s_2b0aa72b109883::t_d1a01f5c5c1833 112,215,303
+  s_2b0aa72b109883::t_521254b3d43f22 28
+apps/app/src/react-app/domains/connections/provider-list-query.ts
+  s_3d389fe63c5932::t_a8f8f36df30b10 5
+  s_3d389fe63c5932::t_6b36794b95b0f1 148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c95bafc03b216a1b811999e5174d208bac75f255",
+  "prompts": {},
+  "sessions": {
+    "s_2b0aa72b109883": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e87f1-e2f1-7721-b49a-e8584405300b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_3d389fe63c5932": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c3ee2f93-dd57-498e-abda-900b0fd726b0",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_b4b8c3c580d184": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e880a-f71e-73d2-8592-0796d989fedd",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    },
+    "s_fea6cb49f7ee96": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "81fa3a66-5418-4ecc-8c6c-f9cf548e18f5",
+        "model": "composer-2.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
