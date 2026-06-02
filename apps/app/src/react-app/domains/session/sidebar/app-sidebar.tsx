@@ -868,7 +868,7 @@ function WorkspaceSidebarGroup({
   );
   const sessionRows = flattenSessionRows(
     group.sessions,
-    previewCount,
+    wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
     tree,
     ctx.expandedSessionIds,
     forcedExpandedSessionIds,
@@ -1009,7 +1009,7 @@ function WorkspaceSidebarGroup({
                         ))}
                       </Reorder.Group>
                     )}
-                    {activeRootCount > previewCount ? (
+                    {wsGroups.length === 0 && activeRootCount > previewCount ? (
                       <SidebarMenuSubItem>
                         <SidebarMenuSubButton
                           className="text-muted-foreground text-xs"
@@ -1064,24 +1064,52 @@ function WorkspaceSidebarGroup({
 }
 
 const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
+const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
 
-function SessionGroupSeparator({ label, onRemove }: { label: string; onRemove?: () => void }) {
+function SessionGroupSeparator({ label, count, expanded, onToggle, onRemove, onTitlePointerDown }: {
+  label: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  onRemove?: () => void;
+  onTitlePointerDown?: React.PointerEventHandler<HTMLSpanElement>;
+}) {
   return (
-    <div className="group/separator flex items-center gap-1 px-2 pb-1 pt-2.5 first:pt-1">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group/separator flex w-full items-center gap-1.5 rounded px-2 pb-1 pt-2.5 text-left transition-colors first:pt-1 hover:bg-sidebar-accent/50"
+      aria-expanded={expanded}
+    >
+      <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-200", expanded && "rotate-90")} />
+      <span
+        className="min-w-0 flex-1 cursor-grab touch-none truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground active:cursor-grabbing"
+        onPointerDown={onTitlePointerDown}
+      >
         {label}
       </span>
+      <span className="text-[10px] tabular-nums text-muted-foreground/70">{count}</span>
       {onRemove ? (
-        <button
-          type="button"
-          onClick={onRemove}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            event.stopPropagation();
+            onRemove();
+          }}
           className="ml-auto size-4 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity hover:text-destructive group-hover/separator:opacity-100"
           aria-label={t("session_management.remove_group")}
         >
           <Trash2 className="size-3" />
-        </button>
+        </span>
       ) : null}
-    </div>
+    </button>
   );
 }
 
@@ -1141,14 +1169,14 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
   const ungroupedRows: FlattenedSessionRow[] = [];
   // Child rows follow their parent regardless of group.
   const childrenByParent = new Map<string, FlattenedSessionRow[]>();
+  const rowIndexById = new Map(sessionRows.map((row, index) => [row.session.id, index]));
 
   for (const row of sessionRows) {
     if (row.depth > 0) {
-      // Attach to parent (the previous depth-0 row).
-      // We walk backwards to find the parent id.
-      const parentIdx = sessionRows.indexOf(row) - 1;
+      const rowIndex = rowIndexById.get(row.session.id);
+      if (rowIndex === undefined) continue;
       let parentId: string | null = null;
-      for (let j = sessionRows.indexOf(row) - 1; j >= 0; j--) {
+      for (let j = rowIndex - 1; j >= 0; j--) {
         if (sessionRows[j].depth < row.depth) { parentId = sessionRows[j].session.id; break; }
       }
       if (parentId) {
@@ -1178,30 +1206,98 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
         forcedExpandedSessionIds={forcedExpandedSessionIds}
         isPinned={pinnedIds.has(row.session.id)}
       />
-      {(childrenByParent.get(row.session.id) ?? []).map((child) => (
-        <SessionMenuItem
-          key={child.session.id}
-          session={child.session}
-          depth={child.depth}
-          tree={tree}
-          workspaceId={workspaceId}
-          forcedExpandedSessionIds={forcedExpandedSessionIds}
-          isPinned={pinnedIds.has(child.session.id)}
-        />
-      ))}
+      {(childrenByParent.get(row.session.id) ?? []).map(renderRow)}
     </React.Fragment>
   );
 
+  const renderGroup = (group: SessionGroupDefinition) => {
+    const rows = rootRowsByGroup.get(group.id) ?? [];
+    const expanded = !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(group.id);
+
+    return (
+      <SessionGroupSection
+        key={group.id}
+        group={group}
+        rows={rows}
+        expanded={expanded}
+        workspaceId={workspaceId}
+        store={store}
+        renderRow={renderRow}
+      />
+    );
+  };
+
+  const ungroupedExpanded = !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(UNGROUPED_GROUP_ID);
+
   return (
     <>
-      {groups.map((group) => {
-        const rows = rootRowsByGroup.get(group.id) ?? [];
-        return (
-          <GroupDropZone key={group.id} groupId={group.id} workspaceId={workspaceId}>
+      <Reorder.Group
+        as="div"
+        axis="y"
+        values={groups.map((group) => group.id)}
+        onReorder={(ids) => store.getState().reorderGroups(workspaceId, ids)}
+        className="flex flex-col"
+      >
+        {groups.map(renderGroup)}
+      </Reorder.Group>
+      {ungroupedRows.length > 0 ? (
+        <GroupDropZone groupId={null} workspaceId={workspaceId}>
+          <Collapsible
+            open={ungroupedExpanded}
+            onOpenChange={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
+          >
             <SessionGroupSeparator
-              label={group.label}
-              onRemove={() => store.getState().removeGroup(workspaceId, group.id)}
+              label={t("session_management.ungrouped")}
+              count={ungroupedRows.length}
+              expanded={ungroupedExpanded}
+              onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
             />
+            <CollapsibleContent>
+              {ungroupedRows.map(renderRow)}
+            </CollapsibleContent>
+          </Collapsible>
+        </GroupDropZone>
+      ) : null}
+    </>
+  );
+}
+
+function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow }: {
+  group: SessionGroupDefinition;
+  rows: FlattenedSessionRow[];
+  expanded: boolean;
+  workspaceId: string;
+  store: typeof useSessionManagementStore;
+  renderRow: (row: FlattenedSessionRow) => React.ReactNode;
+}) {
+  const dragControls = useDragControls();
+
+  return (
+    <Reorder.Item
+      as="div"
+      value={group.id}
+      id={group.id}
+      layout="position"
+      dragElastic={0}
+      dragListener={false}
+      dragControls={dragControls}
+      transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
+    >
+      <GroupDropZone groupId={group.id} workspaceId={workspaceId}>
+        <Collapsible
+          open={expanded}
+          onOpenChange={() => store.getState().toggleGroupExpanded(workspaceId, group.id)}
+          className="group/session-group"
+        >
+          <SessionGroupSeparator
+            label={group.label}
+            count={rows.length}
+            expanded={expanded}
+            onToggle={() => store.getState().toggleGroupExpanded(workspaceId, group.id)}
+            onRemove={() => store.getState().removeGroup(workspaceId, group.id)}
+            onTitlePointerDown={(event) => dragControls.start(event)}
+          />
+          <CollapsibleContent>
             {rows.length > 0
               ? rows.map(renderRow)
               : (
@@ -1211,16 +1307,10 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
                   </SidebarMenuSubButton>
                 </SidebarMenuSubItem>
               )}
-          </GroupDropZone>
-        );
-      })}
-      {ungroupedRows.length > 0 ? (
-        <GroupDropZone groupId={null} workspaceId={workspaceId}>
-          <SessionGroupSeparator label={t("session_management.ungrouped")} />
-          {ungroupedRows.map(renderRow)}
-        </GroupDropZone>
-      ) : null}
-    </>
+          </CollapsibleContent>
+        </Collapsible>
+      </GroupDropZone>
+    </Reorder.Item>
   );
 }
 

@@ -17,6 +17,7 @@ export type SessionGroupDefinition = {
 type WorkspaceGroupState = {
   groups: SessionGroupDefinition[];
   assignments: Record<string, string>;
+  collapsedGroupIds?: string[];
 };
 
 type SessionManagementState = {
@@ -30,6 +31,8 @@ type SessionManagementActions = {
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
+  reorderGroups: (workspaceId: string, groupIds: string[]) => void;
+  toggleGroupExpanded: (workspaceId: string, groupId: string) => void;
   /** Remove a group definition. Sessions assigned to it become ungrouped. */
   removeGroup: (workspaceId: string, groupId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
@@ -91,6 +94,46 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           };
         }),
 
+      reorderGroups: (workspaceId, groupIds) =>
+        set((state) => {
+          const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          const byId = new Map(ws.groups.map((group) => [group.id, group]));
+          const used = new Set<string>();
+          const groups: SessionGroupDefinition[] = [];
+          for (const id of groupIds) {
+            const group = byId.get(id);
+            if (!group || used.has(id)) continue;
+            groups.push(group);
+            used.add(id);
+          }
+          for (const group of ws.groups) {
+            if (!used.has(group.id)) groups.push(group);
+          }
+          return {
+            groupsByWorkspace: {
+              ...state.groupsByWorkspace,
+              [workspaceId]: { ...ws, groups },
+            },
+          };
+        }),
+
+      toggleGroupExpanded: (workspaceId, groupId) =>
+        set((state) => {
+          const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          const collapsed = new Set(ws.collapsedGroupIds ?? []);
+          if (collapsed.has(groupId)) {
+            collapsed.delete(groupId);
+          } else {
+            collapsed.add(groupId);
+          }
+          return {
+            groupsByWorkspace: {
+              ...state.groupsByWorkspace,
+              [workspaceId]: { ...ws, collapsedGroupIds: [...collapsed] },
+            },
+          };
+        }),
+
       removeGroup: (workspaceId, groupId) =>
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
@@ -100,10 +143,11 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           for (const [sid, gid] of Object.entries(ws.assignments)) {
             if (gid !== groupId) assignments[sid] = gid;
           }
+          const collapsedGroupIds = (ws.collapsedGroupIds ?? []).filter((id) => id !== groupId);
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
-              [workspaceId]: { groups, assignments },
+              [workspaceId]: { groups, assignments, collapsedGroupIds },
             },
           };
         }),
