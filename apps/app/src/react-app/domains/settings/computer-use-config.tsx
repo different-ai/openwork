@@ -132,6 +132,10 @@ export function ComputerUseConfig({
 
   // Clear a stale setup error, then re-read permissions.
   const verify = () => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
     resetGrant();
     void refetch();
   };
