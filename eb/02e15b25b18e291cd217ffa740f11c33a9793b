@@ -1,0 +1,24 @@
+apps/app/src/components/chat/message-list.tsx
+  s_29dbfa17b37658::t_278cf7805d2c7b 165,177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "eb02e15b25b18e291cd217ffa740f11c33a9793b",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_29dbfa17b37658": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "eb9acf54-450b-48d0-ac7c-1f96e35a0fee",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
