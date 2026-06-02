@@ -53,7 +53,8 @@ function accountRecord(email: string, sub: string) {
 const previousEnv = {
   devMode: process.env.OPENWORK_DEV_MODE,
   plaintextVault: process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
-  clientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
+  clientSecret: process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
+  legacyClientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
   brokerUrl: process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
 };
 const previousFetch = globalThis.fetch;
@@ -66,24 +67,26 @@ function restoreEnv(key: string, value: string | undefined) {
 afterEach(() => {
   restoreEnv("OPENWORK_DEV_MODE", previousEnv.devMode);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", previousEnv.plaintextVault);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.clientSecret);
+  restoreEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.clientSecret);
+  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyClientSecret);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.brokerUrl);
   globalThis.fetch = previousFetch;
 });
 
 describe("Google Workspace extension", () => {
   test("reports only the user-configurable OAuth secret as missing", async () => {
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "";
     process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "";
     process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL = "";
     const status = await googleWorkspaceStatus(createTestConfig());
     expect(status.configured).toBe(false);
-    expect(status.missing).toEqual(["OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET"]);
+    expect(status.missing).toEqual(["GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET"]);
   });
 
   test("reads multi-account vaults and exposes active account", async () => {
     process.env.OPENWORK_DEV_MODE = "1";
     process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
       version: 2,
@@ -101,7 +104,7 @@ describe("Google Workspace extension", () => {
   test("disconnect can remove one connected account", async () => {
     process.env.OPENWORK_DEV_MODE = "1";
     process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     globalThis.fetch = Object.assign(
       async () => new Response("{}", { status: 200 }),
       { preconnect: previousFetch.preconnect },

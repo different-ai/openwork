@@ -166,7 +166,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
     setBusyAction("save-secret");
     setError(null);
     try {
-      await hostOpenworkServerClient.upsertUserEnv([{ key: "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value }]);
+      await hostOpenworkServerClient.upsertUserEnv([{ key: "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value }]);
       await hostOpenworkServerClient.setUserEnvPendingChanges(true);
       setClientSecret("");
       if (restartLocalServer) {
