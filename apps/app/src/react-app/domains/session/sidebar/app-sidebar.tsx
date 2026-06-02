@@ -98,16 +98,28 @@ import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 
-function SessionStatusIndicator(props: { status?: string; isStreaming: boolean; isActive: boolean }) {
-  const activityTitle = isSessionActivityStatus(props.status) && props.status !== "idle"
-    ? getSessionActivityStatusLabel(props.status)
-    : undefined;
-  const title = activityTitle ?? (props.isStreaming ? t("workspace_list.session_streaming") : t("workspace_list.session_active"));
+interface SessionStatusIndicatorProps {
+  className?: string;
+  status?: string;
+  isStreaming: boolean;
+  isActive: boolean;
+}
 
-  if (props.isStreaming) {
+function SessionStatusIndicator({ className, status, isStreaming, isActive }: SessionStatusIndicatorProps) {
+  const activityTitle = isSessionActivityStatus(status) && status !== "idle"
+    ? getSessionActivityStatusLabel(status)
+    : undefined;
+  const title = activityTitle ?? (isStreaming ? t("workspace_list.session_streaming") : t("workspace_list.session_active"));
+
+  if (isStreaming) {
     return (
       <span
-        className={cn("flex size-3.5 shrink-0 items-center justify-center", sessionActivityTextClass(props.status))}
+        className={cn(
+          "flex size-3.5 shrink-0 items-center justify-center",
+          status === "waiting" && "text-sky-9",
+          status === "error" && "text-red-9",
+          className,
+        )}
         title={title}
         aria-label={title}
       >
@@ -116,10 +128,15 @@ function SessionStatusIndicator(props: { status?: string; isStreaming: boolean; 
     );
   }
 
-  if (props.isActive) {
+  if (isActive) {
     return (
       <span
-        className={cn("size-1.5 shrink-0 rounded-full", sessionActivityDotClass(props.status))}
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          status === "waiting" && "bg-sky-9",
+          status === "error" && "bg-red-9",
+          className,
+        )}
         title={title}
         aria-label={title}
       />
@@ -493,22 +510,6 @@ function useSessionTree(
 
 function isSessionActivityStatus(status: string | undefined): status is SessionActivityStatus {
   return status === "idle" || status === "thinking" || status === "responding" || status === "error" || status === "compacting" || status === "waiting";
-}
-
-function sessionActivityDotClass(status: string | undefined) {
-  if (status === "waiting") return "bg-sky-500";
-  if (status === "error") return "bg-red-500";
-  if (status === "compacting") return "bg-violet-500";
-  if (status === "responding") return "bg-emerald-500";
-  return "bg-amber-500";
-}
-
-function sessionActivityTextClass(status: string | undefined) {
-  if (status === "waiting") return "text-sky-500";
-  if (status === "error") return "text-red-500";
-  if (status === "compacting") return "text-violet-500";
-  if (status === "responding") return "text-emerald-500";
-  return "text-amber-500";
 }
 
 export function AppSidebar(props: AppSidebarProps) {
@@ -1390,10 +1391,9 @@ function SessionMenuItem({
                 onPointerEnter={prefetchSession}
                 onFocus={prefetchSession}
               >
-                <SessionStatusIndicator status={sessionActivityStatus} isStreaming={isSessionStreaming} isActive={isSessionActive} />
                 <PinnedIndicator isPinned={isPinned} />
                 <span
-                  className="min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4"
+                  className={cn("min-w-0 flex-1 truncate transition-[padding] duration-75 group-hover/menu-sub-item:pe-12 group-has-data-popup-open/menu-sub-item:pe-12 pe-4", isSessionStreaming || isSessionActive && "pe-12")}
                   title={displayTitle}
                 >
                   {displayTitle}
@@ -1412,6 +1412,7 @@ function SessionMenuItem({
           isArchived={isArchived}
           className="absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover/menu-sub-item:opacity-100 data-popup-open:opacity-100"
         />
+        <SessionStatusIndicator className="absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 pointer-events-none select-none" status={sessionActivityStatus} isStreaming={isSessionStreaming} isActive={isSessionActive} />
       </SidebarMenuSubItem>
     </Collapsible>
   ) : (
@@ -1422,9 +1423,8 @@ function SessionMenuItem({
           onClick={openSession}
           onPointerEnter={prefetchSession}
           onFocus={prefetchSession}
-          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13")}
+          className={cn("transition-[padding] duration-75 group-hover/menu-sub-item:pe-8 group-has-data-popup-open/menu-sub-item:pe-8", depth > 0 && "ps-13", isSessionStreaming || isSessionActive && "pe-8")}
         >
-          <SessionStatusIndicator status={sessionActivityStatus} isStreaming={isSessionStreaming} isActive={isSessionActive} />
           <PinnedIndicator isPinned={isPinned} />
           <span className="truncate" title={displayTitle}>{displayTitle}</span>
         </SidebarMenuSubButton>
@@ -1436,6 +1436,7 @@ function SessionMenuItem({
         isArchived={isArchived}
         className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/menu-sub-item:opacity-100 data-popup-open:opacity-100"
       />
+      <SessionStatusIndicator className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 pointer-events-none select-none" status={sessionActivityStatus} isStreaming={isSessionStreaming} isActive={isSessionActive} />
     </SidebarMenuSubItem>
   );
 
