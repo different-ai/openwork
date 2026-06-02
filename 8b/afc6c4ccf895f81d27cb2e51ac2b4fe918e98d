@@ -1,0 +1,54 @@
+apps/app/src/react-app/domains/settings/mcp-settings-provider.tsx
+  s_4dc53fd7f26cb7::t_2325e2099f7be6 114
+  s_4dc53fd7f26cb7::t_5834cb004914bf 1-113,115-118
+apps/app/src/react-app/domains/settings/cloud-marketplaces-view-provider.tsx
+  s_4dc53fd7f26cb7::t_8763fc2ca92488 1-73
+apps/app/src/react-app/shell/settings-route.tsx
+  s_4dc53fd7f26cb7::t_165155cd24a3dc 64,66
+  s_4dc53fd7f26cb7::t_4927f879b9202b 65,2143,2214
+  s_4dc53fd7f26cb7::t_2e156533ff1f29 2157-2172,2174-2177,2179-2181,2183-2197,2210-2213
+  s_4dc53fd7f26cb7::t_6de2f45dda3bcb 2225,2237-2239
+  s_4dc53fd7f26cb7::t_86d6f1d7d11a21 2173,2178,2182
+apps/app/src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx
+  s_4dc53fd7f26cb7::t_447dcb118a6a8d 14,132-146
+apps/app/src/react-app/domains/settings/pages/mcp-view.tsx
+  s_4dc53fd7f26cb7::t_5bb4bfea947e07 60,227-228
+apps/app/src/react-app/domains/settings/pages/plugins-view.tsx
+  s_4dc53fd7f26cb7::t_5ee69cba4071f5 2,8,50,52-66,68-71
+  s_4dc53fd7f26cb7::t_b518337c28d7e9 108,110,133-134,143,190,192,194,293,320,322
+  s_4dc53fd7f26cb7::t_eaea2dde8d12ba 73-82
+  s_4dc53fd7f26cb7::t_e32e0a01201665 51,67
+  s_4dc53fd7f26cb7::t_c1a456d1f2f4c8 10-11,33
+apps/app/src/react-app/domains/settings/extensions-settings-provider.tsx
+  s_4dc53fd7f26cb7::t_3e91b0b5a8a530 5-6
+  s_4dc53fd7f26cb7::t_44133e6d8851ef 1-3,7-14,16-78
+  s_4dc53fd7f26cb7::t_9bfe137b65d16f 4
+  s_4dc53fd7f26cb7::t_67d991769f375a 15
+apps/app/src/react-app/domains/settings/pages/extensions-view.tsx
+  s_4dc53fd7f26cb7::t_f866d46687d386 8-9,63,69
+  s_4dc53fd7f26cb7::t_ca913c4da47b23 2,41,66
+  s_4dc53fd7f26cb7::t_68732f1b5e8b92 36,68
+  s_4dc53fd7f26cb7::t_3e540a22cc2e79 5,7,10,14-15,17-34
+  s_4dc53fd7f26cb7::t_6c8feb1d4a9a6a 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8bafc6c4ccf895f81d27cb2e51ac2b4fe918e98d",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_4dc53fd7f26cb7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9b5c2409-2f26-4adb-a9db-7d22d244bdac",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  }
+}
