@@ -65,6 +65,11 @@ mac:
     - zip
 linux:
   icon: resources/icons/icon.png
+  desktop:
+    Name: OpenWork
+    Comment: Open-source alternative to Claude Cowork
+    Categories: Development;
+    StartupWMClass: openwork
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -80,6 +85,8 @@ linux:
         - versions.json-x86_64-unknown-linux-gnu
   target:
     - AppImage
+    - deb
+    - rpm
     - tar.gz
 win:
   icon: resources/icons/icon.ico
