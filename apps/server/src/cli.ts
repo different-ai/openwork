@@ -28,15 +28,18 @@ let managedOpencode: ManagedOpencodeServer | null = null;
 
 if (!config.readOnly) {
   for (const workspace of config.workspaces) {
+    if (workspace.workspaceType === "remote") {
+      continue;
+    }
     await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
   }
 }
 
 if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
-  const workspace = config.workspaces[0];
-  if (workspace?.path) {
+  const localWorkspace = config.workspaces.find((w) => w.workspaceType !== "remote" && w.path);
+  const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || localWorkspace?.path;
+  if (managedOpencodeCwd) {
     const openworkRuntimeConfig = buildOpenworkRuntimeConfig();
-    const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,

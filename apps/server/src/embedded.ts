@@ -48,17 +48,20 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
   if (!config.readOnly) {
     for (const workspace of config.workspaces) {
+      if (workspace.workspaceType === "remote") {
+        continue;
+      }
       await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
     }
   }
 
   if (!config.opencodeBaseUrl && options.manageOpencode) {
-    const workspace = config.workspaces[0];
-    if (workspace?.path) {
+    const localWorkspace = config.workspaces.find((w) => w.workspaceType !== "remote" && w.path);
+    const cwd = options.opencodeCwd
+      || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
+      || localWorkspace?.path;
+    if (cwd) {
       const openworkRuntimeConfig = buildOpenworkRuntimeConfig();
-      const cwd = options.opencodeCwd
-        || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
-        || workspace.path;
       await mkdir(cwd, { recursive: true });
 
       managedOpencode = await createManagedOpencodeServer({
