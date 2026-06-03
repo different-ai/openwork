@@ -97,6 +97,11 @@ import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domain
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
+  hideOpenWorkModelsPromo,
+  isOpenWorkModelsPromoHidden,
+  openWorkModelsPromoChangedEvent,
+} from "@/react-app/domains/cloud/openwork-models-promo";
+import {
   isDesktopRuntime,
   isElectronRuntime,
   isMacPlatform,
@@ -813,7 +818,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  const showOpenWorkModelsSubscribe = !cloudSession.isSignedIn || !hasOpenWorkCloudProvider;
+  const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const showOpenWorkModelsSubscribe = (!cloudSession.isSignedIn || !hasOpenWorkCloudProvider) && !openWorkModelsPromoHidden;
+
+  useEffect(() => {
+    const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
+    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+  }, []);
+
+  const dismissOpenWorkModelsPromo = useCallback(() => {
+    hideOpenWorkModelsPromo();
+    setOpenWorkModelsPromoHidden(true);
+  }, []);
 
   const subscribeToOpenWorkModels = useCallback(() => {
     providerAuthStore.closeProviderAuthModal();
@@ -2099,6 +2116,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             )}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
+            onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
             cloudProvidersView={
               <CloudProvidersView
                 embedded

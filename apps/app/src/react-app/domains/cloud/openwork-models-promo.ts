@@ -11,6 +11,7 @@ export const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 export const OPENWORK_MODELS_PROVIDER_NAME = "OpenWork Models";
 export const OPENWORK_MODELS_PROMO_HIDDEN_KEY = "openwork.openworkModelsPromo.hidden";
 export const OPENWORK_MODELS_PROMO_LAST_SHOWN_KEY = "openwork.openworkModelsPromo.lastShownAt";
+export const OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY = "openwork.openworkModelsPromo.startupShown";
 export const openWorkModelsPromoChangedEvent = "openwork-openwork-models-promo-changed";
 export const OPENWORK_MODELS_PROMO_SHOW_DELAY_MS = 4_000;
 export const OPENWORK_MODELS_PROMO_VISIBLE_MS = 14_000;
@@ -56,6 +57,22 @@ export function hideOpenWorkModelsPromo() {
   try {
     window.localStorage.setItem(OPENWORK_MODELS_PROMO_HIDDEN_KEY, "1");
     window.dispatchEvent(new Event(openWorkModelsPromoChangedEvent));
+  } catch {}
+}
+
+export function wasOpenWorkModelsStartupPromoShown() {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+export function markOpenWorkModelsStartupPromoShown() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(OPENWORK_MODELS_STARTUP_PROMO_SHOWN_KEY, "1");
   } catch {}
 }
 

@@ -99,6 +99,18 @@ import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-acc
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { OpenWorkModelsStartupDialog } from "@/react-app/domains/cloud/openwork-models-startup-dialog";
+import {
+  getOpenWorkModelsActionUrl,
+  hasOpenWorkModelsProvider,
+  hideOpenWorkModelsPromo,
+  isOpenWorkModelsPromoHidden,
+  markOpenWorkModelsStartupPromoShown,
+  OPENWORK_MODEL_PREVIEWS,
+  openWorkModelsPromoChangedEvent,
+  wasOpenWorkModelsStartupPromoShown,
+} from "@/react-app/domains/cloud/openwork-models-promo";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -135,6 +147,7 @@ import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
+import { useShellConfig } from "./shell-config";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
@@ -499,6 +512,8 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
 export function SessionRoute() {
   const navigate = useNavigate();
   const platform = usePlatform();
+  const denAuth = useDenAuth();
+  const { config: shellConfig } = useShellConfig();
   const local = useLocal();
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -592,12 +607,44 @@ export function SessionRoute() {
     [providerConnectedIds],
   );
   const [disabledProviderIds, setDisabledProviderIds] = useState<string[]>([]);
+  const [openWorkModelsStartupOpen, setOpenWorkModelsStartupOpen] = useState(false);
+  const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const openWorkModelsStartupScheduledRef = useRef(false);
   // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
   useEffect(() => {
     const handler = () => setDenSessionVersion((v) => v + 1);
     window.addEventListener(denSessionUpdatedEvent, handler);
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
+  }, []);
+
+  useEffect(() => {
+    const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
+    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+  }, []);
+
+  const hasOpenWorkModels = useMemo(
+    () => hasOpenWorkModelsProvider(providerConnectedIds),
+    [providerConnectedIds],
+  );
+
+  const subscribeToOpenWorkModels = useCallback(() => {
+    setOpenWorkModelsStartupOpen(false);
+    markOpenWorkModelsStartupPromoShown();
+    if (!denAuth.isSignedIn) {
+      navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account");
+    }
+    window.setTimeout(() => {
+      platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+    }, 0);
+  }, [denAuth.isSignedIn, navigate, platform, selectedWorkspaceId]);
+
+  const continueWithoutOpenWorkModels = useCallback(() => {
+    setOpenWorkModelsStartupOpen(false);
+    markOpenWorkModelsStartupPromoShown();
+    hideOpenWorkModelsPromo();
+    setOpenWorkModelsPromoHidden(true);
   }, []);
   // Provider IDs that were just added — used to highlight them as
   // "Recently added" in the model picker even after they've been
@@ -1531,9 +1578,23 @@ export function SessionRoute() {
         )
       ),
   );
+  const hasUsableModel = Boolean(local.prefs.defaultModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
   );
+
+  useEffect(() => {
+    if (!shellConfig.cloudSignin || openWorkModelsPromoHidden || hasOpenWorkModels) return;
+    if (denAuth.status === "checking" || !opencodeClient || !selectedWorkspaceId) return;
+    if (wasOpenWorkModelsStartupPromoShown() || openWorkModelsStartupScheduledRef.current) return;
+
+    openWorkModelsStartupScheduledRef.current = true;
+    const timeout = window.setTimeout(() => {
+      markOpenWorkModelsStartupPromoShown();
+      setOpenWorkModelsStartupOpen(true);
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [denAuth.status, hasOpenWorkModels, opencodeClient, openWorkModelsPromoHidden, selectedWorkspaceId, shellConfig.cloudSignin]);
 
   const sessionProviderAuthStateRef = useRef({
     opencodeClient: opencodeClient as Client | null,
@@ -2054,7 +2115,7 @@ export function SessionRoute() {
         }));
         setCompactModelPickerOpen(false);
       },
-      providerConnectedCount: userProviderConnectedIds.length,
+      providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/general");
       },
@@ -2182,6 +2243,7 @@ export function SessionRoute() {
     client,
     compactModelPickerOpen,
     handleOpenSettings,
+    hasUsableModel,
     local,
     listSlashCommands,
     modelBehaviorOptions,
@@ -2191,6 +2253,7 @@ export function SessionRoute() {
     navigate,
     opencodeBaseUrl,
     opencodeClient,
+    providerConnectedIds,
     selectedAgent,
     selectedSessionId,
     selectedModelUnavailable,
@@ -2783,7 +2846,8 @@ export function SessionRoute() {
       headerStatus={canCreateTask ? t("status.connected") : t("session.loading_detail")}
       busyHint={effectiveLoading ? t("session.loading_detail") : null}
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
-      providerConnectedIds={userProviderConnectedIds}
+      providerConnectedIds={providerConnectedIds}
+      hasUsableModel={hasUsableModel}
       providers={providers}
       mcpConnectedCount={0}
       onSendFeedback={() => {
@@ -3016,6 +3080,13 @@ export function SessionRoute() {
       statusBar={{ loading: showPreparingStatus }}
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
+    />
+    <OpenWorkModelsStartupDialog
+      open={openWorkModelsStartupOpen}
+      isSignedIn={denAuth.isSignedIn}
+      models={OPENWORK_MODEL_PREVIEWS}
+      onSubscribe={subscribeToOpenWorkModels}
+      onContinueWithout={continueWithoutOpenWorkModels}
     />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
