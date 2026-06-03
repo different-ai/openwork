@@ -30,6 +30,7 @@ const EnvSchema = z.object({
   SMTP_SECURE: z.string().optional(),
   LOOPS_API_KEY: z.string().optional(),
   OPENWORK_DEV_MODE: z.string().optional(),
+  HOST: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   WORKER_PROXY_PORT: z.string().optional(),
@@ -155,6 +156,7 @@ const polarFeatureGateEnabled =
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
+const host = optionalString(parsed.HOST) ?? "0.0.0.0"
 
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
@@ -214,6 +216,7 @@ export const env = {
     apiKey: optionalString(parsed.LOOPS_API_KEY),
   },
   port,
+  host,
   workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
   corsOrigins,
   provisionerMode: parsed.PROVISIONER_MODE ?? "daytona",

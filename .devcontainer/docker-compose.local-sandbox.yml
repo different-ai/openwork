@@ -1,0 +1,12 @@
+services:
+  workspace:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile.local-sandbox
+    volumes:
+      - openwork-node-modules:/workspace/node_modules
+      - openwork-pnpm-store:/root/.local/share/pnpm/store
+
+volumes:
+  openwork-node-modules:
+  openwork-pnpm-store:

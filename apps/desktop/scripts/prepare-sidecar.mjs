@@ -157,6 +157,9 @@ const orchestratorTargetName = orchestratorTargetTriple
   : null;
 const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
 const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
+const orchestratorStagingDir = join(tmpdir(), "openwork-orchestrator-sidecar-build");
+const devModeSidecarWrapper =
+  process.env.OPENWORK_DEV_MODE === "1" && process.platform !== "win32";
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -423,33 +426,56 @@ if (shouldBuildOrchestrator) {
       // ignore
     }
   }
-  const orchestratorBuildScript = resolveBuildScript(orchestratorDir);
-  if (!existsSync(orchestratorBuildScript)) {
-    console.error(`Orchestrator build script not found at ${orchestratorBuildScript}`);
-    process.exit(1);
-  }
-  const orchestratorArgs = [
-    orchestratorBuildScript,
-    "--outdir",
-    sidecarDir,
-    "--filename",
-    orchestratorBaseName,
-  ];
-  if (bunTarget) {
-    orchestratorArgs.push("--target", bunTarget);
-  }
-  const result = spawnSync("bun", orchestratorArgs, {
-    cwd: orchestratorDir,
-    stdio: "inherit",
-    shell: true,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      BUN_ENV: "production",
-    },
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+  if (devModeSidecarWrapper) {
+    writeFileSync(
+      orchestratorBuildPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `cd ${JSON.stringify(orchestratorDir)}`,
+        "exec bun src/cli.ts \"$@\"",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    chmodSync(orchestratorBuildPath, 0o755);
+  } else {
+    mkdirSync(orchestratorStagingDir, { recursive: true });
+    const orchestratorBuildScript = resolveBuildScript(orchestratorDir);
+    if (!existsSync(orchestratorBuildScript)) {
+      console.error(`Orchestrator build script not found at ${orchestratorBuildScript}`);
+      process.exit(1);
+    }
+    const orchestratorArgs = [
+      orchestratorBuildScript,
+      "--outdir",
+      orchestratorStagingDir,
+      "--filename",
+      orchestratorBaseName,
+    ];
+    if (bunTarget) {
+      orchestratorArgs.push("--target", bunTarget);
+    }
+    const result = spawnSync("bun", orchestratorArgs, {
+      cwd: orchestratorDir,
+      stdio: "inherit",
+      shell: true,
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        BUN_ENV: "production",
+      },
+    });
+    if (result.status !== 0) {
+      process.exit(result.status ?? 1);
+    }
+
+    const stagedOrchestratorBuildPath = join(orchestratorStagingDir, orchestratorBuildName);
+    if (!existsSync(stagedOrchestratorBuildPath)) {
+      console.error(`Orchestrator sidecar build missing expected artifact: ${stagedOrchestratorBuildPath}`);
+      process.exit(1);
+    }
+    copyFileSync(stagedOrchestratorBuildPath, orchestratorBuildPath);
   }
 
   didBuildOrchestrator = true;

@@ -1,0 +1,19 @@
+FROM node:20-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dbus dbus-x11 default-mysql-client fluxbox git libcairo2 libcups2 \
+    libatk-bridge2.0-0 libasound2 libdrm2 libgbm1 libgtk-3-0 libnotify-dev \
+    libnss3 libpango-1.0-0 libxcomposite1 libxdamage1 libxfixes3 \
+    libxrandr2 libxss1 libxtst6 novnc unzip websockify x11vnc xterm xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+RUN npm install -g bun
+RUN ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
+
+ENV DISPLAY=:99
+ENV ELECTRON_DISABLE_SANDBOX=1
+ENV PNPM_HOME=/root/.local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+WORKDIR /workspace

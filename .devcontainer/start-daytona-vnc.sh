@@ -21,10 +21,20 @@ if ! pgrep -f "Xvfb ${DISPLAY}" >/dev/null 2>&1; then
   sleep 1
 fi
 
-if ! pgrep -f "xfce4-session" >/dev/null 2>&1; then
-  echo "==> Starting XFCE on ${DISPLAY}..."
-  DISPLAY="${DISPLAY}" startxfce4 > /tmp/xfce.log 2>&1 &
-  sleep 2
+if command -v xfce4-session >/dev/null 2>&1; then
+  if ! pgrep -f "xfce4-session" >/dev/null 2>&1; then
+    echo "==> Starting XFCE on ${DISPLAY}..."
+    DISPLAY="${DISPLAY}" startxfce4 > /tmp/xfce.log 2>&1 &
+    sleep 2
+  fi
+elif command -v startfluxbox >/dev/null 2>&1; then
+  if ! pgrep -f "startfluxbox|fluxbox" >/dev/null 2>&1; then
+    echo "==> Starting Fluxbox on ${DISPLAY}..."
+    DISPLAY="${DISPLAY}" startfluxbox > /tmp/fluxbox.log 2>&1 &
+    sleep 2
+  fi
+else
+  echo "==> No supported window manager found (expected xfce4-session or startfluxbox)." >&2
 fi
 
 if ! pgrep -f "x11vnc .*${VNC_PORT}" >/dev/null 2>&1; then
