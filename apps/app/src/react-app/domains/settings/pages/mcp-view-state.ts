@@ -18,7 +18,6 @@ export type McpViewLocalState = {
   showAdvanced: boolean;
   addMcpModalOpen: boolean;
   togglingMcp: string | null;
-  chromeSetupOpen: boolean;
 };
 
 type McpViewLocalAction<K extends keyof McpViewLocalState = keyof McpViewLocalState> =
@@ -41,7 +40,6 @@ export const initialMcpViewLocalState: McpViewLocalState = {
   showAdvanced: false,
   addMcpModalOpen: false,
   togglingMcp: null,
-  chromeSetupOpen: false,
 };
 
 export function mcpViewLocalReducer(

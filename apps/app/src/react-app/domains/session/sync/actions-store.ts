@@ -32,6 +32,7 @@ import type {
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
+import { firstLineLocalFileParts } from "./prompt-file-parts";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -50,7 +51,7 @@ type SessionActionsSnapshot = {
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 
-const fileToDataUrl = (file: File) =>
+const fileToDataUrl = (file: File, mimeType: string) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
@@ -58,8 +59,16 @@ const fileToDataUrl = (file: File) =>
       const result = typeof reader.result === "string" ? reader.result : "";
       resolve(result);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(new Blob([file], { type: mimeType }));
   });
+
+function attachmentMime(attachment: ComposerAttachment) {
+  if (attachment.kind === "image") return attachment.mimeType;
+  if (attachment.mimeType === "application/pdf") return attachment.mimeType;
+  if (attachment.mimeType === "application/json") return "text/plain";
+  if (attachment.mimeType.startsWith("text/")) return "text/plain";
+  return attachment.mimeType;
+}
 
 export function createSessionActionsStore(options: {
   client: () => Client | null;
@@ -146,12 +155,15 @@ export function createSessionActionsStore(options: {
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
-  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => ({
-    type: "file",
-    url: await fileToDataUrl(attachment.file),
-    filename: attachment.name,
-    mime: attachment.mimeType,
-  });
+  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => {
+    const mime = attachmentMime(attachment);
+    return {
+      type: "file",
+      url: await fileToDataUrl(attachment.file, mime),
+      filename: attachment.name,
+      mime,
+    };
+  };
 
   const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
     const parts: PartInput[] = [];
@@ -190,6 +202,7 @@ export function createSessionActionsStore(options: {
       }
     }
 
+    parts.push(...firstLineLocalFileParts(text, root));
     parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
     return parts;
   };

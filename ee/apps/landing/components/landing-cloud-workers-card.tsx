@@ -31,7 +31,7 @@ export function LandingCloudWorkersCard(props: Props) {
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
           <span className="truncate text-[11px] text-gray-400">
-            share.openworklabs.com/b/01KNB...
+            app.openworklabs.com/workers/acme
           </span>
         </div>
       </div>
@@ -40,7 +40,7 @@ export function LandingCloudWorkersCard(props: Props) {
       <div className="flex flex-col gap-5 p-5 md:p-6">
         <div>
           <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-500">
-            Workspace Template
+            Cloud Worker
           </div>
           <h3 className="mb-2 text-xl font-medium tracking-tight text-[#011627]">
             SDR for Acme Company
@@ -73,7 +73,7 @@ export function LandingCloudWorkersCard(props: Props) {
             <polyline points="15 3 21 3 21 9" />
             <line x1="10" y1="14" x2="21" y2="3" />
           </svg>
-          Open in OpenWork
+          Open in Cloud
         </button>
       </div>
     </div>

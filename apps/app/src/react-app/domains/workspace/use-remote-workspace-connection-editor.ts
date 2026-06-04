@@ -5,6 +5,7 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../../../app/lib/desktop";
+import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
 import { t } from "../../../i18n";
 import type { RemoteWorkspaceInput } from "./types";
 
@@ -40,16 +41,22 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
   );
 
   const initialValues = useMemo(
-    () => ({
-      openworkHostUrl: workspace?.openworkHostUrl ?? workspace?.baseUrl ?? "",
-      openworkToken:
-        workspace?.openworkToken ??
-        workspace?.openworkClientToken ??
-        workspace?.openworkHostToken ??
-        "",
-      directory: workspace?.directory ?? workspace?.path ?? "",
-      displayName: workspace?.displayName ?? workspace?.name ?? "",
-    }),
+    () => {
+      const hostUrl = workspace?.openworkHostUrl ?? workspace?.baseUrl ?? "";
+      const mountedUrl = workspace?.remoteType === "openwork"
+        ? buildOpenworkWorkspaceBaseUrl(hostUrl, workspace.openworkWorkspaceId) ?? hostUrl
+        : hostUrl;
+      return {
+        openworkHostUrl: mountedUrl,
+        openworkToken:
+          workspace?.openworkToken ??
+          workspace?.openworkClientToken ??
+          workspace?.openworkHostToken ??
+          "",
+        directory: workspace?.directory ?? workspace?.path ?? "",
+        displayName: workspace?.displayName ?? workspace?.name ?? "",
+      };
+    },
     [workspace],
   );
 

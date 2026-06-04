@@ -66,6 +66,29 @@ export async function unrevertSession(
 }
 
 /**
+ * Archive or unarchive a session via OpenCode's native `time.archived` field.
+ *
+ * Passing `archived: true` stamps the current time; `false` clears it (sends
+ * `0`, which the server treats as "not archived"). Archiving is a non-destructive
+ * primitive — the session and its context are preserved, which matters for orgs
+ * with audit/retention policies that forbid deletion.
+ */
+export async function setSessionArchived(
+  client: Client,
+  sessionID: string,
+  archived: boolean,
+  directory?: string,
+): Promise<void> {
+  unwrap(
+    await client.session.update({
+      sessionID,
+      directory,
+      time: { archived: archived ? Date.now() : 0 },
+    }),
+  );
+}
+
+/**
  * Compact/summarize a long session to reduce context size.
  * Uses `session.summarize` when available and falls back to `/compact` command.
  */

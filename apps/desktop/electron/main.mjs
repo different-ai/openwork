@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync } from "node:fs";
@@ -19,7 +19,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
+import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
@@ -42,6 +43,126 @@ const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
+const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+
+function computerUseHelperExecutablePath() {
+  const appPath = computerUseHelperAppPath();
+  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const candidates = [
+    explicitBinary,
+    appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function computerUseHelperAppPath() {
+  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const candidates = [
+    explicitApp,
+    process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
+    path.resolve(__dirname, "..", "resources", "helpers", COMPUTER_USE_HELPER_APP_NAME),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function getComputerUseMcpCommand() {
+  const helperExecutable = computerUseHelperExecutablePath();
+  if (helperExecutable) return [helperExecutable, "mcp"];
+
+  if (app.isPackaged) {
+    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
+  }
+
+  if (process.env.OPENWORK_DEV_MODE === "1") {
+    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+  }
+  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+}
+
+// ---------------------------------------------------------------------------
+// Permission checks — spawn the binary with --check, read stdout, done.
+// Fresh process = fresh TCC read = always accurate. No HTTP server needed.
+// ---------------------------------------------------------------------------
+
+function resolveComputerUseExecutable() {
+  // 1. Explicit env override.
+  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  if (explicit && existsSync(explicit)) return explicit;
+
+  // 2. .app bundle (packaged builds + pnpm dev).
+  const appPath = computerUseHelperAppPath();
+  if (appPath) {
+    const bin = path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE);
+    if (existsSync(bin)) return bin;
+  }
+
+  // 3. Dev fallback — raw Swift build output.
+  if (!app.isPackaged) {
+    const swiftPkg = path.resolve(__dirname, "../../..", "packages/handsfree/native/HandsFree");
+    const devCandidates = [
+      path.join(swiftPkg, ".build", "release", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "debug", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "HandsFreeComputerUse"),
+    ];
+    for (const c of devCandidates) {
+      if (existsSync(c)) return c;
+    }
+  }
+
+  return null;
+}
+
+async function checkComputerUsePermissions() {
+  // Spawn binary --check → read JSON from stdout → exit. Always fresh.
+  const bin = resolveComputerUseExecutable();
+  if (!bin) {
+    return { ok: false, accessibility: false, screenRecording: false, error: "Helper binary not found. Run pnpm dev to build it." };
+  }
+  return spawnCheckPermissions(bin);
+}
+
+function spawnCheckPermissions(bin) {
+  return new Promise((resolve) => {
+    let stdout = "";
+    const child = spawn(bin, ["--check"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.on("error", () => resolve({ ok: false, accessibility: false, screenRecording: false, error: "Failed to run permission check." }));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        resolve({
+          ok: parsed?.ok === true,
+          accessibility: parsed?.accessibility === true,
+          screenRecording: parsed?.screenRecording === true,
+        });
+      } catch {
+        resolve({ ok: false, accessibility: false, screenRecording: false, error: "Permission check returned invalid output." });
+      }
+    });
+  });
+}
+
+async function openComputerUseSetupApp() {
+  // Open the GUI. Use the .app bundle if available so macOS shows it as
+  // a real app with its own dock icon and permission identity.
+  const appPath = computerUseHelperAppPath();
+  if (appPath) {
+    const result = await shell.openPath(appPath);
+    if (result) console.error("[ComputerUse] shell.openPath error:", result);
+    return;
+  }
+
+  // Fallback: spawn the raw binary (opens the same GUI).
+  const bin = resolveComputerUseExecutable();
+  if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
+  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
 // so in-place migration is a no-op for almost every file. Dev mode uses the
@@ -276,6 +397,7 @@ if (extraLaunchArgs) {
     }
   }
 }
+configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
@@ -353,7 +475,12 @@ let activeBrowserTabId = null;
 let browserViewVisible = false;
 let lastBrowserBounds = null;
 let browserTabCounter = 0;
-const BROWSER_DEFAULT_URL = "https://www.google.com";
+const BROWSER_DEFAULT_URL = "about:blank";
+// URL a user-initiated new tab (the "+" button / opening the browser panel)
+// lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
+const BROWSER_NEW_TAB_URL = "https://www.google.com";
+const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
+const BROWSER_TARGET_RESOLVE_INTERVAL_MS = 80;
 const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
@@ -411,108 +538,6 @@ async function openSettingsFromNativeMenu() {
 async function toggleSidebarFromNativeMenu() {
   const win = await createMainWindow();
   win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
-}
-
-function execFilePromise(file, args) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, (error) => {
-      if (error) reject(error);
-      else resolve(undefined);
-    });
-  });
-}
-
-async function openChromeRemoteDebugging() {
-  const url = "chrome://inspect/#remote-debugging";
-  if (process.platform === "darwin") {
-    try {
-      await execFilePromise("/usr/bin/open", ["-a", "Google Chrome", url]);
-      return { ok: true };
-    } catch {
-      await execFilePromise("/usr/bin/open", ["-a", "Chromium", url]);
-      return { ok: true };
-    }
-  }
-
-  if (process.platform === "win32") {
-    await execFilePromise("cmd.exe", ["/c", "start", "", "chrome", url]);
-    return { ok: true };
-  }
-
-  const linuxCandidates = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
-  let lastError = null;
-  for (const candidate of linuxCandidates) {
-    try {
-      await execFilePromise(candidate, [url]);
-      return { ok: true };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  await shell.openExternal(url);
-  return { ok: true, fallback: true, error: lastError instanceof Error ? lastError.message : null };
-}
-
-function commandOutput(command, args) {
-  try {
-    return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  } catch {
-    return "";
-  }
-}
-
-function listeningPortLooksLikeChrome(port) {
-  if (!Number.isInteger(port) || port <= 0) return false;
-
-  if (process.platform === "darwin") {
-    return /Google|Chromium|Chrome/i.test(commandOutput("/usr/sbin/lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"]));
-  }
-
-  if (process.platform === "linux") {
-    const lsofOutput = commandOutput("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN"]);
-    if (/chrome|chromium/i.test(lsofOutput)) return true;
-    const ssOutput = commandOutput("ss", ["-ltnp", `sport = :${port}`]);
-    return /chrome|chromium/i.test(ssOutput);
-  }
-
-  if (process.platform === "win32") {
-    const netstat = commandOutput("netstat.exe", ["-ano", "-p", "TCP"]);
-    const line = netstat.split(/\r?\n/).find((entry) => entry.includes(`:${port}`) && /LISTENING/i.test(entry));
-    if (!line) return false;
-    const pid = line.trim().split(/\s+/).at(-1);
-    if (!pid) return false;
-    return /chrome\.exe/i.test(commandOutput("tasklist.exe", ["/FI", `PID eq ${pid}`]));
-  }
-
-  return false;
-}
-
-async function checkChromeDebuggingPort(port) {
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-    return { connected: false, port: null, mode: null };
-  }
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
-      signal: AbortSignal.timeout(1200),
-    });
-    if (response.ok) {
-      const payload = await response.json().catch(() => null);
-      if (typeof payload?.webSocketDebuggerUrl === "string") {
-        return { connected: true, port, mode: "cdp-json" };
-      }
-    }
-    if (response.status === 404 && listeningPortLooksLikeChrome(port)) {
-      return { connected: true, port, mode: "chrome-auto-connect" };
-    }
-  } catch {
-    if (listeningPortLooksLikeChrome(port)) {
-      return { connected: true, port, mode: "chrome-listener" };
-    }
-  }
-
-  return { connected: false, port, mode: null };
 }
 
 function installApplicationMenu() {
@@ -660,6 +685,82 @@ function normalizeBrowserUrl(url, fallback = BROWSER_DEFAULT_URL) {
   return /^https?:\/\//i.test(target) ? target : `https://${target}`;
 }
 
+function isMainWindowAllowedNavigation(url) {
+  if (!url) return true;
+  if (url.startsWith("file://") || url.startsWith("data:")) return true;
+  try {
+    const target = new URL(url);
+    if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
+    const currentUrl = mainWindow?.webContents.getURL();
+    if (!currentUrl || currentUrl === "about:blank") return true;
+    const current = new URL(currentUrl);
+    return target.origin === current.origin;
+  } catch {
+    return true;
+  }
+}
+
+function routeBlockedMainWindowNavigation(url) {
+  if (!/^https?:\/\//i.test(String(url ?? ""))) return;
+  void openBrowserUrlForAutomation(url).catch((error) => {
+    console.warn("[browser] failed to route blocked main-window navigation", error);
+  });
+}
+
+function cdpBrowserUrl() {
+  return `http://127.0.0.1:${remoteDebugPort}`;
+}
+
+function browserTargetMarkerUrl(tabId) {
+  const marker = `openwork-browser-tab:${tabId}`;
+  const html = `<!doctype html><title>${marker}</title><meta name="openwork-browser-tab" content="${tabId}"><body>${marker}</body>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+async function listCdpTargets() {
+  if (!remoteDebugPort || remoteDebugPort <= 0) return [];
+  const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
+  if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
+  const targets = await response.json();
+  return Array.isArray(targets) ? targets : [];
+}
+
+async function resolveBrowserCdpTargetId(tabId) {
+  const marker = encodeURIComponent(`openwork-browser-tab:${tabId}`);
+  const deadline = Date.now() + BROWSER_TARGET_RESOLVE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const targets = await listCdpTargets().catch(() => []);
+    const target = targets.find((candidate) => (
+      candidate?.type === "page" &&
+      typeof candidate.id === "string" &&
+      typeof candidate.url === "string" &&
+      candidate.url.includes(marker)
+    ));
+    if (target?.id) return target.id;
+    await new Promise((resolve) => setTimeout(resolve, BROWSER_TARGET_RESOLVE_INTERVAL_MS));
+  }
+  throw new Error("Could not resolve built-in browser CDP target.");
+}
+
+async function openBrowserUrlForAutomation(rawUrl, provider = "auto") {
+  const requestedProvider = String(provider || "auto").trim().toLowerCase();
+  if (requestedProvider && requestedProvider !== "auto" && requestedProvider !== "builtin") {
+    throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
+  }
+  const url = normalizeBrowserUrl(rawUrl);
+  const tab = createBrowserTab("about:blank", { select: true });
+  await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
+  const targetId = await resolveBrowserCdpTargetId(tab.tabId);
+  await tab.view.webContents.loadURL(url);
+  return {
+    provider: "builtin",
+    browser_url: cdpBrowserUrl(),
+    target_id: targetId,
+    tab_id: tab.tabId,
+    url,
+  };
+}
+
 function getBrowserTab(tabId = activeBrowserTabId) {
   return tabId ? browserTabs.get(tabId) ?? null : null;
 }
@@ -672,45 +773,48 @@ function getActiveWebContents() {
   return getActiveBrowserView()?.webContents ?? null;
 }
 
+function getBrowserTabLabel(title, url) {
+  if (title) {
+    return title;
+  }
+
+  if (url && url !== "about:blank") {
+    return url;
+  }
+
+  return "New tab";
+}
+
+function browserTabToPanelTab(tabId, tab) {
+  const webContents = tab.view.webContents;
+  const url = webContents.getURL();
+  const title = webContents.getTitle();
+  const isLoading = webContents.isLoading();
+
+  return {
+    id: tabId,
+    type: "browser",
+    label: getBrowserTabLabel(title, url),
+    url,
+    favicon: tab.favicon ?? null,
+    status: isLoading ? "loading" : "ready",
+    canGoBack: webContents.canGoBack(),
+    canGoForward: webContents.canGoForward(),
+  };
+}
+
 function listBrowserTabs() {
   return browserTabOrder
     .map((tabId) => {
       const tab = browserTabs.get(tabId);
       if (!tab || tab.view.webContents.isDestroyed()) return null;
-      return {
-        tabId,
-        url: tab.view.webContents.getURL(),
-        title: tab.view.webContents.getTitle(),
-        favicon: tab.favicon,
-        canGoBack: tab.view.webContents.canGoBack(),
-        canGoForward: tab.view.webContents.canGoForward(),
-        isLoading: tab.view.webContents.isLoading(),
-        isActive: tabId === activeBrowserTabId,
-      };
+      return browserTabToPanelTab(tabId, tab);
     })
     .filter(Boolean);
 }
 
 function browserStatePayload() {
-  const activeTab = getBrowserTab();
-  const activeWebContents = activeTab?.view.webContents;
-  const activeState = activeWebContents && !activeWebContents.isDestroyed()
-    ? {
-        url: activeWebContents.getURL(),
-        title: activeWebContents.getTitle(),
-        canGoBack: activeWebContents.canGoBack(),
-        canGoForward: activeWebContents.canGoForward(),
-        isLoading: activeWebContents.isLoading(),
-      }
-    : {
-        url: "",
-        title: "",
-        canGoBack: false,
-        canGoForward: false,
-        isLoading: false,
-      };
   return {
-    ...activeState,
     activeTabId: activeBrowserTabId,
     tabs: listBrowserTabs(),
   };
@@ -922,6 +1026,11 @@ function createBrowserTab(url = "about:blank", { select = true } = {}) {
     void shell.openExternal(targetUrl);
     return { action: "deny" };
   });
+  view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace && targetUrl !== "about:blank") {
+      sendToRenderer("openwork:browser:panel-opened");
+    }
+  });
   view.webContents.on("did-navigate", () => sendBrowserState());
   view.webContents.on("did-navigate-in-page", () => sendBrowserState());
   view.webContents.on("page-title-updated", () => sendBrowserState());
@@ -1059,10 +1168,10 @@ function sendBrowserState() {
  * Attach the browser view to the main window.
  * @param {object} bounds — { x, y, width, height }
  * @param {object} [opts]
- * @param {boolean} [opts.preloadDefault=true] - load default URL if the view has no URL
- * @param {boolean} [opts.ensureTab=true] - create a blank tab if needed
+ * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
+ * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
  */
-function attachBrowserView(bounds, { preloadDefault = true, ensureTab = true } = {}) {
+function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false } = {}) {
   if (!mainWindow) return;
   lastBrowserBounds = bounds;
   browserViewVisible = true;
@@ -1292,7 +1401,6 @@ function normalizeDesktopBootstrapConfig(input) {
     typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
       ? input.apiBaseUrl.trim()
       : null;
-
   return {
     baseUrl,
     apiBaseUrl,
@@ -1649,12 +1757,50 @@ const runtimeManager = createRuntimeManager({
 });
 
 let runtimeDisposedForQuit = false;
+let runtimeDisposeInProgress = false;
 let runtimeBootstrapPromise = null;
 
+function showShutdownScreen() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.show();
+    win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body { height: 100%; margin: 0; background: #0b0b0f; color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { display: grid; place-items: center; }
+      main { display: grid; gap: 10px; justify-items: center; }
+      .spinner { width: 22px; height: 22px; border: 2px solid rgba(244,244,245,.25); border-top-color: #f4f4f5; border-radius: 50%; animation: spin .9s linear infinite; }
+      .title { font-size: 15px; font-weight: 600; }
+      .body { font-size: 13px; color: #a1a1aa; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="title">Stopping OpenWork services</div>
+      <div class="body">Closing local workers and background services...</div>
+    </main>
+  </body>
+</html>`)}`);
+  } catch {
+    // Ignore renderer teardown races during quit.
+  }
+}
+
 async function disposeRuntimeBeforeQuit() {
-  if (runtimeDisposedForQuit) return;
-  runtimeDisposedForQuit = true;
-  await runtimeManager.dispose().catch(() => undefined);
+  if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
+  runtimeDisposeInProgress = true;
+  try {
+    await runtimeManager.dispose().catch(() => undefined);
+    runtimeDisposedForQuit = true;
+  } finally {
+    runtimeDisposeInProgress = false;
+  }
 }
 
 function assertOpenworkServerReady(info) {
@@ -2187,9 +2333,12 @@ async function handleDesktopInvoke(event, command, ...args) {
           const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
             ? nextWorkspace.directory.trim()
             : null;
-          let remoteWorkspaceId = typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
-            ? nextWorkspace.openworkWorkspaceId.trim()
-            : parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+          let remoteWorkspaceId = parsedWorkspaceId || (
+            typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
+              ? nextWorkspace.openworkWorkspaceId.trim()
+              : null
+          );
           let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
           if (!remoteWorkspaceId) {
             const discovered = await discoverOpenworkWorkspace({
@@ -2383,6 +2532,24 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       return ["npx", "-y", "openwork-ui-mcp"];
     }
+    case "getComputerUseMcpCommand": {
+      return getComputerUseMcpCommand();
+    }
+    case "checkComputerUsePermissions": {
+      // Spawn --check → fresh TCC read → always accurate.
+      return checkComputerUsePermissions();
+    }
+    case "openComputerUsePermissionSetup": {
+      // Open the GUI app. Returns immediately — React shows "verify" CTA.
+      await openComputerUseSetupApp();
+      // Return a fresh check so the UI shows the current state.
+      return checkComputerUsePermissions();
+    }
+    case "openComputerUsePermissionSettings": {
+      // Legacy: open the setup app (same as above).
+      await openComputerUseSetupApp();
+      return checkComputerUsePermissions();
+    }
     case "getOpenworkUiMcpEnvironment": {
       return {
         OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
@@ -2552,10 +2719,6 @@ async function handleDesktopInvoke(event, command, ...args) {
       if (!target) return "Path is required.";
       return shell.openPath(target);
     }
-    case "__openChromeRemoteDebugging":
-      return openChromeRemoteDebugging();
-    case "__checkChromeDebuggingPort":
-      return checkChromeDebuggingPort(Number(args[0]));
     case "__revealItemInDir": {
       const target = String(args[0] ?? "").trim();
       if (!target) return undefined;
@@ -2731,6 +2894,8 @@ async function startUiControlServer() {
     `${JSON.stringify({ version: 1, app: APP_NAME, identifier: APP_IDENTIFIER, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
     "utf8",
   );
+  // Make the discovery path available to child processes (server → managed OpenCode → plugin).
+  process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
 }
 
 async function stopUiControlServer() {
@@ -2809,6 +2974,12 @@ async function createMainWindow() {
     return { action: "allow" };
   });
 
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isMainWindowAllowedNavigation(url)) return;
+    event.preventDefault();
+    routeBlockedMainWindowNavigation(url);
+  });
+
   const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
   if (startUrl) {
     await mainWindow.loadURL(startUrl);
@@ -2832,10 +3003,22 @@ ipcMain.handle("openwork:shell:relaunch", async () => {
   app.exit(0);
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+ipcMain.handle("openwork:system:microphoneStatus", async () => {
+  if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
+  return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
+});
+ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
+  if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
+  const before = systemPreferences.getMediaAccessStatus("microphone");
+  const granted = await systemPreferences.askForMediaAccess("microphone");
+  const after = systemPreferences.getMediaAccessStatus("microphone");
+  return { platform: process.platform, before, after, granted };
+});
 
 // ── Embedded browser IPC ────────────────────────────────────────────────
 ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
 ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
+ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
 ipcMain.handle("openwork:browser:navigate", (_event, url) => {
   const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
   view.webContents.loadURL(normalizeBrowserUrl(url));
@@ -2858,7 +3041,8 @@ ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
 });
 ipcMain.handle("openwork:browser:state", () => browserStatePayload());
 ipcMain.handle("openwork:browser:createTab", (_event, url) => {
-  const tab = createBrowserTab(url ?? "about:blank", { select: true });
+  const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
+  const tab = createBrowserTab(target, { select: true });
   return { tabId: tab.tabId };
 });
 ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
@@ -2895,6 +3079,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     if (runtimeDisposedForQuit) return;
     event.preventDefault();
+    if (runtimeDisposeInProgress) return;
+    showShutdownScreen();
     void Promise.all([disposeRuntimeBeforeQuit(), stopUiControlServer()]).finally(() => app.quit());
   });
 
@@ -2915,6 +3101,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    installMediaPermissionHandlers(session, () => mainWindow);
     installApplicationMenu();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 

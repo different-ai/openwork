@@ -11,7 +11,10 @@ import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
+import { registerOrgScimRoutes } from "./scim.js"
+import { registerOrgSsoRoutes } from "./sso.js"
 import { registerOrgSkillRoutes } from "./skills.js"
+import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
@@ -46,11 +49,14 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgBillingRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgInferenceRoutes(app)
+  registerOrgScimRoutes(app)
+  registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
+  registerOrgResourceRoutes(app)
   registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
 

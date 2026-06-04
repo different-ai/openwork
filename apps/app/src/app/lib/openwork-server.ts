@@ -2,6 +2,8 @@ import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import { desktopFetch } from "./desktop";
 import { isDesktopRuntime } from "../utils";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
+import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den";
+import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -175,6 +177,81 @@ export type OpenworkWorkspaceFileWriteResult = {
   revision?: string;
 };
 
+export type OpenworkAuthorizedFoldersResponse = {
+  folders: string[];
+  hiddenCount: number;
+  workspaceRoot: string;
+};
+
+export type OpenworkAuthorizedFoldersUpdateResponse = {
+  folders: string[];
+  hiddenCount: number;
+  updatedAt: number;
+};
+
+export type OpenworkRuntimeConfigMigrationResult = {
+  migrated: boolean;
+  keys: string[];
+  legacyKeys: string[];
+  userOpencodeKeys: string[];
+  updatedAt: number | null;
+  legacyError?: string | null;
+};
+
+export type OpenworkRuntimeConfigStatus = {
+  runtime: Record<string, unknown>;
+  runtimeKeys: string[];
+  effectiveRuntime: Record<string, unknown>;
+  sources?: {
+    projectOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
+    globalOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
+    runtimeDatabase: { keys: string[]; config: Record<string, unknown> };
+    injected: { keys: string[]; config: Record<string, unknown> };
+  };
+  legacyOpenwork: {
+    path: string;
+    keys: string[];
+    error: string | null;
+  };
+  userOpencode: {
+    path: string;
+    exists: boolean;
+    keys: string[];
+    migratableKeys: string[];
+  };
+};
+
+export type OpenworkDesktopCloudSyncChange = {
+  id: string;
+  kind: "new" | "modified" | "removed";
+  resourceKind: "llmProvider" | "marketplace" | "plugin" | "configItem";
+  marketplaceId?: string;
+  pluginId?: string;
+  previousLastUpdatedAt: string | null;
+  nextLastUpdatedAt: string | null;
+  queuedAt: number;
+};
+
+export type OpenworkDesktopCloudSyncState = {
+  entries: Record<string, unknown>;
+  updatedAt: number;
+  version: 1;
+};
+
+export type OpenworkDesktopCloudSyncResult = {
+  changes: OpenworkDesktopCloudSyncChange[];
+  state: OpenworkDesktopCloudSyncState;
+};
+
+export type OpenworkCloudPluginInstallResult = {
+  item: CloudImportedPlugin;
+};
+
+export type OpenworkCloudPluginsResult = {
+  marketplaces: Record<string, CloudImportedMarketplace>;
+  plugins: Record<string, CloudImportedPlugin>;
+};
+
 function arrayBufferToBase64(data: ArrayBuffer): string {
   const bytes = new Uint8Array(data);
   let binary = "";
@@ -261,12 +338,70 @@ export type OpenworkArtifactList = {
   items: OpenworkArtifactItem[];
 };
 
+export type GoogleWorkspaceAccount = {
+  accountId: string | null;
+  email: string | null;
+  name: string | null;
+  picture: string | null;
+  sub: string | null;
+  scopes?: string[];
+  connectedAt?: string | null;
+};
+
+export type GoogleWorkspaceAuthStatus = {
+  configured: boolean;
+  missing: string[];
+  vault: "encrypted" | "plaintext-dev" | "unavailable";
+  connected: boolean;
+  account: GoogleWorkspaceAccount | null;
+  accounts: GoogleWorkspaceAccount[];
+  activeAccountId: string | null;
+  scopes: string[];
+  connectedAt: string | null;
+  error: string | null;
+  testStatus: string | null;
+  smokeTest: {
+    driveFileId: string | null;
+    driveFileName: string | null;
+    gmailDraftId: string | null;
+  } | null;
+};
+
+export type GoogleWorkspaceConnectStart = {
+  flowId: string;
+  authUrl: string;
+  expiresAt: number;
+};
+
+export type GoogleWorkspaceConnectStatus = {
+  flowId: string;
+  status: "pending" | "connected" | "failed" | "expired";
+  expiresAt: number;
+  error: string | null;
+  googleWorkspace: GoogleWorkspaceAuthStatus | null;
+};
+
+export type OpenworkExtensionActionCall = {
+  extensionId: string;
+  action: string;
+  args?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+};
+
+export type OpenworkExtensionActionResult = {
+  ok: boolean;
+  extensionId: string;
+  action: string;
+  result: unknown;
+  context?: Record<string, unknown>;
+};
+
 export type OpenworkResolvedArtifactTarget = {
   id: string;
   kind: "file" | "url";
   value: string;
   name: string;
-  preview: "browser" | "markdown" | "sheet" | "image" | "pdf" | "html" | "text" | "external";
+  preview: "browser" | "markdown" | "sheet" | "slides" | "image" | "pdf" | "html" | "text" | "external";
   confidence: number;
   reason: string;
   exists?: boolean;
@@ -300,6 +435,13 @@ export type OpenworkInboxUploadResult = {
   ok: boolean;
   path: string;
   bytes: number;
+};
+
+export type OpenworkUserEnvItem = {
+  key: string;
+  updatedAt: number;
+  hasValue: boolean;
+  value?: string;
 };
 
 export type OpenworkActor = {
@@ -851,7 +993,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     config: 10_000,
     workspaceExport: 30_000,
     workspaceImport: 30_000,
-    shareBundle: 20_000,
     binary: 60_000,
   };
 
@@ -864,9 +1005,43 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
+    googleWorkspaceConnectStart: () => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", timeoutMs: timeouts.status }),
+    googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
+    googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),
+    googleWorkspaceTestConnection: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/test", { token, hostToken, method: "POST", timeoutMs: 60_000 }),
+    googleWorkspaceRunScopeSmokeTest: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/smoke-test", { token, hostToken, method: "POST", timeoutMs: 120_000 }),
+    callExtensionAction: (payload: OpenworkExtensionActionCall) =>
+      requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.binary,
+      }),
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.activateWorkspace,
+      }),
+    createRemoteWorkspace: (payload: {
+      baseUrl: string;
+      openworkHostUrl?: string | null;
+      openworkToken?: string | null;
+      openworkWorkspaceId?: string | null;
+      openworkWorkspaceName?: string | null;
+      displayName?: string | null;
+      directory?: string | null;
+      remoteType?: "openwork" | "opencode";
+      sandboxBackend?: string | null;
+      sandboxRunId?: string | null;
+      sandboxContainerName?: string | null;
+    }) =>
+      requestJson<WorkspaceList>(baseUrl, "/workspaces/remote", {
         token,
         hostToken,
         method: "POST",
@@ -881,12 +1056,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         body: { displayName },
         timeoutMs: timeouts.activateWorkspace,
       }),
-    activateWorkspace: (workspaceId: string) =>
-      requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
+    activateWorkspace: (workspaceId: string, options?: { persist?: boolean }) => {
+      const query = options?.persist ? "?persist=true" : "";
+      return requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo; persisted: boolean }>(
         baseUrl,
-        `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
+        `/workspaces/${encodeURIComponent(workspaceId)}/activate${query}`,
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
-      ),
+      );
+    },
     deleteWorkspace: (workspaceId: string) =>
       requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
         baseUrl,
@@ -987,34 +1164,45 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.workspaceImport,
         },
       ),
-    publishBundle: (payload: unknown, bundleType: "skill" | "skills-set", options?: { name?: string; timeoutMs?: number }) =>
-      requestJson<{ url: string }>(baseUrl, "/share/bundles/publish", {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          payload,
-          bundleType,
-          name: options?.name,
-          timeoutMs: options?.timeoutMs,
-        },
-        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
-      }),
-    fetchBundle: (bundleUrl: string, options?: { timeoutMs?: number }) =>
-      requestJson<Record<string, unknown>>(baseUrl, "/share/bundles/fetch", {
-        token,
-        hostToken,
-        method: "POST",
-        body: {
-          bundleUrl,
-          timeoutMs: options?.timeoutMs,
-        },
-        timeoutMs: options?.timeoutMs ?? timeouts.shareBundle,
-      }),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    listAuthorizedFolders: (workspaceId: string) =>
+      requestJson<OpenworkAuthorizedFoldersResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/authorized-folders`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setAuthorizedFolders: (workspaceId: string, folders: string[]) =>
+      requestJson<OpenworkAuthorizedFoldersUpdateResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/authorized-folders`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { folders },
+          timeoutMs: timeouts.config,
+        },
+      ),
+    migrateRuntimeConfig: (workspaceId: string) =>
+      requestJson<OpenworkRuntimeConfigMigrationResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/migrate`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          timeoutMs: timeouts.config,
+        },
+      ),
+    getRuntimeConfigStatus: (workspaceId: string) =>
+      requestJson<OpenworkRuntimeConfigStatus>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
@@ -1023,6 +1211,41 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "PATCH",
         body: payload,
+      }),
+    getDesktopCloudSync: (workspaceId: string) =>
+      requestJson<OpenworkDesktopCloudSyncState>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
+        token,
+        hostToken,
+        timeoutMs: timeouts.config,
+      }),
+    syncDesktopCloud: (workspaceId: string, snapshot: DenResourceSnapshot) =>
+      requestJson<OpenworkDesktopCloudSyncResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: { snapshot },
+        timeoutMs: timeouts.config,
+      }),
+    listCloudPlugins: (workspaceId: string) =>
+      requestJson<OpenworkCloudPluginsResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
+        token,
+        hostToken,
+        timeoutMs: timeouts.config,
+      }),
+    installCloudPlugin: (workspaceId: string, payload: { marketplaceId: string | null; marketplace?: DenOrgMarketplace | null; resolved: DenOrgPluginResolved }) =>
+      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload,
+        timeoutMs: timeouts.config,
+      }),
+    removeCloudPlugin: (workspaceId: string, pluginId: string) =>
+      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
+        token,
+        hostToken,
+        method: "DELETE",
+        timeoutMs: timeouts.config,
       }),
     readOpencodeConfigFile: (workspaceId: string, scope: "project" | "global" = "project") => {
       const query = `?scope=${scope}`;
@@ -1365,10 +1588,37 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.config },
       ),
 
-    listUserEnv: () =>
-      requestJson<{ items: Array<{ key: string; value: string; updatedAt: number }> }>(
+    getUserEnvStatus: (runtimeKey?: string | null) => {
+      const params = new URLSearchParams();
+      if (runtimeKey?.trim()) params.set("runtimeKey", runtimeKey.trim());
+      const query = params.size ? `?${params.toString()}` : "";
+      return requestJson<{ runtimeKey: string; pendingChanges: boolean }>(
         baseUrl,
-        "/env",
+        `/env/status${query}`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      );
+    },
+
+    setUserEnvPendingChanges: (pendingChanges: boolean, runtimeKey?: string | null) =>
+      requestJson<{ runtimeKey: string; pendingChanges: boolean }>(baseUrl, "/env/status", {
+        token,
+        hostToken,
+        method: "PUT",
+        body: { pendingChanges, runtimeKey: runtimeKey?.trim() || undefined },
+        timeoutMs: timeouts.config,
+      }),
+
+    listUserEnv: () =>
+      requestJson<{ items: OpenworkUserEnvItem[] }>(
+        baseUrl,
+        "/env?includeValues=false",
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+
+    getUserEnv: (key: string) =>
+      requestJson<{ item: OpenworkUserEnvItem & { value: string } }>(
+        baseUrl,
+        `/env/${encodeURIComponent(key)}`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
 
@@ -1386,6 +1636,22 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         hostToken,
         method: "DELETE",
+        timeoutMs: timeouts.config,
+      }),
+
+    createVoiceRealtimeSession: (payload?: { model?: string }) =>
+      requestJson<{
+        ok: true;
+        clientSecret: string;
+        expiresAt: number | null;
+        model: string;
+        transcriptionModel: string;
+        tools: string[];
+      }>(baseUrl, "/voice/realtime/session", {
+        token,
+        hostToken,
+        method: "POST",
+        body: payload ?? {},
         timeoutMs: timeouts.config,
       }),
   };

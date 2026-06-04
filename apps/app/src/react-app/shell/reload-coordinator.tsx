@@ -10,11 +10,63 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ReloadReason, ReloadTrigger } from "../../app/types";
-import { t } from "../../i18n";
-import { ReloadWorkspaceToast } from "../domains/shell-feedback/reload-workspace-toast";
-import { StatusToastsViewport } from "../domains/shell-feedback/status-toasts";
-import { useSystemState } from "../kernel/system-state";
+import { toast } from "@/components/ui/sonner";
+
+import type { ReloadReason, ReloadTrigger } from "@/app/types";
+import { t } from "@/i18n";
+import { useSystemState } from "@/react-app/kernel/system-state";
+
+const RELOAD_TOAST_ID = "openwork-reload-required";
+
+function describeTrigger(
+  description: string,
+  trigger: ReloadTrigger | null,
+): string {
+  if (!trigger) {
+    return description;
+  }
+
+  const verb =
+    trigger.action === "removed"
+      ? "was removed"
+      : trigger.action === "added"
+        ? "was added"
+        : trigger. action === "updated"
+          ? "was updated"
+          : "changed";
+
+  if (trigger.type === "skill") {
+    return trigger.name
+      ? `Skill '${trigger.name}' ${verb}. Reload to use it.`
+      : "Skills changed. Reload to apply.";
+  }
+  if (trigger.type === "plugin") {
+    return trigger.name
+      ? `Plugin '${trigger.name}' ${verb}. Reload to activate.`
+      : "Plugins changed. Reload to apply.";
+  }
+  if (trigger.type === "mcp") {
+    return trigger.name
+      ? `MCP '${trigger.name}' ${verb}. Reload to connect.`
+      : "MCP config changed. Reload to apply.";
+  }
+  if (trigger.type === "config") {
+    return trigger.name
+      ? `Config '${trigger.name}' ${verb}. Reload to apply.`
+      : "Config changed. Reload to apply.";
+  }
+  if (trigger.type === "agent") {
+    return trigger.name
+      ? `Agent '${trigger.name}' ${verb}. Reload to use it.`
+      : "Agents changed. Reload to apply.";
+  }
+  if (trigger.type === "command") {
+    return trigger.name
+      ? `Command '${trigger.name}' ${verb}. Reload to use it.`
+      : "Commands changed. Reload to apply.";
+  }
+  return "Config changed. Reload to apply.";
+}
 
 type ReloadSession = { id: string; title: string };
 
@@ -82,7 +134,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     const update = (event: Event) => {
       setOrgOnboardingVisible(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
     };
+
     window.addEventListener(orgOnboardingVisibilityEvent, update);
+
     return () => {
       window.removeEventListener(orgOnboardingVisibilityEvent, update);
     };
@@ -93,18 +147,55 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
       systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
     };
+
     window.addEventListener("openwork-reload-required", handler);
+
     return () => window.removeEventListener("openwork-reload-required", handler);
   }, [systemState.markReloadRequired]);
 
-  const forceStopActiveSessionsAndReload = useCallback(async () => {
-    const controls = controlsRef.current;
-    const stopSession = controls?.stopSession;
-    if (stopSession) {
-      await Promise.all(activeSessions.map((session) => Promise.resolve(stopSession(session.id)).catch(() => undefined)));
+  const reloadOpen =
+    systemState.reload.reloadPending &&
+    activeSessions.length === 0 &&
+    !orgOnboardingVisible;
+
+  useEffect(() => {
+    if (!reloadOpen) {
+      toast.dismiss(RELOAD_TOAST_ID);
+
+      return;
     }
-    await systemState.reloadWorkspaceEngine();
-  }, [activeSessions, systemState.reloadWorkspaceEngine]);
+
+    const options = {
+      id: RELOAD_TOAST_ID,
+      description:
+        systemState.reload.reloadError ??
+        describeTrigger(systemState.reloadCopy.body, systemState.reload.reloadTrigger),
+      duration: Infinity,
+      action: systemState.canReloadWorkspaceEngine
+        ? {
+            label: t("app.reload_now"),
+            onClick: () => void systemState.reloadWorkspaceEngine(),
+          }
+        : undefined,
+      cancel: {
+        label: t("app.reload_later"),
+        onClick: () => systemState.clearReloadRequired(),
+      },
+    };
+
+    if (systemState.reload.reloadError) {
+      toast.error(systemState.reloadCopy.title, options);
+    } else {
+      toast(systemState.reloadCopy.title, options);
+    }
+  }, [
+    reloadOpen,
+    systemState.reload,
+    systemState.reloadCopy,
+    systemState.canReloadWorkspaceEngine,
+    systemState.reloadWorkspaceEngine,
+    systemState.clearReloadRequired,
+  ]);
 
   const value = useMemo<ReloadCoordinatorContextValue>(
     () => ({
@@ -128,29 +219,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   return (
     <ReloadCoordinatorContext.Provider value={value}>
       {children}
-      <ReloadWorkspaceToast
-        open={systemState.reload.reloadPending && activeSessions.length === 0 && !orgOnboardingVisible}
-        title={systemState.reloadCopy.title}
-        description={systemState.reloadCopy.body}
-        trigger={systemState.reload.reloadTrigger}
-        error={systemState.reload.reloadError}
-        reloadLabel={
-          activeSessions.length > 0 ? t("app.reload_stop_tasks") : t("app.reload_now")
-        }
-        dismissLabel={t("app.reload_later")}
-        busy={systemState.reload.reloadBusy}
-        canReload={systemState.canReloadWorkspaceEngine}
-        hasActiveRuns={activeSessions.length > 0}
-        onReload={() => {
-          void (activeSessions.length > 0
-            ? forceStopActiveSessionsAndReload()
-            : systemState.reloadWorkspaceEngine());
-        }}
-        onDismiss={systemState.clearReloadRequired}
-      />
-      <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
-        <StatusToastsViewport />
-      </div>
     </ReloadCoordinatorContext.Provider>
   );
 }

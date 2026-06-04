@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
-import { getErrorMessage, getOrgLimitError, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../../_lib/den-flow";
 import {
   type DenOrgContext,
   type DenOrgSummary,
@@ -30,9 +30,10 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null }) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean }) => Promise<void>;
   switchOrganization: (slug: string) => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
+  startSeatCheckout: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
@@ -236,8 +237,8 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null }) {
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null } = {};
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean }) {
+    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean } = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -250,6 +251,9 @@ export function OrgDashboardProvider({
     }
     if (input.allowedDesktopVersions !== undefined) {
       body.allowedDesktopVersions = input.allowedDesktopVersions;
+    }
+    if (input.requireSso !== undefined) {
+      body.requireSso = input.requireSso;
     }
 
     await runMutation("update-organization-settings", async () => {
@@ -282,6 +286,11 @@ export function OrgDashboardProvider({
       );
 
       if (!response.ok) {
+        const paymentRequiredError = getOrgPaymentRequiredError(payload);
+        if (paymentRequiredError) {
+          throw paymentRequiredError;
+        }
+
         const limitError = getOrgLimitError(payload);
         if (limitError) {
           throw limitError;
@@ -289,6 +298,37 @@ export function OrgDashboardProvider({
         throw new Error(getErrorMessage(payload, `Failed to invite member (${response.status}).`));
       }
     });
+  }
+
+  async function startSeatCheckout() {
+    setMutationBusy("seat-checkout");
+    setOrgError(null);
+    try {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        "/v1/billing/stripe/checkout",
+        {
+          method: "POST",
+          body: JSON.stringify({ type: "seat" }),
+        },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Seat billing checkout failed (${response.status}).`));
+      }
+
+      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string"
+        ? payload.url
+        : null;
+      if (!url) {
+        throw new Error("Seat billing checkout response did not include a URL.");
+      }
+
+      window.location.href = url;
+    } finally {
+      setMutationBusy(null);
+    }
   }
 
   async function cancelInvitation(invitationId: string) {
@@ -468,9 +508,10 @@ export function OrgDashboardProvider({
     createOrganization,
     updateOrganizationName,
     updateOrganizationSettings,
-    switchOrganization,
-    inviteMember,
-    cancelInvitation,
+      switchOrganization,
+      inviteMember,
+      startSeatCheckout,
+      cancelInvitation,
     updateMemberRole,
     removeMember,
     createTeam,

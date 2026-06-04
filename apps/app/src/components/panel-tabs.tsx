@@ -5,9 +5,17 @@ import { Reorder } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-function PanelTabList({ className, ...props }: React.ComponentProps<typeof Reorder.Group>) {
+type PanelTabListProps<Value> = Omit<
+  React.ComponentProps<typeof Reorder.Group<Value, "div">>,
+  "as" | "axis" | "onReorder" | "values"
+> & {
+  onReorder: (newOrder: Value[]) => void;
+  values: Value[];
+};
+
+function PanelTabList<Value>({ className, ...props }: PanelTabListProps<Value>) {
   return (
-    <Reorder.Group
+    <Reorder.Group<Value, "div">
       as="div"
       axis="x"
       className={cn("flex min-w-max items-center gap-1", className)}

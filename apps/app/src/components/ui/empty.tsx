@@ -7,7 +7,7 @@ const emptyVariants = cva(
   {
     variants: {
       variant: {
-        default: "border border-dashed border-border",
+        default: "border border-border",
         ghost: "",
       },
     },

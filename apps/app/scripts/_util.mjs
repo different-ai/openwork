@@ -59,7 +59,7 @@ export async function spawnOpencodeServe({
 
   const child = spawn("opencode", args, {
     cwd,
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       // Make it explicit we're a non-TUI client.
@@ -69,11 +69,18 @@ export async function spawnOpencodeServe({
 
   const baseUrl = `http://${hostname}:${port}`;
 
-  // If the process dies early, surface stderr.
+  // If the process dies early or never becomes healthy, surface its output so
+  // CI failures are diagnosable instead of showing an empty stderr.
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
+  });
+
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
   });
 
   async function waitForExit(ms) {
@@ -115,16 +122,31 @@ export async function spawnOpencodeServe({
     getStderr() {
       return stderr;
     },
+    getStdout() {
+      return stdout;
+    },
+    getExitInfo() {
+      return { exitCode: child.exitCode, signalCode: child.signalCode };
+    },
   };
 }
 
-export async function waitForHealthy(client, { timeoutMs = 10_000, pollMs = 250 } = {}) {
+export async function waitForHealthy(
+  client,
+  { timeoutMs = 30_000, pollMs = 250, requestTimeoutMs = 5_000 } = {},
+) {
   const start = Date.now();
   let lastError;
 
   while (Date.now() - start < timeoutMs) {
     try {
-      const health = await client.global.health();
+      // Bound each individual request: a single fetch to a port that is not
+      // yet accepting connections can otherwise block for the OS-level connect
+      // timeout (tens of seconds on macOS), blowing past `timeoutMs` because
+      // the loop can only re-check the deadline between awaits.
+      const health = await client.global.health({
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
       assert.equal(health.healthy, true);
       assert.ok(typeof health.version === "string");
       return health;

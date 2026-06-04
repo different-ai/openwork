@@ -1,15 +1,16 @@
 /** @jsxImportSource react */
 import { useEffect, type ReactNode } from "react";
 
-import { isWebDeployment } from "../../app/lib/openwork-deployment";
-import { hydrateOpenworkServerSettingsFromEnv } from "../../app/lib/openwork-server";
-import { isDesktopRuntime } from "../../app/utils";
-import { DenAuthProvider } from "../domains/cloud/den-auth-provider";
-import { DesktopConfigProvider } from "../domains/cloud/desktop-config-provider";
-import { RestrictionNoticeProvider } from "../domains/cloud/restriction-notice-provider";
-import { StatusToastsProvider } from "../domains/shell-feedback/status-toasts";
-import { LocalProvider } from "../kernel/local-provider";
-import { ServerProvider } from "../kernel/server-provider";
+import { Toaster } from "@/components/ui/sonner";
+
+import { isWebDeployment } from "@/app/lib/openwork-deployment";
+import { hydrateOpenworkServerSettingsFromEnv } from "@/app/lib/openwork-server";
+import { isDesktopRuntime } from "@/app/utils";
+import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
+import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
+import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
+import { LocalProvider } from "@/react-app/kernel/local-provider";
+import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
@@ -68,9 +69,8 @@ export function AppProviders({ children }: AppProvidersProps) {
             <DesktopConfigProvider>
               <RestrictionNoticeProvider>
                 <LocalProvider>
-                  <StatusToastsProvider>
-                    <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                  </StatusToastsProvider>
+                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                  <Toaster />
                 </LocalProvider>
               </RestrictionNoticeProvider>
             </DesktopConfigProvider>

@@ -24,10 +24,68 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
 }
 
 function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessage: UIMessage): UIMessage {
+  const metadata = snapshotMessage.metadata ?? cachedMessage.metadata;
+
   return {
     ...snapshotMessage,
+    ...(metadata === undefined ? {} : { metadata }),
     parts: mergeMessageParts(snapshotMessage, cachedMessage),
   };
+}
+
+function messageCreated(message: UIMessage) {
+  const metadata = message.metadata;
+  if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null;
+
+  const opencode = metadata.opencode;
+  if (!opencode || typeof opencode !== "object" || !("created" in opencode)) return null;
+
+  const created = opencode.created;
+  return typeof created === "number" ? created : null;
+}
+
+function insertMessageByChronology(messages: UIMessage[], message: UIMessage, sourceOrder: UIMessage[]) {
+  const created = messageCreated(message);
+  if (created !== null) {
+    const timestampIndex = messages.findIndex((existing) => {
+      const existingCreated = messageCreated(existing);
+      return existingCreated !== null && existingCreated > created;
+    });
+    if (timestampIndex !== -1) {
+      messages.splice(timestampIndex, 0, message);
+      return;
+    }
+  }
+
+  const sourceIndex = sourceOrder.findIndex((item) => item.id === message.id);
+  if (sourceIndex !== -1) {
+    for (let index = sourceIndex + 1; index < sourceOrder.length; index += 1) {
+      const nextIndex = messages.findIndex((item) => item.id === sourceOrder[index]?.id);
+      if (nextIndex !== -1) {
+        messages.splice(nextIndex, 0, message);
+        return;
+      }
+    }
+
+    for (let index = sourceIndex - 1; index >= 0; index -= 1) {
+      const previousIndex = messages.findIndex((item) => item.id === sourceOrder[index]?.id);
+      if (previousIndex !== -1) {
+        messages.splice(previousIndex + 1, 0, message);
+        return;
+      }
+    }
+  }
+
+  messages.push(message);
+}
+
+function sortFullyTimestampedMessages(messages: UIMessage[]) {
+  const withCreated = messages.map((message, index) => ({ message, index, created: messageCreated(message) }));
+  if (withCreated.some((item) => item.created === null)) return messages;
+
+  return withCreated
+    .sort((a, b) => (a.created ?? 0) - (b.created ?? 0) || a.index - b.index)
+    .map((item) => item.message);
 }
 
 export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
@@ -53,11 +111,11 @@ export function mergeSnapshotAndLiveMessages(
 
   if (options.appendLiveOnlyMessages) {
     for (const liveMessage of liveMessages) {
-      if (!snapshotIds.has(liveMessage.id)) merged.push(liveMessage);
+      if (!snapshotIds.has(liveMessage.id)) insertMessageByChronology(merged, liveMessage, liveMessages);
     }
   }
 
-  return merged;
+  return sortFullyTimestampedMessages(merged);
 }
 
 export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], cachedMessages: UIMessage[]) {
@@ -66,11 +124,8 @@ export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], c
 
   const snapshotById = new Map(snapshotMessages.map((message) => [message.id, message]));
   const cachedById = new Map(cachedMessages.map((message) => [message.id, message]));
-  const useCachedOrder = cachedMessages.length > snapshotMessages.length;
-  const primary = useCachedOrder ? cachedMessages : snapshotMessages;
-  const secondary = useCachedOrder ? snapshotMessages : cachedMessages;
   const seen = new Set<string>();
-  const merged = primary.map((message) => {
+  const merged = snapshotMessages.map((message) => {
     seen.add(message.id);
     const snapshotMessage = snapshotById.get(message.id);
     const cachedMessage = cachedById.get(message.id);
@@ -79,11 +134,11 @@ export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], c
       : message;
   });
 
-  for (const message of secondary) {
+  for (const message of cachedMessages) {
     if (seen.has(message.id)) continue;
     seen.add(message.id);
-    merged.push(message);
+    insertMessageByChronology(merged, message, cachedMessages);
   }
 
-  return merged;
+  return sortFullyTimestampedMessages(merged);
 }

@@ -14,5 +14,6 @@ export {
   type EmailTemplateProps,
   type FeedbackEmailProps,
   type OrganizationInviteEmailProps,
+  type PasswordResetEmailProps,
   type VerificationEmailProps,
 } from "./templates/index.js"
