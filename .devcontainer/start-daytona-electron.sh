@@ -32,10 +32,26 @@ PY
   exit 0
 fi
 
-DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-/daytona-secrets/openai.env}"
+DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-/daytona-secrets}"
 DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS="${DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS:---disable-gpu --disable-dev-shm-usage --enable-unsafe-swiftshader}"
 
-if [ -f "$DAYTONA_SECRETS_ENV" ]; then
+source_secret_env_file() {
+  local env_file="$1"
+  if [ -f "$env_file" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+}
+
+if [ -d "$DAYTONA_SECRETS_ENV" ]; then
+  shopt -s nullglob
+  for env_file in "$DAYTONA_SECRETS_ENV"/*.env; do
+    source_secret_env_file "$env_file"
+  done
+  shopt -u nullglob
+elif [ -f "$DAYTONA_SECRETS_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
   source "$DAYTONA_SECRETS_ENV"
@@ -48,5 +64,6 @@ export ELECTRON_EXTRA_LAUNCH_ARGS="${ELECTRON_EXTRA_LAUNCH_ARGS:-$DAYTONA_ELECTR
 export OPENWORK_REACT_DEVTOOLS="${OPENWORK_REACT_DEVTOOLS:-0}"
 export OPENWORK_DEV_MODE="${OPENWORK_DEV_MODE:-1}"
 export OPENWORK_ELECTRON_REMOTE_DEBUG_PORT="${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9825}"
+export OPENWORK_ELECTRON_FAKE_MEDIA="${OPENWORK_ELECTRON_FAKE_MEDIA:-0}"
 
 exec pnpm --filter @openwork/desktop dev:electron

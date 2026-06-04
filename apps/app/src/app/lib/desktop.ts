@@ -25,6 +25,12 @@ export type {
 } from "./desktop-types";
 
 import type { WorkspaceList } from "./desktop-types";
+import type { BrowserPanelTab } from "../../react-app/domains/session/panel/panel-tab-store";
+
+export type BrowserStatePayload = {
+  activeTabId?: string | null;
+  tabs?: BrowserPanelTab[];
+};
 
 // ---------------------------------------------------------------------------
 // Electron bridge surface
@@ -50,6 +56,17 @@ declare global {
           version: string;
           downloadUrl: string;
           releaseUrl: string;
+        }>;
+        getMicrophoneStatus?: () => Promise<{
+          platform: string;
+          status: string;
+        }>;
+        askMicrophoneAccess?: () => Promise<{
+          platform: string;
+          before?: string;
+          after?: string;
+          status?: string;
+          granted: boolean;
         }>;
       };
       migration?: {
@@ -83,73 +100,28 @@ declare global {
       browser?: {
         show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
         hide?: () => Promise<void>;
+        openUrl?: (url: string, provider?: "auto" | "builtin" | "external") => Promise<{
+          provider: "builtin";
+          browser_url: string;
+          target_id: string;
+          tab_id: string;
+          url: string;
+        }>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
         reload?: () => Promise<void>;
         setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
-        getState?: () => Promise<{
-          url: string;
-          title: string;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          isLoading: boolean;
-          activeTabId?: string | null;
-          tabs?: Array<{
-            tabId: string;
-            url: string;
-            title: string;
-            favicon?: string | null;
-            canGoBack: boolean;
-            canGoForward: boolean;
-            isLoading: boolean;
-            isActive: boolean;
-          }>;
-        } | null>;
+        getState?: () => Promise<BrowserStatePayload | null>;
         createTab?: (url?: string) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
         closeAllTabs?: () => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
-        reorderTabs?: (tabIds: string[]) => Promise<Array<{
-          tabId: string;
-          url: string;
-          title: string;
-          favicon?: string | null;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          isLoading: boolean;
-          isActive: boolean;
-        }>>;
-        listTabs?: () => Promise<Array<{
-          tabId: string;
-          url: string;
-          title: string;
-          favicon?: string | null;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          isLoading: boolean;
-          isActive: boolean;
-        }>>;
+        reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
+        listTabs?: () => Promise<BrowserPanelTab[]>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
-        onStateChange?: (callback: (state: {
-          url: string;
-          title: string;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          isLoading: boolean;
-          activeTabId?: string | null;
-          tabs?: Array<{
-            tabId: string;
-            url: string;
-            title: string;
-            favicon?: string | null;
-            canGoBack: boolean;
-            canGoForward: boolean;
-            isLoading: boolean;
-            isActive: boolean;
-          }>;
-        }) => void) => () => void;
+        onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
         onPanelOpened?: (callback: () => void) => () => void;
         onPanelClosed?: (callback: () => void) => () => void;
       };
@@ -330,25 +302,6 @@ export async function openDesktopUrl(url: string): Promise<void> {
   if (typeof window !== "undefined") {
     window.open(url, "_blank", "noopener,noreferrer");
   }
-}
-
-export async function openChromeRemoteDebugging(): Promise<void> {
-  try {
-    await invokeElectronHelper("__openChromeRemoteDebugging");
-    return;
-  } catch {
-    await openDesktopUrl("https://developer.chrome.com/docs/devtools/remote-debugging");
-  }
-}
-
-export type ChromeDebuggingPortCheck = {
-  connected: boolean;
-  port: number | null;
-  mode: "cdp-json" | "chrome-auto-connect" | "chrome-listener" | null;
-};
-
-export async function checkChromeDebuggingPort(port: number): Promise<ChromeDebuggingPortCheck> {
-  return invokeElectronHelper<ChromeDebuggingPortCheck>("__checkChromeDebuggingPort", port);
 }
 
 export async function openDesktopPath(target: string): Promise<void> {

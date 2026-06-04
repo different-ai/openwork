@@ -1,0 +1,29 @@
+---
+title: "Desktop policies"
+description: "Use OpenWork Cloud to control desktop app capabilities for members and teams."
+---
+
+Desktop policies let organization owners and admins manage what the OpenWork desktop app allows after a member signs in to Cloud. Policies can apply to the whole organization through the default policy, or to specific members and teams through assigned policies. The desktop app caches the effective policy, applies it on reload, and refreshes it when the active Cloud organization changes or the Cloud account is refreshed.
+
+## What policies control
+
+Current desktop policy keys map to concrete product capabilities:
+
+- `Custom providers`: allow or block locally added model providers that were not deployed through OpenWork Cloud.
+- `Enable OpenCode Zen Models`: allow or block built-in OpenCode models.
+- `Multiple workspaces`: allow or block creating or configuring more than one local workspace.
+- `Control Settings`: allow or block changing desktop settings.
+- `Manage Extensions`: allow or block local extension management.
+- `Built-in Extensions`: allow or block OpenWork-provided built-in extensions, including browser, image, and local-provider extensions.
+- `Welcome Page`: show or hide the getting-started page for new users.
+
+## Configure a policy
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
+2. Go to `Desktop policies`.
+3. Create a new policy or edit the default policy.
+4. Turn capabilities on or off.
+5. Assign the policy to members or teams when it should not apply to everyone.
+6. Save the policy, then have members refresh their Cloud account or switch the active organization in the desktop app.
+
+The desktop app explains blocked capabilities as organization-controlled. For example, a built-in extension disabled by policy is hidden from the normal catalog and can appear in hidden views with a `Disabled by organization` explanation.

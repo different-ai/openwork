@@ -11,6 +11,8 @@ Run these before shipping changes that touch:
 - `apps/app/src/app/constants.ts` (extension catalog)
 - `apps/app/src/react-app/domains/settings/browser-extension-config.tsx`
 - `apps/app/src/react-app/domains/settings/extension-state.ts`
+- `apps/app/src/react-app/domains/settings/pages/extensions-view.tsx`
+- `apps/app/src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx`
 - `apps/app/src/react-app/domains/session/surface/composer/composer.tsx`
 - `apps/app/src/react-app/domains/session/settings/extensions-pane-slot.tsx`
 - `apps/desktop/electron/main.mjs` (CDP port, browser panel)
@@ -28,7 +30,7 @@ Run these before shipping changes that touch:
    You should see the OpenWork target.
 3. Enable control mode:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "window.__openworkControl.setEnabled(true); 'ok'" })
    ```
 
@@ -41,7 +43,7 @@ Run these before shipping changes that touch:
 Steps:
 1. Read the workspace `opencode.jsonc`:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "fetch('/workspace/' + location.hash.split('/')[2] + '/opencode-config').then(r => r.text())" })
    ```
    Or check the file directly on disk.
@@ -65,12 +67,12 @@ visibly navigate.
 Steps:
 1. Create a new session:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "window.__openworkControl.execute('session.create_task')" })
    ```
 2. Type and send the prompt:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(async () => {
        const ctrl = window.__openworkControl;
        await ctrl.execute('composer.set_text', { text: 'Use the OpenWork Browser extension to navigate to https://example.com and tell me the page title' });
@@ -124,7 +126,7 @@ enabled extensions from the catalog.
 Steps:
 1. Open the tool menu:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        const btn = Array.from(document.querySelectorAll('button')).find(b => b.title === 'Commands, skills, and MCPs');
        if (btn) { btn.click(); return 'opened'; }
@@ -133,7 +135,7 @@ Steps:
    ```
 2. Click the Extensions tab:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        const tabs = document.querySelectorAll('button');
        for (let i = 0; i < tabs.length; i++) {
@@ -145,8 +147,8 @@ Steps:
 3. Count visible extensions.
 
 Pass criteria:
-- At least 2 extensions visible: "OpenWork Browser" and "Chrome".
-- Each extension has a name and description.
+- "OpenWork Browser" is visible with a name and description.
+- "Chrome" is not visible as an OpenWork extension.
 
 Known regressions this catches:
 - Extension catalog not loaded.
@@ -177,7 +179,7 @@ the composer menu.
 Steps:
 1. Disable OpenWork Browser:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        localStorage.setItem('openwork.extension.disabled.openwork-browser', '1');
        window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {
@@ -189,7 +191,7 @@ Steps:
 2. Open the Extensions menu and count extensions.
 3. Re-enable:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        localStorage.removeItem('openwork.extension.disabled.openwork-browser');
        window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {
@@ -242,3 +244,57 @@ Known regressions this catches:
 - Stale MCPs causing connection errors on startup.
 - Migration clobbering non-browser MCP entries.
 - Migration clobbering `default_agent` or other top-level keys.
+
+## Flow 8 — Hidden extensions stay out of normal UI and composer
+
+**Why**: The Extensions pane now supports a Finder-style hidden view. Hidden
+items should disappear from the normal catalog and composer menu, then reappear
+when `Show hidden` is enabled.
+
+Steps:
+1. Open Settings -> Extensions.
+2. Open the "OpenWork Browser" detail modal and click `Hide`.
+3. Confirm "OpenWork Browser" disappears from the normal Extensions catalog.
+4. Open the composer tool menu -> Extensions.
+5. Confirm "OpenWork Browser" is not listed.
+6. Return to Settings -> Extensions and click `Show hidden`.
+7. Confirm "OpenWork Browser" reappears with a hidden badge.
+8. Open its detail modal and click `Show`.
+
+Pass criteria:
+- Hidden state is persisted in localStorage under
+  `openwork.extension.hidden.openwork-browser`.
+- Normal Extensions catalog excludes the hidden card.
+- Composer Extensions excludes the hidden card.
+- `Show hidden` reveals the card and allows restoring visibility.
+
+Known regressions this catches:
+- Hidden extensions still appearing in composer.
+- Hidden state not re-rendering after the custom extension-state event.
+- `Show hidden` acting like a destructive uninstall instead of a reversible view preference.
+
+## Flow 9 — Cloud marketplace appears in Extensions Marketplace
+
+**Why**: Organization marketplaces are now reached from Extensions ->
+Marketplace, not Cloud settings. This flow verifies the marketplace import path
+still works from the new IA.
+
+Steps:
+1. Sign in to OpenWork Cloud with an org that has a marketplace plugin.
+2. Open Settings -> Extensions.
+3. Click `Marketplace`.
+4. Verify marketplace packages are visible in one searchable list.
+5. Click `Refresh` in the Marketplace view.
+6. Add an available package.
+
+Pass criteria:
+- Cloud sidebar does not show a separate Marketplace item.
+- The marketplace package is visible from Settings -> Extensions -> Marketplace.
+- Add succeeds and reports the number of imported files.
+- The imported package appears in My Extensions.
+- Existing Cloud Account, Providers, and Workers settings remain available.
+
+Known regressions this catches:
+- Marketplace still only reachable through Cloud settings.
+- Marketplace import losing the active org context after moving into Extensions.
+- Extensions refresh not refreshing cloud marketplace data.

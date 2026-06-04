@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { type DenOrgSummary, formatRoleLabel, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 type SettingsTab = "profile" | "organizations";
@@ -101,7 +101,7 @@ export function OrganizationScreen() {
         throw new Error("Organization was created, but no slug was returned.");
       }
 
-      router.push(getOrgDashboardRoute(nextSlug));
+      router.push(getMarketplaceOnboardingRoute(nextSlug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");
       setCreateBusy(false);

@@ -43,7 +43,6 @@ export type ConfigViewProps = {
   canReloadWorkspace: boolean;
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
-  reloadError: string | null;
 
   developerMode: boolean;
 };
@@ -309,7 +308,6 @@ export function ConfigView(props: ConfigViewProps) {
       <ConfigEngineReloadSection
         anyActiveRuns={props.anyActiveRuns}
         reloadBusy={props.reloadBusy}
-        reloadError={props.reloadError}
         reloadAvailabilityReason={reloadAvailabilityReason}
         reloadButtonTone={reloadButtonTone}
         reloadButtonDisabled={reloadButtonDisabled}

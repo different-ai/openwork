@@ -33,7 +33,6 @@ const inferenceStatusSchema = z.object({
 
 const inferenceStatusResponseSchema = z.object({
   inference: inferenceStatusSchema,
-  checkoutUrl: z.string().nullable().optional(),
 }).meta({ ref: "InferenceStatusResponse" })
 
 const inferenceProviderMissingSchema = z.object({

@@ -1,6 +1,6 @@
 ---
 name: daytona-electron-test
-description: "Test the real Electron app on Daytona: create sandbox, start services, connect via CDP, create workspaces, drive sessions, and verify settings. Use when the user says 'test on Daytona', 'run the app on Daytona', 'Daytona dry run', 'test Electron remotely', or 'reproduce on Daytona'."
+description: "Daytona Electron sandbox testing with CDP/noVNC. Use when the user says test on Daytona, run Electron on Daytona, Daytona dry run, test Electron remotely, reproduce on Daytona, or validate a real desktop flow."
 ---
 
 # Skill: Daytona Electron Test
@@ -30,9 +30,46 @@ It prints the CDP and noVNC URLs at the end. Then use `browser_list` to connect.
 Refresh the snapshot with `bash .devcontainer/create-daytona-openwork-snapshot.sh`
 when dependencies or base setup change. The snapshot excludes `node_modules`;
 dependency installs reuse the `openwork-eval-pnpm-store` volume.
-For OpenAI flows, create the reusable secrets volume once with
+For provider flows, create/populate the reusable secrets volume once with
 `bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken`; future Daytona
-sandboxes mount `openwork-eval-secrets:/daytona-secrets` automatically.
+sandboxes mount `openwork-eval-secrets:/daytona-secrets` automatically and
+source every `/daytona-secrets/*.env` file before Electron starts.
+
+## Related Daytona Skills
+
+- `daytona-flow-validator`: pass/fail validation with a strict observe -> act
+  -> observe/assert -> evidence loop.
+- `daytona-cloud-server`: Den Web/API, worker proxy, marketplace, cloud auth,
+  and org policy server setup.
+- `daytona-electron-den`: two-sandbox server + Electron validation.
+- `daytona-chrome-cdp`: standalone Chrome in Daytona for web sign-in and OAuth.
+- `daytona-secrets-volume`: provider keys and eval-only secrets in
+  `openwork-eval-secrets:/daytona-secrets`.
+- `daytona-recording-artifacts`: screenshots, recordings, validation artifacts,
+  before/after videos, and PR evidence.
+
+## Daytona Testing Toolbox
+
+- **Cloud server:** use `.devcontainer/test-server-on-daytona.sh` for Den Web,
+  Den API, worker proxy, org policies, marketplace, and cloud auth flows.
+- **Secrets volume:** use `openwork-eval-secrets:/daytona-secrets` for provider
+  keys and eval-only credentials. Add more files with
+  `bash .devcontainer/setup-daytona-secrets-volume.sh <local-env> <name>.env`.
+- **Electron sandbox:** use `.devcontainer/test-on-daytona.sh` for the real
+  desktop app, noVNC visual access, and CDP automation on port 9825.
+- **Artifacts volume:** use `openwork-eval-artifacts:/daytona-artifacts` for
+  screenshots, validation notes, and recordings that survive sandbox deletion.
+
+Validation standard: use `daytona-flow-validator`. Prove behavior with CDP
+assertions first, capture a PNG screenshot at important states for quick
+AI/human review, and record MP4 video for end-to-end PR evidence.
+
+Before sharing screenshot URLs, inspect the saved PNG itself per
+`daytona-flow-validator`. Do not post screenshots that are covered by native
+pickers, dialogs, toasts, desktop windows, or unrelated overlays.
+
+When the user asks specifically about server, secrets, recordings, screenshots,
+or evidence, use the focused skill above instead of relying only on this runbook.
 
 ## Manual debugging
 
@@ -67,7 +104,7 @@ Should show: `[target_id] OpenWork  http://localhost:5173/#/welcome`
 ### 6. Verify it's real Electron (not plain Chromium)
 
 ```
-browser_eval({ expression: "navigator.userAgent" })
+browser_eval({ browser_url: "<CDP_URL>", target_id: "<TARGET_ID>", expression: "navigator.userAgent" })
 ```
 
 Must contain `Electron/`.
@@ -136,6 +173,14 @@ The reducer uses `{ key, value }` actions. NOT direct state replacement.
    - URL contains `#/workspace/ws_`
    - Status bar shows "OpenWork Ready"
    - opencode process running: `daytona exec "$SANDBOX" -- "bash -lc 'ps aux | grep opencode | grep -v grep'"`
+
+### Native Linux dialogs
+
+If the current app path opens a native Linux dialog instead of the React modal,
+use `daytona-flow-validator`'s Linux desktop automation guidance. Drive GTK file
+pickers and OS dialogs with `xdotool`/`wmctrl`, then verify the dialog closed
+with `wmctrl -l`, assert app state with CDP, and inspect the captured screenshot
+before sharing evidence.
 
 ## UI automation selector map
 
@@ -285,19 +330,22 @@ daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name OpenWork
 daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name OpenWork windowactivate'"
 ```
 
-## API keys for provider evals
+## API keys and eval secrets
 
 Do not edit workspace config or print keys. Create/populate the reusable
 Daytona volume once from the repo root:
 
 ```bash
 bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken
+bash .devcontainer/setup-daytona-secrets-volume.sh .anthropic anthropic.env
 ```
 
 Every Daytona eval sandbox mounts `openwork-eval-secrets:/daytona-secrets` and
-`/opt/openwork-daytona/start-daytona-electron.sh` sources
-`/daytona-secrets/openai.env` before Electron starts. If you update the volume while a sandbox is already
-running, restart Electron so the env is reloaded:
+`/opt/openwork-daytona/start-daytona-electron.sh` sources every
+`/daytona-secrets/*.env` file before Electron starts. Keep provider keys, test
+OAuth credentials, and other eval-only secrets there instead of workspace files.
+If you update the volume while a sandbox is already running, restart Electron so
+the env is reloaded:
 
 ```bash
 # Step 1: kill Electron/runtime children
@@ -322,6 +370,40 @@ Always use two separate `daytona exec` calls with a `sleep` between them.
 | CDP       | 9825 | Chrome DevTools Protocol for automation  |
 | Den Web   | 3005 | Admin dashboard (needs MySQL)            |
 | Den API   | 8788 | Control plane (needs MySQL)              |
+
+## Two-sandbox Den + Electron marketplace evals
+
+Use `daytona-electron-den` when testing Cloud Marketplace, desktop policies, or
+org-managed extension flows end-to-end. Keep this section as a quick reference
+only.
+
+1. Start the Den server sandbox:
+```bash
+bash .devcontainer/test-server-on-daytona.sh <branch-or-commit>
+```
+
+2. Seed the server sandbox with demo org, marketplace, and plugin data. The seed
+must use the same encryption key as `.devcontainer/start-daytona-server.sh`, and
+`@openwork/email` must be built before the seed imports Den email helpers:
+```bash
+daytona exec <server-sandbox> -- 'cd /workspace && pnpm --filter @openwork/email build && cd /workspace/ee/apps/den-api && OPENWORK_DEV_MODE=1 DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den DEN_DB_ENCRYPTION_KEY=daytona-den-db-encryption-key-please-change-1234567890 BETTER_AUTH_SECRET=local-dev-secret-not-for-production-use!! BETTER_AUTH_URL=http://localhost:3005 pnpm exec tsx scripts/seed-demo-org.ts --reset'
+```
+
+3. Start Electron against the printed Den Web/API URLs:
+```bash
+bash .devcontainer/test-on-daytona.sh <branch-or-commit> --den-base-url <DEN_WEB_URL> --den-api-base-url <DEN_API_URL> --record-video --recording-name <name>
+```
+
+4. Sign in from Electron using the seeded demo account. Create a desktop handoff
+grant from the Den API, paste the `openwork://den-auth?...` URL into Cloud
+Account -> `Paste sign-in code`, and choose `Acme Robotics`:
+```bash
+TOKEN=$(curl -s -X POST '<DEN_API_URL>/api/auth/sign-in/email' -H 'content-type: application/json' --data '{"email":"alex@acme.test","password":"OpenWorkDemo123!"}' | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.parse(s).token))')
+curl -s -X POST '<DEN_API_URL>/v1/auth/desktop-handoff' -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' --data '{"desktopScheme":"openwork"}'
+```
+
+5. Open Settings -> Extensions -> Marketplace and run the marketplace install,
+remove, search, and filter flows against the seeded marketplace packages.
 
 ## Troubleshooting
 
@@ -383,6 +465,122 @@ Kill the old Electron process before restarting:
 ```bash
 daytona exec "$SANDBOX" -- "bash -lc 'pkill -f electron || true; pkill -f electron-dev || true'"
 ```
+
+## Recording before/after comparisons
+
+Use this workflow to capture a BEFORE recording on the current branch, switch
+to a feature branch on the same sandbox, and capture an AFTER recording. Both
+recordings are saved to the persistent `openwork-eval-artifacts` volume and
+survive sandbox deletion.
+
+### Step 1: Start the sandbox with BEFORE recording
+
+```bash
+bash .devcontainer/test-on-daytona.sh dev --record-video --recording-name my-feature-before
+```
+
+Save the sandbox name from the output (e.g. `SANDBOX=openwork-test-20260601-165424`).
+
+### Step 2: Drive the BEFORE flow
+
+Use browser tools to navigate the app and demonstrate the current behavior.
+The display is being recorded the entire time.
+
+### Step 3: Stop the BEFORE recording
+
+```bash
+daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
+```
+
+### Step 4: Switch to the feature branch
+
+```bash
+daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace && git fetch origin feat/my-branch:feat/my-branch && git checkout feat/my-branch'"
+```
+
+Vite HMR picks up the changes automatically. Wait a few seconds, then reset
+any app state needed (e.g. onboarding flag):
+
+```js
+// In browser_eval:
+const raw = localStorage.getItem("openwork.preferences");
+const prefs = raw ? JSON.parse(raw) : {};
+prefs.hasCompletedOnboarding = false;
+localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+location.reload();
+```
+
+### Step 5: Start the AFTER recording
+
+```bash
+daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace && DISPLAY=:99 .devcontainer/start-daytona-recording.sh --detach --output /daytona-artifacts/recordings/my-feature-after.mp4'"
+```
+
+### Step 6: Drive the AFTER flow
+
+Use browser tools to demonstrate the new behavior. Same steps as BEFORE, but
+validate with `daytona-flow-validator` before calling the recording successful.
+
+### Step 7: Stop the AFTER recording
+
+```bash
+daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
+```
+
+### Step 8: Get recording URLs
+
+Both recordings are on the persistent artifacts volume, served via the
+Python HTTP server on port 8090:
+
+```bash
+ARTIFACTS_URL=$(daytona preview-url "$SANDBOX" -p 8090 2>/dev/null | grep -v "^time=")
+echo "BEFORE: ${ARTIFACTS_URL}/recordings/my-feature-before.mp4"
+echo "AFTER:  ${ARTIFACTS_URL}/recordings/my-feature-after.mp4"
+```
+
+Include these URLs in your PR description.
+
+## Screenshot validation checkpoints
+
+Use screenshots for fast validation while driving the UI. They complement, but
+do not replace, CDP assertions or recordings.
+
+```bash
+daytona exec "$SANDBOX" -- 'bash .devcontainer/capture-daytona-screenshot.sh'
+```
+
+Screenshots are saved to `/daytona-artifacts/screenshots` when the artifacts
+volume is mounted. Get the download URL from port 8090:
+
+```bash
+ARTIFACTS_URL=$(daytona preview-url "$SANDBOX" -p 8090 2>/dev/null | grep -v "^time=")
+echo "${ARTIFACTS_URL}/screenshots/<filename>.png"
+```
+
+Use this pattern for each critical UI state: run a CDP assertion, capture a
+screenshot, then continue the recording.
+
+### Key recording commands reference
+
+| Action | Command |
+|--------|---------|
+| Start recording (from test-on-daytona.sh) | `--record-video --recording-name NAME` |
+| Start recording (mid-sandbox) | `daytona exec $SANDBOX -- "bash -lc 'cd /workspace && DISPLAY=:99 .devcontainer/start-daytona-recording.sh --detach --output /daytona-artifacts/recordings/NAME.mp4'"` |
+| Stop recording | `daytona exec $SANDBOX -- 'bash .devcontainer/stop-daytona-recording.sh'` |
+| List recordings | `daytona exec $SANDBOX -- 'ls -lah /daytona-artifacts/recordings/'` |
+| Capture screenshot | `daytona exec $SANDBOX -- 'bash .devcontainer/capture-daytona-screenshot.sh'` |
+| Get download URL | `daytona preview-url $SANDBOX -p 8090` then append `/recordings/NAME.mp4` |
+
+### Notes
+
+- Recordings are stored on the `openwork-eval-artifacts` Daytona volume (5 GB,
+  reusable across sandboxes). They persist after `daytona delete`.
+- The `start-daytona-recording.sh` script records to a temp file first, then
+  copies to the artifacts volume on stop — this avoids NFS write issues.
+- Always use `stop-daytona-recording.sh` to stop. It sends SIGINT so ffmpeg
+  finalizes the mp4 container properly. SIGKILL produces a corrupt file.
+- Default resolution is 1920x1080 at 15fps. Override with `--size 1280x800
+  --fps 10` for smaller files.
 
 ## Teardown
 

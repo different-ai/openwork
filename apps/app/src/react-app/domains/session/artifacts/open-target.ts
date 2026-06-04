@@ -1,8 +1,7 @@
-/** @jsxImportSource react */
 import type { UIMessage } from "ai";
 
-export type OpenTargetKind = "url" | "file";
-export type OpenTargetPreview = "browser" | "markdown" | "sheet" | "image" | "pdf" | "html" | "text" | "external";
+type OpenTargetKind = "url" | "file";
+export type OpenTargetPreview = "browser" | "markdown" | "sheet" | "slides" | "image" | "pdf" | "html" | "text" | "external";
 
 export interface TextData {
   kind: "text";
@@ -35,8 +34,10 @@ const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\
 const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
 const URL_PATTERN = /https?:\/\/[^\s)\]}>"'`]+/gi;
 const SOCKET_PATTERN = /(?:ws|wss):\/\/[^\s)\]}>"'`]+/gi;
-const ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "image", "pdf", "html"]);
+const ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "slides", "image", "pdf", "html"]);
+const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
+const ARTIFACT_METADATA_TOOL_NAMES = new Set(["openwork_extension_call"]);
 const WRITE_TOOL_NAMES = new Set([
   "apply_patch",
   "edit",
@@ -51,6 +52,7 @@ const WRITE_TOOL_NAMES = new Set([
 const FILE_METADATA_KEYS = ["path", "file", "filePath", "filepath"];
 const PATCH_FILE_PATTERN = /^\*\*\* (?:Add File|Update File):\s*(.+)$/gmi;
 const PATCH_MOVE_TO_PATTERN = /^\*\*\* Move to:\s*(.+)$/gmi;
+const URI_PATTERN = /^(?:https?|wss?|file):\/\//i;
 
 type DeriveOpenTargetsOptions = {
   includeFileMentions?: boolean;
@@ -76,16 +78,21 @@ function extname(value: string) {
   return index >= 0 ? name.slice(index) : "";
 }
 
-export function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
+function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
   if (kind === "url") return "browser";
   const ext = extname(value);
   if ([".md", ".markdown", ".mdx"].includes(ext)) return "markdown";
   if ([".csv", ".tsv", ".xlsx", ".xls", ".ods"].includes(ext)) return "sheet";
+  if ([".ppt", ".pptx", ".pptm", ".pot", ".potx", ".odp", ".key", ".sxi"].includes(ext)) return "slides";
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) return "image";
   if (ext === ".pdf") return "pdf";
   if ([".html", ".htm"].includes(ext)) return "html";
   if ([".txt", ".log", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".xml", ".ts", ".tsx", ".js", ".jsx", ".css", ".scss"].includes(ext)) return "text";
   return "external";
+}
+
+function shouldScanAssistantFileMentions(text: string) {
+  return ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text);
 }
 
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
@@ -143,8 +150,8 @@ export function isLocalhostBrowserTarget(target: OpenTarget) {
   return target.kind === "url" && /(?:https?|wss?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(target.value);
 }
 
-export function selectAutoOpenTarget(targets: OpenTarget[]): OpenTarget | null {
-  return targets.find(shouldAutoOpenTarget) ?? null;
+export function selectAutoOpenTarget(_targets: OpenTarget[]): OpenTarget | null {
+  return null;
 }
 
 function scanText(
@@ -194,6 +201,10 @@ function isWriteTool(toolName: string) {
   return WRITE_TOOL_NAMES.has(normalizedToolName(toolName));
 }
 
+function isArtifactMetadataTool(toolName: string) {
+  return ARTIFACT_METADATA_TOOL_NAMES.has(normalizedToolName(toolName));
+}
+
 function collectFileMetadataValues(value: unknown) {
   if (!isObject(value)) return [];
   const values: string[] = [];
@@ -208,6 +219,11 @@ function collectFileMetadataValues(value: unknown) {
     }
   }
   return values;
+}
+
+function collectNestedFileMetadataValues(value: unknown) {
+  if (!isObject(value)) return [];
+  return [value, value.result].flatMap(collectFileMetadataValues);
 }
 
 function collectPatchFileValues(value: unknown) {
@@ -239,8 +255,20 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
     for (const part of message.parts) {
       if (part.type === "text" && typeof part.text === "string") {
         scanText(targets, part.text, message.role === "assistant" ? 65 : 40, "message", {
-          includeFiles: options.includeFileMentions === true,
+          includeFiles: options.includeFileMentions === true || (message.role === "assistant" && shouldScanAssistantFileMentions(part.text)),
         });
+        continue;
+      }
+
+      if (part.type === "source-document") {
+        addTarget(
+          targets,
+          part.filename
+            ? targetFromFile(part.filename, 95, "attachment source")
+            : URI_PATTERN.test(part.title)
+              ? targetFromUrl(part.title, 95, "attachment source")
+              : targetFromFile(part.title, 95, "attachment source"),
+        );
         continue;
       }
 
@@ -250,6 +278,7 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
 
       const discoveryTool = isDiscoveryTool(part.toolName);
       const writeTool = isWriteTool(part.toolName);
+      const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
 
       if (writeTool) {
         addFileValues(
@@ -264,6 +293,15 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
         }
       }
 
+      if (artifactMetadataTool) {
+        addFileValues(
+          targets,
+          [part.input, part.output].flatMap(collectNestedFileMetadataValues),
+          95,
+          "artifact tool metadata",
+        );
+      }
+
       if (!discoveryTool) {
         scanText(targets, JSON.stringify(part.output ?? part.input ?? ""), 75, "tool output", { includeFiles: false });
       }
@@ -273,8 +311,4 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
   return Array.from(targets.values())
     .filter(isArtifactTarget)
     .sort((left, right) => right.confidence - left.confidence);
-}
-
-export function shouldAutoOpenTarget(): boolean {
-  return false;
 }

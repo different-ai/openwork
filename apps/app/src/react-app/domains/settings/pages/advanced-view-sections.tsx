@@ -1,14 +1,13 @@
 /** @jsxImportSource react */
 import type { ComponentProps, ReactNode } from "react";
-import { CircleAlert, Cpu, Info, RefreshCcw, Server } from "lucide-react";
+import { CircleAlert, Cpu, Database, Info, RefreshCcw, Server } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkServerStatus } from "@/app/lib/openwork-server";
-import type { EngineInfo } from "@/app/lib/desktop-types";
+import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import {
@@ -66,19 +65,13 @@ function RuntimeStatusCard(props: RuntimeStatusCardProps) {
   );
 }
 
-function formatOpencodeBinary(info: EngineInfo | null) {
-  const binary = info?.opencodeBinPath?.trim();
-  if (!binary) return "—";
-  const source = info?.opencodeBinSource?.trim();
-  return source ? `${binary} (${source})` : binary;
-}
-
 interface AdvancedRuntimeSectionProps {
-  engineInfo: EngineInfo | null;
   clientStatusLabel: string;
   clientTone: SettingsTone;
+  clientDetailLines: string[];
   openworkStatusLabel: string;
   openworkTone: SettingsTone;
+  openworkDetailLines: string[];
 }
 
 export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
@@ -96,11 +89,7 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
           description={t("settings.opencode_engine_desc")}
           statusLabel={props.clientStatusLabel}
           tone={props.clientTone}
-          detailLines={[
-            t("settings.diag_opencode_binary", undefined, {
-              binary: formatOpencodeBinary(props.engineInfo),
-            }),
-          ]}
+          detailLines={props.clientDetailLines}
         />
         <RuntimeStatusCard
           icon={<Server size={18} />}
@@ -108,8 +97,238 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
           description={t("settings.openwork_server_desc")}
           statusLabel={props.openworkStatusLabel}
           tone={props.openworkTone}
+          detailLines={props.openworkDetailLines}
         />
       </div>
+    </LayoutSection>
+  );
+}
+
+interface AdvancedRuntimeMigrationSectionProps {
+  busy: boolean;
+  canMigrate: boolean;
+  migrationBusy: boolean;
+  migrationStatus: string | null;
+  configStatus: OpenworkRuntimeConfigStatus | null;
+  configStatusBusy: boolean;
+  configStatusError: string | null;
+  onRefresh: () => Promise<void>;
+  onMigrate: () => Promise<void>;
+}
+
+function formatKeys(keys: string[]) {
+  return keys.length ? keys.join(", ") : "none";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function countRecord(value: unknown) {
+  return isRecord(value) ? Object.keys(value).length : 0;
+}
+
+function countArray(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function providerModelCount(config: Record<string, unknown>) {
+  const providers = isRecord(config.provider) ? config.provider : {};
+  return Object.values(providers).reduce<number>((total, provider) => {
+    if (!isRecord(provider)) return total;
+    return total + countRecord(provider.models);
+  }, 0);
+}
+
+function RuntimeConfigSummary(props: { config: Record<string, unknown> }) {
+  const config = props.config;
+  const providers = countRecord(config.provider);
+  const models = providerModelCount(config);
+  const agents = countRecord(config.agent);
+  const plugins = countArray(config.plugin);
+  const mcps = countRecord(config.mcp);
+  const permissions = countRecord(config.permission);
+  const disabledProviders = countArray(config.disabled_providers);
+  const defaultAgent = typeof config.default_agent === "string" ? config.default_agent : "not set";
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">Default agent</div>
+        <div className="mt-1 truncate font-mono text-[11px] text-gray-12" title={defaultAgent}>{defaultAgent}</div>
+      </div>
+      <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">Providers / models</div>
+        <div className="mt-1 font-mono text-[11px] text-gray-12">{providers} providers, {models} models</div>
+      </div>
+      <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">Agents / plugins</div>
+        <div className="mt-1 font-mono text-[11px] text-gray-12">{agents} agents, {plugins} plugins</div>
+      </div>
+      <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">MCP / permissions</div>
+        <div className="mt-1 font-mono text-[11px] text-gray-12">{mcps} MCPs, {permissions} permission keys</div>
+      </div>
+      {disabledProviders ? (
+        <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2 sm:col-span-2 lg:col-span-4">
+          <div className="text-[10px] uppercase tracking-wide text-gray-8">Disabled providers</div>
+          <div className="mt-1 font-mono text-[11px] text-gray-12">{disabledProviders}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RuntimeConfigSourceBlock(props: {
+  title: string;
+  description: string;
+  path?: string;
+  exists?: boolean;
+  keys: string[];
+  config: Record<string, unknown>;
+}) {
+  return (
+    <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/70 p-3">
+      <div>
+        <div className="font-medium text-gray-12">{props.title}</div>
+        <div className="text-[11px] text-gray-9">{props.description}</div>
+        {props.path ? <div className="mt-1 break-all font-mono text-[11px] text-gray-8">{props.path}</div> : null}
+        {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? "Found" : "Not found"}</div> : null}
+        <div className="text-[11px] text-gray-9">Keys: {formatKeys(props.keys)}</div>
+      </div>
+      <RuntimeConfigSummary config={props.config} />
+      <details className="rounded-lg bg-gray-3 p-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw JSON</summary>
+        <pre className="mt-2 max-h-56 overflow-auto font-mono text-[11px] text-gray-11">
+          {JSON.stringify(props.config, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationSectionProps) {
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
+        <LayoutSectionDescription>
+          Inspect what OpenWork controls at runtime versus what belongs to your workspace config. This works through the OpenWork server and does not require the OpenCode engine to be healthy.
+        </LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Move OpenWork-managed config</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Moves older OpenWork-owned runtime keys from `.opencode/openwork.json` and safe OpenWork-managed keys from `opencode.jsonc` into the runtime database.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void props.onRefresh()}
+              disabled={props.busy || props.configStatusBusy || !props.canMigrate}
+            >
+              <RefreshCcw size={14} className={props.configStatusBusy ? "animate-spin" : ""} />
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void props.onMigrate()}
+              disabled={props.busy || props.migrationBusy || !props.canMigrate}
+            >
+              <Database size={14} />
+              {props.migrationBusy ? "Migrating..." : "Migrate"}
+            </Button>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        {props.migrationStatus ? <SettingsNotice>{props.migrationStatus}</SettingsNotice> : null}
+        {props.configStatusError ? <SettingsNotice>{props.configStatusError}</SettingsNotice> : null}
+        {props.configStatus ? (
+          <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
+            <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
+              <div className="font-medium text-gray-12">Effective injected OpenCode config</div>
+              <div className="text-[11px] text-gray-9">
+                This is the OpenWork-built config object injected through `OPENCODE_CONFIG_CONTENT`. It includes OpenWork defaults plus runtime DB values.
+              </div>
+              <RuntimeConfigSummary config={props.configStatus.effectiveRuntime ?? props.configStatus.runtime} />
+              <details className="rounded-lg bg-gray-3 p-2">
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw injected JSON</summary>
+                <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
+                  {JSON.stringify(props.configStatus.effectiveRuntime ?? props.configStatus.runtime, null, 2)}
+                </pre>
+              </details>
+            </div>
+            {props.configStatus.sources ? (
+              <div className="space-y-3">
+                <div>
+                  <div className="font-medium text-gray-12">OpenCode source breakdown</div>
+                  <div className="text-[11px] text-gray-9">
+                    OpenCode also reads its own project and global config files. OpenWork injects the runtime config separately; for OpenWork-managed keys, the injected config is the source to inspect.
+                  </div>
+                </div>
+                <RuntimeConfigSourceBlock
+                  title="Project opencode config"
+                  description="Workspace-level OpenCode config owned by the user/project."
+                  path={props.configStatus.sources.projectOpencode.path}
+                  exists={props.configStatus.sources.projectOpencode.exists}
+                  keys={props.configStatus.sources.projectOpencode.keys}
+                  config={props.configStatus.sources.projectOpencode.config}
+                />
+                <RuntimeConfigSourceBlock
+                  title="Global opencode config"
+                  description="User-level OpenCode config under ~/.config/opencode."
+                  path={props.configStatus.sources.globalOpencode.path}
+                  exists={props.configStatus.sources.globalOpencode.exists}
+                  keys={props.configStatus.sources.globalOpencode.keys}
+                  config={props.configStatus.sources.globalOpencode.config}
+                />
+                <RuntimeConfigSourceBlock
+                  title="OpenWork runtime DB"
+                  description="OpenWork-managed runtime values stored outside workspace files."
+                  keys={props.configStatus.sources.runtimeDatabase.keys}
+                  config={props.configStatus.sources.runtimeDatabase.config}
+                />
+                <RuntimeConfigSourceBlock
+                  title="OpenWork injected config"
+                  description="The object OpenWork injects into OpenCode at runtime."
+                  keys={props.configStatus.sources.injected.keys}
+                  config={props.configStatus.sources.injected.config}
+                />
+              </div>
+            ) : null}
+            <div>
+              <div className="font-medium text-gray-12">Runtime database</div>
+              <div>Stored keys: {formatKeys(props.configStatus.runtimeKeys)}</div>
+            </div>
+            <div>
+              <div className="font-medium text-gray-12">Legacy OpenWork metadata</div>
+              <div className="break-all">{props.configStatus.legacyOpenwork.path}</div>
+              {props.configStatus.legacyOpenwork.error ? (
+                <div className="text-amber-11">{props.configStatus.legacyOpenwork.error}; fix this file before moving legacy config.</div>
+              ) : null}
+              <div>Migratable keys: {formatKeys(props.configStatus.legacyOpenwork.keys)}</div>
+            </div>
+            <div>
+              <div className="font-medium text-gray-12">User opencode.jsonc</div>
+              <div className="break-all">{props.configStatus.userOpencode.path}</div>
+              <div>{props.configStatus.userOpencode.exists ? "Found" : "Not found"}</div>
+              <div>User-owned keys: {formatKeys(props.configStatus.userOpencode.keys)}</div>
+              <div>Migratable keys: {formatKeys(props.configStatus.userOpencode.migratableKeys)}</div>
+            </div>
+            <div>
+              <div className="font-medium text-gray-12">Runtime DB JSON</div>
+              <pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-gray-3 p-2 font-mono text-[11px] text-gray-11">
+                {JSON.stringify(props.configStatus.runtime, null, 2)}
+              </pre>
+            </div>
+          </div>
+        ) : null}
+      </LayoutSectionItem>
     </LayoutSection>
   );
 }

@@ -1,13 +1,11 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { t } from "../../i18n";
 import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
-  workspaceCreate,
-  workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type WorkspaceInfo,
@@ -16,12 +14,20 @@ import {
 import { isDesktopRuntime } from "../../app/utils";
 import { createClient, unwrap } from "../../app/lib/opencode";
 import { useLocal } from "../kernel/local-provider";
+import { usePlatform } from "../kernel/platform";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
+import { ProviderSelectionStep } from "../domains/onboarding/provider-selection-step";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
+import {
+  hideOpenWorkModelsPromo,
+  markOpenWorkModelsStartupPromoShown,
+} from "../domains/cloud/openwork-models-promo";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { buildDenAuthUrl, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
+import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -41,6 +47,9 @@ type WelcomeState = {
   createError: string | null;
   remoteBusy: boolean;
   remoteError: string | null;
+  providerStep: boolean;
+  pendingWorkspaceId: string | null;
+  pendingSessionId: string | null;
 };
 
 type WelcomeAction =
@@ -51,7 +60,8 @@ type WelcomeAction =
   | { type: "create:finish" }
   | { type: "remote:start" }
   | { type: "remote:error"; error: string }
-  | { type: "remote:finish" };
+  | { type: "remote:finish" }
+  | { type: "provider-step"; workspaceId: string; sessionId: string | null };
 
 const initialWelcomeState: WelcomeState = {
   modalOpen: false,
@@ -59,6 +69,9 @@ const initialWelcomeState: WelcomeState = {
   createError: null,
   remoteBusy: false,
   remoteError: null,
+  providerStep: false,
+  pendingWorkspaceId: null,
+  pendingSessionId: null,
 };
 
 function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeState {
@@ -79,6 +92,8 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
       return { ...state, remoteError: action.error };
     case "remote:finish":
       return { ...state, remoteBusy: false };
+    case "provider-step":
+      return { ...state, providerStep: true, pendingWorkspaceId: action.workspaceId, pendingSessionId: action.sessionId };
   }
 }
 
@@ -93,7 +108,9 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
 export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
+  const platform = usePlatform();
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
+  const [manualFolder, setManualFolder] = useState("");
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -112,56 +129,63 @@ export function WelcomeRoute() {
       dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
-      const list = await workspaceCreate({
-        folderPath: folder,
-        name: workspaceName,
-        preset: "starter",
-      }) as WorkspaceList;
-      const createdId =
-        resolveWorkspaceListSelectedId(list) ||
-        list.workspaces[list.workspaces.length - 1]?.id ||
-        "";
-      let targetWorkspaceId = createdId;
-      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
+        let list: WorkspaceList | null = null;
+        let serverBaseUrl = "";
+        let serverToken = "";
+        try {
+          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
+            await resolveOpenworkConnection();
+          if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
+            const openworkClient = createOpenworkServerClient({
+              baseUrl: normalizedBaseUrl,
+              token: resolvedToken || undefined,
+              hostToken: resolvedHostToken || undefined,
+            });
+            list = await openworkClient.createLocalWorkspace({
+              folderPath: folder,
+              name: workspaceName,
+              preset: "starter",
+            });
+            serverBaseUrl = normalizedBaseUrl;
+            serverToken = resolvedToken;
+          }
+        } catch {
+          list = null;
+        }
+        if (!list) {
+          throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
+        }
+        const createdId =
+          resolveWorkspaceListSelectedId(list) ||
+          list.workspaces[list.workspaces.length - 1]?.id ||
+          "";
+        let targetWorkspaceId = createdId;
+        let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
         let targetSessionId: string | null = null;
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
           writeActiveWorkspaceId(createdId);
         }
-        // Register with the running openwork-server if available.
-        try {
-          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-            await resolveOpenworkConnection();
-          if (normalizedBaseUrl && resolvedToken) {
-            const openworkClient = createOpenworkServerClient({
-              baseUrl: normalizedBaseUrl,
-              token: resolvedToken,
-              hostToken: resolvedHostToken || undefined,
-            });
-            const serverList = await openworkClient
-              .createLocalWorkspace({
-                folderPath: folder,
-                name: workspaceName,
-                preset: "starter",
-              })
-              .catch(() => null);
-            targetWorkspaceId = serverList
-              ? resolveWorkspaceListSelectedId(serverList) || serverList.workspaces[serverList.workspaces.length - 1]?.id || targetWorkspaceId
-              : targetWorkspaceId;
-            targetWorkspace = serverList?.workspaces.find((workspace) => workspace.id === targetWorkspaceId) ?? targetWorkspace;
-            if (targetWorkspaceId) {
-              const workspacePath = targetWorkspace?.path?.trim() || folder;
-              const session = unwrap(await createClient(
-                `${(buildOpenworkWorkspaceBaseUrl(normalizedBaseUrl, targetWorkspaceId) ?? normalizedBaseUrl).replace(/\/+$/, "")}/opencode`,
-                workspacePath || undefined,
-                { token: resolvedToken, mode: "openwork" },
-              ).session.create({ directory: workspacePath || undefined }));
-              targetSessionId = session.id;
-            }
+        if (targetWorkspace) {
+          await ensureDesktopLocalOpenworkConnection({
+            route: "session",
+            workspace: targetWorkspace,
+            allWorkspaces: list.workspaces,
+          }).catch(() => undefined);
+        }
+        if (targetWorkspaceId && serverBaseUrl && serverToken) {
+          try {
+            const workspacePath = targetWorkspace?.path?.trim() || folder;
+            const session = unwrap(await createClient(
+              `${(buildOpenworkWorkspaceBaseUrl(serverBaseUrl, targetWorkspaceId) ?? serverBaseUrl).replace(/\/+$/, "")}/opencode`,
+              workspacePath || undefined,
+              { token: serverToken, mode: "openwork" },
+            ).session.create({ directory: workspacePath || undefined }));
+            targetSessionId = session.id;
+          } catch {
+            // Best-effort first task creation.
           }
-        } catch {
-          // Best-effort server registration.
         }
         if (targetWorkspaceId) {
           writeActiveWorkspaceId(targetWorkspaceId);
@@ -169,8 +193,9 @@ export function WelcomeRoute() {
         }
         markOnboardingComplete();
         dispatch({ type: "close" });
-        navigate(targetWorkspaceId ? workspaceSessionRoute(targetWorkspaceId, targetSessionId) : "/session", { replace: true });
-        if (targetSessionId) focusPromptSoon();
+        // Show the provider selection step before navigating to the session.
+        dispatch({ type: "provider-step", workspaceId: targetWorkspaceId, sessionId: targetSessionId });
+
       } catch (error) {
         dispatch({
           type: "create:error",
@@ -194,18 +219,36 @@ export function WelcomeRoute() {
       if (!baseUrlValue) return false;
       dispatch({ type: "remote:start" });
       try {
-      const list = await workspaceCreateRemote({
-        baseUrl: baseUrlValue,
-        openworkHostUrl: baseUrlValue,
-        openworkToken: input.openworkToken?.trim() || null,
-        displayName: input.displayName?.trim() || null,
-        directory: input.directory?.trim() || null,
-        remoteType: "openwork",
-      }) as WorkspaceList;
-      const createdId =
-        resolveWorkspaceListSelectedId(list) ||
-        list.workspaces[list.workspaces.length - 1]?.id ||
-        "";
+        const remoteType: "openwork" = "openwork";
+        const payload = {
+          baseUrl: baseUrlValue,
+          openworkHostUrl: baseUrlValue,
+          openworkToken: input.openworkToken?.trim() || null,
+          displayName: input.displayName?.trim() || null,
+          directory: input.directory?.trim() || null,
+          remoteType,
+        };
+        let list: WorkspaceList | null = null;
+        try {
+          const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
+            await resolveOpenworkConnection();
+          if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
+            list = await createOpenworkServerClient({
+              baseUrl: normalizedBaseUrl,
+              token: resolvedToken || undefined,
+              hostToken: resolvedHostToken || undefined,
+            }).createRemoteWorkspace(payload);
+          }
+        } catch {
+          list = null;
+        }
+        if (!list) {
+          throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+        }
+        const createdId =
+          resolveWorkspaceListSelectedId(list) ||
+          list.workspaces[list.workspaces.length - 1]?.id ||
+          "";
         if (createdId) {
           await workspaceSetSelected(createdId).catch(() => undefined);
           await workspaceSetRuntimeActive(createdId).catch(() => undefined);
@@ -228,9 +271,36 @@ export function WelcomeRoute() {
     [markOnboardingComplete, navigate],
   );
 
+  const handleGetStarted = useCallback(async () => {
+    if (!isDesktopRuntime()) {
+      // Non-desktop: fall back to the modal for remote workspace creation.
+      dispatch({ type: "open" });
+      return;
+    }
+    const picked = await pickDirectory({ title: t("onboarding.authorize_folder") });
+    const folder = typeof picked === "string" ? picked : null;
+    if (!folder) return;
+    await handleCreateWorkspace("starter", folder);
+  }, [handleCreateWorkspace]);
+
+  const handleUseManualFolder = useCallback(async () => {
+    const folder = manualFolder.trim();
+    if (!folder) return;
+    await handleCreateWorkspace("starter", folder);
+  }, [handleCreateWorkspace, manualFolder]);
+
   return (
     <>
-      <WelcomePage onGetStarted={() => dispatch({ type: "open" })} />
+      <WelcomePage
+        onGetStarted={handleGetStarted}
+        getStartedLabel={t("welcome.pick_folder")}
+        busy={state.createBusy}
+        error={state.createError}
+        manualFolder={manualFolder}
+        onManualFolderChange={setManualFolder}
+        onUseManualFolder={handleUseManualFolder}
+        showManualFolder={import.meta.env.DEV && isDesktopRuntime()}
+      />
       <CreateWorkspaceModal
         open={state.modalOpen}
         onClose={() => dispatch({ type: "close" })}
@@ -252,6 +322,36 @@ export function WelcomeRoute() {
             : t("app.local_disabled_reason")
         }
       />
+      {state.providerStep ? (
+        <ProviderSelectionStep
+          onOpenWorkModels={() => {
+            const settings = readDenSettings();
+            platform.openLink(buildDenAuthUrl(settings.baseUrl, "sign-up"));
+            // Navigate to session after opening sign-up — user will complete in browser
+            const route = state.pendingWorkspaceId
+              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              : "/session";
+            navigate(route, { replace: true });
+            if (state.pendingSessionId) focusPromptSoon();
+          }}
+          onBringYourOwn={() => {
+            markOpenWorkModelsStartupPromoShown();
+            hideOpenWorkModelsPromo();
+            const route = state.pendingWorkspaceId
+              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              : "/session";
+            navigate(`${route}?onboarding=1`, { replace: true });
+            if (state.pendingSessionId) focusPromptSoon();
+          }}
+          onSkip={() => {
+            const route = state.pendingWorkspaceId
+              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
+              : "/session";
+            navigate(route, { replace: true });
+            if (state.pendingSessionId) focusPromptSoon();
+          }}
+        />
+      ) : null}
     </>
   );
 }

@@ -150,7 +150,7 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
         <g className="transition-all duration-300" style={{ opacity: config.browser ? 1 : 0 }}>
           <line x1={cx + cw - 120} y1="31" x2={cx + cw - 120} y2="226" stroke="var(--dls-border)" strokeWidth="0.5" />
           <rect x={cx + cw - 120} y="31" width="120" height="195" fill="var(--dls-hover)" opacity="0.5" />
-          {/* Browser chrome */}
+          {/* Browser frame */}
           <rect x={cx + cw - 115} y="36" width="110" height="14" rx="4" fill="var(--dls-surface)" />
           <circle cx={cx + cw - 108} cy="43" r="2" fill="var(--dls-text-secondary)" opacity="0.2" />
           <circle cx={cx + cw - 100} cy="43" r="2" fill="var(--dls-text-secondary)" opacity="0.2" />
