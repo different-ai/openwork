@@ -1,4 +1,9 @@
-# Skill: Browser Automation
+---
+name: browser-automation
+description: Local OpenWork Electron browser automation with CDP. Use when driving a local Electron dev app, browser_list, browser_snapshot, browser_eval, composer automation, or local UI smoke tests.
+---
+
+# Browser Automation
 
 ## What I Do
 
@@ -56,14 +61,14 @@ lsof -nP -iTCP:9823 -sTCP:LISTEN
 
 1. List targets with `browser_list` using `browser_url: "http://127.0.0.1:9823"`.
 2. Select the `OpenWork` target ID.
-3. Read state with `browser_evaluate` or `browser_snapshot`.
+3. Read state with `browser_eval` or `browser_snapshot`.
 4. Fill the Lexical composer by targeting `[contenteditable="true"][data-lexical-editor="true"]`.
 5. Click the `Run task` button.
 6. Confirm the session response by checking `document.body.innerText` or the current URL.
 
 ## Send A Session
 
-Use this `browser_evaluate` pattern after selecting the OpenWork target:
+Use this `browser_eval` pattern after selecting the OpenWork target:
 
 ```js
 (() => {
@@ -71,12 +76,12 @@ Use this `browser_evaluate` pattern after selecting the OpenWork target:
   if (!editor) return { ok: false, reason: 'editor not found' };
 
   editor.focus();
-  document.execCommand('selectAll', false, null);
-  const inserted = document.execCommand('insertText', false, 'Say hello from the Electron browser test.');
-  editor.dispatchEvent(new InputEvent('input', {
+  const data = new DataTransfer();
+  data.setData('text/plain', 'Say hello from the Electron browser test.');
+  editor.dispatchEvent(new ClipboardEvent('paste', {
     bubbles: true,
-    inputType: 'insertText',
-    data: 'Say hello from the Electron browser test.',
+    cancelable: true,
+    clipboardData: data,
   }));
 
   const run = Array.from(document.querySelectorAll('button'))
@@ -85,7 +90,7 @@ Use this `browser_evaluate` pattern after selecting the OpenWork target:
   if (run.disabled) return { ok: false, reason: 'Run task disabled', inserted, text: editor.innerText };
 
   run.click();
-  return { ok: true, inserted, text: editor.innerText };
+  return { ok: true, inserted: true, text: editor.innerText };
 })()
 ```
 

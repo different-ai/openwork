@@ -34,6 +34,19 @@ That's it. HandsFree can now list your sessions, read transcripts, type into the
 - `ui_execute_action` — run an action by ID, e.g. `session.create_task`, `composer.set_text`, `composer.send`.
 - `ui_status` — check if OpenWork is running and the bridge is reachable.
 
+### Cross-session memory
+
+OpenWork's cross-session memory currently comes from saved session history exposed through the UI control surface. It is not a separate long-term memory database.
+
+For requests like `What did I say in the Blue Yonder session?` or `Remind me what we decided in session ses_abc123`, an MCP client can:
+
+1. Run `session.list_sessions` to find a matching session by ID, title, workspace, or topic words.
+2. Run `session.open` with the selected `sessionId`.
+3. Run `session.read_transcript` to read recent messages from that session.
+4. Answer from the returned transcript, and say when the returned messages are insufficient.
+
+This may navigate OpenWork away from the user's current session while the lookup runs. If multiple sessions match, ask which one to inspect.
+
 ## Install
 
 ```bash

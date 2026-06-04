@@ -1,21 +1,20 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowUp, ChevronRight, FileText, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { ArrowUp, ChevronRight, FileText, ListPlus, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
-import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "../../../../../app/constants";
-import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../../app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "../../../../../app/types";
-import { t } from "../../../../../i18n";
-import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "../../../settings/extension-state";
-import { useDesktopRestriction } from "../../../cloud/desktop-config-provider";
-import { ModelBehaviorSelect } from "../../../../../components/model-behavior-select";
-import { ModelSelect } from "../../../../../components/model-select";
+import { toast } from "@/components/ui/sonner";
+import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
+import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import { formatBytes } from "@/app/utils";
+import { t } from "@/i18n";
+import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { ModelBehaviorSelect } from "@/components/model-behavior-select";
+import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor } from "./editor";
-import {
-  ReactComposerNotice,
-  type ReactComposerNotice as ReactComposerNoticeData,
-} from "./notice";
+import { getSlashCommandQuery } from "./slash-command";
 
 type MentionItem = {
   id: string;
@@ -47,8 +46,11 @@ type ComposerProps = {
   mentions: Record<string, "agent" | "file">;
   onDraftChange: (value: string) => void;
   onSend: () => void | Promise<void>;
+  onSteer: () => void | Promise<void>;
+  onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
   statusLabel: string;
@@ -82,13 +84,10 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: "agent" | "file", value: string) => void;
-  notice: ReactComposerNoticeData | null;
-  onNotice: (notice: ReactComposerNoticeData) => void;
   onPasteText: (text: string) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
   onExpandPastedText: (id: string) => void;
-  onRevealPastedText: (id: string) => void;
   onRemovePastedText: (id: string) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
@@ -130,12 +129,6 @@ function parseClipboardUriList(clipboard: DataTransfer) {
     links.push(normalized);
   }
   return links;
-}
-
-function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function isImageAttachment(attachment: ComposerAttachment) {
@@ -324,9 +317,53 @@ export function ReactSessionComposer(props: ComposerProps) {
     draftRef.current = props.draft;
   }, [props.draft]);
 
-  const slashMatch = props.draft.match(/^\/(\S*)$/);
-  const slashOpenNext = Boolean(slashMatch);
-  const slashQuery = slashMatch?.[1] ?? "";
+  // Follow-up message UX (only relevant while the agent is busy):
+  // - Enter does NOT submit; instead it shakes the Steer/Queue buttons.
+  // - Escape arms a "Hit Escape again to stop the agent" prompt for 3s;
+  //   a second Escape within that window stops the agent.
+  const [followupShake, setFollowupShake] = useState(false);
+  const [escapeArmed, setEscapeArmed] = useState(false);
+  const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const escapeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerFollowupShake = useCallback(() => {
+    if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current);
+    setFollowupShake(true);
+    shakeTimerRef.current = setTimeout(() => setFollowupShake(false), 450);
+  }, []);
+
+  const disarmEscape = useCallback(() => {
+    if (escapeTimerRef.current) {
+      clearTimeout(escapeTimerRef.current);
+      escapeTimerRef.current = null;
+    }
+    setEscapeArmed(false);
+  }, []);
+
+  // Reset the escape-to-stop prompt whenever the agent stops being busy.
+  useEffect(() => {
+    if (!props.busy) disarmEscape();
+  }, [props.busy, disarmEscape]);
+
+  useEffect(() => () => {
+    if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current);
+    if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
+  }, []);
+
+  // Editor submit (Enter). While idle this sends normally; while busy a
+  // follow-up message must be explicitly Steered or Queued, so Enter only
+  // nudges the buttons.
+  const handleEditorSubmit = useCallback(() => {
+    if (props.busy) {
+      triggerFollowupShake();
+      return;
+    }
+    void props.onSend();
+  }, [props.busy, props.onSend, triggerFollowupShake]);
+
+  const slashCommandQuery = getSlashCommandQuery(props.draft);
+  const slashOpenNext = slashCommandQuery !== null;
+  const slashQuery = slashCommandQuery ?? "";
   const mentionMatch = props.draft.match(/@([^\s@]*)$/);
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
@@ -671,7 +708,17 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [menuIndex, activeItems.length]);
 
   const applyCommandSelection = (command: SlashCommandOption) => {
+    if (command.source === "skill") {
+      applySkillSelection(command.name);
+      return;
+    }
     props.onDraftChange(`/${command.name} `);
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
+  const applySkillSelection = (name: string) => {
+    props.onDraftChange(`[skill ${name}] `);
     setSlashOpen(false);
     setToolMenuOpen(false);
   };
@@ -679,10 +726,11 @@ export function ReactSessionComposer(props: ComposerProps) {
   const applyPluginFileSelection = (file: CloudImportedPluginFile) => {
     const commandName = pluginSlashCommandName(file);
     if (commandName) {
-      applyCommandSelection({
+      if (file.objectType === "skill") applySkillSelection(commandName);
+      else applyCommandSelection({
         id: `plugin:${file.configObjectId}`,
         name: commandName,
-        source: file.objectType === "skill" ? "skill" : "command",
+        source: "command",
       });
       return;
     }
@@ -758,6 +806,25 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (event.key === "Enter" && imeActive) {
       return;
     }
+    // Escape-to-stop while the agent is busy. Only when no menu is open so
+    // Escape can still close menus. First press arms a confirmation prompt
+    // for 3s; a second Escape within that window stops the agent.
+    const anyMenuOpen = agentMenuOpen || toolMenuOpen || Boolean(activeMenu);
+    if (event.key === "Escape" && props.busy && !anyMenuOpen) {
+      event.preventDefault();
+      if (escapeArmed) {
+        disarmEscape();
+        void props.onStop();
+      } else {
+        setEscapeArmed(true);
+        if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
+        escapeTimerRef.current = setTimeout(() => {
+          setEscapeArmed(false);
+          escapeTimerRef.current = null;
+        }, 3000);
+      }
+      return;
+    }
     if (agentMenuOpen) {
       const total = agents.length + 1;
       if (event.key === "ArrowDown") {
@@ -817,10 +884,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const addAttachments = async (inputFiles: File[]) => {
     if (!inputFiles.length) return;
     if (!props.attachmentsEnabled) {
-      props.onNotice({
-        title: props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"),
-        tone: "warning",
-      });
+      toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
       return;
     }
 
@@ -838,23 +902,14 @@ export function ReactSessionComposer(props: ComposerProps) {
 
     if (accepted.length) {
       props.onAttachFiles(accepted);
-      props.onNotice({
-        title:
-          accepted.length === 1
-            ? t("composer.uploaded_single_file", { name: accepted[0]?.name ?? t("composer.file_kind") })
-            : t("composer.uploaded_multiple_files", { count: accepted.length }),
-        tone: "success",
-      });
     }
 
     if (oversize.length) {
-      props.onNotice({
-        title:
-          oversize.length === 1
-            ? t("composer.file_exceeds_limit", { name: oversize[0] })
-            : `${oversize.length} files exceed the 8MB limit.`,
-        tone: "warning",
-      });
+      toast.warning(
+        oversize.length === 1
+          ? t("composer.file_exceeds_limit", { name: oversize[0] })
+          : `${oversize.length} files exceed the 8MB limit.`,
+      );
     }
 
   };
@@ -991,7 +1046,6 @@ export function ReactSessionComposer(props: ComposerProps) {
           className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
-          <ReactComposerNotice notice={props.notice} />
 
           {renderMentionMenu()}
           {renderSlashMenu()}
@@ -1054,7 +1108,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               disabled={props.disabled}
               placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}
-              onSubmit={props.onSend}
+              onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
               onPasteText={props.onPasteText}
               onPaste={(event) => {
@@ -1080,10 +1134,6 @@ export function ReactSessionComposer(props: ComposerProps) {
                 if (uriList.length) {
                   event.preventDefault();
                   props.onUnsupportedFileLinks(uriList);
-                  props.onNotice({
-                    title: t("composer.inserted_links_unsupported"),
-                    tone: "info",
-                  });
                   return;
                 }
 
@@ -1101,16 +1151,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                   /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
                 ) {
                   const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                  props.onNotice({
-                    title: t("composer.remote_worker_paste_warning"),
-                    tone: "warning",
-                    actionLabel:
+                  toast.warning(t("composer.remote_worker_paste_warning"), {
+                    action:
                       props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? t("composer.upload_to_shared_folder")
-                        : undefined,
-                    onAction:
-                      props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? () => void props.onUploadInboxFiles?.(attachedFiles)
+                        ? {
+                            label: t("composer.upload_to_shared_folder"),
+                            onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
+                          }
                         : undefined,
                   });
                   // Intentionally no preventDefault — the notice is advisory,
@@ -1369,27 +1416,72 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
 
               {/*
-                Single action button that toggles between Stop and Run task.
-                When busy with no draft: Stop (cancels current run).
-                When busy with a draft: Run task (queues a follow-up).
-                When idle: Run task.
+                Action area.
+                - Idle: single "Run task" button (sends immediately).
+                - Busy: follow-up controls — "Steer" sends now (the agent
+                  adjusts mid-task), "Queue" sends once the agent is idle,
+                  and an outline "Stop" cancels the run. Steer/Queue are
+                  disabled until there's something to send. Pressing Enter
+                  while busy shakes Steer/Queue to prompt an explicit choice.
+                  Escape arms a "Hit Escape again to stop the agent" prompt.
               */}
               <div className="ml-auto flex shrink-0 items-end gap-1.5">
-                {props.busy && !canSend ? (
-                  <button
-                    type="button"
-                    onClick={props.onStop}
-                    className="inline-flex h-9 max-h-9 items-center gap-2 rounded-full bg-gray-12 px-4 text-[13px] font-medium text-gray-1 transition-colors hover:bg-gray-11"
-                    title={t("composer.stop")}
-                  >
-                    <Square size={12} fill="currentColor" />
-                    <span>{t("composer.stop")}</span>
-                  </button>
+                {props.busy ? (
+                  <>
+                    {escapeArmed ? (
+                      <span className="self-center pr-1 text-[12px] font-medium text-gray-10">
+                        {t("composer.escape_to_stop")}
+                      </span>
+                    ) : null}
+                    <div className={`flex items-end gap-1.5 ${followupShake ? "animate-shake" : ""}`}>
+                      <button
+                        type="button"
+                        onClick={canSend ? props.onSteer : undefined}
+                        disabled={!canSend}
+                        className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
+                          canSend
+                            ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
+                            : "bg-gray-4 text-gray-10"
+                        }`}
+                        title={t("composer.steer_hint")}
+                      >
+                        <Zap size={14} />
+                        <span>{t("composer.steer")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={canSend ? props.onQueue : undefined}
+                        disabled={!canSend}
+                        className={`relative inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
+                          canSend
+                            ? "bg-gray-12 text-gray-1 hover:bg-gray-11"
+                            : "bg-gray-4 text-gray-10"
+                        }`}
+                        title={t("composer.queue_hint")}
+                      >
+                        <ListPlus size={14} />
+                        <span>
+                          {props.queuedCount > 0
+                            ? t("composer.queued_count", { count: props.queuedCount })
+                            : t("composer.queue")}
+                        </span>
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={props.onStop}
+                      className="inline-flex h-9 max-h-9 items-center gap-2 rounded-full border border-dls-border bg-transparent px-4 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3"
+                      title={t("composer.stop")}
+                    >
+                      <Square size={12} fill="currentColor" />
+                      <span>{t("composer.stop")}</span>
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
-                    onClick={canSend ? props.onSend : props.busy ? props.onStop : undefined}
-                    disabled={props.disabled || (!canSend && !props.busy)}
+                    onClick={canSend ? props.onSend : undefined}
+                    disabled={props.disabled || !canSend}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
                       !canSend || props.disabled
                         ? "bg-gray-4 text-gray-10"

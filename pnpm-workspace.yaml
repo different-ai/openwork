@@ -1,4 +1,6 @@
 minimumReleaseAge: 4320
+minimumReleaseAgeExclude:
+  - "@opencode-ai/sdk"
 
 packages:
   - "apps/*"

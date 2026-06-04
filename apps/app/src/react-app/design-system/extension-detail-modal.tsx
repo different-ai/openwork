@@ -17,16 +17,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import {
   Table,
   TableBody,
   TableCell,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import type { ExtensionKind } from "@/app/constants";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
-import { modalBodyClass } from "../domains/workspace/modal-styles";
 import { resolveExtensionIconSrc } from "./extension-icon-src";
 import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
 
@@ -174,49 +174,47 @@ function stripSkillFrontmatter(content: string): string {
     }
   }
 
-  // Trim leading blank lines
-  return text.replace(/^\s*\n/, "");
+  return text.trim();
 }
 
-export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
-  const {
-    open,
-    onClose,
-    name,
-    description,
-    iconSlug,
-    iconSrc,
-    kind = "mcp",
-    connected = false,
-    connectedLabel,
-    disconnectedLabel,
-    connecting = false,
-    hidden = false,
-    preview = false,
-    disabledReason = null,
-    url,
-    setupInstructions,
-    resourceLabels = [],
-    contributionLabels = [],
-    oauth,
-    launchCommand,
-    environment,
-    path,
-    trigger,
-    contentPreview,
-    onReveal,
-    onConnect,
-    connectLabel = "Connect",
-    connectingLabel = "Connecting...",
-    onUninstall,
-    uninstallLabel,
-    onHide,
-    onShow,
-    configSlot,
-    showEnablementCard = true,
-    size = "default",
-  } = props;
-  const resolvedIconSrc = iconSrc ? resolveExtensionIconSrc(iconSrc) : undefined;
+export function ExtensionDetailModal({
+  open,
+  onClose,
+  name,
+  description,
+  iconSlug,
+  iconSrc,
+  kind = "mcp",
+  connected = false,
+  connectedLabel,
+  disconnectedLabel,
+  connecting = false,
+  hidden = false,
+  preview = false,
+  disabledReason = null,
+  url,
+  setupInstructions,
+  resourceLabels = [],
+  contributionLabels = [],
+  oauth,
+  launchCommand,
+  environment,
+  path,
+  trigger,
+  contentPreview,
+  onReveal,
+  onConnect,
+  connectLabel = "Connect",
+  connectingLabel = "Connecting...",
+  onUninstall,
+  uninstallLabel,
+  onHide,
+  onShow,
+  configSlot,
+  showEnablementCard = true,
+  size = "default",
+}: ExtensionDetailModalProps) {
+  "use memo";
 
   return (
     <Dialog
@@ -226,20 +224,24 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
       }}
     >
       <DialogContent
-        className={`flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden ${size === "wide" ? "max-w-3xl sm:max-w-3xl" : "max-w-xl sm:max-w-xl"}`}
+        className={cn(
+          "flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden",
+          size === "wide" ? "max-w-3xl sm:max-w-3xl" : "max-w-xl sm:max-w-xl",
+        )}
       >
         <DialogHeader>
           <div className="flex min-w-0 items-start gap-4">
             {/* Icon */}
             <div className="relative shrink-0">
               <div
-                className={`flex size-12 items-center justify-center rounded-xl border ${
-                  connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover"
-                }`}
+                className={cn(
+                  "flex size-12 items-center justify-center rounded-xl border",
+                  connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
+                )}
               >
-                {resolvedIconSrc ? (
+                {iconSrc ? (
                   <div className="flex size-8 items-center justify-center rounded-md bg-white">
-                    <img src={resolvedIconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
+                    <img src={resolveExtensionIconSrc(iconSrc)} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
                   </div>
                 ) : iconSlug ? (
                   <div className="flex size-8 items-center justify-center rounded-md bg-white">
@@ -275,8 +277,9 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
         </DialogHeader>
 
         {/* Body */}
-        <div className={modalBodyClass}>
-          <div className="space-y-5 px-px">
+        <ScrollArea className="flex min-h-0 flex-1 flex-col">
+          <ScrollAreaViewport className="min-h-0 flex-1 h-auto!">
+            <div className="space-y-5 px-px">
             {/* Description */}
             <div className="text-sm leading-relaxed text-card-foreground">
               {description}
@@ -379,7 +382,7 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
 
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Status</span>
-                    <span className={`font-medium ${connected ? "text-green-11" : "text-muted-foreground"}`}>
+                    <span className={cn("font-medium", connected ? "text-green-11" : "text-muted-foreground")}>
                       {connected
                         ? connectedLabel ?? (kind === "skill" || kind === "plugin" ? "Installed" : "Connected")
                         : connecting
@@ -428,7 +431,11 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
 
             {kind === "skill" && contentPreview ? (() => {
               const body = stripSkillFrontmatter(contentPreview);
-              if (!body.trim()) return null;
+
+              if (!body) {
+                return null;
+              }
+
               return (
                 <div className="flex flex-col gap-2">
                   <div className="text-sm font-medium text-card-foreground">
@@ -456,59 +463,67 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
             ) : null}
 
             {configSlot}
-          </div>
-        </div>
+            </div>
+          </ScrollAreaViewport>
+        </ScrollArea>
 
-        <DialogFooter className="shrink-0">
-          <div className="flex justify-between">
-            <div className="flex gap-2">
-              {hidden && onShow ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { onShow(); onClose(); }}
-                >
-                  Show
-                </Button>
-              ) : !hidden && onHide ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { onHide(); onClose(); }}
-                >
-                  Hide
-                </Button>
-              ) : null}
-              {connected && onUninstall ? (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => { onUninstall(); onClose(); }}
-                >
-                  {uninstallLabel ?? (kind === "skill" ? "Uninstall" : "Disconnect")}
-                </Button>
-              ) : null}
-            </div>
-            <div className="flex gap-3">
-              <DialogClose render={<Button variant="outline" />}>
-                Close
-              </DialogClose>
-              {!connected && onConnect ? (
-                <Button
-                  onClick={onConnect}
-                  disabled={connecting}
-                >
-                  {connecting ? (
-                    <>
-                      <Loader2 data-icon="inline-start" className="animate-spin" />
-                      {connectingLabel}
-                    </>
-                  ) : (
-                    connectLabel
-                  )}
-                </Button>
-              ) : null}
-            </div>
+        <DialogFooter className="shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {hidden && onShow ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onShow();
+                  onClose();
+                }}
+              >
+                Show
+              </Button>
+            ) : !hidden && onHide ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onHide();
+                  onClose();
+                }}
+              >
+                Hide
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DialogClose render={<Button variant="outline" />}>
+              Close
+            </DialogClose>
+            {connected && onUninstall ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  onUninstall();
+                  onClose();
+                }}
+              >
+                {uninstallLabel ?? (kind === "skill" ? "Uninstall" : "Disconnect")}
+              </Button>
+            ) : null}
+            {!connected && onConnect ? (
+              <Button
+                onClick={onConnect}
+                disabled={connecting}
+              >
+                {connecting ? (
+                  <>
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                    {connectingLabel}
+                  </>
+                ) : (
+                  connectLabel
+                )}
+              </Button>
+            ) : null}
           </div>
         </DialogFooter>
       </DialogContent>
@@ -516,7 +531,14 @@ export function ExtensionDetailModal(props: ExtensionDetailModalProps) {
   );
 }
 
-function UiControlConnectionDetails(props: { launchCommand?: string[]; environment?: Record<string, string> }) {
+interface UiControlConnectionDetailsProps {
+  launchCommand?: string[];
+  environment?: Record<string, string>;
+}
+
+function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
+  "use memo";
+
   const opencodeConfig = props.launchCommand ? uiControlOpencodeConfig(props.launchCommand, props.environment) : fallbackUiControlOpencodeConfig;
 
   return (

@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   browser: {
     show(bounds) { return ipcRenderer.invoke("openwork:browser:show", bounds); },
     hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
+    openUrl(url, provider) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },

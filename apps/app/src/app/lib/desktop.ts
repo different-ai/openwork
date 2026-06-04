@@ -100,6 +100,13 @@ declare global {
       browser?: {
         show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
         hide?: () => Promise<void>;
+        openUrl?: (url: string, provider?: "auto" | "builtin" | "external") => Promise<{
+          provider: "builtin";
+          browser_url: string;
+          target_id: string;
+          tab_id: string;
+          url: string;
+        }>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;

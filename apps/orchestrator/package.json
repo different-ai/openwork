@@ -1,6 +1,6 @@
 {
   "name": "openwork-orchestrator",
-  "version": "0.14.0",
+  "version": "0.15.1",
   "description": "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
   "private": true,
   "type": "module",
@@ -44,11 +44,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.14.38",
+    "@opencode-ai/sdk": "^1.15.12",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
-    "opencode-router": "0.14.0",
-    "openwork-server": "0.14.0",
+    "opencode-router": "0.15.1",
+    "openwork-server": "0.15.1",
     "solid-js": "1.9.9"
   },
   "devDependencies": {

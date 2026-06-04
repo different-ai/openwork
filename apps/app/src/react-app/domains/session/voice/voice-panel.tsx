@@ -3,12 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ChevronDown, ChevronRight, Loader2, Mic2, MicOff, Radio, SendHorizontal, Sparkles, Square, X } from "lucide-react";
 import { PaperGrainGradient } from "@openwork/ui/react";
 
-import { desktopFetch } from "../../../../app/lib/desktop";
-import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import { desktopFetch } from "@/app/lib/desktop";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { publishInspectorSlice, recordInspectorEvent } from "../../../shell/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -749,7 +749,8 @@ export function VoicePanel(props: VoicePanelProps) {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-5 px-4 py-5">
+        <ScrollAreaViewport>
+          <div className="flex flex-col gap-5 px-4 py-5">
           <VoiceOrb status={status} muted={micMuted} />
 
           <div className="text-center">
@@ -905,7 +906,8 @@ export function VoicePanel(props: VoicePanelProps) {
             )}
             <div ref={timelineEndRef} />
           </div>
-        </div>
+          </div>
+        </ScrollAreaViewport>
       </ScrollArea>
     </div>
   );
