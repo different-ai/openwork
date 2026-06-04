@@ -47,7 +47,15 @@ try {
   );
 } catch (e) {
   const message = e instanceof Error ? e.message : String(e);
-  console.error(JSON.stringify({ ok: false, error: message, stderr: server.getStderr() }));
+  console.error(
+    JSON.stringify({
+      ok: false,
+      error: message,
+      stderr: server.getStderr(),
+      stdout: server.getStdout?.() ?? "",
+      serverExit: server.getExitInfo?.() ?? null,
+    }),
+  );
   process.exitCode = 1;
 } finally {
   await server.close();

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, type RefObject, type UIEventHandler } from "react";
 
-import { getSessionScrollState, useSessionScrollStore } from "./scroll-store";
+import { getSessionScrollState, useSessionScrollStore, type SessionScrollState } from "./scroll-store";
+
+function readScrollState(sessionId: string | null): SessionScrollState {
+  return getSessionScrollState(useSessionScrollStore.getState().sessions, sessionId);
+}
+
+function isStickyBottom(sessionId: string | null) {
+  return readScrollState(sessionId).mode === "stickyBottom";
+}
 
 const EXACT_BOTTOM_GAP_PX = 1;
 // Widened from 250ms so a single wheel or trackpad flick isn't missed between
@@ -68,11 +76,6 @@ export function useSessionScrollController(
   options: SessionScrollControllerOptions,
 ) {
   const selectedSessionId = options.selectedSessionId;
-  const selectScrollState = useCallback(
-    (state: ReturnType<typeof useSessionScrollStore.getState>) => getSessionScrollState(state.sessions, selectedSessionId),
-    [selectedSessionId],
-  );
-  const scrollState = useSessionScrollStore(selectScrollState);
   const setStickyBottom = useSessionScrollStore((state) => state.setStickyBottom);
   const setManualScroll = useSessionScrollStore((state) => state.setManualScroll);
   const setTopClippedMessageId = useSessionScrollStore((state) => state.setTopClippedMessageId);
@@ -85,9 +88,6 @@ export function useSessionScrollController(
   const lastGestureAtRef = useRef(0);
   const previousSessionIdRef = useRef<string | null>(null);
 
-  const isAtBottom = scrollState.mode === "stickyBottom";
-  const topClippedMessageId = scrollState.topClippedMessageId;
-
   const hasScrollGesture = useCallback(
     () => Date.now() - lastGestureAtRef.current < SCROLL_GESTURE_WINDOW_MS,
     [],
@@ -96,8 +96,8 @@ export function useSessionScrollController(
   const updateOverflowAnchor = useCallback(() => {
     const container = options.containerRef.current;
     if (!container) return;
-    container.style.overflowAnchor = isAtBottom ? "none" : "auto";
-  }, [isAtBottom, options.containerRef]);
+    container.style.overflowAnchor = isStickyBottom(selectedSessionId) ? "none" : "auto";
+  }, [options.containerRef, selectedSessionId]);
 
   const markScrollGesture = useCallback(
     (target?: EventTarget | null) => {
@@ -239,21 +239,22 @@ export function useSessionScrollController(
 
   const jumpToStartOfMessage = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
-      const messageId = topClippedMessageId;
+      const messageId = readScrollState(selectedSessionId).topClippedMessageId;
       const container = options.containerRef.current;
       if (!messageId || !container) return;
 
       const target = messageElementById(container, messageId);
       if (!target) return;
 
-      setManualScroll(selectedSessionId, container.scrollTop, topClippedMessageId);
+      setManualScroll(selectedSessionId, container.scrollTop, messageId);
       target.scrollIntoView({ behavior, block: "start" });
     },
-    [options.containerRef, selectedSessionId, setManualScroll, topClippedMessageId],
+    [options.containerRef, selectedSessionId, setManualScroll],
   );
 
   useEffect(() => {
     updateOverflowAnchor();
+    return useSessionScrollStore.subscribe(updateOverflowAnchor);
   }, [updateOverflowAnchor]);
 
   useEffect(() => {
@@ -275,7 +276,7 @@ export function useSessionScrollController(
       // touchpad, or scrollbar in the last SCROLL_GESTURE_WINDOW_MS, treat
       // that as intent to break out of autoscroll and leave their position
       // alone until the next handleScroll tick reclassifies the mode.
-      if (grew && isAtBottom && !hasScrollGesture()) {
+      if (grew && isStickyBottom(selectedSessionId) && !hasScrollGesture()) {
         scrollToBottom("auto");
         return;
       }
@@ -285,7 +286,7 @@ export function useSessionScrollController(
 
     observer.observe(content);
     return () => observer.disconnect();
-  }, [hasScrollGesture, isAtBottom, options.contentRef, refreshTopClippedMessage, scrollToBottom]);
+  }, [hasScrollGesture, options.contentRef, refreshTopClippedMessage, scrollToBottom, selectedSessionId]);
 
   useEffect(() => {
     if (selectedSessionId === previousSessionIdRef.current) return;
@@ -333,8 +334,6 @@ export function useSessionScrollController(
   }, [clearProgrammaticScrollReset]);
 
   return {
-    isAtBottom,
-    topClippedMessageId,
     handleScroll,
     markScrollGesture,
     scrollToBottom,

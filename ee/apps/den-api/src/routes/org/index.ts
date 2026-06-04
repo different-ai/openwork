@@ -14,6 +14,7 @@ import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
 import { registerOrgSsoRoutes } from "./sso.js"
 import { registerOrgSkillRoutes } from "./skills.js"
+import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
@@ -55,6 +56,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables }>(ap
   registerOrgMemberRoutes(app)
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)
+  registerOrgResourceRoutes(app)
   registerOrgSkillRoutes(app)
   registerOrgTeamRoutes(app)
 

@@ -7,6 +7,7 @@ import {
   resolveRenderedSessionSnapshot,
 } from "../src/react-app/domains/session/surface/session-render-state";
 import { reconcileTranscriptMessages } from "../src/react-app/domains/session/sync/transcript-reconcile";
+import { describeOpencodeSessionError } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 function snapshotWithMessages(
   messages: Array<{ id: string; role: "user" | "assistant"; text: string; created?: number }>,
@@ -303,5 +304,36 @@ describe("deriveRenderedSessionMessages", () => {
       transcriptState: [],
       snapshot,
     })[0]?.parts[0]).toMatchObject({ text: "current session" });
+  });
+});
+
+describe("describeOpencodeSessionError", () => {
+  it("includes API error status and response details", () => {
+    expect(describeOpencodeSessionError({
+      name: "APIError",
+      data: {
+        message: "Service unavailable",
+        statusCode: 503,
+        isRetryable: true,
+        responseBody: "upstream overloaded",
+      },
+    })).toBe("Service unavailable\nStatus: 503\nResponse: upstream overloaded");
+  });
+
+  it("uses named error defaults when opencode omits a message", () => {
+    expect(describeOpencodeSessionError({
+      name: "MessageOutputLengthError",
+      data: {},
+    })).toBe("The model reached its output limit before finishing");
+  });
+
+  it("surfaces structured output retry counts", () => {
+    expect(describeOpencodeSessionError({
+      name: "StructuredOutputError",
+      data: {
+        message: "Invalid JSON",
+        retries: 3,
+      },
+    })).toBe("Invalid JSON\nRetries: 3");
   });
 });

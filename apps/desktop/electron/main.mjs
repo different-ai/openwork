@@ -43,7 +43,6 @@ const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
-const BROWSER_PLUGIN = "opencode-chrome-devtools";
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
@@ -477,6 +476,11 @@ let browserViewVisible = false;
 let lastBrowserBounds = null;
 let browserTabCounter = 0;
 const BROWSER_DEFAULT_URL = "about:blank";
+// URL a user-initiated new tab (the "+" button / opening the browser panel)
+// lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
+const BROWSER_NEW_TAB_URL = "https://www.google.com";
+const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
+const BROWSER_TARGET_RESOLVE_INTERVAL_MS = 80;
 const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
@@ -679,6 +683,82 @@ function normalizeBrowserUrl(url, fallback = BROWSER_DEFAULT_URL) {
   const target = typeof url === "string" && url.trim() ? url.trim() : fallback;
   if (!target || target === "about:blank") return "about:blank";
   return /^https?:\/\//i.test(target) ? target : `https://${target}`;
+}
+
+function isMainWindowAllowedNavigation(url) {
+  if (!url) return true;
+  if (url.startsWith("file://") || url.startsWith("data:")) return true;
+  try {
+    const target = new URL(url);
+    if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
+    const currentUrl = mainWindow?.webContents.getURL();
+    if (!currentUrl || currentUrl === "about:blank") return true;
+    const current = new URL(currentUrl);
+    return target.origin === current.origin;
+  } catch {
+    return true;
+  }
+}
+
+function routeBlockedMainWindowNavigation(url) {
+  if (!/^https?:\/\//i.test(String(url ?? ""))) return;
+  void openBrowserUrlForAutomation(url).catch((error) => {
+    console.warn("[browser] failed to route blocked main-window navigation", error);
+  });
+}
+
+function cdpBrowserUrl() {
+  return `http://127.0.0.1:${remoteDebugPort}`;
+}
+
+function browserTargetMarkerUrl(tabId) {
+  const marker = `openwork-browser-tab:${tabId}`;
+  const html = `<!doctype html><title>${marker}</title><meta name="openwork-browser-tab" content="${tabId}"><body>${marker}</body>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+async function listCdpTargets() {
+  if (!remoteDebugPort || remoteDebugPort <= 0) return [];
+  const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
+  if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
+  const targets = await response.json();
+  return Array.isArray(targets) ? targets : [];
+}
+
+async function resolveBrowserCdpTargetId(tabId) {
+  const marker = encodeURIComponent(`openwork-browser-tab:${tabId}`);
+  const deadline = Date.now() + BROWSER_TARGET_RESOLVE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const targets = await listCdpTargets().catch(() => []);
+    const target = targets.find((candidate) => (
+      candidate?.type === "page" &&
+      typeof candidate.id === "string" &&
+      typeof candidate.url === "string" &&
+      candidate.url.includes(marker)
+    ));
+    if (target?.id) return target.id;
+    await new Promise((resolve) => setTimeout(resolve, BROWSER_TARGET_RESOLVE_INTERVAL_MS));
+  }
+  throw new Error("Could not resolve built-in browser CDP target.");
+}
+
+async function openBrowserUrlForAutomation(rawUrl, provider = "auto") {
+  const requestedProvider = String(provider || "auto").trim().toLowerCase();
+  if (requestedProvider && requestedProvider !== "auto" && requestedProvider !== "builtin") {
+    throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
+  }
+  const url = normalizeBrowserUrl(rawUrl);
+  const tab = createBrowserTab("about:blank", { select: true });
+  await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
+  const targetId = await resolveBrowserCdpTargetId(tab.tabId);
+  await tab.view.webContents.loadURL(url);
+  return {
+    provider: "builtin",
+    browser_url: cdpBrowserUrl(),
+    target_id: targetId,
+    tab_id: tab.tabId,
+    url,
+  };
 }
 
 function getBrowserTab(tabId = activeBrowserTabId) {
@@ -1321,7 +1401,6 @@ function normalizeDesktopBootstrapConfig(input) {
     typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
       ? input.apiBaseUrl.trim()
       : null;
-
   return {
     baseUrl,
     apiBaseUrl,
@@ -1437,30 +1516,6 @@ function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
     authorizedRoots: workspacePath ? [workspacePath] : [],
     reload: null,
   };
-}
-
-async function workspaceOpencodeConfigPath(workspacePath) {
-  const candidates = [
-    path.join(workspacePath, "opencode.jsonc"),
-    path.join(workspacePath, "opencode.json"),
-    path.join(workspacePath, ".opencode", "opencode.jsonc"),
-    path.join(workspacePath, ".opencode", "opencode.json"),
-  ];
-  for (const candidate of candidates) {
-    if (await pathExists(candidate)) return candidate;
-  }
-  return candidates[0];
-}
-
-async function ensureDefaultWorkspaceOpencodeConfig(workspacePath) {
-  const configPath = await workspaceOpencodeConfigPath(workspacePath);
-  if (await pathExists(configPath)) return false;
-  await writeJsonFileAtomic(configPath, {
-    $schema: "https://opencode.ai/config.json",
-    default_agent: "openwork",
-    plugin: [BROWSER_PLUGIN],
-  });
-  return true;
 }
 
 async function normalizeLocalWorkspacePath(rawPath) {
@@ -2174,7 +2229,6 @@ async function handleDesktopInvoke(event, command, ...args) {
         workspaceType: "local",
       });
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-      await ensureDefaultWorkspaceOpencodeConfig(folderPath);
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
 
       return mutateWorkspaceState((state) => {
@@ -2840,6 +2894,8 @@ async function startUiControlServer() {
     `${JSON.stringify({ version: 1, app: APP_NAME, identifier: APP_IDENTIFIER, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
     "utf8",
   );
+  // Make the discovery path available to child processes (server → managed OpenCode → plugin).
+  process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
 }
 
 async function stopUiControlServer() {
@@ -2918,6 +2974,12 @@ async function createMainWindow() {
     return { action: "allow" };
   });
 
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isMainWindowAllowedNavigation(url)) return;
+    event.preventDefault();
+    routeBlockedMainWindowNavigation(url);
+  });
+
   const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
   if (startUrl) {
     await mainWindow.loadURL(startUrl);
@@ -2956,6 +3018,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 // ── Embedded browser IPC ────────────────────────────────────────────────
 ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
 ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
+ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
 ipcMain.handle("openwork:browser:navigate", (_event, url) => {
   const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
   view.webContents.loadURL(normalizeBrowserUrl(url));
@@ -2978,7 +3041,8 @@ ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
 });
 ipcMain.handle("openwork:browser:state", () => browserStatePayload());
 ipcMain.handle("openwork:browser:createTab", (_event, url) => {
-  const tab = createBrowserTab(url ?? "about:blank", { select: true });
+  const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
+  const tab = createBrowserTab(target, { select: true });
   return { tabId: tab.tabId };
 });
 ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));

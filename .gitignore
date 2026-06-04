@@ -59,3 +59,5 @@ opencode.jsonc
 .vercel
 .env*.local
 .claude/*
+.security
+transcript-analysis

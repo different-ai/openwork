@@ -25,7 +25,6 @@ export function ConfigWorkspaceSummary(props: { runtimeWorkspaceId: string | nul
 export function ConfigEngineReloadSection(props: {
   anyActiveRuns: boolean;
   reloadBusy: boolean;
-  reloadError: string | null;
   reloadAvailabilityReason: string | null;
   reloadButtonTone: "destructive" | "secondary";
   reloadButtonDisabled: boolean;
@@ -43,7 +42,6 @@ export function ConfigEngineReloadSection(props: {
           <div className="text-sm text-gray-12">{t("config.reload_now_title")}</div>
           <div className="text-xs text-gray-7">{t("config.reload_now_desc")}</div>
           {props.anyActiveRuns ? <div className="text-[11px] text-amber-11">{t("config.reload_active_tasks_warning")}</div> : null}
-          {props.reloadError ? <div className="text-[11px] text-red-11">{props.reloadError}</div> : null}
           {props.reloadAvailabilityReason ? <div className="text-[11px] text-gray-9">{props.reloadAvailabilityReason}</div> : null}
         </div>
         <Button variant={props.reloadButtonTone} size="sm" className="shrink-0" onClick={props.onReload} disabled={props.reloadButtonDisabled}>

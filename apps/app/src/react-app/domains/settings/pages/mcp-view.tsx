@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
-import { evaluateEnablement, defaultMcpEnablement } from "../../../../app/enablement";
+import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import { ExtensionCard } from "../../../design-system/extension-card";
@@ -397,13 +397,6 @@ export function McpView(props: McpViewProps) {
     if (manifest?.enablement && props.enablementContext) {
       return evaluateEnablement(manifest.enablement, props.enablementContext);
     }
-    // For plain MCP entries, use default mcp-connected enablement.
-    if (entry.kind === "mcp" || entry.kind === "ui-control" || isMcpBackedExtension(entry)) {
-      const serverName = getMcpIdentityKey(entry);
-      if (props.enablementContext) {
-        return evaluateEnablement(defaultMcpEnablement(serverName), props.enablementContext);
-      }
-    }
     return null;
   };
 
@@ -494,7 +487,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {props.mcpStatus ? (
-        <div className="whitespace-pre-wrap break-words rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+        <div className="whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
           {props.mcpStatus}
         </div>
       ) : null}

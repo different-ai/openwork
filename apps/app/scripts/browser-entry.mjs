@@ -284,6 +284,8 @@ try {
   results.ok = false;
   results.error = message;
   results.stderr = opencode?.getStderr?.() ?? "";
+  results.stdout = opencode?.getStdout?.() ?? "";
+  results.serverExit = opencode?.getExitInfo?.() ?? null;
   console.error(JSON.stringify(results, null, 2));
   process.exitCode = 1;
 } finally {

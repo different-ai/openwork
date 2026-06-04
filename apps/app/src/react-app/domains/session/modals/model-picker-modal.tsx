@@ -6,7 +6,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, ChevronRight, Search, Star } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ChevronRight, Search, Sparkles, Star, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import {
   Dialog,
@@ -20,56 +21,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
-import { isDefaultVisibleModel, isRecommendedModel } from "../../../../app/defaults";
+import { isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { t } from "../../../../i18n";
-
-const HIDDEN_MODELS_KEY = "openwork.hiddenModels";
-const HIDDEN_MODELS_SEEDED_KEY = "openwork.hiddenModelsSeeded";
-
-/**
- * Seed the hidden models set on first run. For providers with curated
- * default-visible lists (OpenAI, Anthropic), hide everything except
- * the top picks defined in app/defaults/models.ts.
- */
-function seedHiddenModels(options: ModelOption[]): Set<string> {
-  const hidden = new Set<string>();
-  for (const opt of options) {
-    if (!isDefaultVisibleModel(opt.providerID, opt.modelID)) {
-      hidden.add(`${opt.providerID}/${opt.modelID}`);
-    }
-  }
-  return hidden;
-}
-
-export function readHiddenModels(): Set<string> {
-  try {
-    const raw = window.localStorage.getItem(HIDDEN_MODELS_KEY);
-    return new Set(raw ? JSON.parse(raw) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function writeHiddenModels(hidden: Set<string>): void {
-  try {
-    window.localStorage.setItem(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]));
-  } catch {}
-}
-
-function hasSeededHiddenModels(): boolean {
-  try {
-    return window.localStorage.getItem(HIDDEN_MODELS_SEEDED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function markSeededHiddenModels(): void {
-  try {
-    window.localStorage.setItem(HIDDEN_MODELS_SEEDED_KEY, "1");
-  } catch {}
-}
+import { useDenAuth } from "../../cloud/den-auth-provider";
+import { usePlatform } from "../../../kernel/platform";
+import {
+  getOpenWorkModelsActionUrl,
+  hasOpenWorkModelsProvider,
+  hideOpenWorkModelsPromo,
+  isOpenWorkModelsPromoHidden,
+  OPENWORK_MODELS_PROVIDER_ID,
+  OPENWORK_MODELS_PROVIDER_NAME,
+  openWorkModelsPromoChangedEvent,
+} from "../../cloud/openwork-models-promo";
 
 export type ModelPickerModalProps = {
   open: boolean;
@@ -100,27 +64,28 @@ type ProviderGroup = {
 export function ModelPickerModal(props: ModelPickerModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
-  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => readHiddenModels());
+  const [promoHidden, setPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const denAuth = useDenAuth();
+  const navigate = useNavigate();
+  const platform = usePlatform();
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
     [props.disabledProviders],
   );
 
-  // Reset on open + seed defaults on first run
+  // Reset on open
   useEffect(() => {
     if (props.open) {
       props.setQuery("");
-      if (!hasSeededHiddenModels() && props.options.length > 0) {
-        const seeded = seedHiddenModels(props.options);
-        writeHiddenModels(seeded);
-        markSeededHiddenModels();
-        setHiddenModels(seeded);
-      } else {
-        setHiddenModels(readHiddenModels());
-      }
     }
-  }, [props.open, props.options]);
+  }, [props.open]);
+
+  useEffect(() => {
+    const handlePromoChanged = () => setPromoHidden(isOpenWorkModelsPromoHidden());
+    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+  }, []);
 
   // Focus search
   useEffect(() => {
@@ -169,7 +134,12 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         group.hasCurrent = true;
       }
     }
-    return [...map.values()].sort((a, b) => {
+    const groups = [...map.values()];
+    for (const group of groups) {
+      group.recommended.sort((a, b) => a.title.localeCompare(b.title));
+      group.other.sort((a, b) => a.title.localeCompare(b.title));
+    }
+    return groups.sort((a, b) => {
       if (a.isDisabled !== b.isDisabled) return a.isDisabled ? 1 : -1;
       if (a.isNew !== b.isNew) return a.isNew ? -1 : 1;
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
@@ -199,32 +169,25 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
-  const toggleModelVisible = useCallback((providerID: string, modelID: string) => {
-    const key = `${providerID}/${modelID}`;
-    setHiddenModels((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      writeHiddenModels(next);
-      return next;
-    });
-  }, []);
+  const showOpenWorkModelsPromo = useMemo(
+    () => !promoHidden && !hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
+    [promoHidden, props.options],
+  );
 
-  const batchToggleProvider = useCallback((providerID: string, showAll: boolean) => {
-    setHiddenModels((prev) => {
-      const next = new Set(prev);
-      const models = filteredOptions.filter((o) => o.providerID === providerID);
-      for (const m of models) {
-        const key = `${m.providerID}/${m.modelID}`;
-        if (showAll) {
-          next.delete(key);
-        } else {
-          next.add(key);
-        }
-      }
-      writeHiddenModels(next);
-      return next;
-    });
-  }, [filteredOptions]);
+  const openOpenWorkModels = useCallback(() => {
+    props.onClose();
+    if (!denAuth.isSignedIn) {
+      navigate("/settings/cloud-account");
+    }
+    window.setTimeout(() => {
+      platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+    }, 0);
+  }, [denAuth.isSignedIn, navigate, platform, props.onClose]);
+
+  const hideOpenWorkModels = useCallback(() => {
+    hideOpenWorkModelsPromo();
+    setPromoHidden(true);
+  }, []);
 
   const handleSelect = useCallback(
     (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
@@ -269,6 +232,39 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               onChange={(e) => props.setQuery(e.target.value)}
             />
           </div>
+
+          {showOpenWorkModelsPromo ? (
+            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-blue-6/60 bg-blue-2/60 shadow-[0_12px_30px_-20px_rgba(var(--dls-accent-rgb),0.45)]">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-blue-3/70"
+                onClick={openOpenWorkModels}
+              >
+                <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-blue-11" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
+                    <Sparkles className="size-3.5 text-blue-11" />
+                    <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
+                  </div>
+                  <div className="truncate text-[11px] text-dls-secondary">
+                    {denAuth.isSignedIn ? "Subscribe to use hosted frontier models in this workspace." : "Sign in to unlock hosted frontier models for your team."}
+                  </div>
+                </div>
+                <span className="flex shrink-0 items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5 text-[11px] font-medium text-blue-11">
+                  {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
+                  <ArrowRight className="size-3" />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
+                onClick={hideOpenWorkModels}
+                aria-label="Hide OpenWork Models"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">
@@ -441,5 +437,3 @@ function DefaultModelRow({
     </button>
   );
 }
-
-
