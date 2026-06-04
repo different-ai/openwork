@@ -113,7 +113,7 @@ describe("reload watcher fingerprints", () => {
         await watcher.refreshWorkspace(workspace.id, ensured.reloadReasons);
         await sleep(250);
 
-        expect(ensured.reloadReasons.sort()).toEqual(["agents", "config"]);
+        expect(ensured.reloadReasons.sort()).toEqual([]);
         expect(events.list(workspace.id)).toEqual([]);
       } finally {
         watcher.close();

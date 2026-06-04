@@ -2,6 +2,7 @@
 import { useEffect, useId, useState, type SetStateAction } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
 import {
   Dialog,
@@ -35,7 +36,7 @@ import {
   useEnvironmentVariableRemove,
   useIsEnvironmentVariableChangesPending,
 } from "./environment-variable-provider";
-import { SettingsNotice, Spinner } from "../settings-section";
+import { SettingsNotice, Spinner } from "@/react-app/domains/settings/settings-section";
 import {
   EnvironmentVariableTableItem,
   EnvironmentVariableTable,
@@ -52,8 +53,7 @@ import {
   LayoutSectionItemFootnote,
   LayoutSectionTitle,
   LayoutStack,
-} from "../settings-layout";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
+} from "@/react-app/domains/settings/settings-layout";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 
 type EnvItem = EnvironmentVariableItem;
@@ -128,7 +128,6 @@ type EnvironmentSettingsPanelProps = {
 function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
   const isPendingChanges = useIsEnvironmentVariableChangesPending();
   const queryClient = useQueryClient();
-  const { showToast } = useStatusToasts();
   const { data, error, isLoading } = useEnvironmentVariableList({
     client: props.client,
     isRemoteWorkspace: props.isRemoteWorkspace,
@@ -189,10 +188,7 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
     void readEnvironmentValue(item)
       .then((value) => props.onEditorChange({ mode: "edit", key: item.key, value }))
       .catch((readError) => {
-        showToast({
-          title: readError instanceof Error ? readError.message : t("app.unknown_error"),
-          tone: "error",
-        });
+        toast.error(readError instanceof Error ? readError.message : t("app.unknown_error"));
       });
   };
 
@@ -265,7 +261,6 @@ type EnvironmentPendingChangesProps = {
 };
 
 function EnvironmentPendingChanges(props: EnvironmentPendingChangesProps) {
-  const { showToast } = useStatusToasts();
   const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
   const { isApplying, error } = useEnvironmentVariableApplyChanges();
 
@@ -290,10 +285,7 @@ function EnvironmentPendingChanges(props: EnvironmentPendingChangesProps) {
               size="sm"
               onClick={() => {
                 if (props.applyBlocked) {
-                  showToast({
-                    title: props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks"),
-                    tone: "warning",
-                  });
+                  toast.warning(props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks"));
                   return;
                 }
                 setApplyConfirmOpen(true);
@@ -331,7 +323,6 @@ function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
   const [revealing, setRevealing] = useState<Record<string, boolean>>({});
   const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
   const { isRemoving } = useEnvironmentVariableRemove();
-  const { showToast } = useStatusToasts();
 
   const toggleReveal = async (key: string) => {
     const item = props.items.find((entry) => entry.key === key);
@@ -345,10 +336,7 @@ function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
       await props.onRevealValue(item);
       setRevealed((current) => ({ ...current, [key]: true }));
     } catch (readError) {
-      showToast({
-        title: readError instanceof Error ? readError.message : t("app.unknown_error"),
-        tone: "error",
-      });
+      toast.error(readError instanceof Error ? readError.message : t("app.unknown_error"));
     } finally {
       setRevealing((current) => ({ ...current, [key]: false }));
     }

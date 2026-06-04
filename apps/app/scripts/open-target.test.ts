@@ -75,6 +75,72 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
   });
 
+  it("extracts PowerPoint decks from assistant artifact summaries", () => {
+    const targets = deriveOpenTargets([
+      message("msg_1", "assistant", "Updated file: decks/openwork-vertebrae-deck.pptx"),
+    ]);
+    const deck = targets.find((target) => target.value === "decks/openwork-vertebrae-deck.pptx");
+
+    expect(deck).toMatchObject({ preview: "slides", confidence: 65 });
+    expect(deck ? isCollectibleArtifactTarget({ ...deck, exists: true }) : false).toBe(true);
+  });
+
+  it("extracts artifact paths from OpenWork extension call metadata", () => {
+    const targets = deriveOpenTargets([
+      toolMessage("msg_tool", "openwork_extension_call", {
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+      }, {
+        ok: true,
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+        path: "artifacts/potato.png",
+        result: {
+          path: "artifacts/potato.png",
+          bytes: 12345,
+          model: "gpt-image-2",
+        },
+      }),
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "artifacts/potato.png", preview: "image", confidence: 95 });
+  });
+
+  it("extracts artifact targets from attachment sources", () => {
+    const targets = deriveOpenTargets([
+      {
+        id: "msg_attachment",
+        role: "assistant",
+        parts: [{
+          type: "source-document",
+          sourceId: "attachment-source",
+          mediaType: "text/csv",
+          title: "customers.csv",
+          filename: "reports/customers.csv",
+        }],
+      },
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "reports/customers.csv", preview: "sheet", confidence: 95 });
+  });
+
+  it("keeps URI-backed source documents as URL targets when filename is missing", () => {
+    const targets = deriveOpenTargets([
+      {
+        id: "msg_source",
+        role: "assistant",
+        parts: [{
+          type: "source-document",
+          sourceId: "url-source",
+          mediaType: "text/html",
+          title: "https://example.com/docs/report.html",
+        }],
+      },
+    ]);
+
+    expect(targets[0]).toMatchObject({ kind: "url", value: "https://example.com/docs/report.html", preview: "browser" });
+  });
+
   it("does not extract file artifacts from read tool metadata or output", () => {
     const targets = deriveOpenTargets([
       toolMessage(

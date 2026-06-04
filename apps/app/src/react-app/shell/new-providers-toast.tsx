@@ -1,17 +1,17 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
-import { Zap, X } from "lucide-react";
-import { resolveProviderDisplayName } from "../../app/utils";
+import { toast } from "@/components/ui/sonner";
+import { resolveProviderDisplayName } from "@/app/utils";
 import {
   newProvidersEvent,
   type NewProviderInfo,
   type NewProvidersEventDetail,
-} from "../../app/lib/provider-events";
-import { ProviderIcon } from "../design-system/provider-icon";
+} from "@/app/lib/provider-events";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
 const SEEN_KEY = "openwork.seenProviderIds";
 const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
+const NEW_PROVIDERS_TOAST_ID = "openwork-new-providers";
 
 /** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
@@ -136,9 +136,14 @@ export function NewProvidersToast() {
     }, 0);
   }, [state.providers]);
 
-  if (!state.show || (state.providers.length === 0 && state.newModelCount === 0)) return null;
+  useEffect(() => {
+    const visible =
+      state.show && (state.providers.length > 0 || state.newModelCount > 0);
+    if (!visible) {
+      toast.dismiss(NEW_PROVIDERS_TOAST_ID);
+      return;
+    }
 
-  const message = (() => {
     const parts: string[] = [];
     if (state.newProviderCount > 0) {
       parts.push(`${state.newProviderCount} new ${state.newProviderCount === 1 ? "provider" : "providers"}`);
@@ -146,39 +151,19 @@ export function NewProvidersToast() {
     if (state.newModelCount > 0) {
       parts.push(`${state.newModelCount} new ${state.newModelCount === 1 ? "model" : "models"}`);
     }
-    return parts.join(" & ");
-  })();
+    const summary =
+      parts.join(" & ") ||
+      resolveProviderDisplayName(
+        state.providers[0]?.name || state.providers[0]?.providerId || "Models",
+      );
 
-  return (
-    <div className="fixed bottom-6 left-1/2 z-[9999] -translate-x-1/2 animate-in slide-in-from-bottom-4 fade-in duration-300">
-      <div className="flex items-center gap-4 rounded-2xl border border-dls-border bg-dls-surface px-5 py-3.5 shadow-lg">
-        <div className="flex items-center gap-2">
-          {state.providers.slice(0, 6).map((p) => (
-            <ProviderIcon key={p.id} providerId={p.providerId} providerName={p.name} size={16} className="text-dls-text" />
-          ))}
-        </div>
+    toast(`${summary} available.`, {
+      id: NEW_PROVIDERS_TOAST_ID,
+      duration: Infinity,
+      action: { label: "Select a model", onClick: pickDefault },
+      cancel: { label: "Dismiss", onClick: dismiss },
+    });
+  }, [state, pickDefault, dismiss]);
 
-        <div className="min-w-0 text-[13px] text-dls-text">
-          <span className="font-medium">{message || resolveProviderDisplayName(state.providers[0]?.name || state.providers[0]?.providerId || "Models")}</span>
-          {" "}available.{" "}
-          <button
-            type="button"
-            className="font-medium underline underline-offset-2 transition-colors hover:text-dls-text/80"
-            onClick={pickDefault}
-          >
-            Select a model
-          </button>
-        </div>
-
-        <button
-          type="button"
-          className="flex size-6 shrink-0 items-center justify-center rounded-full text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
-          onClick={dismiss}
-          aria-label="Dismiss"
-        >
-          <X size={14} />
-        </button>
-      </div>
-    </div>
-  );
+  return null;
 }

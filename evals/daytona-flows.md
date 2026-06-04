@@ -2,7 +2,7 @@
 
 End-to-end scenarios that run against a real Electron OpenWork instance in a
 Daytona cloud sandbox. The agent drives the app through CDP browser tools
-(`browser_list`, `browser_evaluate`, `browser_screenshot`, etc.) over the
+(`browser_list`, `browser_eval`, `browser_screenshot`, etc.) over the
 Daytona proxy.
 
 ## Preflight
@@ -14,21 +14,22 @@ daytona organization use "Different AI"
 bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 ```
 
-Use the helper. It creates from the reusable `openwork-eval-vnc` snapshot when
-available, falls back to the Daytona VNC Dockerfile when needed, mounts secrets,
-mounts the reusable pnpm store volume, checks out the requested ref,
-conditionally installs deps, starts services, waits for CDP, and prints the
-CDP/noVNC URLs.
+Use the helper. It creates from the reusable `openwork-eval-vnc` snapshot,
+mounts secrets, mounts the reusable pnpm store volume, checks out the requested
+ref, conditionally installs deps, starts services, waits for CDP, and prints the
+CDP/noVNC URLs. If the snapshot is missing, create it with
+`bash .devcontainer/create-daytona-openwork-snapshot.sh`.
 
 The reusable `openwork-eval-secrets` volume is mounted at `/daytona-secrets`.
-Create/populate it once with `bash .devcontainer/setup-daytona-secrets-volume.sh
-.newtoken`; future eval sandboxes reuse it and source `/daytona-secrets/openai.env`
-before Electron starts. The Electron starter also applies Daytona-safe Chromium
-flags via `ELECTRON_EXTRA_LAUNCH_ARGS`.
+Create/populate it with `bash .devcontainer/setup-daytona-secrets-volume.sh
+.newtoken`; future eval sandboxes reuse it and source every
+`/daytona-secrets/*.env` file before Electron starts. The Electron starter also
+applies Daytona-safe Chromium flags via `ELECTRON_EXTRA_LAUNCH_ARGS`.
 
 To persist downloadable artifacts, pass `--artifacts-volume`. The helper mounts
 the reusable `openwork-eval-artifacts` volume at `/daytona-artifacts`, starts a
-static download server, and prints its Daytona preview URL.
+static download server, and prints its Daytona preview URL. Capture screenshot
+checkpoints with `daytona exec <sandbox> -- 'bash .devcontainer/capture-daytona-screenshot.sh'`.
 
 To record the Electron display, pass `--record-video`:
 
@@ -41,12 +42,12 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit] --record-video
 the stop command:
 
 ```bash
-daytona exec <sandbox> -- 'pkill -INT -f "ffmpeg.*x11grab"'
+daytona exec <sandbox> -- 'bash .devcontainer/stop-daytona-recording.sh'
 ```
 
-Use `SIGINT` so ffmpeg finalizes the mp4 cleanly before downloading it. Optional
-recording controls are `--recording-name <name>`, `--recording-fps <fps>`, and
-`--recording-size <WxH>`.
+The stop helper sends `SIGINT` so ffmpeg finalizes the mp4 cleanly before
+downloading it. Optional recording controls are `--recording-name <name>`,
+`--recording-fps <fps>`, and `--recording-size <WxH>`.
 
 ### 2. Get the CDP proxy URL
 
@@ -86,43 +87,43 @@ If no opencode process, the workspace hasn't been created yet (expected on fresh
 
 2. Verify we're on the Welcome page:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "window.location.hash" })
+   browser_eval({ browser_url: CDP_URL, expression: "window.location.hash" })
    → "#/welcome"
    ```
 
 3. Click "Get started" to expand options:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Get started') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Get started') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
    ```
 
 4. Click "Local workspace":
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Local workspace') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Local workspace') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
    ```
 
 5. Wait 2s, then inject the folder path into the CreateWorkspaceModal React reducer:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "JSON.stringify((function() { function findFiber(el) { var key = Object.keys(el).find(function(k) { return k.startsWith('__reactFiber$'); }); return key ? el[key] : null; } var spans = document.querySelectorAll('span'); var p = null; for (var i = 0; i < spans.length; i++) { if (spans[i].textContent.indexOf('No folder') !== -1) { p = spans[i]; break; } } if (!p) return {err: 'no placeholder'}; var fiber = findFiber(p); while (fiber) { var name = (fiber.elementType && fiber.elementType.name) || (fiber.type && fiber.type.name) || ''; if (name === 'CreateWorkspaceModal') break; fiber = fiber.return; } if (!fiber) return {err: 'no fiber'}; var hook = fiber.memoizedState; while (hook) { if (hook.queue && hook.queue.dispatch) { hook.queue.dispatch({ key: 'selectedFolder', value: '/workspace/hello' }); hook.queue.dispatch({ key: 'pickingFolder', value: false }); return {ok: true}; } hook = hook.next; } return {err: 'no dispatch'}; })())" })
+   browser_eval({ browser_url: CDP_URL, expression: "JSON.stringify((function() { function findFiber(el) { var key = Object.keys(el).find(function(k) { return k.startsWith('__reactFiber$'); }); return key ? el[key] : null; } var spans = document.querySelectorAll('span'); var p = null; for (var i = 0; i < spans.length; i++) { if (spans[i].textContent.indexOf('No folder') !== -1) { p = spans[i]; break; } } if (!p) return {err: 'no placeholder'}; var fiber = findFiber(p); while (fiber) { var name = (fiber.elementType && fiber.elementType.name) || (fiber.type && fiber.type.name) || ''; if (name === 'CreateWorkspaceModal') break; fiber = fiber.return; } if (!fiber) return {err: 'no fiber'}; var hook = fiber.memoizedState; while (hook) { if (hook.queue && hook.queue.dispatch) { hook.queue.dispatch({ key: 'selectedFolder', value: '/workspace/hello' }); hook.queue.dispatch({ key: 'pickingFolder', value: false }); return {ok: true}; } hook = hook.next; } return {err: 'no dispatch'}; })())" })
    ```
 
    **Key:** The reducer uses `{ key, value }` action format, NOT direct state replacement.
 
 6. Verify "Create Workspace" is enabled (not disabled):
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim() === 'Create Workspace') return btns[i].disabled ? 'DISABLED' : 'ENABLED'; } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim() === 'Create Workspace') return btns[i].disabled ? 'DISABLED' : 'ENABLED'; } return 'not found'; })()" })
    → "ENABLED"
    ```
 
 7. Click "Create Workspace":
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim() === 'Create Workspace' && !btns[i].disabled) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim() === 'Create Workspace' && !btns[i].disabled) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
    ```
 
 8. Wait 10s for workspace creation + opencode sidecar boot.
 
 9. Verify navigation to session page:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "window.location.hash" })
+   browser_eval({ browser_url: CDP_URL, expression: "window.location.hash" })
    → should contain "/session"
    ```
 
@@ -148,34 +149,34 @@ If no opencode process, the workspace hasn't been created yet (expected on fresh
 
 1. Click a starter card to create a session:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Edit a CSV') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Edit a CSV') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
    ```
 
 2. Wait 5s for session creation.
 
 3. Verify session URL:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "window.location.hash" })
+   browser_eval({ browser_url: CDP_URL, expression: "window.location.hash" })
    → should contain "/session/ses_"
    ```
 
 4. Focus the composer and type a message:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var editor = document.querySelector('[contenteditable=true]'); if (!editor) return 'no editor'; editor.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, 'Hello from Daytona! List the files in the current directory.'); return 'typed'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var editor = document.querySelector('[contenteditable=true]'); if (!editor) return 'no editor'; editor.focus(); document.execCommand('selectAll', false, null); document.execCommand('insertText', false, 'Hello from Daytona! List the files in the current directory.'); return 'typed'; })()" })
    ```
 
    **Key:** Use `document.execCommand('insertText', ...)` for Lexical editors, NOT `textContent =` or `innerHTML =`.
 
 5. Click "Run task":
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Run task') !== -1 && !btns[i].disabled) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+   browser_eval({ browser_url: CDP_URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('Run task') !== -1 && !btns[i].disabled) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
    ```
 
 6. Wait 15s for LLM response.
 
 7. Verify agent response appeared:
    ```
-   browser_evaluate({ browser_url: CDP_URL, expression: "document.body.innerText.substring(0, 500)" })
+   browser_eval({ browser_url: CDP_URL, expression: "document.body.innerText.substring(0, 500)" })
    → should contain the agent's response about directory contents
    ```
 
@@ -486,6 +487,143 @@ Daytona-hosted Den server stack.
 - Settings show the signed-in user and at least one organization or the org
   selection prompt.
 - Den API logs show `/v1/auth/desktop-handoff/exchange` and `/v1/me/orgs`.
+
+---
+
+## Flow 7: LLM api provisioning for desktop app from den
+
+**Goal:** Prove a fresh Electron desktop app can receive a Den-managed LLM
+provider, import it into the workspace, select the managed model, and complete a
+real OpenCode task without relying on locally injected provider environment
+variables.
+
+### Verified run: 2026-06-02
+
+- Server sandbox: `openwork-server-20260602-154721`
+- Electron sandbox: `openwork-test-20260602-155000`
+- Workspace: `ws_d3840983187b`, `/tmp/llm-den-provisioning-workspace`
+- Den org: `acme-robotics-demo`, `org_01kt58ejd1extvd0p7nqagxaky`
+- Recording: `https://8090-zz8rblselmaj10a5.daytonaproxy01.net/recordings/llm-api-provisioning-desktop-from-den.mp4`
+
+### Steps
+
+1. Start a fresh Daytona server sandbox and seed the demo organization:
+   ```bash
+   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
+   ```
+
+2. Start a fresh Electron sandbox against that Den server with recording enabled:
+   ```bash
+   bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
+     --den-base-url DEN_WEB_URL \
+     --den-api-base-url DEN_API_URL \
+     --record-video \
+     --recording-name llm-api-provisioning-desktop-from-den
+   ```
+
+3. Restart Electron without local AI-provider secrets so the baseline has no
+   local OpenAI provider:
+   ```bash
+   DAYTONA_SECRETS_ENV=/tmp/no-daytona-secrets bash /opt/openwork-daytona/start-daytona-electron.sh --detach
+   ```
+
+4. Create a clean workspace and verify Settings -> AI Providers initially shows
+   only `OpenCode Zen`.
+
+5. Create a Den-managed OpenAI provider through the Den API. Do not print the API
+   key; read it inside the sandbox only for the provider creation request.
+
+6. Refresh or wait for desktop cloud sync. Verified timing: provider creation
+   took `555ms`; the provider appeared/imported in desktop AI Providers `35.7s`
+   after Den creation.
+
+7. Click `Reload now`, open the model picker, select the imported cloud provider
+   `Den OpenAI Verified 1780441917820`, then select `GPT-5.5`.
+
+8. Create a new session and run:
+   ```text
+   Reply with exactly: Den LLM provisioning OK
+   ```
+
+9. Verify the UI response is exactly:
+   ```text
+   Den LLM provisioning OK
+   ```
+
+10. Verify the session metadata uses the Den provider, not `openai` from local
+    environment configuration:
+    ```json
+    {
+      "providerID": "lpr_01kt59qavdfk4skede8anxce1a",
+      "modelID": "gpt-5.5",
+      "variant": "medium"
+    }
+    ```
+
+### Add/remove/perf checkpoints
+
+Use these checkpoints when validating provider lifecycle and desktop sync
+latency, especially after changing Den provider payloads or desktop policy code.
+
+1. Baseline before add:
+   - Restart Electron with `DAYTONA_SECRETS_ENV=/tmp/no-daytona-secrets`.
+   - Confirm AI Providers shows no local OpenAI provider.
+   - Capture `performance.now()` in the page before creating the Den provider.
+
+2. Add/import timing:
+   - Create the Den LLM provider through the Den API and record API duration.
+   - Measure time until the provider appears in Settings -> AI Providers as
+     `Imported` and `Credential ready`.
+   - Verified run baseline: create `555ms`, visible/imported in desktop `35.7s`.
+
+3. Add/use timing:
+   - Click `Reload now`, select the imported provider model, and run the exact
+     prompt from this flow.
+   - Record time from `Run task` click to first final assistant text.
+   - Confirm the session model metadata uses the `lpr_...` provider id.
+
+4. Remove timing:
+   - Delete the Den provider from the org, or remove it from the resource
+     snapshot source used by the Den API.
+   - Trigger desktop provider sync by opening Settings -> AI Providers, changing
+     Den settings, or waiting for the cloud-provider sync interval.
+   - Confirm the imported provider disappears from connected providers,
+     workspace cloud import metadata, and the model picker.
+   - Confirm a task cannot continue using the removed provider after reload.
+
+5. Policy persistence:
+   - Toggle an org desktop policy in Den, refresh desktop settings, then reload
+     the app.
+   - Confirm the restriction is still applied immediately from cached desktop
+     config before the HTTP refresh completes.
+   - Confirm the HTTP refresh either updates the policy or preserves the cached
+     policy on transient failure.
+
+6. Local file checks:
+   - Confirm OpenWork-owned cloud import metadata is stored in the OpenWork
+     runtime DB, not `.opencode/openwork.json`.
+   - Confirm the provider executable config currently lands in `opencode.jsonc`;
+     this remains a follow-up if the desired end state is no cloud-managed
+     provider writes to user-owned OpenCode config.
+
+### Expected outcome
+
+- Fresh desktop starts without a local OpenAI provider.
+- Den-managed provider appears as a cloud provider with `Credential ready`.
+- Imported provider config includes the executable provider config fields needed
+  by OpenCode, including the provider package metadata.
+- The selected model completes a real task and returns `Den LLM provisioning OK`.
+- Removing the Den provider removes the imported local provider on the next
+  desktop provider sync and reload.
+- Sync timing remains interactive for realistic org provider counts.
+- No API key is printed, checked in, or written into repo docs.
+
+### Regression caught
+
+Den returned `providerConfig` and model `config` as JSON strings. The desktop
+client must parse those stringified records; otherwise imported provider config
+is incomplete and OpenCode fails with `"undefined/chat/completions" cannot be
+parsed as a URL.`
 
 ---
 

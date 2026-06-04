@@ -7,10 +7,10 @@
  */
 import { mkdir } from "node:fs/promises";
 import { resolveServerConfig, type CliArgs } from "./config.js";
-import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
+import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
 import { startServer } from "./server.js";
 import { ensureWorkspaceFiles } from "./workspace-init.js";
-import { openworkExtensionsPreviewPluginPath } from "./openwork-extensions-plugin-path.js";
+import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
@@ -30,6 +30,8 @@ export type EmbeddedServerHandle = {
   url: string;
   /** The resolved server config (with OpenCode URLs populated). */
   config: ServerConfig;
+  /** Redacted details for the managed OpenCode child process, when spawned. */
+  managedOpencodeExecution: OpencodeExecutionSnapshot | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -53,12 +55,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   if (!config.opencodeBaseUrl && options.manageOpencode) {
     const workspace = config.workspaces[0];
     if (workspace?.path) {
-      const openworkExtensionsPreviewConfig = JSON.stringify({
-        plugin: [
-          "opencode-chrome-devtools",
-          openworkExtensionsPreviewPluginPath(),
-        ],
-      });
+      const openworkRuntimeConfig = await buildOpenworkRuntimeConfig(config, workspace.id);
       const cwd = options.opencodeCwd
         || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
@@ -69,9 +66,10 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         env: {
           ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+          ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
           OPENWORK_SERVER_URL: serverUrl,
           OPENWORK_SERVER_TOKEN: config.token,
-          OPENCODE_CONFIG_CONTENT: openworkExtensionsPreviewConfig,
+          OPENCODE_CONFIG_CONTENT: openworkRuntimeConfig,
           OPENCODE_MODELS_URL: opencodeModelsUrl,
         },
       });
@@ -101,6 +99,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     port: server.port,
     url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
     config,
+    managedOpencodeExecution: managedOpencode?.execution ?? null,
     async stop() {
       managedOpencode?.close();
       await server.stop();

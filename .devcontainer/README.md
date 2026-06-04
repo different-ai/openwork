@@ -23,18 +23,21 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 The test script creates a sandbox from the reusable `openwork-eval-vnc` snapshot
 when present, checks out the target ref, skips `pnpm install` if the lockfile is
 unchanged, starts XFCE/noVNC, Vite, and Electron, then prints the noVNC and CDP
-URLs. If the snapshot is missing, it falls back to the VNC Dockerfile path. The
+URLs. If the snapshot is missing, it fails fast and tells you to create it. The
 snapshot intentionally does not bake `node_modules`; installs use the reusable
 `openwork-eval-pnpm-store` volume so the image stays under Daytona's 20 GB limit.
 
-For OpenAI/provider evals, create the reusable Daytona secrets volume once:
+For provider evals, create/populate the reusable Daytona secrets volume once:
 
 ```bash
 bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken
+bash .devcontainer/setup-daytona-secrets-volume.sh .anthropic anthropic.env
 ```
 
 Future Daytona test sandboxes mount `openwork-eval-secrets:/daytona-secrets`
-and source `/daytona-secrets/openai.env` automatically before Electron starts.
+and source every `/daytona-secrets/*.env` file automatically before Electron
+starts. Use this volume for provider keys and other eval-only secrets; never
+commit those files into the repo.
 
 For downloadable eval artifacts or optional video recording, use:
 
@@ -46,8 +49,9 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit] --record-video
 The artifacts flow mounts `openwork-eval-artifacts:/daytona-artifacts`, starts a
 static download server on port 8090, and prints a Daytona preview URL. Recording
 writes mp4 files to `/daytona-artifacts/recordings` and prints the direct video
-URL. Stop recording with the printed `pkill -INT -f "ffmpeg.*x11grab"` command so
-ffmpeg finalizes the file cleanly.
+URL. Screenshots write png files to `/daytona-artifacts/screenshots` for quick
+AI/human validation checkpoints. Stop recording with
+`.devcontainer/stop-daytona-recording.sh` so ffmpeg finalizes the file cleanly.
 
 Do not use the generic `daytona create https://github.com/different-ai/openwork`
 flow for Electron/noVNC tests. The default resource size is too small and the
@@ -91,7 +95,32 @@ client and talks to the server through public Daytona preview URLs.
    applies Daytona-safe Chromium flags, and starts Electron on display `:99`.
 7. **CDP on port 9825** enables Chrome MCP and browser-tool automation.
 8. Optional artifact capture mounts `/daytona-artifacts`, serves it on port 8090,
-   and records display `:99` with ffmpeg when `--record-video` is passed.
+   records display `:99` with ffmpeg when `--record-video` is passed, and can
+   capture screenshot checkpoints with `.devcontainer/capture-daytona-screenshot.sh`.
+
+## Validation Evidence
+
+Use three layers of evidence for Daytona UI work:
+
+- **CDP assertions:** use browser tools against port 9825 to inspect text, URL,
+  state, and accessibility snapshots. This is the primary AI validation path.
+- **Screenshots:** run `daytona exec "$SANDBOX" -- 'bash .devcontainer/capture-daytona-screenshot.sh'` after important states. These png files live in `/daytona-artifacts/screenshots`.
+- **Recordings:** start with `--record-video --recording-name <name>` for flows
+  that need PR evidence. These mp4 files live in `/daytona-artifacts/recordings`.
+
+Recordings prove the flow to humans. CDP assertions and screenshots give the AI
+fast checkpoints to decide whether behavior is correct before reporting success.
+
+## AI Skills
+
+The Daytona toolbox is exposed to opencode through focused skills:
+
+- `daytona-dev`: overview of the Daytona setup and when to use each piece.
+- `daytona-cloud-server`: Den Web/API, worker proxy, marketplace, cloud auth, and org policy flows.
+- `daytona-secrets-volume`: add and verify provider keys or eval-only secrets in `/daytona-secrets`.
+- `daytona-electron-test`: run and drive the real Electron app through CDP/noVNC.
+- `daytona-recording-artifacts`: screenshots, recordings, before/after videos, and PR evidence.
+- `run-evals`: orchestrates evals and pulls in the relevant Daytona skill based on the flow.
 
 ## Testing the customization system
 

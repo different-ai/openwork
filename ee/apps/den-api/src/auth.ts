@@ -265,8 +265,8 @@ export const auth = betterAuth({
     },
   },
   emailVerification: {
-    sendOnSignUp: true,
-    sendOnSignIn: true,
+    sendOnSignUp: env.requireEmailVerification,
+    sendOnSignIn: env.requireEmailVerification,
     afterEmailVerification: async (user) => {
       await syncDenSignupContact({
         email: user.email,
@@ -277,7 +277,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     autoSignIn: false,
-    requireEmailVerification: true,
+    requireEmailVerification: env.requireEmailVerification,
     revokeSessionsOnPasswordReset: true,
     async sendResetPassword({ user, url }) {
       await sendEmail({
@@ -306,7 +306,7 @@ export const auth = betterAuth({
       ac: denOrganizationAccess,
       roles: denOrganizationStaticRoles,
       creatorRole: "owner",
-      requireEmailVerificationOnInvitation: true,
+      requireEmailVerificationOnInvitation: env.requireEmailVerification,
       dynamicAccessControl: {
         enabled: true,
       },

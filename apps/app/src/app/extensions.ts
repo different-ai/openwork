@@ -158,7 +158,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     composer: { prompt: "Use the OpenWork Browser extension to " },
     setup: {
       instructions: "OpenWork Browser is ready by default in desktop workspaces.",
-      primaryCta: "Enable browser automation",
     },
     resources: [
       {
@@ -175,7 +174,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     ],
     enablement: [
       { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
-      { type: "plugin-loaded", ref: "opencode-chrome-devtools", label: "Browser plugin loaded" },
     ],
     lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
     defaultEnabled: true,
@@ -184,13 +182,13 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     schemaVersion: 1,
     id: "computer-use",
     name: "Computer Use",
-    description: "Control macOS apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
+    description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
     preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
     icon: { src: "/openwork-mark.svg" },
     composer: { prompt: "Use Computer Use to " },
     setup: {
-      instructions: "Computer Use runs as a local MCP server backed by a macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
+      instructions: "Computer Use is Mac only. It runs as a local MCP server backed by the macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
       primaryCta: "Connect Computer Use MCP",
       secondaryCta: "Check macOS permissions",
       testActionRef: "openwork.computerUse.healthCheck",
@@ -236,16 +234,16 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     icon: { src: "/ext-openai.svg" },
     composer: { prompt: "Use the OpenAI Image Gen extension to " },
     setup: {
-      instructions: "Add an OpenAI API key, then OpenWork installs an OpenCode plugin that exposes image_generate.",
+      instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions.",
       primaryCta: "Enable image generation",
       secondaryCta: "Generate test image",
       requiredEnv: ["OPENAI_API_KEY"],
       testActionRef: "openwork.imageGen.testGenerate",
     },
     resources: [
-      { type: "opencode-plugin", id: "openwork-image-generation", path: ".opencode/plugins/openwork-image-generation.ts", required: true },
       { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "file", id: "openai-image-config", path: ".opencode/openwork-extensions/openai-image-generation.json", required: true },
+      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
+      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
     ],
     contributions: [
       { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
@@ -253,10 +251,9 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
     ],
     enablement: [
-      { type: "plugin-loaded", ref: "openwork-image-generation", label: "Image plugin installed" },
       { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
     ],
-    lifecycle: { reload: ["plugins"], detection: ["plugin:openwork-image-generation"] },
+    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
   },
   {
     schemaVersion: 1,
@@ -322,7 +319,6 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
-    defaultHidden: true,
   },
   {
     schemaVersion: 1,

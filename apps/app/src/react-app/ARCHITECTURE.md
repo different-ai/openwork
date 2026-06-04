@@ -23,10 +23,13 @@ src/react-app/
     │   ├── state/             Settings-scoped hooks/providers
     │   ├── pages/             Plugins, extensions, config, ... (tab bodies)
     │   └── modals/            Reset modal, ...
-    ├── connections/
-    │   └── modals/            Add-MCP, provider auth, ...
-    └── shell-feedback/        Status toasts, reload banner, top-right notifications
+    └── connections/
+        └── modals/            Add-MCP, provider auth, ...
 ```
+
+Toasts and shell notifications are rendered with `sonner` (`@/components/ui/sonner`),
+mounted once via `<Toaster />` in `shell/providers.tsx` and driven imperatively with
+`toast()` from anywhere.
 
 ## Why domains
 
@@ -38,7 +41,6 @@ The React tree uses explicit domain ownership so every feature has one obvious h
 - `settings/` owns settings state, the full settings shell once it lands, and each tab body as a
   stateless page under `pages/`.
 - `connections/` owns MCP and provider auth UI.
-- `shell-feedback/` owns toasts and notifications that the shell shows on top of everything.
 
 Cross-domain imports go through module boundaries, not a shared blob.
 

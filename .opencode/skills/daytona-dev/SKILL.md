@@ -1,3 +1,8 @@
+---
+name: daytona-dev
+description: Daytona development environment overview. Use when the user asks about Daytona setup, Daytona toolbox, dev environment, noVNC, CDP, server sandbox, secrets volume, Electron sandbox, standalone Chrome, validation, or artifacts volume.
+---
+
 # Skill: Daytona Dev Environment
 
 Launch the OpenWork Electron app in a Daytona cloud sandbox. The real desktop
@@ -18,8 +23,30 @@ browser.
 bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 ```
 
-The helper uses the VNC snapshot when available, falls back to the VNC Dockerfile
-when needed, starts noVNC/Vite/Electron, and prints the URLs.
+The helper uses the VNC snapshot, starts noVNC/Vite/Electron, and prints the
+URLs. If the snapshot is missing, create it with
+`bash .devcontainer/create-daytona-openwork-snapshot.sh`.
+
+Use the Daytona setup as four reusable pieces. Prefer the focused skills when a
+request names one piece directly:
+
+- `test-on-daytona.sh` for the real Electron/noVNC/CDP sandbox.
+- `daytona-flow-validator` for the observe -> act -> assert -> evidence loop.
+- `test-server-on-daytona.sh` for the cloud Den server sandbox.
+- `daytona-electron-den` for Electron connected to a Daytona Den server.
+- `daytona-chrome-cdp` for standalone Chrome in the sandbox, separate from Electron.
+- `openwork-eval-secrets:/daytona-secrets` for provider keys and eval-only secrets.
+- `openwork-eval-artifacts:/daytona-artifacts` for screenshots, validation notes, and recordings.
+
+Focused skills:
+
+- `daytona-cloud-server` for cloud server and Den flows.
+- `daytona-electron-den` for two-sandbox Electron + Den validation.
+- `daytona-flow-validator` for pass/fail validation and evidence.
+- `daytona-chrome-cdp` for normal Chrome browser automation in Daytona.
+- `daytona-secrets-volume` for adding or verifying secrets.
+- `daytona-electron-test` for real Electron UI validation.
+- `daytona-recording-artifacts` for screenshots, recordings, and PR evidence.
 
 Or SSH in after the helper prints the sandbox name:
 
@@ -87,8 +114,11 @@ daytona exec openwork-dev 'tail -50 /tmp/electron.log'
 daytona exec openwork-dev 'tail -50 /tmp/vite.log'
 daytona exec openwork-dev 'tail -50 /tmp/start-vnc.log'
 
-# Take a screenshot via CDP
+# Inspect Electron CDP targets
 daytona exec openwork-dev 'curl -s http://127.0.0.1:9825/json/list'
+
+# Capture a persistent screenshot artifact
+daytona exec openwork-dev 'bash .devcontainer/capture-daytona-screenshot.sh'
 
 # Restart just the Electron app
 daytona exec openwork-dev 'bash -lc "pkill -f electron || true; pkill -f electron-dev || true"'

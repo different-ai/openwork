@@ -43,8 +43,6 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   onClose: () => void;
   headerLeadingSlot?: React.ReactNode;
   children: React.ReactNode;
-  error?: string | null;
-  errorSlot?: React.ReactNode;
   modalSlot?: React.ReactNode;
   footer?: React.ReactNode;
   compact?: boolean;
@@ -85,15 +83,6 @@ export function SettingsShell(props: SettingsShellProps) {
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col">
             <SettingsPage {...props}>{props.children}</SettingsPage>
-
-            {props.error ? (
-              <div className="mx-auto w-full max-w-3xl px-4 pb-6">
-                <div className="flex flex-col gap-y-3 rounded-2xl border border-red-7/20 bg-red-1/40 px-5 py-4 text-sm text-red-12">
-                  <div>{props.error}</div>
-                  {props.errorSlot}
-                </div>
-              </div>
-            ) : null}
 
             {props.modalSlot}
           </div>
@@ -155,15 +144,6 @@ export function SettingsShell(props: SettingsShellProps) {
 
             <div className="flex min-h-0 flex-1 flex-col">
               <SettingsPage {...props}>{props.children}</SettingsPage>
-
-              {props.error ? (
-                <div className="mx-auto max-w-5xl px-6 pb-24 md:px-10 md:pb-10">
-                  <div className="flex flex-col gap-y-3 rounded-2xl border border-red-7/20 bg-red-1/40 px-5 py-4 text-sm text-red-12">
-                    <div>{props.error}</div>
-                    {props.errorSlot}
-                  </div>
-                </div>
-              ) : null}
 
               {props.modalSlot}
             </div>
