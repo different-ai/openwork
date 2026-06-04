@@ -12,7 +12,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../../billing/polar.js"
+import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
@@ -36,16 +36,6 @@ export const updateWorkerSchema = z.object({
 
 export const listWorkersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
-})
-
-export const billingQuerySchema = z.object({
-  includeCheckout: z.string().optional(),
-  excludePortal: z.string().optional(),
-  excludeInvoices: z.string().optional(),
-})
-
-export const billingSubscriptionSchema = z.object({
-  cancelAtPeriodEnd: z.boolean().default(true),
 })
 
 export const activityHeartbeatSchema = z.object({
@@ -158,15 +148,6 @@ function getConnectUrlCandidates(workerId: WorkerId, instanceUrl: string | null)
   }
 
   return candidates
-}
-
-export function queryIncludesFlag(value: string | undefined): boolean {
-  if (typeof value !== "string") {
-    return false
-  }
-
-  const normalized = value.trim().toLowerCase()
-  return normalized === "1" || normalized === "true" || normalized === "yes"
 }
 
 export function readBearerToken(value: string | undefined) {
@@ -384,44 +365,6 @@ export async function requireCloudAccessOrPayment(input: {
   name: string
 }) {
   return requireCloudWorkerAccess(input)
-}
-
-export async function getWorkerBilling(input: {
-  userId: UserId
-  email: string
-  name: string
-  includeCheckoutUrl: boolean
-  includePortalUrl: boolean
-  includeInvoices: boolean
-}) {
-  return getCloudWorkerBillingStatus(
-    {
-      userId: input.userId,
-      email: input.email,
-      name: input.name,
-    },
-    {
-      includeCheckoutUrl: input.includeCheckoutUrl,
-      includePortalUrl: input.includePortalUrl,
-      includeInvoices: input.includeInvoices,
-    },
-  )
-}
-
-export async function setWorkerBillingSubscription(input: {
-  userId: UserId
-  email: string
-  name: string
-  cancelAtPeriodEnd: boolean
-}) {
-  return setCloudWorkerSubscriptionCancellation(
-    {
-      userId: input.userId,
-      email: input.email,
-      name: input.name,
-    },
-    input.cancelAtPeriodEnd,
-  )
 }
 
 export async function getWorkerTokensAndConnect(worker: WorkerRow) {

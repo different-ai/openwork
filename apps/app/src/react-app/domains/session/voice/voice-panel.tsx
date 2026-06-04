@@ -3,12 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ChevronDown, ChevronRight, Loader2, Mic2, MicOff, Radio, SendHorizontal, Sparkles, Square, X } from "lucide-react";
 import { PaperGrainGradient } from "@openwork/ui/react";
 
-import { desktopFetch } from "../../../../app/lib/desktop";
-import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
+import { desktopFetch } from "@/app/lib/desktop";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { publishInspectorSlice, recordInspectorEvent } from "../../../shell/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -28,6 +28,8 @@ type VoiceRuntimeSnapshot = {
   status: VoiceStatus;
   statusText: string;
   micMuted: boolean;
+  micDiagnostics: string;
+  realtimeDiagnostics: string;
   entries: VoiceTimelineEntry[];
   latestUserTranscript: string;
   assistantPreview: string;
@@ -56,6 +58,8 @@ const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
   status: "idle",
   statusText: "Ready for voice control.",
   micMuted: false,
+  micDiagnostics: "Microphone has not started yet.",
+  realtimeDiagnostics: "Realtime is not connected.",
   entries: [],
   latestUserTranscript: "",
   assistantPreview: "",
@@ -178,6 +182,32 @@ function waitForDataChannelOpen(channel: RTCDataChannel) {
   });
 }
 
+function describeAudioTrack(track: MediaStreamTrack | undefined) {
+  if (!track) return "No microphone track is attached.";
+  const muted = track.muted ? "muted by the system" : "not muted by the system";
+  const enabled = track.enabled ? "enabled" : "disabled";
+  return `Microphone track is ${track.readyState}, ${enabled}, and ${muted}.`;
+}
+
+function setMicDiagnostics(stream: MediaStream | null) {
+  const track = stream?.getAudioTracks()[0];
+  setVoiceRuntimeSnapshot((current) => ({ ...current, micDiagnostics: describeAudioTrack(track) }));
+}
+
+function setRealtimeDiagnostics(text: string) {
+  setVoiceRuntimeSnapshot((current) => ({ ...current, realtimeDiagnostics: text }));
+}
+
+async function requestMacMicrophoneAccess() {
+  const ask = window.__OPENWORK_ELECTRON__?.system?.askMicrophoneAccess;
+  if (!ask) return true;
+  const result = await ask();
+  if (result.platform !== "darwin") return true;
+  const status = result.after ?? result.before ?? result.status ?? "unknown";
+  setVoiceRuntimeSnapshot((current) => ({ ...current, micDiagnostics: `macOS microphone permission is ${status}.` }));
+  return result.granted;
+}
+
 async function executeOpenWorkTool(name: string, args: Record<string, unknown>) {
   const control = window.__openworkControl;
   if (!control) return { ok: false, error: "OpenWork control surface is not available." };
@@ -284,7 +314,7 @@ export function VoicePanel(props: VoicePanelProps) {
   const timelineEndRef = useRef<HTMLDivElement>(null);
   const [textCommand, setTextCommand] = useState("");
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(() => new Set());
-  const { status, statusText, micMuted, entries, latestUserTranscript, assistantPreview } = useVoiceRuntimeSnapshot();
+  const { status, statusText, micMuted, micDiagnostics, realtimeDiagnostics, entries, latestUserTranscript, assistantPreview } = useVoiceRuntimeSnapshot();
   const connected = status === "listening" || status === "speaking" || status === "muted";
 
   const addEntry = useCallback((role: VoiceTimelineEntry["role"], text: string, options: { toolName?: string; error?: boolean } = {}) => {
@@ -334,7 +364,13 @@ export function VoicePanel(props: VoicePanelProps) {
     voiceRealtime.responseInProgress = false;
     voiceRealtime.pendingResponse = false;
     voiceRealtime.micMuted = false;
-    setVoiceRuntimeSnapshot((current) => ({ ...current, micMuted: false, assistantPreview: "" }));
+    setVoiceRuntimeSnapshot((current) => ({
+      ...current,
+      micMuted: false,
+      micDiagnostics: "Microphone has not started yet.",
+      realtimeDiagnostics: "Realtime is not connected.",
+      assistantPreview: "",
+    }));
     setRuntimeStatus("idle");
     if (!silent) addEntry("system", "Voice session stopped.");
     recordInspectorEvent("voice.disconnected", { sessionId: props.sessionId });
@@ -453,14 +489,21 @@ export function VoicePanel(props: VoicePanelProps) {
     voiceRealtime.peer = peer;
     if (audioInput) {
       setRuntimeStatus("connecting", "Requesting microphone...");
+      const macPermissionGranted = await requestMacMicrophoneAccess();
+      if (!macPermissionGranted) throw new Error("macOS denied microphone access. Enable OpenWork in System Settings > Privacy & Security > Microphone, then restart OpenWork.");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       voiceRealtime.stream = stream;
+      setMicDiagnostics(stream);
       for (const track of stream.getAudioTracks()) {
+        track.addEventListener("mute", () => setMicDiagnostics(stream));
+        track.addEventListener("unmute", () => setMicDiagnostics(stream));
+        track.addEventListener("ended", () => setMicDiagnostics(stream));
         peer.addTrack(track, stream);
       }
     } else {
+      setVoiceRuntimeSnapshot((current) => ({ ...current, micDiagnostics: "Voice command is using typed or injected audio, not the microphone." }));
       peer.addTransceiver("audio", { direction: "recvonly" });
     }
 
@@ -496,6 +539,7 @@ export function VoicePanel(props: VoicePanelProps) {
     }
     await peer.setRemoteDescription({ type: "answer", sdp: await sdpResponse.text() });
     await waitForDataChannelOpen(channel);
+    setRealtimeDiagnostics("Realtime data channel is open.");
     setRuntimeStatus("listening", audioInput ? undefined : "Connected. Send a typed voice command.");
     addEntry("system", `Realtime connected with ${realtimeSession.model} and ${realtimeSession.tools.length} OpenWork tools.`);
     recordInspectorEvent("voice.connected", { sessionId: props.sessionId, model: realtimeSession.model });
@@ -508,6 +552,7 @@ export function VoicePanel(props: VoicePanelProps) {
     } catch (error) {
       disconnectRealtime(true);
       const message = error instanceof Error ? error.message : String(error);
+      setRealtimeDiagnostics(message);
       setRuntimeStatus("error", message);
       addEntry("system", message, { error: true });
       return { ok: false, error: message };
@@ -598,7 +643,7 @@ export function VoicePanel(props: VoicePanelProps) {
       })),
     }));
     return dispose;
-  }, [assistantPreview, connected, entries, latestUserTranscript, micMuted, props.sessionId, status, statusText, textCommand.length]);
+  }, [assistantPreview, connected, entries, latestUserTranscript, micDiagnostics, micMuted, props.sessionId, realtimeDiagnostics, status, statusText, textCommand.length]);
 
   const startAction = useMemo<OpenworkControlAction>(() => ({
     id: "voice.start",
@@ -676,8 +721,8 @@ export function VoicePanel(props: VoicePanelProps) {
     label: "Read Voice Mode status",
     description: "Return the Voice Mode runtime state for tests and agents.",
     sideEffect: "none",
-    execute: () => ({ status, statusText, connected, micMuted, latestUserTranscript, assistantPreview }),
-  }), [assistantPreview, connected, latestUserTranscript, micMuted, status, statusText]);
+    execute: () => ({ status, statusText, connected, micMuted, micDiagnostics, realtimeDiagnostics, latestUserTranscript, assistantPreview }),
+  }), [assistantPreview, connected, latestUserTranscript, micDiagnostics, micMuted, realtimeDiagnostics, status, statusText]);
   useControlAction(statusAction);
 
   return (
@@ -704,7 +749,8 @@ export function VoicePanel(props: VoicePanelProps) {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-5 px-4 py-5">
+        <ScrollAreaViewport>
+          <div className="flex flex-col gap-5 px-4 py-5">
           <VoiceOrb status={status} muted={micMuted} />
 
           <div className="text-center">
@@ -784,6 +830,28 @@ export function VoicePanel(props: VoicePanelProps) {
           <Card variant="outline" size="sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm">
+                <Radio className="text-primary" />
+                Voice diagnostics
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs text-muted-foreground">
+              <div>
+                <span className="font-medium text-foreground">Connection:</span> {realtimeDiagnostics}
+              </div>
+              <div>
+                <span className="font-medium text-foreground">Microphone:</span> {micDiagnostics}
+              </div>
+              {status === "error" ? (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-destructive">
+                  {statusText}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card variant="outline" size="sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
                 <Sparkles className="text-primary" />
                 Typed voice command
               </CardTitle>
@@ -838,7 +906,8 @@ export function VoicePanel(props: VoicePanelProps) {
             )}
             <div ref={timelineEndRef} />
           </div>
-        </div>
+          </div>
+        </ScrollAreaViewport>
       </ScrollArea>
     </div>
   );

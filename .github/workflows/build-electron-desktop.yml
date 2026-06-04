@@ -38,12 +38,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: 11.4.0
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version: 24
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -73,12 +73,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.27.0
+          version: 11.4.0
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version: 24
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

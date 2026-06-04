@@ -7,9 +7,10 @@ import { ensureDir, exists } from "./utils.js";
 interface ParseResult<T> {
   data: T;
   raw: string;
+  invalid?: boolean;
 }
 
-export async function readJsoncFile<T>(path: string, fallback: T): Promise<ParseResult<T>> {
+export async function readJsoncFile<T>(path: string, fallback: T, options?: { allowInvalid?: boolean }): Promise<ParseResult<T>> {
   if (!(await exists(path))) {
     return { data: fallback, raw: "" };
   }
@@ -17,6 +18,7 @@ export async function readJsoncFile<T>(path: string, fallback: T): Promise<Parse
   const errors: { error: number; offset: number; length: number }[] = [];
   const data = parse(raw, errors, { allowTrailingComma: true }) as T;
   if (errors.length > 0) {
+    if (options?.allowInvalid === true) return { data: fallback, raw, invalid: true };
     const details = errors.map((error) => ({
       code: printParseErrorCode(error.error),
       offset: error.offset,

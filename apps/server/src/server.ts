@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, readdir, rename, stat, appendFile, mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { ApprovalService } from "./approvals.js";
@@ -12,14 +12,14 @@ import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
-import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint } from "./reload-fingerprint.js";
 import { startReloadWatchers } from "./reload-watcher.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { workspaceIdForPath } from "./workspaces.js";
+import { workspaceIdForPath, workspaceIdForRemote } from "./workspaces.js";
 import { ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
@@ -27,13 +27,18 @@ import { EnvService, EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey } from
 import { TOY_UI_CSS, TOY_UI_FAVICON_SVG, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import { FileSessionStore } from "./file-sessions.js";
 import {
+  normalizeResourceSnapshot,
+  readDesktopCloudSyncState,
+  syncDesktopCloudResources,
+} from "./desktop-cloud-sync.js";
+import { installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
+import {
   applyMaterializedBlueprintSessions,
   normalizeBlueprintSessionTemplates,
   readMaterializedBlueprintSessions,
   sanitizeOpenworkTemplateConfig,
 } from "./blueprint-sessions.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { fetchSharedBundle, publishSharedBundle } from "./share-bundles.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
 import { listPortableFiles } from "./portable-files.js";
 import {
@@ -54,6 +59,26 @@ import {
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { serve, type ServeResult } from "./serve-node.js";
+import {
+  createGoogleWorkspaceConnectFlowManager,
+  googleWorkspaceDisconnect,
+  googleWorkspaceRunScopeSmokeTest,
+  googleWorkspaceStatus,
+  googleWorkspaceTestConnection,
+} from "./extensions/google-workspace.js";
+import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "./extensions/index.js";
+import {
+  mergeOpencodeConfigs,
+  readRuntimeOpencodeConfig,
+  type RuntimeOpencodeConfig,
+  writeRuntimeOpencodeConfig,
+} from "./runtime-opencode-config-store.js";
+import {
+  mergeOpenworkWorkspaceConfigs,
+  readOpenworkWorkspaceConfig,
+  writeOpenworkWorkspaceConfig,
+} from "./openwork-workspace-config-store.js";
+import { buildOpenworkRuntimeConfigObject } from "./openwork-runtime-config.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -69,6 +94,7 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
 const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 
 const OPENWORK_VOICE_REALTIME_TOOLS = [
   {
@@ -109,6 +135,265 @@ function readStringField(value: unknown, key: string): string {
   return typeof field === "string" ? field.trim() : "";
 }
 
+const LEGACY_RUNTIME_CONFIG_KEYS = ["plugin", "mcp", "permission", "provider"] as const;
+const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "disabled_providers", "provider"] as const;
+
+type LegacyRuntimeConfigKey = typeof LEGACY_RUNTIME_CONFIG_KEYS[number];
+type UserOpencodeRuntimeConfigKey = typeof USER_OPENCODE_RUNTIME_CONFIG_KEYS[number];
+
+function legacyRuntimeConfigFromOpenworkConfig(openwork: Record<string, unknown>): {
+  config: RuntimeOpencodeConfig;
+  keys: LegacyRuntimeConfigKey[];
+} {
+  const keys: LegacyRuntimeConfigKey[] = [];
+  const plugin = Array.isArray(openwork.plugin) ? openwork.plugin.filter((item) => typeof item === "string") : [];
+  const mcp: Record<string, Record<string, unknown>> = {};
+  if (isRecord(openwork.mcp)) {
+    for (const [name, value] of Object.entries(openwork.mcp)) {
+      if (isRecord(value)) mcp[name] = value;
+    }
+  }
+  const permission = isRecord(openwork.permission) ? openwork.permission : null;
+  const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : null;
+  const provider = isRecord(openwork.provider) ? openwork.provider : null;
+
+  if (plugin.length) keys.push("plugin");
+  if (Object.keys(mcp).length) keys.push("mcp");
+  if (externalDirectory && Object.keys(externalDirectory).length) keys.push("permission");
+  if (provider && Object.keys(provider).length) keys.push("provider");
+
+  return {
+    keys,
+    config: {
+      ...(plugin.length ? { plugin } : {}),
+      ...(Object.keys(mcp).length ? { mcp } : {}),
+      ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
+      ...(provider ? { provider } : {}),
+    },
+  };
+}
+
+function removeLegacyRuntimeConfig(openwork: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...openwork };
+  for (const key of LEGACY_RUNTIME_CONFIG_KEYS) {
+    delete next[key];
+  }
+  return next;
+}
+
+function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>): {
+  config: RuntimeOpencodeConfig;
+  keys: UserOpencodeRuntimeConfigKey[];
+} {
+  const keys: UserOpencodeRuntimeConfigKey[] = [];
+  const defaultAgent = opencode.default_agent === "openwork" ? "openwork" : undefined;
+  const plugin = Array.isArray(opencode.plugin) ? opencode.plugin.filter((item) => typeof item === "string") : undefined;
+  const disabledProviders = Array.isArray(opencode.disabled_providers)
+    ? opencode.disabled_providers.filter((item) => typeof item === "string")
+    : undefined;
+  const provider = isRecord(opencode.provider) ? opencode.provider : undefined;
+
+  if (defaultAgent) keys.push("default_agent");
+  if (Array.isArray(opencode.plugin)) keys.push("plugin");
+  if (Array.isArray(opencode.disabled_providers)) keys.push("disabled_providers");
+  if (isRecord(opencode.provider)) keys.push("provider");
+
+  return {
+    keys,
+    config: {
+      ...(defaultAgent ? { default_agent: defaultAgent } : {}),
+      ...(plugin?.length ? { plugin } : {}),
+      ...(disabledProviders?.length ? { disabled_providers: disabledProviders } : {}),
+      ...(provider && Object.keys(provider).length ? { provider } : {}),
+    },
+  };
+}
+
+async function removeUserRuntimeConfigFromOpencode(workspaceRoot: string, keys: UserOpencodeRuntimeConfigKey[]): Promise<void> {
+  if (!keys.length) return;
+  const updates = Object.fromEntries(keys.map((key) => [key, undefined]));
+  await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), updates);
+}
+
+function runtimeConfigKeys(config: RuntimeOpencodeConfig): string[] {
+  const keys: string[] = [];
+  if (config.default_agent) keys.push("default_agent");
+  if (Array.isArray(config.plugin) && config.plugin.length) keys.push("plugin");
+  if (Array.isArray(config.disabled_providers) && config.disabled_providers.length) keys.push("disabled_providers");
+  if (isRecord(config.mcp) && Object.keys(config.mcp).length) keys.push("mcp");
+  const permission = isRecord(config.permission) ? config.permission : null;
+  if (permission && isRecord(permission.external_directory) && Object.keys(permission.external_directory).length) {
+    keys.push("permission");
+  }
+  if (isRecord(config.provider) && Object.keys(config.provider).length) keys.push("provider");
+  return keys;
+}
+
+function userOpencodeConfigKeys(config: Record<string, unknown>): string[] {
+  return Object.keys(config).filter((key) => key !== "$schema").sort();
+}
+
+function mergeLegacyRuntimeConfig(
+  current: RuntimeOpencodeConfig,
+  legacy: RuntimeOpencodeConfig,
+): RuntimeOpencodeConfig {
+  const currentPermission = isRecord(current.permission) ? current.permission : {};
+  const legacyPermission = isRecord(legacy.permission) ? legacy.permission : {};
+  const currentExternalDirectory = isRecord(currentPermission.external_directory) ? currentPermission.external_directory : {};
+  const legacyExternalDirectory = isRecord(legacyPermission.external_directory) ? legacyPermission.external_directory : {};
+  return {
+    default_agent: current.default_agent ?? legacy.default_agent,
+    plugin: [
+      ...(Array.isArray(current.plugin) ? current.plugin.filter((item) => typeof item === "string") : []),
+      ...(Array.isArray(legacy.plugin) ? legacy.plugin.filter((item) => typeof item === "string") : []),
+    ].filter((item, index, list) => list.indexOf(item) === index),
+    disabled_providers: [
+      ...(Array.isArray(current.disabled_providers) ? current.disabled_providers.filter((item) => typeof item === "string") : []),
+      ...(Array.isArray(legacy.disabled_providers) ? legacy.disabled_providers.filter((item) => typeof item === "string") : []),
+    ].filter((item, index, list) => list.indexOf(item) === index),
+    mcp: {
+      ...(isRecord(legacy.mcp) ? legacy.mcp : {}),
+      ...(isRecord(current.mcp) ? current.mcp : {}),
+    },
+    permission: {
+      ...legacyPermission,
+      ...currentPermission,
+      external_directory: {
+        ...legacyExternalDirectory,
+        ...currentExternalDirectory,
+      },
+    },
+    provider: {
+      ...(isRecord(legacy.provider) ? legacy.provider : {}),
+      ...(isRecord(current.provider) ? current.provider : {}),
+    },
+  };
+}
+
+function normalizeRemoteDirectory(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function parseOpenworkWorkspaceIdFromUrl(input: string | null | undefined): string | null {
+  const raw = input?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    return mountIndex >= 0 && segments[mountIndex + 1]
+      ? decodeURIComponent(segments[mountIndex + 1])
+      : null;
+  } catch {
+    const match = raw.match(/\/(?:workspace|w)\/([^/?#]+)/);
+    if (!match?.[1]) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+}
+
+function stripOpenworkWorkspaceMount(input: string | null | undefined): string | null {
+  const raw = input?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const workspaceIndex = segments.indexOf("workspace");
+    const legacyIndex = segments.indexOf("w");
+    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
+      const prefix = segments.slice(0, mountIndex).join("/");
+      url.pathname = prefix ? `/${prefix}` : "/";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/\/(?:workspace|w)\/[^/?#]+.*$/, "").replace(/\/+$/, "") || raw;
+  }
+}
+
+function openworkRemoteWorkspaceId(hostUrl: string, workspaceId: string | null | undefined): string {
+  const remoteWorkspaceId = workspaceId?.trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  return remoteWorkspaceId ? `rem_${remoteWorkspaceId}` : workspaceIdForRemote(hostUrl, null);
+}
+
+function workspaceDirectoryCandidates(workspace: Record<string, unknown>): string[] {
+  const opencode = isRecord(workspace.opencode) ? workspace.opencode : {};
+  return [workspace.directory, workspace.path, opencode.directory]
+    .map(normalizeRemoteDirectory)
+    .filter(Boolean);
+}
+
+function selectOpenworkWorkspaceForConnection(list: unknown, directory: string | null): Record<string, unknown> | null {
+  if (!isRecord(list)) return null;
+  const rawItems = Array.isArray(list.items)
+    ? list.items
+    : Array.isArray(list.workspaces)
+      ? list.workspaces
+      : [];
+  const items = rawItems.filter(isRecord);
+  if (!items.length) return null;
+
+  const expectedDirectory = normalizeRemoteDirectory(directory);
+  if (expectedDirectory) {
+    return items.find((item) => workspaceDirectoryCandidates(item).includes(expectedDirectory)) ?? null;
+  }
+
+  const activeId = readStringField(list, "activeId");
+  return (activeId ? items.find((item) => readStringField(item, "id") === activeId) : null) ?? items[0] ?? null;
+}
+
+function openworkWorkspaceDisplayName(workspace: Record<string, unknown>): string | null {
+  return readStringField(workspace, "displayName")
+    || readStringField(workspace, "openworkWorkspaceName")
+    || readStringField(workspace, "name")
+    || readStringField(workspace, "id")
+    || null;
+}
+
+async function fetchOpenworkWorkspaceList(hostUrl: string, token: string, hostToken: string): Promise<unknown> {
+  const url = `${hostUrl.replace(/\/+$/, "")}/workspaces`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (hostToken) headers.set("X-OpenWork-Host-Token", hostToken);
+
+  try {
+    const response = await fetch(url, { headers, signal: controller.signal });
+    if (!response.ok) {
+      throw new ApiError(
+        502,
+        "openwork_workspace_discovery_failed",
+        `OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`,
+      );
+    }
+    return await response.json();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(502, "openwork_workspace_discovery_failed", "OpenWork workspace discovery failed", {
+      error: String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function discoverOpenworkWorkspace(input: {
+  hostUrl: string;
+  token: string;
+  hostToken: string;
+  directory: string | null;
+}): Promise<Record<string, unknown> | null> {
+  const list = await fetchOpenworkWorkspaceList(input.hostUrl, input.token, input.hostToken);
+  return selectOpenworkWorkspaceForConnection(list, input.directory);
+}
+
 async function resolveOpenAiRealtimeApiKey(env: EnvService): Promise<string> {
   const records = await env.list();
   const storedKey =
@@ -144,6 +429,15 @@ Help the user control OpenWork by using the semantic OpenWork UI tools.
 - If audio is unclear, ask the user to repeat it instead of guessing.
 - Ignore background speech that is not addressed to OpenWork.
 - Summarize tool results briefly and offer the next useful step.`;
+}
+
+function enqueueDesktopCloudSync<T>(operation: () => Promise<T>): Promise<T> {
+  const run = desktopCloudSyncQueue.then(operation);
+  desktopCloudSyncQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expiresAt: number | null } {
@@ -563,10 +857,10 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
   return {
     ...server,
-    stop: () => {
+    stop: async () => {
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
-      server.stop();
+      await server.stop();
     },
   };
 }
@@ -607,12 +901,16 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
+function buildOpencodeDirectoryHeader(directory: string) {
+  return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
+}
+
 function createOpencodeDirectoryFetch(directory: string): typeof fetch {
   return Object.assign(
     (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const headers = new Headers(init?.headers ?? request.headers);
-      headers.set("x-opencode-directory", directory);
+      headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
       return fetch(new Request(request, { headers }));
     },
     { preconnect: fetch.preconnect },
@@ -674,7 +972,7 @@ async function proxyOpencodeRequest(input: {
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   if (directory && !headers.has("x-opencode-directory")) {
-    headers.set("x-opencode-directory", directory);
+    headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
   }
 
   const auth = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
@@ -1028,6 +1326,12 @@ function contentTypeForPath(path: string): string {
   if (lowered.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (lowered.endsWith(".xls")) return "application/vnd.ms-excel";
   if (lowered.endsWith(".ods")) return "application/vnd.oasis.opendocument.spreadsheet";
+  if (lowered.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (lowered.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (lowered.endsWith(".pptm")) return "application/vnd.ms-powerpoint.presentation.macroEnabled.12";
+  if (lowered.endsWith(".potx")) return "application/vnd.openxmlformats-officedocument.presentationml.template";
+  if (lowered.endsWith(".pot")) return "application/vnd.ms-powerpoint";
+  if (lowered.endsWith(".odp")) return "application/vnd.oasis.opendocument.presentation";
   if (isSupportedWorkspaceTextFilePath(path)) return "text/plain; charset=utf-8";
   return "application/octet-stream";
 }
@@ -1045,6 +1349,7 @@ function artifactPreviewForPath(path: string): string {
   const lowered = path.toLowerCase();
   if (/\.(md|markdown|mdx)$/.test(lowered)) return "markdown";
   if (/\.(csv|tsv|xlsx|xls|ods)$/.test(lowered)) return "sheet";
+  if (/\.(ppt|pptx|pptm|pot|potx|odp|key|sxi)$/.test(lowered)) return "slides";
   if (/\.(png|jpe?g|gif|webp|svg)$/.test(lowered)) return "image";
   if (lowered.endsWith(".pdf")) return "pdf";
   if (/\.(html|htm)$/.test(lowered)) return "html";
@@ -1065,6 +1370,7 @@ function normalizeUrlTarget(value: string): string | null {
 export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
+  const workspaceResolved = resolve(workspaceRoot);
 
   for (const item of targets) {
     if (!item || typeof item !== "object") continue;
@@ -1096,7 +1402,16 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
 
     let relativePath: string;
     try {
-      relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+      if (isAbsolute(rawValue)) {
+        const absolutePath = resolve(rawValue);
+        const pathFromWorkspace = relative(workspaceResolved, absolutePath);
+        if (!pathFromWorkspace || pathFromWorkspace === ".." || pathFromWorkspace.startsWith(`..${sep}`) || isAbsolute(pathFromWorkspace)) {
+          continue;
+        }
+        relativePath = normalizeWorkspaceRelativePath(pathFromWorkspace, { allowSubdirs: true });
+      } else {
+        relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+      }
     } catch {
       continue;
     }
@@ -1362,6 +1677,121 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
+export type AuthorizedFoldersResponse = {
+  folders: string[];
+  hiddenCount: number;
+  workspaceRoot: string;
+};
+
+export type AuthorizedFoldersUpdateResponse = {
+  folders: string[];
+  hiddenCount: number;
+  updatedAt: number;
+};
+
+type AuthorizedFoldersConfig = {
+  folders: string[];
+  hiddenEntries: Record<string, unknown>;
+};
+
+function normalizeAuthorizedFolderPath(input: string | null | undefined): string {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "/*") return "/";
+  const withoutWildcard = trimmed.replace(/[\\/]\*+$/, "");
+  const withoutVerbatim = /^\\\\\?\\UNC\\/i.test(withoutWildcard)
+    ? `\\${withoutWildcard.slice(7)}`
+    : /^\\\\\?\\[a-zA-Z]:[\\/]/.test(withoutWildcard)
+      ? withoutWildcard.slice(4)
+      : withoutWildcard;
+  const unified = withoutVerbatim.replace(/\\/g, "/");
+  const withoutTrailing = unified.replace(/\/+$/, "");
+  return withoutTrailing || "/";
+}
+
+function externalDirectoryKeyToAuthorizedFolder(key: string, value: unknown): string | null {
+  if (value !== "allow") return null;
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  if (trimmed === "/*") return "/";
+  if (!trimmed.endsWith("/*")) return null;
+  return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
+}
+
+function authorizedFolderToExternalDirectoryKey(folder: string): string {
+  return folder === "/" ? "/*" : `${folder}/*`;
+}
+
+function hasOwnKey(object: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function readAuthorizedFoldersFromOpencodeConfig(
+  opencodeConfig: Record<string, unknown>,
+  workspaceRoot: string,
+): AuthorizedFoldersConfig {
+  const workspaceRootFolder = normalizeAuthorizedFolderPath(workspaceRoot);
+  const permission = ensurePlainObject(opencodeConfig.permission);
+  const externalDirectory = ensurePlainObject(permission.external_directory);
+  const folders: string[] = [];
+  const hiddenEntries: Record<string, unknown> = {};
+  const seen = new Set<string>();
+
+  for (const [key, value] of Object.entries(externalDirectory)) {
+    const folder = externalDirectoryKeyToAuthorizedFolder(key, value);
+    if (!folder) {
+      hiddenEntries[key] = value;
+      continue;
+    }
+    if (folder === workspaceRootFolder || seen.has(folder)) continue;
+    seen.add(folder);
+    folders.push(folder);
+  }
+
+  return { folders, hiddenEntries };
+}
+
+function parseAuthorizedFoldersPayload(input: unknown, workspaceRoot: string): string[] {
+  if (!Array.isArray(input)) {
+    throw new ApiError(400, "invalid_payload", "folders must be an array");
+  }
+
+  const workspaceRootFolder = normalizeAuthorizedFolderPath(workspaceRoot);
+  const folders: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input) {
+    if (typeof item !== "string") {
+      throw new ApiError(400, "invalid_payload", "folders must be an array of strings");
+    }
+    const folder = normalizeAuthorizedFolderPath(item);
+    if (!folder || folder === workspaceRootFolder || seen.has(folder)) continue;
+    seen.add(folder);
+    folders.push(folder);
+  }
+
+  return folders;
+}
+
+function mergeAuthorizedFoldersIntoExternalDirectory(
+  folders: string[],
+  hiddenEntries: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const next: Record<string, unknown> = { ...hiddenEntries };
+  for (const folder of folders) {
+    next[authorizedFolderToExternalDirectoryKey(folder)] = "allow";
+  }
+  return Object.keys(next).length ? next : undefined;
+}
+
+function buildAuthorizedFoldersResponse(workspace: WorkspaceInfo, config: AuthorizedFoldersConfig): AuthorizedFoldersResponse {
+  return {
+    folders: config.folders,
+    hiddenCount: Object.keys(config.hiddenEntries).length,
+    workspaceRoot: normalizeAuthorizedFolderPath(workspace.path),
+  };
+}
+
 function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   const { opencodeUsername, opencodePassword, ...rest } = workspace;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
@@ -1389,6 +1819,8 @@ function createRoutes(
 ): Route[] {
   const routes: Route[] = [];
   const fileSessions = new FileSessionStore();
+  const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
+  const envPendingChangesByRuntime = new Map<string, boolean>();
 
   const serializeFileSession = (session: {
     id: string;
@@ -1608,6 +2040,51 @@ function createRoutes(
     return jsonResponse(buildCapabilities(config));
   });
 
+  addRoute(routes, "GET", "/experimental/extensions/actions", "client", async (ctx) => {
+    const extensionId = ctx.url.searchParams.get("extensionId") ?? "";
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      actions: listExperimentalExtensionActions(extensionId),
+    });
+  });
+
+  addRoute(routes, "POST", "/experimental/extensions/call", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") {
+      throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
+    }
+    const body = await readJsonBody(ctx.request);
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body));
+  });
+
+  addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async () => {
+    return jsonResponse(await googleWorkspaceStatus(config));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/connect/start", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot connect Google Workspace");
+    return jsonResponse(await googleWorkspaceConnectFlows.start(), 201);
+  });
+
+  addRoute(routes, "GET", "/experimental/google-workspace/connect/status/:flowId", "client", async (ctx) => {
+    return jsonResponse(await googleWorkspaceConnectFlows.status(ctx.params.flowId));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/disconnect", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot disconnect Google Workspace");
+    const body = await readOptionalJsonBody(ctx.request);
+    const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : null;
+    return jsonResponse(await googleWorkspaceDisconnect(config, accountId));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/test", "client", async () => {
+    return jsonResponse(await googleWorkspaceTestConnection(config));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/smoke-test", "client", async () => {
+    return jsonResponse(await googleWorkspaceRunScopeSmokeTest(config));
+  });
+
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
     const items = config.workspaces.map(serializeWorkspace);
@@ -1653,18 +2130,68 @@ function createRoutes(
   }
 
   // User-level env vars (see apps/app/pr/environment-variables.md). All routes
-  // require the desktop host token (not owner bearer tokens) because values are
-  // returned raw; the React pane masks them only for display. Reload semantics
-  // are driven from the UI after a write; this surface is user-scoped, not
-  // workspace-scoped, so no audit.
-  addRoute(routes, "GET", "/env", "host-token", async () => {
+  // require the desktop host token (not owner bearer tokens). List callers can
+  // request metadata-only results so renderer settings panes do not receive
+  // every raw secret value up front. Reload semantics are driven from the UI
+  // after a write; this surface is user-scoped, not workspace-scoped, so no audit.
+  addRoute(routes, "GET", "/env", "host-token", async (ctx) => {
+    const includeValues = parseOptionalBoolean(ctx.url.searchParams.get("includeValues"), "includeValues") ?? true;
     const items = await env.list().catch(rethrowEnvStoreReadError);
-    return jsonResponse({ items });
+    return jsonResponse({
+      items: items.map((item) => ({
+        key: item.key,
+        updatedAt: item.updatedAt,
+        hasValue: item.value.length > 0,
+        ...(includeValues ? { value: item.value } : {}),
+      })),
+    });
   });
 
   addRoute(routes, "GET", "/env/keys", "host-token", async () => {
     const items = await env.list().catch(rethrowEnvStoreReadError);
     return jsonResponse({ keys: items.map((item) => item.key) });
+  });
+
+  function envRuntimeKeyFromUrl(url: URL): string {
+    return url.searchParams.get("runtimeKey")?.trim() || "default";
+  }
+
+  addRoute(routes, "GET", "/env/status", "host-token", async (ctx) => {
+    const runtimeKey = envRuntimeKeyFromUrl(ctx.url);
+    return jsonResponse({ runtimeKey, pendingChanges: envPendingChangesByRuntime.get(runtimeKey) === true });
+  });
+
+  addRoute(routes, "PUT", "/env/status", "host-token", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const runtimeKey = typeof body.runtimeKey === "string" && body.runtimeKey.trim()
+      ? body.runtimeKey.trim()
+      : "default";
+    const pendingChanges = body.pendingChanges === true;
+    if (pendingChanges) {
+      envPendingChangesByRuntime.set(runtimeKey, true);
+    } else {
+      envPendingChangesByRuntime.delete(runtimeKey);
+    }
+    return jsonResponse({ runtimeKey, pendingChanges });
+  });
+
+  addRoute(routes, "GET", "/env/:key", "host-token", async (ctx) => {
+    const key = ctx.params.key;
+    if (!isValidEnvKey(key)) {
+      throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
+    }
+    const item = (await env.list().catch(rethrowEnvStoreReadError)).find((entry) => entry.key === key);
+    if (!item) {
+      throw new ApiError(404, "env_not_found", "Environment variable not found");
+    }
+    return jsonResponse({
+      item: {
+        key: item.key,
+        updatedAt: item.updatedAt,
+        hasValue: item.value.length > 0,
+        value: item.value,
+      },
+    });
   });
 
   addRoute(routes, "PUT", "/env", "host-token", async (ctx) => {
@@ -1722,7 +2249,7 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
-  addRoute(routes, "POST", "/voice/realtime/session", "host-token", async (ctx) => {
+  addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
   });
@@ -1775,9 +2302,101 @@ function createRoutes(
     }, 201);
   });
 
+  addRoute(routes, "POST", "/workspaces/remote", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const baseUrl = readStringField(body, "baseUrl");
+    if (!baseUrl) {
+      throw new ApiError(400, "invalid_payload", "baseUrl is required");
+    }
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      throw new ApiError(400, "invalid_payload", "baseUrl must start with http:// or https://");
+    }
+
+    const remoteType = readStringField(body, "remoteType") === "opencode" ? "opencode" : "openwork";
+    const directory = readStringField(body, "directory") || null;
+    const displayName = readStringField(body, "displayName") || null;
+    const rawOpenworkHostUrl = readStringField(body, "openworkHostUrl") || null;
+    const openworkHostUrl = remoteType === "openwork"
+      ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
+      : rawOpenworkHostUrl;
+    const openworkToken = readStringField(body, "openworkToken");
+    const openworkHostToken = readStringField(body, "openworkHostToken");
+    const sandboxBackend = readStringField(body, "sandboxBackend");
+    const sandboxRunId = readStringField(body, "sandboxRunId");
+    const sandboxContainerName = readStringField(body, "sandboxContainerName");
+    let openworkWorkspaceId = remoteType === "openwork"
+      ? readStringField(body, "openworkWorkspaceId")
+        || parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl)
+        || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+      : "";
+    let openworkWorkspaceName = readStringField(body, "openworkWorkspaceName") || null;
+
+    if (remoteType === "openwork" && !openworkWorkspaceId) {
+      const discovered = await discoverOpenworkWorkspace({
+        hostUrl: openworkHostUrl ?? baseUrl,
+        token: openworkToken,
+        hostToken: openworkHostToken,
+        directory,
+      });
+      openworkWorkspaceId = discovered ? readStringField(discovered, "id") : "";
+      openworkWorkspaceName = discovered ? openworkWorkspaceDisplayName(discovered) : openworkWorkspaceName;
+      if (!openworkWorkspaceId) {
+        throw new ApiError(
+          400,
+          "openwork_workspace_not_found",
+          directory
+            ? `OpenWork server has no workspace matching ${directory}.`
+            : "OpenWork server returned no workspaces.",
+        );
+      }
+    }
+
+    const workspace: WorkspaceInfo = {
+      id: remoteType === "openwork"
+        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, openworkWorkspaceId)
+        : workspaceIdForRemote(baseUrl, directory),
+      name: displayName ?? openworkWorkspaceName ?? "Remote workspace",
+      path: directory ?? "",
+      preset: "remote",
+      workspaceType: "remote",
+      remoteType,
+      baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
+      ...(directory ? { directory } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(remoteType === "openwork" && openworkHostUrl ? { openworkHostUrl } : {}),
+      ...(openworkToken ? { openworkToken } : {}),
+      ...(remoteType === "openwork" && openworkWorkspaceId ? { openworkWorkspaceId } : {}),
+      ...(remoteType === "openwork" && openworkWorkspaceName ? { openworkWorkspaceName } : {}),
+      ...(sandboxBackend ? { sandboxBackend } : {}),
+      ...(sandboxRunId ? { sandboxRunId } : {}),
+      ...(sandboxContainerName ? { sandboxContainerName } : {}),
+    };
+
+    config.workspaces = [workspace, ...config.workspaces.filter((entry) => entry.id !== workspace.id)];
+    const persisted = await persistServerWorkspaceState(config);
+    onWorkspacesChanged();
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.create",
+      target: workspace.path || workspace.baseUrl || "workspace",
+      summary: `Created remote workspace ${workspace.name}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({
+      activeId: workspace.id,
+      workspaces: config.workspaces.map(serializeWorkspace),
+      persisted,
+    }, 201);
+  });
+
   addRoute(routes, "PATCH", "/workspaces/:id/display-name", "host", async (ctx) => {
     ensureWritable(config);
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const nextDisplayName = typeof body.displayName === "string" && body.displayName.trim()
       ? body.displayName.trim()
@@ -1801,7 +2420,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "host" },
       action: "workspace.rename",
-      target: workspace.path,
+      target: workspace.path || workspace.baseUrl || "workspace",
       summary: `Updated workspace display name${nextDisplayName ? ` to ${nextDisplayName}` : ""}`,
       timestamp: Date.now(),
     });
@@ -1814,11 +2433,17 @@ function createRoutes(
   });
 
   addRoute(routes, "POST", "/workspaces/:id/activate", "host", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
+    const queryPersist = parseOptionalBoolean(ctx.url.searchParams.get("persist"), "persist");
+    const body = queryPersist === undefined ? await readOptionalJsonBody(ctx.request) : {};
+    const persist = queryPersist ?? (body.persist === true);
+    if (persist) ensureWritable(config);
     config.workspaces = [
       workspace,
       ...config.workspaces.filter((entry) => entry.id !== workspace.id),
     ];
+    const persisted = persist ? await persistServerWorkspaceState(config) : false;
+    if (persist) onWorkspacesChanged();
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -1828,23 +2453,22 @@ function createRoutes(
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-    if (connection.baseUrl?.trim()) {
+    if (workspace.workspaceType === "local" && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim()) {
       await reloadOpencodeEngine(config, workspace);
     }
-    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted: false });
+    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted });
   });
 
   addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
     ensureWritable(config);
 
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const workspace = await resolveWorkspaceForRegistry(config, ctx.params.id);
 
     const before = config.workspaces.length;
     config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);
     const deleted = before !== config.workspaces.length;
 
-    if (deleted) {
+    if (deleted && workspace.workspaceType === "local") {
       // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
     }
@@ -1874,10 +2498,325 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const opencode = await readOpencodeConfig(workspace.path);
-    const openwork = await readOpenworkConfig(workspace.path);
+    const openwork = mergeOpenworkWorkspaceConfigs(
+      await readOpenworkConfig(workspace.path),
+      await readOpenworkWorkspaceConfig(config, workspace.id),
+    );
+    const opencode = mergeOpencodeConfigs(
+      await readOpencodeConfig(workspace.path),
+      await readRuntimeOpencodeConfig(config, workspace.id),
+    );
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const openwork = mergeOpenworkWorkspaceConfigs(
+      await readOpenworkConfig(workspace.path),
+      await readOpenworkWorkspaceConfig(config, workspace.id),
+    );
+    return jsonResponse(readDesktopCloudSyncState(openwork));
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const snapshot = normalizeResourceSnapshot(body.snapshot);
+    if (!snapshot) {
+      throw new ApiError(400, "invalid_payload", "snapshot is required");
+    }
+
+    const result = await enqueueDesktopCloudSync(async () => {
+      const openwork = mergeOpenworkWorkspaceConfigs(
+        await readOpenworkConfig(workspace.path),
+        await readOpenworkWorkspaceConfig(config, workspace.id),
+      );
+      const cloudImports = await readInstalledCloudPlugins(config, workspace.id);
+      const next = syncDesktopCloudResources({ openwork: { ...openwork, cloudImports }, snapshot });
+      await writeOpenworkWorkspaceConfig(config, workspace.id, () => next.openwork);
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "desktop_cloud_sync.update",
+        target: openworkConfigPath(workspace.path),
+        summary: "Updated desktop cloud sync state",
+        timestamp: Date.now(),
+      });
+      return next;
+    });
+    return jsonResponse({ changes: result.changes, state: result.state });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/cloud-plugins", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const cloudImports = await readInstalledCloudPlugins(config, workspace.id);
+    return jsonResponse({ marketplaces: cloudImports.marketplaces, plugins: cloudImports.plugins });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/cloud-plugins", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const resolved = readCloudPluginResolved(body.resolved);
+    const marketplace = body.marketplace && typeof body.marketplace === "object" && !Array.isArray(body.marketplace)
+      ? Object.fromEntries(Object.entries(body.marketplace))
+      : null;
+    const marketplaceId = typeof body.marketplaceId === "string" && body.marketplaceId.trim()
+      ? body.marketplaceId.trim()
+      : null;
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "cloud_plugins.install",
+      summary: `Install cloud plugin ${resolved.plugin.name}`,
+      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
+    });
+
+    const imported = await installCloudPlugin({
+      serverConfig: config,
+      workspaceId: workspace.id,
+      workspaceRoot: workspace.path,
+      marketplaceId,
+      marketplace: marketplaceId
+        ? {
+            id: marketplaceId,
+            name: typeof marketplace?.name === "string" ? marketplace.name : marketplaceId,
+            updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
+          }
+        : null,
+      resolved,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "cloud_plugins.install",
+      target: openworkConfigPath(workspace.path),
+      summary: `Installed cloud plugin ${resolved.plugin.name}`,
+      timestamp: Date.now(),
+    });
+
+    for (const file of imported.files) {
+      emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
+        type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
+        name: file.title,
+        action: "added",
+      });
+    }
+
+    return jsonResponse({ item: imported });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const pluginId = ctx.params.pluginId ?? "";
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "cloud_plugins.remove",
+      summary: `Remove cloud plugin ${pluginId}`,
+      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
+    });
+
+    const removed = await removeCloudPlugin({
+      serverConfig: config,
+      workspaceId: workspace.id,
+      workspaceRoot: workspace.path,
+      pluginId,
+    });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "cloud_plugins.remove",
+      target: openworkConfigPath(workspace.path),
+      summary: `Removed cloud plugin ${removed.name}`,
+      timestamp: Date.now(),
+    });
+
+    for (const file of removed.files) {
+      emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
+        type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
+        name: file.title,
+        action: "removed",
+      });
+    }
+
+    return jsonResponse({ item: removed });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const opencode = mergeOpencodeConfigs(
+      await readOpencodeConfig(workspace.path),
+      await readRuntimeOpencodeConfig(config, workspace.id),
+    );
+    const foldersConfig = readAuthorizedFoldersFromOpencodeConfig(opencode, workspace.path);
+    return jsonResponse(buildAuthorizedFoldersResponse(workspace, foldersConfig));
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/authorized-folders", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const folders = parseAuthorizedFoldersPayload(body.folders, workspace.path);
+    const configPath = openworkConfigPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.authorized_folders.write",
+      summary: "Update authorized folders",
+      paths: [configPath],
+    });
+
+    const persistedOpencode = await readOpencodeConfig(workspace.path);
+    const runtimeOpencode = await readRuntimeOpencodeConfig(config, workspace.id);
+    const existingOpencode = mergeOpencodeConfigs(persistedOpencode, runtimeOpencode);
+    const existingFoldersConfig = readAuthorizedFoldersFromOpencodeConfig(existingOpencode, workspace.path);
+    const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
+      folders,
+      existingFoldersConfig.hiddenEntries,
+    );
+
+    await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
+      ...current,
+      permission: {
+        ...(ensurePlainObject(current.permission)),
+        external_directory: nextExternalDirectory ?? {},
+      },
+    }));
+
+    const updatedAt = Date.now();
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "config.authorized_folders.write",
+      target: configPath,
+      summary: "Updated authorized folders",
+      timestamp: updatedAt,
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+
+    const updatedFoldersConfig = readAuthorizedFoldersFromOpencodeConfig({
+      permission: { external_directory: nextExternalDirectory ?? {} },
+    }, workspace.path);
+
+    const response: AuthorizedFoldersUpdateResponse = {
+      folders: updatedFoldersConfig.folders,
+      hiddenCount: Object.keys(updatedFoldersConfig.hiddenEntries).length,
+      updatedAt,
+    };
+    return jsonResponse(response);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-config/migrate", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const configPath = openworkConfigPath(workspace.path);
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.runtime_migrate",
+      summary: "Migrate legacy runtime OpenCode config",
+      paths: [configPath],
+    });
+
+    const openwork = await readOpenworkConfigForStatus(workspace.path);
+    const legacy = legacyRuntimeConfigFromOpenworkConfig(openwork.data);
+    const user = userRuntimeConfigFromOpencodeConfig(await readOpencodeConfig(workspace.path));
+    if (!legacy.keys.length && !user.keys.length) {
+      return jsonResponse({ migrated: false, keys: [], legacyKeys: [], userOpencodeKeys: [], updatedAt: null, legacyError: openwork.error });
+    }
+
+    await writeRuntimeOpencodeConfig(config, workspace.id, (current) => (
+      mergeLegacyRuntimeConfig(mergeLegacyRuntimeConfig(current, legacy.config), user.config)
+    ));
+    if (legacy.keys.length && !openwork.error) {
+      await writeOpenworkConfig(workspace.path, removeLegacyRuntimeConfig(openwork.data), false);
+    }
+    await removeUserRuntimeConfigFromOpencode(workspace.path, user.keys);
+
+    const updatedAt = Date.now();
+    const keys = [...legacy.keys, ...user.keys];
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "config.runtime_migrate",
+      target: configPath,
+      summary: `Migrated runtime OpenCode config: ${keys.join(", ")}`,
+      timestamp: updatedAt,
+    });
+    emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+
+    return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openwork.error });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/runtime-config", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
+    const openwork = await readOpenworkConfigForStatus(workspace.path);
+    const openworkConfig = openwork.data;
+    const legacy = legacyRuntimeConfigFromOpenworkConfig(openworkConfig);
+    const rawOpencode = await readRawOpencodeConfig(opencodeConfigPath(workspace.path));
+    const persistedOpencode = await readOpencodeConfig(workspace.path);
+    const globalOpencodePath = resolveOpencodeConfigFilePath("global", workspace.path);
+    const rawGlobalOpencode = await readRawOpencodeConfig(globalOpencodePath);
+    const globalOpencode = (await readJsoncFile(globalOpencodePath, {} as Record<string, unknown>, { allowInvalid: true })).data;
+    const effectiveRuntime = await buildOpenworkRuntimeConfigObject(config, workspace.id);
+    const user = userRuntimeConfigFromOpencodeConfig(persistedOpencode);
+
+    return jsonResponse({
+      runtime,
+      runtimeKeys: runtimeConfigKeys(runtime),
+      effectiveRuntime,
+      sources: {
+        projectOpencode: {
+          path: opencodeConfigPath(workspace.path),
+          exists: rawOpencode.exists,
+          keys: userOpencodeConfigKeys(persistedOpencode),
+          config: persistedOpencode,
+        },
+        globalOpencode: {
+          path: globalOpencodePath,
+          exists: rawGlobalOpencode.exists,
+          keys: userOpencodeConfigKeys(globalOpencode),
+          config: globalOpencode,
+        },
+        runtimeDatabase: {
+          keys: runtimeConfigKeys(runtime),
+          config: runtime,
+        },
+        injected: {
+          keys: runtimeConfigKeys(effectiveRuntime),
+          config: effectiveRuntime,
+        },
+      },
+      legacyOpenwork: {
+        path: openworkConfigPath(workspace.path),
+        keys: legacy.keys,
+        error: openwork.error,
+      },
+      userOpencode: {
+        path: opencodeConfigPath(workspace.path),
+        exists: rawOpencode.exists,
+        keys: userOpencodeConfigKeys(persistedOpencode),
+        migratableKeys: user.keys,
+      },
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/opencode-config", "client", async (ctx) => {
@@ -2024,47 +2963,57 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "config.patch",
       summary: "Patch workspace config",
-      paths: [opencode ? opencodeConfigPath(workspace.path) : null, openwork ? openworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
+      paths: [opencode || openwork ? openworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
     });
 
-    const configFingerprintBefore = opencode
-      ? await computeReloadFingerprint(workspace.path, "config")
-      : null;
-
     if (opencode) {
-      const configPath = opencodeConfigPath(workspace.path);
+      const configPath = openworkConfigPath(workspace.path);
       const nextOpencode = ensurePlainObject(opencode);
       const { permission, provider, ...topLevelUpdates } = nextOpencode;
-
-      if (Object.keys(topLevelUpdates).length) {
-        await updateJsoncTopLevel(configPath, topLevelUpdates);
-      }
+      const logicalUpdates: Record<string, unknown> = { ...topLevelUpdates };
 
       const providerUpdate = ensurePlainObject(provider);
-      for (const [providerId, providerConfig] of Object.entries(providerUpdate)) {
-        await updateJsoncPath(configPath, ["provider", providerId], providerConfig);
+      if (Object.keys(providerUpdate).length) {
+        const currentRuntime = await readRuntimeOpencodeConfig(config, workspace.id);
+        logicalUpdates.provider = {
+          ...(ensurePlainObject(currentRuntime.provider)),
+          ...providerUpdate,
+        };
       }
 
       const permissionUpdate = ensurePlainObject(permission);
       if (Object.prototype.hasOwnProperty.call(permissionUpdate, "external_directory")) {
-        const existingOpencode = await readOpencodeConfig(workspace.path);
-        const existingPermission = ensurePlainObject(existingOpencode.permission);
+        const existingRuntime = await readRuntimeOpencodeConfig(config, workspace.id);
+        const existingPermission = ensurePlainObject(existingRuntime.permission);
         const nextExternalDirectory = permissionUpdate.external_directory;
         const existingPermissionKeys = Object.keys(existingPermission);
         const removePermissionParent =
           typeof nextExternalDirectory === "undefined" &&
-          (existingPermissionKeys.length === 0 ||
+            (existingPermissionKeys.length === 0 ||
             (existingPermissionKeys.length === 1 && Object.prototype.hasOwnProperty.call(existingPermission, "external_directory")));
 
         if (removePermissionParent) {
-          await updateJsoncPath(configPath, ["permission"], undefined);
+          logicalUpdates.permission = undefined;
         } else {
-          await updateJsoncPath(configPath, ["permission", "external_directory"], nextExternalDirectory);
+          logicalUpdates.permission = {
+            ...existingPermission,
+            external_directory: nextExternalDirectory,
+          };
         }
+      }
+
+      if (Object.keys(logicalUpdates).length || Object.prototype.hasOwnProperty.call(logicalUpdates, "permission")) {
+        await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
+          ...current,
+          ...logicalUpdates,
+        }));
       }
     }
     if (openwork) {
-      await writeOpenworkConfig(workspace.path, openwork, true);
+      await writeOpenworkWorkspaceConfig(config, workspace.id, (current) => ({
+        ...current,
+        ...openwork,
+      }));
     }
 
     await recordAudit(workspace.path, {
@@ -2072,13 +3021,13 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "config.patch",
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: "Patched workspace config",
       timestamp: Date.now(),
     });
 
-    if (opencode && configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+    if (opencode) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkConfigPath(workspace.path)));
     }
 
     return jsonResponse({ updatedAt: Date.now() });
@@ -2800,7 +3749,7 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const result = await listPlugins(workspace.path, includeGlobal);
+    const result = await listPlugins(config, workspace.id, workspace.path, includeGlobal);
     return jsonResponse(result);
   });
 
@@ -2815,15 +3764,15 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "plugins.add",
       summary: `Add plugin ${spec}`,
-      paths: [opencodeConfigPath(workspace.path)],
+      paths: [openworkConfigPath(workspace.path)],
     });
-    const changed = await addPlugin(workspace.path, spec);
+    const changed = await addPlugin(config, workspace.id, spec);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "plugins.add",
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: `Added ${spec}`,
       timestamp: Date.now(),
     });
@@ -2834,7 +3783,7 @@ function createRoutes(
         action: "added",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(config, workspace.id, workspace.path, false);
     return jsonResponse(result);
   });
 
@@ -2848,15 +3797,15 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "plugins.remove",
       summary: `Remove plugin ${name}`,
-      paths: [opencodeConfigPath(workspace.path)],
+      paths: [openworkConfigPath(workspace.path)],
     });
-    const removed = await removePlugin(workspace.path, name);
+    const removed = await removePlugin(config, workspace.id, name);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "plugins.remove",
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: `Removed ${name}`,
       timestamp: Date.now(),
     });
@@ -2867,7 +3816,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const result = await listPlugins(workspace.path, false);
+    const result = await listPlugins(config, workspace.id, workspace.path, false);
     return jsonResponse(result);
   });
 
@@ -3020,7 +3969,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items });
   });
 
@@ -3038,15 +3987,15 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "mcp.add",
       summary: `Add MCP ${name}`,
-      paths: [opencodeConfigPath(workspace.path)],
+      paths: [openworkConfigPath(workspace.path)],
     });
-    const result = await addMcp(workspace.path, name, configPayload);
+    const result = await addMcp(config, workspace.id, name, configPayload);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "mcp.add",
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: `Added MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -3055,7 +4004,7 @@ function createRoutes(
       name,
       action: result.action,
     });
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items });
   });
 
@@ -3068,15 +4017,15 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "mcp.remove",
       summary: `Remove MCP ${name}`,
-      paths: [opencodeConfigPath(workspace.path)],
+      paths: [openworkConfigPath(workspace.path)],
     });
-    const removed = await removeMcp(workspace.path, name);
+    const removed = await removeMcp(config, workspace.id, name);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "mcp.remove",
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: `Removed MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -3087,7 +4036,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items });
   });
 
@@ -3109,9 +4058,9 @@ function createRoutes(
       workspaceId: workspace.id,
       action,
       summary,
-      paths: [opencodeConfigPath(workspace.path)],
+      paths: [openworkConfigPath(workspace.path)],
     });
-    const updated = await setMcpEnabled(workspace.path, name, enabled);
+    const updated = await setMcpEnabled(config, workspace.id, name, enabled);
     if (!updated) {
       throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
     }
@@ -3120,7 +4069,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action,
-      target: "opencode.json",
+      target: openworkConfigPath(workspace.path),
       summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -3130,7 +4079,7 @@ function createRoutes(
       name,
       action: "updated",
     });
-    const items = await listMcp(workspace.path);
+    const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items });
   });
 
@@ -3373,34 +4322,6 @@ function createRoutes(
     return jsonResponse(result);
   });
 
-  addRoute(routes, "POST", "/share/bundles/publish", "client", async (ctx) => {
-    requireClientScope(ctx, "viewer");
-    const body = await readJsonBody(ctx.request);
-    if (typeof body.baseUrl === "string" && body.baseUrl.trim()) {
-      throw new ApiError(
-        400,
-        "publisher_base_url_forbidden",
-        "Bundle publishing always uses the configured OpenWork publisher. Remove baseUrl from the request.",
-      );
-    }
-    const result = await publishSharedBundle({
-      payload: body.payload,
-      bundleType: String(body.bundleType ?? "").trim(),
-      name: typeof body.name === "string" ? body.name : undefined,
-      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
-    });
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "POST", "/share/bundles/fetch", "client", async (ctx) => {
-    requireClientScope(ctx, "viewer");
-    const body = await readJsonBody(ctx.request);
-    const bundle = await fetchSharedBundle(body.bundleUrl, {
-      timeoutMs: typeof body.timeoutMs === "number" ? body.timeoutMs : undefined,
-    });
-  return jsonResponse(bundle);
-  });
-
   addRoute(routes, "GET", "/approvals", "host", async (ctx) => {
     return jsonResponse({ items: ctx.approvals.list() });
   });
@@ -3568,6 +4489,21 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
   return { ...workspace, path: resolvedWorkspace };
 }
 
+async function resolveWorkspaceForRegistry(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
+  const workspaceId = id.trim();
+  const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
+  const workspace =
+    config.workspaces.find((entry) => entry.id === workspaceId) ??
+    (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
+  if (!workspace) {
+    throw new ApiError(404, "workspace_not_found", "Workspace not found");
+  }
+  if (workspace.workspaceType === "remote") {
+    return { ...workspace, path: workspace.path?.trim() ?? "" };
+  }
+  return resolveWorkspace(config, id);
+}
+
 function reloadOpencodeEngineAfterInternalBootstrap(config: ServerConfig, workspace: WorkspaceInfo): void {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   if (!connection.baseUrl?.trim()) return;
@@ -3610,6 +4546,16 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   try {
     const json = await request.json();
     return json as Record<string, unknown>;
+  } catch {
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+}
+
+async function readOptionalJsonBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  if (!text.trim()) return {};
+  try {
+    return ensurePlainObject(JSON.parse(text));
   } catch {
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }
@@ -3668,6 +4614,7 @@ async function readServerConfigFile(configPath: string): Promise<OpenworkServerC
 }
 
 function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string, unknown> {
+  const isLocalWorkspace = workspace.workspaceType !== "remote";
   return {
     id: workspace.id,
     path: workspace.path,
@@ -3675,8 +4622,8 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     preset: workspace.preset,
     workspaceType: workspace.workspaceType,
     ...(workspace.remoteType ? { remoteType: workspace.remoteType } : {}),
-    ...(workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
-    ...(workspace.directory ? { directory: workspace.directory } : {}),
+    ...(!isLocalWorkspace && workspace.baseUrl ? { baseUrl: workspace.baseUrl } : {}),
+    ...(!isLocalWorkspace && workspace.directory ? { directory: workspace.directory } : {}),
     ...(workspace.displayName ? { displayName: workspace.displayName } : {}),
     ...(workspace.openworkHostUrl ? { openworkHostUrl: workspace.openworkHostUrl } : {}),
     ...(workspace.openworkToken ? { openworkToken: workspace.openworkToken } : {}),
@@ -3685,15 +4632,14 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     ...(workspace.sandboxBackend ? { sandboxBackend: workspace.sandboxBackend } : {}),
     ...(workspace.sandboxRunId ? { sandboxRunId: workspace.sandboxRunId } : {}),
     ...(workspace.sandboxContainerName ? { sandboxContainerName: workspace.sandboxContainerName } : {}),
-    ...(workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
-    ...(workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
+    ...(!isLocalWorkspace && workspace.opencodeUsername ? { opencodeUsername: workspace.opencodeUsername } : {}),
+    ...(!isLocalWorkspace && workspace.opencodePassword ? { opencodePassword: workspace.opencodePassword } : {}),
   };
 }
 
 async function persistServerWorkspaceState(config: ServerConfig): Promise<boolean> {
   const configPath = config.configPath?.trim() ?? "";
   if (!configPath) return false;
-  if (!(await exists(configPath))) return false;
 
   const parsed = await readServerConfigFile(configPath);
   const next: OpenworkServerConfigFile = {
@@ -3762,7 +4708,7 @@ async function fetchRuntimeControl(path: string, init?: { method?: string; body?
 }
 
 async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
-  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
+  const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
   return data;
 }
 
@@ -3774,6 +4720,20 @@ async function readOpenworkConfig(workspaceRoot: string): Promise<Record<string,
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
     throw new ApiError(422, "invalid_json", "Failed to parse openwork.json");
+  }
+}
+
+async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
+  data: Record<string, unknown>;
+  error: string | null;
+}> {
+  try {
+    return { data: await readOpenworkConfig(workspaceRoot), error: null };
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "invalid_json") {
+      return { data: {}, error: error.message };
+    }
+    throw error;
   }
 }
 

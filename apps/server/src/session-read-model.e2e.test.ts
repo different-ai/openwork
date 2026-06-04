@@ -23,11 +23,12 @@ afterEach(async () => {
   }
 });
 
-async function createWorkspaceRoot() {
+async function createWorkspaceRoot(folderName?: string) {
   const root = await mkdtemp(join(tmpdir(), "openwork-session-read-"));
-  await mkdir(join(root, ".opencode"), { recursive: true });
+  const workspaceRoot = folderName ? join(root, folderName) : root;
+  await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
   roots.push(root);
-  return root;
+  return workspaceRoot;
 }
 
 function auth(token: string) {
@@ -253,6 +254,42 @@ describe("workspace session read APIs", () => {
     expect(body.items[0]?.id).toBe("ses_1");
     expect(body.items[0]?.directory).toBe(workspaceRoot);
     expect(mock.requests.find((request) => request.pathname === "/session")?.directory).toBe(workspaceRoot);
+  });
+
+  test("encodes non-ASCII workspace directory headers for session reads", async () => {
+    const workspaceRoot = await createWorkspaceRoot("项目");
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/sessions`, {
+      headers: auth(openwork.token),
+    });
+
+    expect(response.status).toBe(200);
+    const listRequest = mock.requests.find((request) => request.pathname === "/session");
+    const encodedDirectory = encodeURIComponent(workspaceRoot);
+    expect(listRequest?.directory).toBe(encodedDirectory);
+    expect(listRequest?.search).toContain(`directory=${encodedDirectory}`);
+  });
+
+  test("encodes non-ASCII workspace directory headers for opencode proxy requests", async () => {
+    const workspaceRoot = await createWorkspaceRoot("项目");
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session`, {
+      headers: auth(openwork.token),
+    });
+
+    expect(response.status).toBe(200);
+    const proxyRequest = mock.requests.find((request) => request.pathname === "/session");
+    expect(proxyRequest?.directory).toBe(encodeURIComponent(workspaceRoot));
   });
 
   test("returns 404 when the upstream session is missing", async () => {

@@ -97,10 +97,11 @@ MAX_WAIT=90
 DAYTONA_EVAL_SNAPSHOT="${DAYTONA_EVAL_SNAPSHOT:-openwork-eval-vnc}"
 DAYTONA_SECRETS_VOLUME="${DAYTONA_SECRETS_VOLUME:-openwork-eval-secrets}"
 DAYTONA_SECRETS_MOUNT="${DAYTONA_SECRETS_MOUNT:-/daytona-secrets}"
-DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-${DAYTONA_SECRETS_MOUNT}/openai.env}"
+DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-${DAYTONA_SECRETS_MOUNT}}"
 DAYTONA_ARTIFACTS_VOLUME="${DAYTONA_ARTIFACTS_VOLUME:-openwork-eval-artifacts}"
 DAYTONA_ARTIFACTS_MOUNT="${DAYTONA_ARTIFACTS_MOUNT:-/daytona-artifacts}"
 DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS="${DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS:---disable-gpu --disable-dev-shm-usage --enable-unsafe-swiftshader}"
+OPENWORK_ELECTRON_FAKE_MEDIA="${OPENWORK_ELECTRON_FAKE_MEDIA:-0}"
 
 if [ -z "$RECORDING_NAME" ]; then
   RECORDING_NAME="$SANDBOX"
@@ -211,7 +212,7 @@ fi
 if [ "$ARTIFACTS_ENABLED" -eq 1 ]; then
   echo ""
   echo "==> Starting artifacts download server..."
-  daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; mkdir -p \"$DAYTONA_ARTIFACTS_MOUNT/recordings\"; nohup python3 -m http.server $ARTIFACTS_PORT --directory \"$DAYTONA_ARTIFACTS_MOUNT\" >/tmp/daytona-artifacts.log 2>&1 &'"
+  daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; mkdir -p \"$DAYTONA_ARTIFACTS_MOUNT/recordings\" \"$DAYTONA_ARTIFACTS_MOUNT/screenshots\" \"$DAYTONA_ARTIFACTS_MOUNT/validation\"; nohup python3 -m http.server $ARTIFACTS_PORT --directory \"$DAYTONA_ARTIFACTS_MOUNT\" >/tmp/daytona-artifacts.log 2>&1 &'"
 fi
 
 echo ""
@@ -220,7 +221,7 @@ daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; REF=\"$R
 
 echo ""
 echo "==> Starting OpenWork sandbox dev stack..."
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_BASE_URL=\"$DEN_BASE_URL\"; DEN_API_BASE_URL=\"$DEN_API_BASE_URL\"; DEN_REQUIRE_SIGNIN=\"$DEN_REQUIRE_SIGNIN\"; if [ -n \"\$DEN_BASE_URL\" ] || [ -n \"\$DEN_API_BASE_URL\" ] || [ \"\$DEN_REQUIRE_SIGNIN\" = 1 ]; then mkdir -p /workspace/.openwork-daytona; DEN_BASE_URL=\"\$DEN_BASE_URL\" DEN_API_BASE_URL=\"\$DEN_API_BASE_URL\" DEN_REQUIRE_SIGNIN=\"\$DEN_REQUIRE_SIGNIN\" node -e '\''const fs = require(\"node:fs\"); const baseUrl = process.env.DEN_BASE_URL || \"https://app.openworklabs.com\"; const apiBaseUrl = process.env.DEN_API_BASE_URL || null; const requireSignin = process.env.DEN_REQUIRE_SIGNIN === \"1\"; fs.writeFileSync(\"/workspace/.openwork-daytona/desktop-bootstrap.json\", JSON.stringify({ baseUrl, apiBaseUrl, requireSignin }, null, 2) + \"\\n\");'\''; fi; export DAYTONA_SECRETS_ENV=\"$DAYTONA_SECRETS_ENV\" DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS=\"$DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS\" OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=$CDP_PORT OPENWORK_WORKSPACE_DIR=/workspace; if [ -f /workspace/.openwork-daytona/desktop-bootstrap.json ]; then export OPENWORK_DESKTOP_BOOTSTRAP_PATH=/workspace/.openwork-daytona/desktop-bootstrap.json; fi; pnpm dev:sandbox'"
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_BASE_URL=\"$DEN_BASE_URL\"; DEN_API_BASE_URL=\"$DEN_API_BASE_URL\"; DEN_REQUIRE_SIGNIN=\"$DEN_REQUIRE_SIGNIN\"; if [ -n \"\$DEN_BASE_URL\" ] || [ -n \"\$DEN_API_BASE_URL\" ] || [ \"\$DEN_REQUIRE_SIGNIN\" = 1 ]; then mkdir -p /workspace/.openwork-daytona; DEN_BASE_URL=\"\$DEN_BASE_URL\" DEN_API_BASE_URL=\"\$DEN_API_BASE_URL\" DEN_REQUIRE_SIGNIN=\"\$DEN_REQUIRE_SIGNIN\" node -e '\''const fs = require(\"node:fs\"); const baseUrl = process.env.DEN_BASE_URL || \"https://app.openworklabs.com\"; const apiBaseUrl = process.env.DEN_API_BASE_URL || null; const requireSignin = process.env.DEN_REQUIRE_SIGNIN === \"1\"; fs.writeFileSync(\"/workspace/.openwork-daytona/desktop-bootstrap.json\", JSON.stringify({ baseUrl, apiBaseUrl, requireSignin }, null, 2) + \"\\n\");'\''; fi; export DAYTONA_SECRETS_ENV=\"$DAYTONA_SECRETS_ENV\" DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS=\"$DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS\" OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=$CDP_PORT OPENWORK_ELECTRON_FAKE_MEDIA=\"$OPENWORK_ELECTRON_FAKE_MEDIA\" OPENWORK_WORKSPACE_DIR=/workspace OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT=1; if [ -f /workspace/.openwork-daytona/desktop-bootstrap.json ]; then export OPENWORK_DESKTOP_BOOTSTRAP_PATH=/workspace/.openwork-daytona/desktop-bootstrap.json; fi; pnpm dev:sandbox'"
 
 echo ""
 echo "==> Waiting for Electron CDP on port $CDP_PORT (up to ${MAX_WAIT}s)..."
@@ -251,6 +252,7 @@ if [ "$RECORD_VIDEO" -eq 1 ]; then
   echo ""
   echo "==> Starting Daytona display recording..."
   daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace; DISPLAY=:99 .devcontainer/start-daytona-recording.sh --detach --output \"$RECORDING_PATH\" --size \"$RECORDING_SIZE\" --fps \"$RECORDING_FPS\"'"
+  echo "    Recording is active. Begin the user-visible flow after the ready banner below."
 fi
 
 echo ""
@@ -260,7 +262,7 @@ else
   echo "==> opencode sidecar: not running (workspace may need creation first)"
 fi
 
-echo "==> Secrets env: ${DAYTONA_SECRETS_ENV} (sourced if present)"
+echo "==> Secrets env: ${DAYTONA_SECRETS_ENV} (file or directory, sourced if present)"
 if [ -n "$DEN_BASE_URL" ]; then
   echo "==> Den base URL: $DEN_BASE_URL"
 fi
@@ -284,12 +286,15 @@ echo "  Electron CDP:  $CDP_URL"
 echo "  noVNC visual:  $NOVNC_URL"
 if [ "$ARTIFACTS_ENABLED" -eq 1 ]; then
   echo "  Artifacts:     $ARTIFACTS_URL"
+  echo "  Screenshot:"
+  echo "    daytona exec $SANDBOX -- 'bash .devcontainer/capture-daytona-screenshot.sh'"
 fi
 if [ "$RECORD_VIDEO" -eq 1 ]; then
   echo "  Recording:     $RECORDING_URL"
   echo ""
   echo "  Stop recording:"
-  echo "    daytona exec $SANDBOX -- 'pkill -INT -f \"ffmpeg.*x11grab\"'"
+  echo "    daytona exec $SANDBOX -- 'bash .devcontainer/stop-daytona-recording.sh'"
+  echo "  Validate recording duration before using it as evidence."
 fi
 echo ""
 echo "  Connect browser tools:"

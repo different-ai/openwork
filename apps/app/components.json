@@ -12,6 +12,8 @@
   },
   "iconLibrary": "lucide",
   "rtl": true,
+  "menuColor": "inverted-translucent",
+  "menuAccent": "subtle",
   "aliases": {
     "components": "@/components",
     "utils": "@/lib/utils",
@@ -19,7 +21,7 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
-  "menuColor": "inverted-translucent",
-  "menuAccent": "subtle",
-  "registries": {}
+  "registries": {
+    "@ai-elements": "https://ai-sdk.dev/elements/api/registry/{name}.json"
+  }
 }

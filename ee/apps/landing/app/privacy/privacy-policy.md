@@ -51,6 +51,14 @@ The Desktop App does not collect, track, or transmit any data during normal use.
 
 This diagnostic data is submitted only with your affirmative action and does not include personal information, file contents, conversation data, or usage history. It is stored temporarily and deleted once the related issue is resolved.
 
+### Google Workspace integrations
+
+If you choose to connect Google Workspace to OpenWork, OpenWork requests only the Google OAuth scopes needed for the capabilities you enable. The initial Google Workspace integration uses Google OAuth to let OpenWork read your calendar events, create Gmail drafts for your review, and access only the specific Google Drive files that you select or create with OpenWork.
+
+OpenWork uses Google Workspace data only to provide the user-facing features you request, such as preparing for a meeting, reading an explicitly selected Drive file, or creating a Gmail draft. OpenWork does not sell Google user data, use Google user data for advertising, or use Google user data to train generalized AI models. OpenWork does not expose a tool to automatically send email in the initial Google Workspace integration; Gmail access is used to create drafts that you can review in Gmail.
+
+For the Desktop App, Google OAuth tokens are stored locally in the operating system's encrypted storage when available. For hosted or cloud-connected versions of OpenWork, Google OAuth tokens are stored in an encrypted token vault. You can disconnect Google Workspace from OpenWork to stop future access and remove stored OAuth credentials.
+
 ### Cloud Service
 
 The Cloud Service does not track or profile user behavior. Like the Desktop App, the Cloud Service supports voluntary bug reporting with the same diagnostic data described above. In addition, the Cloud Service collects limited operational telemetry (such as service availability, error rates, and performance metrics) that is necessary for us to monitor and maintain the reliability and security of the service. This operational telemetry does not contain personal information or user content.

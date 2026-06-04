@@ -189,6 +189,7 @@ function describeEngine(info: EngineInfo | null) {
     ],
     stdout: info?.lastStdout ?? null,
     stderr: info?.lastStderr ?? null,
+    execution: info?.execution ?? null,
     error: null as string | null,
   };
 }
@@ -228,6 +229,7 @@ function describeOpenworkServer(info: OpenworkServerInfo | null) {
     ],
     stdout: info?.lastStdout ?? null,
     stderr: info?.lastStderr ?? null,
+    execution: info?.managedOpencodeExecution ?? null,
     error: null as string | null,
   };
 }

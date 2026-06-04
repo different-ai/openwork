@@ -22,7 +22,9 @@ import {
   Zap,
 } from "lucide-react";
 
-import { isBuiltInOpenWorkExtension, type McpDirectoryInfo } from "../../../../app/constants";
+import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
+import { evaluateEnablement } from "../../../../app/enablement";
+import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
 import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
@@ -106,6 +108,8 @@ export type McpViewProps = {
   configSlotForEntry?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   /** Check if an extension-kind entry is connected/active. */
   isExtensionConnected?: (entry: McpDirectoryInfo) => boolean;
+  /** Enablement context for evaluating extension active state. */
+  enablementContext?: import("../../../../app/enablement").EnablementContext;
   /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
 };
@@ -314,8 +318,9 @@ export function McpView(props: McpViewProps) {
     const nextId = configRequestId.current + 1;
     configRequestId.current = nextId;
     const readConfig = props.readConfigFile;
+    const canReadDesktopConfig = !props.isRemoteWorkspace && isDesktopRuntime();
 
-    if (!readConfig && !isDesktopRuntime()) {
+    if (!readConfig && !canReadDesktopConfig) {
       dispatchLocal({ type: "configUnavailable" });
       return;
     }
@@ -327,9 +332,15 @@ export function McpView(props: McpViewProps) {
           root
             ? readConfig
               ? readConfig("project")
-              : readOpencodeConfig("project", root)
+              : canReadDesktopConfig
+              ? readOpencodeConfig("project", root)
+              : Promise.resolve(null)
             : Promise.resolve(null),
-          readConfig ? readConfig("global") : readOpencodeConfig("global", root),
+          readConfig
+            ? readConfig("global")
+            : canReadDesktopConfig
+            ? readOpencodeConfig("global", root)
+            : Promise.resolve(null),
         ]);
         if (nextId !== configRequestId.current) return;
         dispatchLocal({
@@ -345,7 +356,7 @@ export function McpView(props: McpViewProps) {
         });
       }
     })();
-  }, [props.readConfigFile, props.selectedWorkspaceRoot]);
+  }, [props.isRemoteWorkspace, props.readConfigFile, props.selectedWorkspaceRoot]);
 
   const activeConfig = configScope === "project" ? projectConfig : globalConfig;
 
@@ -355,6 +366,7 @@ export function McpView(props: McpViewProps) {
 
   const canRevealConfig =
     isDesktopRuntime() &&
+    !props.isRemoteWorkspace &&
     !revealBusy &&
     !(configScope === "project" && !props.selectedWorkspaceRoot.trim()) &&
     Boolean(activeConfig?.exists);
@@ -379,6 +391,14 @@ export function McpView(props: McpViewProps) {
 
   const isMcpBackedExtension = (entry: McpDirectoryInfo) =>
     entry.kind === "extension" && Boolean(entry.type || entry.command?.length || entry.url);
+
+  const enablementForEntry = (entry: McpDirectoryInfo): { active: boolean; results: EnablementResult[] } | null => {
+    const manifest = entry.extensionManifest;
+    if (manifest?.enablement && props.enablementContext) {
+      return evaluateEnablement(manifest.enablement, props.enablementContext);
+    }
+    return null;
+  };
 
   const launchCommandForEntry = (entry: McpDirectoryInfo) => {
     if (entry.serverName === "openwork-ui") return openworkUiMcpCommand ?? undefined;
@@ -439,7 +459,9 @@ export function McpView(props: McpViewProps) {
     try {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
-        : await readOpencodeConfig(configScope, root);
+        : !props.isRemoteWorkspace
+        ? await readOpencodeConfig(configScope, root)
+        : null;
       const configFile = resolved as OpencodeConfigFile | null;
       if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
@@ -465,7 +487,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {props.mcpStatus ? (
-        <div className="whitespace-pre-wrap break-words rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+        <div className="whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
           {props.mcpStatus}
         </div>
       ) : null}
@@ -552,15 +574,16 @@ export function McpView(props: McpViewProps) {
             ? builtInExtensionDisabledReason
             : null
         }
-        isConfigured={(entry) =>
-          props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
-            ? false
-            : isToggleOnlyExtension(entry)
-            ? isOpenWorkExtensionEnabled(entry)
-            : entry.kind === "extension" && !isMcpBackedExtension(entry)
-            ? props.isExtensionConnected?.(entry) ?? false
-            : isQuickConnectConfigured(entry)
-        }
+        isConfigured={(entry) => {
+          if (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)) return false;
+          const result = enablementForEntry(entry);
+          if (result) return result.active;
+          // Fallback for entries without enablement context.
+          if (isToggleOnlyExtension(entry)) return isOpenWorkExtensionEnabled(entry);
+          if (entry.kind === "extension" && !isMcpBackedExtension(entry)) return props.isExtensionConnected?.(entry) ?? false;
+          return isQuickConnectConfigured(entry);
+        }}
+        enablementForEntry={props.enablementContext ? enablementForEntry : undefined}
         statusForEntry={quickConnectStatus}
         onConnect={props.connectMcp}
         onDetail={setDetailEntry}
@@ -671,6 +694,7 @@ export function McpView(props: McpViewProps) {
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
           ? props.isExtensionConnected?.(detailEntry) ?? false
           : isQuickConnectConfigured(detailEntry);
+        const isGoogleWorkspace = detailEntry.id === "google-workspace";
         return (
           <ExtensionDetailModal
             open={!!detailEntry}
@@ -686,14 +710,15 @@ export function McpView(props: McpViewProps) {
             hidden={hidden}
             preview={detailEntry.preview}
             disabledReason={disabledReason}
-            setupInstructions={detailEntry.extensionManifest?.setup?.instructions}
-            resourceLabels={extensionResourceLabels(detailEntry)}
-            contributionLabels={extensionContributionLabels(detailEntry)}
+            setupInstructions={isGoogleWorkspace ? undefined : detailEntry.extensionManifest?.setup?.instructions}
+            resourceLabels={isGoogleWorkspace ? [] : extensionResourceLabels(detailEntry)}
+            contributionLabels={isGoogleWorkspace ? [] : extensionContributionLabels(detailEntry)}
             launchCommand={launchCommandForEntry(detailEntry)}
             environment={detailEntry.serverName === "openwork-ui" ? openworkUiMcpEnvironment ?? undefined : undefined}
             url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
             oauth={detailEntry.oauth}
             configSlot={disabledReason ? null : extensionConfigSlot}
+            showEnablementCard={!isGoogleWorkspace}
             onConnect={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) ? () => {
               setOpenWorkExtensionEnabled(detailEntry, true);
               setDetailEntry(null);
@@ -810,6 +835,7 @@ function McpQuickConnectSection(props: {
   isPluginHidden: (plugin: CloudImportedPlugin) => boolean;
   disabledReasonForEntry: (entry: McpDirectoryInfo) => string | null;
   isConfigured: (entry: McpDirectoryInfo) => boolean;
+  enablementForEntry?: (entry: McpDirectoryInfo) => { active: boolean; results: EnablementResult[] } | null;
   statusForEntry: (entry: McpDirectoryInfo) => { status: ReactMcpStatus } | undefined;
   onConnect: (entry: McpDirectoryInfo) => void;
   onDetail: (entry: McpDirectoryInfo) => void;
@@ -829,6 +855,7 @@ function McpQuickConnectSection(props: {
         {/* MCP entries */}
         {props.entries.map((entry) => {
           const configured = props.isConfigured(entry);
+          const enablement = props.enablementForEntry?.(entry);
           const connecting = props.connectingName === entry.name;
           const FallbackIcon = serviceIcon(entry.name);
           const hidden = props.isEntryHidden(entry);
@@ -844,6 +871,7 @@ function McpQuickConnectSection(props: {
               fallbackIcon={FallbackIcon}
               kind={entry.kind ?? "mcp"}
               connected={configured}
+              enablement={enablement?.results}
               connecting={connecting}
               hidden={hidden}
               preview={entry.preview}

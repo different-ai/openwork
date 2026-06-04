@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version: 24
 
       - name: Install opencode
         run: |
@@ -67,7 +67,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version-file: .nvmrc
+          node-version: 24
 
       - name: Install opencode
         run: |

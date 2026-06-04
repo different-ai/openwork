@@ -42,18 +42,17 @@ export function setOpenWorkExtensionEnabled(entry: McpDirectoryInfo, enabled: bo
 export function isOpenWorkExtensionHidden(entryOrId: McpDirectoryInfo | string): boolean {
   const id = typeof entryOrId === "string" ? entryOrId : getExtensionId(entryOrId);
   if (typeof window === "undefined") return false;
-  return window.localStorage.getItem(`${EXTENSION_HIDDEN_KEY_PREFIX}${id}`) === "1";
+  const stored = window.localStorage.getItem(`${EXTENSION_HIDDEN_KEY_PREFIX}${id}`);
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return typeof entryOrId !== "string" && entryOrId.defaultHidden === true;
 }
 
 export function setOpenWorkExtensionHidden(entryOrId: McpDirectoryInfo | string, hidden: boolean) {
   const id = typeof entryOrId === "string" ? entryOrId : getExtensionId(entryOrId);
   if (typeof window === "undefined") return;
   const key = `${EXTENSION_HIDDEN_KEY_PREFIX}${id}`;
-  if (hidden) {
-    window.localStorage.setItem(key, "1");
-  } else {
-    window.localStorage.removeItem(key);
-  }
+  window.localStorage.setItem(key, hidden ? "1" : "0");
   window.dispatchEvent(new CustomEvent(OPENWORK_EXTENSION_STATE_CHANGED, {
     detail: { id, hidden },
   }));

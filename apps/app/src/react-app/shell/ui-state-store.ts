@@ -14,9 +14,28 @@ export const DEFAULT_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_WIDTH = 520;
 export const MIN_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 320;
 export const MAX_WORKSPACE_RIGHT_SIDEBAR_WIDTH = 960;
 
-export const SIDE_PANEL_ITEMS = ["browser", "artifacts", "extensions", "voice"] as const;
+export const SIDE_PANEL_ITEMS = ["panel", "extensions", "voice"] as const;
 export type SidePanelItem = (typeof SIDE_PANEL_ITEMS)[number];
 export type SidePanelState = Record<string, SidePanelItem | null>;
+
+const LEGACY_UNIFIED_PANEL_ITEMS = ["browser", "artifacts"] as const;
+type LegacyUnifiedPanelItem = (typeof LEGACY_UNIFIED_PANEL_ITEMS)[number];
+
+function normalizeSidePanelItem(value: unknown): SidePanelItem | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (isSidePanelItem(value)) {
+    return value;
+  }
+
+  if (LEGACY_UNIFIED_PANEL_ITEMS.includes(value as LegacyUnifiedPanelItem)) {
+    return "panel";
+  }
+
+  return null;
+}
 
 export type PersistedUiState = {
   sidePanelState?: SidePanelState;
@@ -103,11 +122,18 @@ function normalizeSidePanelState(value: unknown): SidePanelState {
   }
 
   return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, SidePanelItem | null] => (
-        typeof entry[0] === "string" && (entry[1] === null || isSidePanelItem(entry[1]))
-      ),
-    ),
+    Object.entries(value).flatMap(([sessionId, panel]) => {
+      if (typeof sessionId !== "string") {
+        return [];
+      }
+
+      const normalized = normalizeSidePanelItem(panel);
+      if (normalized === null && panel !== null) {
+        return [];
+      }
+
+      return [[sessionId, normalized] as const];
+    }),
   );
 }
 

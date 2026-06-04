@@ -5,6 +5,8 @@ import { mkdir } from "node:fs/promises";
 import { parseCliArgs, printHelp, resolveServerConfig } from "./config.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
 import { createServerLogger, startServer } from "./server.js";
+import { ensureWorkspaceFiles } from "./workspace-init.js";
+import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -21,11 +23,19 @@ if (args.version) {
 
 const config = await resolveServerConfig(args);
 const logger = createServerLogger(config);
+const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${config.port}`;
 let managedOpencode: ManagedOpencodeServer | null = null;
+
+if (!config.readOnly) {
+  for (const workspace of config.workspaces) {
+    await ensureWorkspaceFiles(workspace.path, workspace.preset ?? "starter");
+  }
+}
 
 if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
   const workspace = config.workspaces[0];
   if (workspace?.path) {
+    const openworkRuntimeConfig = await buildOpenworkRuntimeConfig(config, workspace.id);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     managedOpencode = await createManagedOpencodeServer({
@@ -33,6 +43,10 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
       cwd: managedOpencodeCwd,
       env: {
         ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+        ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
+        OPENWORK_SERVER_URL: serverUrl,
+        OPENWORK_SERVER_TOKEN: config.token,
+        OPENCODE_CONFIG_CONTENT: openworkRuntimeConfig,
       },
     });
     config.opencodeBaseUrl = managedOpencode.url;

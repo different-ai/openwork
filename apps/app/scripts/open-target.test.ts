@@ -2,11 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { UIMessage } from "ai";
 
 import {
-  classifyOpenTarget,
   deriveOpenTargets,
   isCollectibleArtifactTarget,
   selectAutoOpenTarget,
-  shouldAutoOpenTarget,
 } from "../src/react-app/domains/session/artifacts/open-target";
 
 function message(id: string, role: "user" | "assistant", text: string): UIMessage {
@@ -27,17 +25,6 @@ function toolMessage(id: string, toolName: string, input: Record<string, unknown
     }],
   };
 }
-
-describe("open target classification", () => {
-  it("routes common artifact formats to deterministic previews", () => {
-    expect(classifyOpenTarget("report.md", "file")).toBe("markdown");
-    expect(classifyOpenTarget("customers.csv", "file")).toBe("sheet");
-    expect(classifyOpenTarget("forecast.xlsx", "file")).toBe("sheet");
-    expect(classifyOpenTarget("diagram.svg", "file")).toBe("image");
-    expect(classifyOpenTarget("dist/index.html", "file")).toBe("html");
-    expect(classifyOpenTarget("http://localhost:5173", "url")).toBe("browser");
-  });
-});
 
 describe("deriveOpenTargets", () => {
   it("extracts file and localhost URL targets from recent assistant output", () => {
@@ -86,6 +73,72 @@ describe("deriveOpenTargets", () => {
     ]);
 
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
+  });
+
+  it("extracts PowerPoint decks from assistant artifact summaries", () => {
+    const targets = deriveOpenTargets([
+      message("msg_1", "assistant", "Updated file: decks/openwork-vertebrae-deck.pptx"),
+    ]);
+    const deck = targets.find((target) => target.value === "decks/openwork-vertebrae-deck.pptx");
+
+    expect(deck).toMatchObject({ preview: "slides", confidence: 65 });
+    expect(deck ? isCollectibleArtifactTarget({ ...deck, exists: true }) : false).toBe(true);
+  });
+
+  it("extracts artifact paths from OpenWork extension call metadata", () => {
+    const targets = deriveOpenTargets([
+      toolMessage("msg_tool", "openwork_extension_call", {
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+      }, {
+        ok: true,
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+        path: "artifacts/potato.png",
+        result: {
+          path: "artifacts/potato.png",
+          bytes: 12345,
+          model: "gpt-image-2",
+        },
+      }),
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "artifacts/potato.png", preview: "image", confidence: 95 });
+  });
+
+  it("extracts artifact targets from attachment sources", () => {
+    const targets = deriveOpenTargets([
+      {
+        id: "msg_attachment",
+        role: "assistant",
+        parts: [{
+          type: "source-document",
+          sourceId: "attachment-source",
+          mediaType: "text/csv",
+          title: "customers.csv",
+          filename: "reports/customers.csv",
+        }],
+      },
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "reports/customers.csv", preview: "sheet", confidence: 95 });
+  });
+
+  it("keeps URI-backed source documents as URL targets when filename is missing", () => {
+    const targets = deriveOpenTargets([
+      {
+        id: "msg_source",
+        role: "assistant",
+        parts: [{
+          type: "source-document",
+          sourceId: "url-source",
+          mediaType: "text/html",
+          title: "https://example.com/docs/report.html",
+        }],
+      },
+    ]);
+
+    expect(targets[0]).toMatchObject({ kind: "url", value: "https://example.com/docs/report.html", preview: "browser" });
   });
 
   it("does not extract file artifacts from read tool metadata or output", () => {
@@ -198,12 +251,8 @@ describe("deriveOpenTargets", () => {
     const targets = deriveOpenTargets([
       toolMessage("msg_tool", "write", { filePath: "data/customers.csv" }, { filePath: "data/customers.csv" }),
       message("msg_1", "assistant", "Created data/customers.csv and see https://example.com for docs."),
-    ]);
-    const csv = targets.find((target) => target.value === "data/customers.csv");
-    const externalUrl = targets.find((target) => target.value === "https://example.com");
+    ]).map((target) => ({ ...target, exists: target.kind === "file" }));
 
-    expect(csv && shouldAutoOpenTarget({ ...csv, exists: true })).toBe(false);
-    expect(csv && shouldAutoOpenTarget({ ...csv, exists: false })).toBe(false);
-    expect(externalUrl && shouldAutoOpenTarget(externalUrl)).toBe(false);
+    expect(selectAutoOpenTarget(targets)).toBeNull();
   });
 });

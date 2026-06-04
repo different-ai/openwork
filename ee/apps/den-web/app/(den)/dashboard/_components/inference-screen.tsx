@@ -67,7 +67,7 @@ function parseUsageBuckets(value: unknown): InferenceUsageBucket[] {
   return buckets;
 }
 
-function parseInferencePayload(payload: unknown): { inference: InferenceStatus; checkoutUrl: string | null } | null {
+function parseInferencePayload(payload: unknown): InferenceStatus | null {
   if (!payload || typeof payload !== "object" || !("inference" in payload)) {
     return null;
   }
@@ -80,16 +80,13 @@ function parseInferencePayload(payload: unknown): { inference: InferenceStatus; 
     return null;
   }
   return {
-    inference: {
-      enabled: value.enabled,
-      tier: value.tier,
-      memberCount: typeof value.memberCount === "number" ? value.memberCount : 0,
-      proxyBaseUrl: typeof value.proxyBaseUrl === "string" ? value.proxyBaseUrl : "",
-      upstreamProviderConfigured: value.upstreamProviderConfigured === true,
-      subscribed: value.subscribed === true,
-      buckets: parseUsageBuckets(value.buckets),
-    },
-    checkoutUrl: "checkoutUrl" in payload && typeof payload.checkoutUrl === "string" ? payload.checkoutUrl : null,
+    enabled: value.enabled,
+    tier: value.tier,
+    memberCount: typeof value.memberCount === "number" ? value.memberCount : 0,
+    proxyBaseUrl: typeof value.proxyBaseUrl === "string" ? value.proxyBaseUrl : "",
+    upstreamProviderConfigured: value.upstreamProviderConfigured === true,
+    subscribed: value.subscribed === true,
+    buckets: parseUsageBuckets(value.buckets),
   };
 }
 
@@ -171,7 +168,7 @@ export function InferenceScreen() {
       if (!parsed) {
         throw new Error("Inference settings response was incomplete.");
       }
-      setStatus(parsed.inference);
+      setStatus(parsed);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load inference settings.");
     } finally {
@@ -207,11 +204,7 @@ export function InferenceScreen() {
       if (!parsed) {
         throw new Error("Inference settings response was incomplete.");
       }
-      if (parsed.checkoutUrl) {
-        window.location.href = parsed.checkoutUrl;
-        return;
-      }
-      setStatus(parsed.inference);
+      setStatus(parsed);
       await refreshOrgData();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to update inference settings.");

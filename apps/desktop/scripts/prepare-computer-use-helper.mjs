@@ -7,9 +7,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const packagePath = resolve(repoRoot, "packages", "handsfree", "native", "HandsFree");
+const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
 const productName = "HandsFreeComputerUse";
 const helperExecutableName = "ComputerUse";
-const helperAppName = "Computer Use.app";
+const helperAppName = "OpenWork Computer Use.app";
 const bundleIdentifier = "com.differentai.openwork.computer-use";
 
 const readArg = (name) => {
@@ -65,15 +66,17 @@ function infoPlist() {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>Computer Use</string>
+  <string>OpenWork Computer Use</string>
   <key>CFBundleExecutable</key>
   <string>${helperExecutableName}</string>
   <key>CFBundleIdentifier</key>
   <string>${bundleIdentifier}</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Computer Use</string>
+  <string>OpenWork Computer Use</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -82,8 +85,6 @@ function infoPlist() {
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
-  <key>LSUIElement</key>
-  <true/>
 </dict>
 </plist>
 `;
@@ -113,6 +114,9 @@ mkdirSync(join(appPath, "Contents", "Resources"), { recursive: true });
 writeFileSync(join(appPath, "Contents", "Info.plist"), infoPlist(), "utf8");
 writeFileSync(join(appPath, "Contents", "PkgInfo"), "APPL????", "utf8");
 copyFileSync(builtExecutable, join(appPath, "Contents", "MacOS", helperExecutableName));
+if (existsSync(iconPath)) {
+  copyFileSync(iconPath, join(appPath, "Contents", "Resources", "AppIcon.icns"));
+}
 chmodSync(join(appPath, "Contents", "MacOS", helperExecutableName), 0o755);
 signHelperApp();
 

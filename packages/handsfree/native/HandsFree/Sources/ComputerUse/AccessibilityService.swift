@@ -16,12 +16,16 @@ final class AccessibilityService: @unchecked Sendable {
     ]
 
     func resolveTarget(appName: String?) throws -> WindowTarget {
+        try resolveTarget(appName: appName, windowTitle: nil)
+    }
+
+    func resolveTarget(appName: String?, windowTitle: String?) throws -> WindowTarget {
         guard AXIsProcessTrusted() else { throw ComputerUseError.accessibilityDenied }
 
         let app = try resolveApp(appName: appName)
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
-        let axWindow = firstAXWindow(axApp: axApp)
+        let axWindow = firstAXWindow(axApp: axApp, title: windowTitle)
         let title = axWindow.flatMap { axString($0, kAXTitleAttribute) }
         let info = firstCGWindowInfo(pid: pid, title: title)
         let bounds = axWindow.flatMap(axFrame) ?? info?.bounds
@@ -42,10 +46,12 @@ final class AccessibilityService: @unchecked Sendable {
     }
 
     func snapshot(target: WindowTarget, strictMode: Bool, backgroundActivated: Bool) async throws -> AppSnapshot {
-        let records = target.axWindow.map(semanticRecords(window:)) ?? []
+        let records = records(target: target)
         let (data, meta) = try await captureScreenshot(target: target)
 
         return AppSnapshot(
+            id: "",
+            observation: 0,
             appName: target.appName,
             pid: target.pid,
             windowNumber: target.windowNumber,
@@ -55,8 +61,15 @@ final class AccessibilityService: @unchecked Sendable {
             screenshotMeta: meta,
             records: records,
             strictMode: strictMode,
-            backgroundActivated: backgroundActivated
+            backgroundActivated: backgroundActivated,
+            recentActions: [],
+            addedLabels: [],
+            removedLabels: []
         )
+    }
+
+    func records(target: WindowTarget) -> [AXElementRecord] {
+        target.axWindow.map(semanticRecords(window:)) ?? []
     }
 
     func press(record: AXElementRecord) -> Bool {
@@ -99,16 +112,20 @@ final class AccessibilityService: @unchecked Sendable {
         throw ComputerUseError.appNotFound(rawName)
     }
 
-    private func firstAXWindow(axApp: AXUIElement) -> AXUIElement? {
+    private func firstAXWindow(axApp: AXUIElement, title preferredTitle: String?) -> AXUIElement? {
         var windowValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowValue) == .success,
               let windows = windowValue as? [AXUIElement] else {
             return nil
         }
-        return windows.first { window in
+        let usable = windows.filter { window in
             guard let frame = axFrame(window) else { return false }
             return frame.width > 20 && frame.height > 20
         }
+        if let preferredTitle, let match = usable.first(where: { axString($0, kAXTitleAttribute) == preferredTitle }) {
+            return match
+        }
+        return usable.first
     }
 
     private func semanticRecords(window: AXUIElement) -> [AXElementRecord] {

@@ -16,6 +16,7 @@ import {
   LogOut,
   MessageSquare,
   Puzzle,
+  Shield,
   SlidersHorizontal,
   Sparkles,
   Store,
@@ -37,6 +38,8 @@ import {
   getOrgSettingsRoute,
   getMarketplacesRoute,
   getPluginsRoute,
+  getSsoRoute,
+  getScimRoute,
   getSkillHubsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -110,6 +113,12 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getApiKeysRoute(orgSlug))) {
     return "API Keys";
   }
+  if (pathname.startsWith(getScimRoute(orgSlug))) {
+    return "SCIM";
+  }
+  if (pathname.startsWith(getSsoRoute(orgSlug))) {
+    return "SSO";
+  }
   if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
     return "Background Tasks";
   }
@@ -134,7 +143,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Integrations";
   }
-  if (pathname.startsWith(getBillingRoute(orgSlug)) || pathname === "/checkout") {
+  if (pathname.startsWith(getBillingRoute(orgSlug))) {
     return "Billing";
   }
   if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
@@ -235,8 +244,22 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 icon: KeyRound,
               }]
             : []),
+          ...(access.canManageScim
+            ? [{
+                href: activeOrg ? getScimRoute(activeOrg.slug) : "#",
+                label: "SCIM",
+                icon: Shield,
+              }]
+            : []),
+          ...(access.canManageSso
+            ? [{
+                href: activeOrg ? getSsoRoute(activeOrg.slug) : "#",
+                label: "SSO",
+                icon: Shield,
+              }]
+            : []),
           {
-            href: activeOrg ? getBillingRoute(activeOrg.slug) : "/checkout",
+            href: getBillingRoute(activeOrg?.slug),
             label: "Billing",
             icon: CreditCard,
           },
@@ -310,7 +333,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <div className="min-w-0">
                     <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
                     <span className="block truncate text-[12px] text-gray-500">
-                      {org.role === "owner" ? "Creator plan" : "Free plan"} • 1 member
+                      {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
                     </span>
                   </div>
                 </div>

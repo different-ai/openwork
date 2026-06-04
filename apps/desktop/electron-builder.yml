@@ -12,10 +12,15 @@ directories:
 files:
   - electron/**/*
   - server/**/*
+  - "!server/dist/opencode-plugins/**"
   - package.json
 extraResources:
   - from: ../app/dist
     to: app-dist
+  - from: server/dist/opencode-plugins
+    to: opencode-plugins
+    filter:
+      - "*.js"
 asar: true
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
@@ -34,6 +39,10 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: OpenWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -50,7 +59,7 @@ mac:
     - from: resources/helpers
       to: helpers
       filter:
-        - Computer Use.app/**
+        - "OpenWork Computer Use.app/**"
   target:
     - dmg
     - zip

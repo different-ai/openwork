@@ -4,15 +4,16 @@ import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
-import { createClient, unwrap } from "../../../../app/lib/opencode";
-import { abortSessionSafe } from "../../../../app/lib/opencode-session";
-import { t } from "../../../../i18n";
-import { readWorkspaceCloudImports, type CloudImportedPlugin } from "../../../../app/cloud/import-state";
+import { createClient, unwrap } from "@/app/lib/opencode";
+import { abortSessionSafe } from "@/app/lib/opencode-session";
+import { t } from "@/i18n";
+import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import type {
   OpenworkServerClient,
   OpenworkSessionSnapshot,
-} from "../../../../app/lib/openwork-server";
+} from "@/app/lib/openwork-server";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -24,34 +25,36 @@ import type {
   PendingQuestion,
   SkillCard,
   TodoItem,
-} from "../../../../app/types";
+} from "@/app/types";
 import {
   publishInspectorSlice,
   recordInspectorEvent,
-} from "../../../shell/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+} from "@/react-app/shell/app-inspector";
+import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { ReactSessionComposer } from "./composer/composer";
-import { DevProfiler } from "../../../shell/dev-profiler";
+import { decodeComposerMentionValue, encodeComposerMentionValue } from "./composer/mention-encoding";
+import { parseSlashCommandInvocation } from "./composer/slash-command";
+import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
-import { OwDotTicker } from "../../../shell/dot-ticker";
-import { useShellConfig } from "../../../shell/shell-config";
-import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
-import type { ReactComposerNotice } from "./composer/notice";
+import { useShellConfig } from "@/react-app/shell/shell-config";
+import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
-import { SessionTranscript } from "./message-list";
-import { useLocal } from "../../../kernel/local-provider";
-import { deriveSessionRenderModel } from "../sync/transition-controller";
+import { useLocal } from "@/react-app/kernel/local-provider";
+import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
-import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
-import { PermissionApprovalPanel } from "../chat/permission-approval-modal";
-import { QuestionPanel } from "../modals/question-modal";
-import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "../artifacts/open-target";
+import { SessionScrollOverlay } from "./scroll-overlay";
+import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
+import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
+import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
+import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   seedSessionState,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
-} from "../sync/session-sync";
+} from "@/react-app/domains/session/sync/session-sync";
 import {
   getComposerAttachments,
   getComposerDraft,
@@ -59,6 +62,10 @@ import {
   getComposerPasteParts,
   useComposerStateStore,
 } from "./composer-state-store";
+import { MessageList } from "@/components/chat/message-list";
+import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import { OpenTargetProvider } from "@/lib/target-provider";
+import type { ThreadStatus } from "@/lib/messages";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -100,7 +107,7 @@ export type SessionSurfaceProps = {
   selectedAgent: string | null;
   listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
   onSelectAgent: (agent: string | null) => void;
-  listCommands: () => Promise<import("../../../../app/types").SlashCommandOption[]>;
+  listCommands: () => Promise<import("@/app/types").SlashCommandOption[]>;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
@@ -115,11 +122,11 @@ export type SessionSurfaceProps = {
   safeStringify?: (value: unknown) => string;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
-  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins") => void) | undefined;
+  providerConnectedCount?: number;
+  onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
   onRevertToMessage?: (messageId: string) => void;
   onForkAtMessage?: (messageId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }) => void;
-  onOpenTargetsChange?: (targets: OpenTarget[]) => void;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -183,49 +190,8 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
   });
 }
 
-function formatAssistantFallbackValue(value: unknown) {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value.trim();
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function assistantFallbackPartToText(part: UIMessage["parts"][number]) {
-  if (part.type === "text" || part.type === "reasoning") return part.text.trim();
-  if (part.type === "file") return (part.filename ?? part.url).trim();
-
-  const record = part as Record<string, unknown>;
-  const toolName = typeof record.toolName === "string" ? record.toolName : null;
-  if (toolName) {
-    if (typeof record.errorText === "string" && record.errorText.trim()) {
-      return `[tool:${toolName}] ${record.errorText.trim()}`;
-    }
-    const output = formatAssistantFallbackValue(record.output);
-    if (output) return `[tool:${toolName}] ${output}`;
-    const input = formatAssistantFallbackValue(record.input);
-    if (input) return `[tool:${toolName}] ${input}`;
-    return `[tool:${toolName}]`;
-  }
-
-  const unknown = formatAssistantFallbackValue(record);
-  return unknown === "{}" ? "" : unknown;
-}
-
-function assistantFallbackText(messages: UIMessage[], baseline: number) {
-  return messages
-    .slice(baseline)
-    .filter((message) => message.role === "assistant")
-    .flatMap((message) => message.parts.map(assistantFallbackPartToText))
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
-}
-
-function AssistantWaitingCard({ label = t("session.assistant_thinking"), collapseLayout = false }: { label?: string; collapseLayout?: boolean }) {
-  const content = (
+function AssistantWaitingCard({ label = t("session.assistant_thinking") }: { label?: string }) {
+  return (
     <div className="flex justify-start" role="status" aria-live="polite">
       <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
         <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
@@ -242,32 +208,6 @@ function AssistantWaitingCard({ label = t("session.assistant_thinking"), collaps
         </div>
         <span>{label}</span>
       </div>
-    </div>
-  );
-
-  if (collapseLayout) {
-    return <div>{content}</div>;
-  }
-
-  return (
-    content
-  );
-}
-
-function AssistantNoVisibleOutputCard(props: { text: string }) {
-  return (
-    <div className="font-mono text-[13px] leading-[1.7] text-gray-8 whitespace-pre-wrap" role="status" aria-live="polite">
-      <div className="max-w-[720px]">
-        {props.text || t("session.assistant_empty_response")}
-      </div>
-    </div>
-  );
-}
-
-function AssistantStatusSpacer() {
-  return (
-    <div className="invisible" aria-hidden="true">
-      <AssistantWaitingCard label={t("session.assistant_responding")} collapseLayout />
     </div>
   );
 }
@@ -415,6 +355,34 @@ function revokeAttachmentPreview(attachment: { previewUrl?: string | undefined }
   URL.revokeObjectURL(attachment.previewUrl);
 }
 
+// Combine multiple queued follow-up drafts into a single send. Their text and
+// parts are concatenated with blank-line separators and attachments are
+// merged, so the whole queue is delivered to the agent as one message.
+function mergeDrafts(drafts: ComposerDraft[]): ComposerDraft | null {
+  if (drafts.length === 0) return null;
+  if (drafts.length === 1) return drafts[0] ?? null;
+  const separator: ComposerPart = { type: "text", text: "\n\n" };
+  const parts: ComposerPart[] = [];
+  const attachments: ComposerAttachment[] = [];
+  const texts: string[] = [];
+  const resolvedTexts: string[] = [];
+  drafts.forEach((draft, index) => {
+    if (index > 0) parts.push(separator);
+    parts.push(...draft.parts);
+    attachments.push(...draft.attachments);
+    texts.push(draft.text);
+    resolvedTexts.push(draft.resolvedText ?? draft.text);
+  });
+  return {
+    mode: "prompt",
+    parts,
+    attachments,
+    text: texts.join("\n\n"),
+    resolvedText: resolvedTexts.join("\n\n"),
+    command: undefined,
+  };
+}
+
 export function SessionSurface(props: SessionSurfaceProps) {
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
@@ -431,12 +399,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
-  const [notice, setNotice] = useState<ReactComposerNotice | null>(null);
   const [error, setError] = useState<SessionError | null>(null);
   const [sending, setSending] = useState(false);
+  // Locally queued follow-up drafts. OpenCode has no server-side queue, so we
+  // hold these client-side and auto-send the first one once the session goes
+  // idle (see the drain effect below).
+  const [queuedDrafts, setQueuedDrafts] = useState<ComposerDraft[]>([]);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
-  const [noVisibleAssistantOutputBaseline, setNoVisibleAssistantOutputBaseline] = useState<number | null>(null);
   const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
@@ -486,20 +456,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setSending(false);
     setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
-    setNoVisibleAssistantOutputBaseline(null);
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
-    setNotice(null);
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
   }, [props.sessionId]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const id = window.setTimeout(() => setNotice(null), 2400);
-    return () => window.clearTimeout(id);
-  }, [notice]);
 
   // Publish a composer inspector slice so external drivers can read draft
   // state, attachments, mentions, and sending status from the running app.
@@ -524,7 +486,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })),
       sending,
       error,
-      hasNotice: Boolean(notice),
     }));
     return dispose;
   }, [
@@ -532,7 +493,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     draft,
     error,
     mentions,
-    notice,
     pasteParts,
     props.sessionId,
     props.workspaceId,
@@ -566,6 +526,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const status = useMemo((): ThreadStatus => {
+    if (sending) {
+      return "submitted";
+    }
+
+    if (liveStatus.type === "busy") {
+      return "streaming";
+    }
+
+    if (liveStatus.type === "retry") {
+      return "retrying";
+    }
+
+    return "ready";
+  }, [liveStatus, sending]);
   const renderedMessages = useMemo(
     () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
     [snapshot, transcriptState],
@@ -583,16 +558,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       .slice(awaitingAssistantBaseline)
       .some(messageHasVisibleAssistantOutput);
   }, [awaitingAssistantBaseline, renderedMessages]);
-  const noVisibleAssistantOutputText = useMemo(() => {
-    if (noVisibleAssistantOutputBaseline === null) return "";
-    return assistantFallbackText(renderedMessages, noVisibleAssistantOutputBaseline);
-  }, [noVisibleAssistantOutputBaseline, renderedMessages]);
-  const assistantOutputAfterNoVisibleFallback = useMemo(() => {
-    if (noVisibleAssistantOutputBaseline === null) return false;
-    return renderedMessages
-      .slice(noVisibleAssistantOutputBaseline)
-      .some(messageHasVisibleAssistantOutput);
-  }, [noVisibleAssistantOutputBaseline, renderedMessages]);
   const showAssistantWaitState = awaitingAssistantBaseline !== null && !assistantOutputAfterAwaitStart;
   const showAssistantRespondingState = awaitingAssistantBaseline !== null && assistantOutputAfterAwaitStart && chatStreaming;
   const effectiveActivityStatus: SessionActivityStatus = sessionActivityStatus !== "idle"
@@ -602,15 +567,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       : showAssistantRespondingState
         ? "responding"
         : "idle";
-  const showNoVisibleAssistantOutput = noVisibleAssistantOutputBaseline !== null && !assistantOutputAfterNoVisibleFallback;
-  const reserveAssistantStatusSpace = effectiveActivityStatus === "idle" && awaitingAssistantBaseline !== null && assistantOutputAfterAwaitStart && !chatStreaming;
-  const assistantStatusFooter = effectiveActivityStatus !== "idle" ? (
-    <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} collapseLayout />
-  ) : showNoVisibleAssistantOutput ? (
-    <AssistantNoVisibleOutputCard text={noVisibleAssistantOutputText} />
-  ) : reserveAssistantStatusSpace ? (
-    <AssistantStatusSpacer />
-  ) : null;
   useReactRenderWatchdog("SessionSurface", {
     sessionId: props.sessionId,
     workspaceId: props.workspaceId,
@@ -620,7 +576,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     pendingSessionLoad,
     showAssistantWaitState,
     showAssistantRespondingState,
-    noVisibleAssistantOutputBaseline,
     hasSnapshot: Boolean(snapshot),
   });
 
@@ -665,8 +620,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [openTargetsFingerprint, props.client, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
-    props.onOpenTargetsChange?.(verifiedOpenTargets);
-  }, [props.onOpenTargetsChange, verifiedOpenTargets]);
+    usePanelTabStore.getState().syncTranscriptArtifacts(props.sessionId, verifiedOpenTargets);
+  }, [props.sessionId, verifiedOpenTargets]);
 
   useEffect(() => {
     if (!pendingSessionLoad) {
@@ -684,7 +639,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     if (sending || liveStatus.type !== "idle" || renderedMessages.length <= awaitingAssistantBaseline) return;
     const id = window.setTimeout(() => {
-      setNoVisibleAssistantOutputBaseline(awaitingAssistantBaseline);
       setAwaitingAssistantBaseline(null);
     }, 1200);
     return () => window.clearTimeout(id);
@@ -699,9 +653,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const trimmed = text.trim();
-    const slashMatch = trimmed.match(/^\/([^\s]+)\s*(.*)$/);
-    const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
       if (pasteMatch) {
@@ -710,8 +662,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines }];
         }
       }
+      const skillMatch = segment.match(/^\[skill (.+)\]$/);
+      if (skillMatch?.[1]) {
+        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
+      }
       if (segment.startsWith("@")) {
-        const value = segment.slice(1);
+        const value = decodeComposerMentionValue(segment.slice(1));
         const kind = mentions[value];
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
@@ -724,13 +680,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     for (const part of pasteParts) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
+    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+    for (const value of Object.keys(mentions)) {
+      resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
+    }
+    const slashCommand = parseSlashCommandInvocation(resolved);
     return {
       mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
       resolvedText: resolved,
-      command: slashMatch ? { name: slashMatch[1] ?? "", arguments: slashMatch[2] ?? "" } : undefined,
+      command: slashCommand ?? undefined,
     };
   }, [mentions, pasteParts]);
 
@@ -746,36 +707,76 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   };
 
-  const handleSend = useCallback(async () => {
-    const text = draft.trim();
-    if (!text && attachments.length === 0) return;
-    // Intentionally allow sending while the assistant is still streaming.
-    // OpenCode accepts follow-up user turns mid-run and queues them; if the
-    // backend can't accept the follow-up it'll surface an error via the
-    // catch below. This restores the "append a prompt while it's still
-    // talking" behavior that the Solid composer had.
+  // Core sender shared by initial send and steered follow-ups. OpenCode
+  // accepts follow-up user turns mid-run (steering) — the running loop picks
+  // up the new message — so this is safe to call while the agent is busy.
+  const sendDraft = useCallback(async (nextDraft: ComposerDraft, draftAttachments: ComposerAttachment[]) => {
     setError(null);
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
     setSending(true);
     setAwaitingAssistantBaseline(renderedMessages.length);
-    setNoVisibleAssistantOutputBaseline(null);
     try {
-      const nextDraft = buildDraft(text, attachments);
       await props.onSendDraft(nextDraft);
-      attachments.forEach(revokeAttachmentPreview);
-      clearComposerSession(props.sessionId);
-      props.onDraftChange(buildDraft("", []));
+      draftAttachments.forEach(revokeAttachmentPreview);
       setSending(false);
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       setError(parsed);
-      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId);
+      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       setComposerDraft(props.sessionId, "");
       setAwaitingAssistantBaseline(null);
-      setNoVisibleAssistantOutputBaseline(null);
       setSending(false);
+      throw nextError;
     }
-  }, [attachments, buildDraft, clearComposerSession, draft, props.onDraftChange, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
+  }, [props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
+
+  const clearComposer = useCallback(() => {
+    clearComposerSession(props.sessionId);
+    props.onDraftChange(buildDraft("", []));
+  }, [buildDraft, clearComposerSession, props.onDraftChange, props.sessionId]);
+
+  // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
+  // share the same immediate path.
+  const handleSend = useCallback(async () => {
+    const text = draft.trim();
+    if (!text && attachments.length === 0) return;
+    const nextDraft = buildDraft(text, attachments);
+    const sentAttachments = attachments;
+    try {
+      await sendDraft(nextDraft, sentAttachments);
+      clearComposer();
+    } catch {
+      setComposerDraft(props.sessionId, "");
+    }
+  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft, setComposerDraft]);
+
+  const handleSteer = handleSend;
+
+  // Queue: hold the draft locally and clear the composer. The drain effect
+  // sends it once the session reports idle.
+  const handleQueue = useCallback(() => {
+    const text = draft.trim();
+    if (!text && attachments.length === 0) return;
+    setQueuedDrafts((current) => [...current, buildDraft(text, attachments)]);
+    clearComposer();
+  }, [attachments, buildDraft, clearComposer, draft]);
+
+  const removeQueuedDraft = useCallback((index: number) => {
+    setQueuedDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }, []);
+
+  // One label per queued draft, kept index-aligned with `queuedDrafts` so the
+  // panel's remove action targets the correct entry. Attachment-only drafts
+  // (no text) fall back to a count label instead of being dropped.
+  const queuedMessages = useMemo(
+    () =>
+      queuedDrafts.map((draftItem) => {
+        const text = draftItem.text.trim();
+        if (text) return text;
+        return t("composer.queued_attachments_only", { count: draftItem.attachments.length });
+      }),
+    [queuedDrafts],
+  );
 
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
@@ -799,23 +800,47 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   }, [liveStatus.type]);
 
+  // Drain the queued follow-ups once the session goes idle. OpenCode has no
+  // server-side queue, so we send everything that's queued as a single merged
+  // message. The ref guards against re-entrancy while the send is in flight.
+  const drainingQueueRef = useRef(false);
+  useEffect(() => {
+    if (drainingQueueRef.current) return;
+    if (queuedDrafts.length === 0) return;
+    if (chatStreaming || liveStatus.type !== "idle") return;
+    const merged = mergeDrafts(queuedDrafts);
+    if (!merged) return;
+    const drained = queuedDrafts;
+    drainingQueueRef.current = true;
+    setQueuedDrafts([]);
+    void (async () => {
+      try {
+        await sendDraft(merged, merged.attachments);
+      } catch {
+        // Restore the queue so the user can retry / edit on failure.
+        setQueuedDrafts((current) => [...drained, ...current]);
+      } finally {
+        drainingQueueRef.current = false;
+      }
+    })();
+  }, [queuedDrafts, chatStreaming, liveStatus.type, sendDraft]);
+
   useEffect(() => {
     props.onDraftChange(buildDraft(draft, attachments));
   }, [attachments, buildDraft, draft, props.onDraftChange]);
 
   const handleAttachFiles = (files: File[]) => {
     if (!props.attachmentsEnabled) {
-      setNotice({ title: props.attachmentsDisabledReason ?? "Attachments are unavailable.", tone: "warning" });
+      toast.warning(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
       return;
     }
     const oversized = files.filter((file) => file.size > 25 * 1024 * 1024);
     const accepted = files.filter((file) => file.size <= 25 * 1024 * 1024);
     if (oversized.length) {
-      setNotice({
-        title: oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
-        description: "Files over 25 MB were skipped.",
-        tone: "warning",
-      });
+      toast.warning(
+        oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
+        { description: "Files over 25 MB were skipped." },
+      );
     }
     if (!accepted.length) return;
     const next = accepted.map((file) => ({
@@ -828,10 +853,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
     }));
     setComposerAttachments(props.sessionId, [...attachments, ...next]);
-    setNotice({
-      title: next.length === 1 ? `Attached ${next[0]?.name ?? "file"}` : `Attached ${next.length} files`,
-      tone: "success",
-    });
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -843,7 +864,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const handleInsertMention = (kind: "agent" | "file", value: string) => {
-    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${value} `));
+    setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     setComposerMentions(props.sessionId, { ...mentions, [value]: kind });
   };
 
@@ -852,16 +873,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const label = `${id.slice(-4)} · ${text.split(/\r?\n/).length} lines`;
     setComposerPasteParts(props.sessionId, [...pasteParts, { id, label, text, lines: text.split(/\r?\n/).length }]);
     setComposerDraft(props.sessionId, `${draft}[pasted text ${label}]`);
-  };
-
-  const handleRevealPastedText = (id: string) => {
-    const part = pasteParts.find((item) => item.id === id);
-    if (!part) return;
-    setNotice({
-      title: `Pasted text · ${part.label}`,
-      description: part.text.slice(0, 800),
-      tone: "info",
-    });
   };
 
   const handleExpandPastedText = (id: string) => {
@@ -997,25 +1008,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return plugins;
   };
 
-  const handleUploadInboxFiles = async (files: File[], options?: { notify?: boolean }) => {
+  const handleUploadInboxFiles = async (files: File[]) => {
     const input = files.filter(Boolean);
     if (!input.length) return;
     try {
       const results = await Promise.all(input.map((file) => props.client.uploadInbox(props.workspaceId, file)));
-      if (options?.notify !== false) {
-        const summary = results.map((item) => item.path.split("/").filter(Boolean).slice(-1)[0] ?? item.path).join(", ");
-        setNotice({
-          title: input.length === 1 ? "Uploaded to the shared folder." : `Uploaded ${input.length} files to the shared folder.`,
-          description: summary || undefined,
-          tone: "success",
-        });
-      }
       return results;
     } catch (nextError) {
-      setNotice({
-        title: nextError instanceof Error ? nextError.message : "Shared folder upload failed",
-        tone: "warning",
-      });
+      toast.warning(nextError instanceof Error ? nextError.message : "Shared folder upload failed");
       throw nextError;
     }
   };
@@ -1028,6 +1028,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     containerRef: scrollRef,
     contentRef,
   });
+
+  const handleMessageListDispatchAction = useCallback((action: DispatchAction) => {
+    if (action.target === "settings" && action.action === "open") {
+      props.onOpenSettingsSection?.(action.section);
+    }
+  }, [props.onOpenSettingsSection]);
+
+  const handleMessageListSetPrompt = useCallback((prompt: string) => {
+    void typeComposerText(prompt);
+  }, [typeComposerText]);
+
+  const handleRevertToUserMessage = useCallback((messageId: string) => {
+    props.onRevertToMessage?.(messageId);
+  }, [props.onRevertToMessage]);
+
+  const handleForkAtMessage = useCallback((messageId: string) => {
+    props.onForkAtMessage?.(messageId);
+  }, [props.onForkAtMessage]);
 
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
@@ -1160,123 +1178,72 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <div className="px-6 py-12">
                 <AssistantWaitingCard label={getSessionActivityStatusLabel(effectiveActivityStatus)} />
               </div>
-            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 ? (
-              error ? (
-                <SessionErrorCard
-                  error={error}
-                  onDismiss={handleDismissError}
-                  onChangeModel={props.onChangeModel}
-                  onOpenModelPicker={props.onModelClick}
-                />
-              ) : shellConfig.starterCards ? (
-                <div className="flex flex-1 flex-col items-center justify-end px-6 pb-4">
-                  <div className="w-full max-w-[640px]">
-                    <p className="mb-3 text-xs text-dls-secondary">Try one of these:</p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => void typeComposerText("Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.")}
-                      >
-                        <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Edit a CSV</div>
-                          <div className="text-[11px] text-dls-secondary">Create a sample spreadsheet</div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => void typeComposerText("Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.")}
-                      >
-                        <img src="/openwork-mark.svg" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Browse the web</div>
-                          <div className="text-[11px] text-dls-secondary">Search Craigslist for couches</div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="flex flex-1 items-start gap-2.5 rounded-xl border border-dls-border bg-dls-surface p-3 text-left transition-colors hover:bg-dls-hover"
-                        onClick={() => props.onOpenSettingsSection?.("mcps")}
-                      >
-                        <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={16} height={16} className="mt-0.5 shrink-0" />
-                        <div>
-                          <div className="text-[12px] font-medium text-dls-text">Connect an extension</div>
-                          <div className="text-[11px] text-dls-secondary">Add MCPs and integrations</div>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null
+            ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
+              <SessionErrorCard
+                error={error}
+                onDismiss={handleDismissError}
+                onChangeModel={props.onChangeModel}
+                onOpenModelPicker={props.onModelClick}
+              />
             ) : (
-              <DevProfiler id="SessionTranscript">
-                <>
-                  <SessionTranscript
-                    messages={renderedMessages}
-                    isStreaming={chatStreaming}
-                    developerMode={props.developerMode}
+              <DevProfiler id="MessageList">
+                <OpenTargetProvider
+                  openTargets={verifiedOpenTargets}
+                  onOpenTarget={props.onOpenTarget}
+                >
+                  <MessageListProvider
+                    workspaceId={props.workspaceId}
+                    sessionId={props.sessionId}
                     showThinking={showThinking}
-                    scrollElement={() => scrollRef.current}
-                    onRevertToMessage={props.onRevertToMessage}
-                    onForkAtMessage={props.onForkAtMessage}
-                    openTargets={verifiedOpenTargets}
-                    onOpenTarget={props.onOpenTarget}
-                    footer={assistantStatusFooter}
-                  />
-                  {error ? (
-                    <SessionErrorCard
-                      error={error}
-                      onDismiss={handleDismissError}
-                      onChangeModel={props.onChangeModel}
-                      onOpenModelPicker={props.onModelClick}
+                    developerMode={props.developerMode}
+                    displaySuggestions={shellConfig.starterCards}
+                    providerConnectedCount={props.providerConnectedCount ?? 0}
+                    dispatchAction={handleMessageListDispatchAction}
+                    setPrompt={handleMessageListSetPrompt}
+                    onRevertToUserMessage={handleRevertToUserMessage}
+                    onForkAtMessage={handleForkAtMessage}
+                  >
+                    <MessageList
+                      messages={renderedMessages}
+                      status={status}
+                      retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                     />
-                  ) : null}
-                </>
+                  </MessageListProvider>
+                </OpenTargetProvider>
               </DevProfiler>
             )}
           </div>
         </div>
-        {!sessionScroll.isAtBottom || (!chatStreaming && sessionScroll.topClippedMessageId) ? (
-          <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex -translate-x-1/2 justify-center">
-            <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
-              {!chatStreaming && sessionScroll.topClippedMessageId ? (
-                <button
-                  type="button"
-                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
-                  onClick={() => {
-                    sessionScroll.jumpToStartOfMessage("smooth");
-                  }}
-                >
-                  Jump to start
-                </button>
-              ) : null}
-              {!sessionScroll.isAtBottom ? (
-                <button
-                  type="button"
-                  className="rounded-full px-3 py-1.5 text-xs text-dls-text transition-colors hover:bg-dls-hover"
-                  onClick={() => {
-                    sessionScroll.jumpToLatest("smooth");
-                  }}
-                >
-                  Jump to latest
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        <SessionScrollOverlay
+          sessionId={props.sessionId}
+          isStreaming={chatStreaming}
+          onJumpToLatest={sessionScroll.jumpToLatest}
+          onJumpToStartOfMessage={sessionScroll.jumpToStartOfMessage}
+        />
       </div>
 
       <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+        {(props.providerConnectedCount ?? 0) === 0 ? (
+          <button
+            type="button"
+            className="mx-3 mb-2 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-lg border border-amber-7/40 bg-amber-2/30 px-3 py-2 text-left text-xs text-amber-11 transition-colors hover:bg-amber-3/40"
+            onClick={() => props.onOpenSettingsSection?.("providers")}
+          >
+            <span className="font-medium">No AI model connected.</span>
+            <span className="text-amber-11/70">Add a provider to run tasks.</span>
+          </button>
+        ) : null}
         <DevProfiler id="SessionComposer">
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
         onSend={handleSend}
+        onSteer={handleSteer}
+        onQueue={handleQueue}
         onStop={handleAbort}
         busy={chatStreaming}
+        queuedCount={queuedMessages.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
@@ -1310,21 +1277,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
-        notice={notice}
-        onNotice={setNotice}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
-        onRevealPastedText={handleRevealPastedText}
         onRemovePastedText={handleRemovePastedText}
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission)}
+          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedMessages.length > 0)}
           topAccessory={
-            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission ? (
+            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedMessages.length > 0 ? (
               <div>
+                {queuedMessages.length > 0 ? (
+                  <QueuedMessagesPanel messages={queuedMessages} onRemove={removeQueuedDraft} />
+                ) : null}
                 {props.activeQuestion ? (
                   <QuestionPanel
                     questions={props.activeQuestion.questions}
@@ -1335,9 +1302,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       }
                     }}
                   />
-                ) : (
+                ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
                   <TodoPanel todos={props.todos ?? []} />
-                )}
+                ) : null}
                 {props.activePermission ? (
                   <PermissionApprovalPanel
                     permission={props.activePermission}

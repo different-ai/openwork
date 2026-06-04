@@ -23,11 +23,13 @@ src/react-app/
     │   ├── state/             Settings-scoped hooks/providers
     │   ├── pages/             Plugins, extensions, config, ... (tab bodies)
     │   └── modals/            Reset modal, ...
-    ├── connections/
-    │   └── modals/            Add-MCP, provider auth, ...
-    ├── bundles/               Import / start / skill-destination flows + agnostic re-exports
-    └── shell-feedback/        Status toasts, reload banner, top-right notifications
+    └── connections/
+        └── modals/            Add-MCP, provider auth, ...
 ```
+
+Toasts and shell notifications are rendered with `sonner` (`@/components/ui/sonner`),
+mounted once via `<Toaster />` in `shell/providers.tsx` and driven imperatively with
+`toast()` from anywhere.
 
 ## Why domains
 
@@ -39,9 +41,6 @@ The React tree uses explicit domain ownership so every feature has one obvious h
 - `settings/` owns settings state, the full settings shell once it lands, and each tab body as a
   stateless page under `pages/`.
 - `connections/` owns MCP and provider auth UI.
-- `bundles/` owns import/start/destination modals plus re-exports of the framework-agnostic
-  helpers.
-- `shell-feedback/` owns toasts and notifications that the shell shows on top of everything.
 
 Cross-domain imports go through module boundaries, not a shared blob.
 
@@ -142,8 +141,6 @@ tree when a domain-scoped import path is clearer. Examples:
 - `app/lib/*` (opencode, tauri, den, openwork-server, ...) — consumed directly by React.
 - `app/types.ts`, `app/constants.ts`, `app/theme.ts`, `app/utils/*` — shared across both runtimes.
 - `app/session/composer-tools.ts` — shared session helpers.
-- `app/bundles/{types,schema,url-policy,sources,apply,publish,skill-org-publish,index}` — bundle
-  logic consumed by both runtimes; React side re-exports from `domains/bundles/*`.
 
 ## Porting pattern
 

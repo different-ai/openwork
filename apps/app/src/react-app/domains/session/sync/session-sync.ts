@@ -1,14 +1,21 @@
 import type { UIMessage } from "ai";
-import type { Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
-import { createClient } from "../../../../app/lib/opencode";
-import { normalizeEvent } from "../../../../app/utils";
-import type { OpencodeEvent, PendingPermission, PendingQuestion } from "../../../../app/types";
-import { snapshotToUIMessages } from "./usechat-adapter";
-import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import { createClient } from "@/app/lib/opencode";
+import { normalizeEvent } from "@/app/utils";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
+import { createSessionErrorUIMessage, describeOpencodeSessionError, snapshotToUIMessages } from "./usechat-adapter";
+import {
+  parseDynamicToolUIPart,
+  parseStructuredOutputUIPart,
+  STRUCTURED_OUTPUT_TOOL,
+} from "./parse-tool-parts";
+import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import { reconcileTranscriptMessages } from "./transcript-reconcile";
-import { useSessionActivityStore } from "../status/session-activity-store";
+import {
+  useSessionActivityStore,
+} from "../status/session-activity-store";
 
 type SyncOptions = {
   workspaceId: string;
@@ -18,7 +25,7 @@ type SyncOptions = {
   onSessionStatus?: (update: { sessionId: string; status: SessionStatus }) => void;
 };
 
-export type PendingDelta = {
+type PendingDelta = {
   sessionId: string;
   messageId: string;
   partId: string;
@@ -130,7 +137,28 @@ function sessionIdFromProperties(properties: unknown) {
   return typeof sessionID === "string" ? sessionID : "";
 }
 
+function sessionErrorFromProperties(properties: unknown) {
+  if (!properties || typeof properties !== "object") return undefined;
+  return (properties as { error?: unknown }).error;
+}
+
+function latestAssistantMessageId(messages: UIMessage[]) {
+  // The snapshot keys each error to its errored assistant message id, so the
+  // live event must resolve to that same id to dedupe on reload. Skipping
+  // synthetic error messages ensures a follow-up error keys off the real
+  // assistant turn rather than overwriting the previous error message.
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant") continue;
+    if (message.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)) continue;
+    return message.id;
+  }
+  return null;
+}
+
 function partHasVisibleAssistantOutput(part: Part) {
+  if (part.type === "text" && part.synthetic) return false;
+  if (part.type === "text" && part.ignored) return false;
   const partType = String(part.type);
   if ("text" in part && typeof part.text === "string" && part.text.trim().length > 0) return true;
   return partType === "tool" || partType === "file" || partType === "agent";
@@ -260,11 +288,59 @@ export function seedQuestionState(
   });
 }
 
+function fileProviderMetadata(part: FilePart) {
+  if (part.source) {
+    return { opencode: { partId: part.id, source: part.source } };
+  }
+  return { opencode: { partId: part.id } };
+}
+
+function toFileUIPart(part: FilePart): UIMessage["parts"][number] {
+  return {
+    type: "file",
+    url: part.url,
+    filename: part.filename,
+    mediaType: part.mime,
+    providerMetadata: fileProviderMetadata(part),
+  };
+}
+
+function toFileSourceUIPart(part: FilePart): UIMessage["parts"][number] | null {
+  const source = part.source;
+  if (!source) return null;
+
+  const sourceId = `${part.id}:source`;
+  const providerMetadata = { opencode: { partId: sourceId, sourcePartId: part.id, source } };
+
+  if (source.type === "resource") {
+    if (source.uri.startsWith("http://")) {
+      return { type: "source-url", sourceId, url: source.uri, title: source.uri, providerMetadata };
+    }
+    if (source.uri.startsWith("https://")) {
+      return { type: "source-url", sourceId, url: source.uri, title: source.uri, providerMetadata };
+    }
+    return { type: "source-document", sourceId, mediaType: part.mime, title: source.uri, providerMetadata };
+  }
+
+  if (source.type === "symbol") {
+    return { type: "source-document", sourceId, mediaType: part.mime, title: source.name, filename: source.path, providerMetadata };
+  }
+
+  return { type: "source-document", sourceId, mediaType: part.mime, title: source.path, filename: source.path, providerMetadata };
+}
+
+function toFileUIParts(part: FilePart): UIMessage["parts"] {
+  const sourcePart = toFileSourceUIPart(part);
+  if (sourcePart) return [toFileUIPart(part), sourcePart];
+  return [toFileUIPart(part)];
+}
+
 function toUIPart(part: Part): UIMessage["parts"][number] | null {
   if (part.type === "text") {
+    if (part.synthetic || part.ignored) return null;
     return {
       type: "text",
-      text: typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "",
+      text: part.text,
       state: "done",
       providerMetadata: { opencode: { partId: part.id } },
     };
@@ -272,60 +348,50 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
   if (part.type === "reasoning") {
     return {
       type: "reasoning",
-      text: typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "",
+      text: part.text,
       state: "done",
       providerMetadata: { opencode: { partId: part.id } },
     };
   }
   if (part.type === "file") {
-    const file = part as Part & { url?: string; filename?: string; mime?: string };
-    if (!file.url) return null;
-    return {
-      type: "file",
-      url: file.url,
-      filename: file.filename,
-      mediaType: file.mime ?? "application/octet-stream",
-      providerMetadata: { opencode: { partId: part.id } },
-    };
+    return toFileUIPart(part);
   }
   if (part.type === "tool") {
-    const record = part as Part & { tool?: string; state?: Record<string, unknown> };
-    const state = record.state ?? {};
-    const toolName = typeof record.tool === "string" ? record.tool : "tool";
-    if (typeof state.error === "string" && state.error.trim()) {
-      return {
-        type: "dynamic-tool",
-        toolName,
-        toolCallId: part.id,
-        state: "output-error",
-        input: state.input,
-        errorText: state.error,
-      };
+    if (part.tool === STRUCTURED_OUTPUT_TOOL) {
+      return parseStructuredOutputUIPart(part);
     }
-    if (state.output !== undefined) {
-      return {
-        type: "dynamic-tool",
-        toolName,
-        toolCallId: part.id,
-        state: "output-available",
-        input: state.input,
-        output: state.output,
-      };
-    }
+    return parseDynamicToolUIPart(part);
+  }
+  if (part.type === "agent") {
     return {
-      type: "dynamic-tool",
-      toolName,
-      toolCallId: part.id,
-      state: "input-available",
-      input: state.input,
+      type: "text",
+      text: part.name ? `@${part.name}` : "@agent",
+      state: "done",
+      providerMetadata: { opencode: { partId: part.id } },
     };
   }
   if (part.type === "step-start") return { type: "step-start" };
   return null;
 }
 
+function toUIParts(part: Part): UIMessage["parts"] {
+  if (part.type === "file") return toFileUIParts(part);
+  const mapped = toUIPart(part);
+  if (!mapped) return [];
+  if (part.type === "tool" && part.tool === STRUCTURED_OUTPUT_TOOL) return [mapped];
+  if (part.type === "tool" && part.state.status === "completed" && part.state.attachments) {
+    return [mapped, ...part.state.attachments.flatMap(toFileUIParts)];
+  }
+  return [mapped];
+}
+
 function getPartMetadataId(part: UIMessage["parts"][number]) {
-  if (part.type !== "text" && part.type !== "reasoning" && part.type !== "file") return null;
+  if (part.type === "dynamic-tool") {
+    const metadata = part.callProviderMetadata?.opencode;
+    if (!metadata || typeof metadata !== "object") return null;
+    return "partId" in metadata ? (metadata as { partId?: string }).partId ?? null : null;
+  }
+  if (part.type !== "text" && part.type !== "reasoning" && part.type !== "file" && part.type !== "source-url" && part.type !== "source-document") return null;
   const metadata = part.providerMetadata?.opencode;
   if (!metadata || typeof metadata !== "object") return null;
   return "partId" in metadata ? (metadata as { partId?: string }).partId ?? null : null;
@@ -495,7 +561,24 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "session.error") {
     const sessionId = sessionIdFromProperties(event.properties);
-    if (sessionId) useSessionActivityStore.getState().setError(workspaceId, sessionId);
+    if (sessionId) {
+      const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
+      useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
+      if (isTrackedSession(entry, sessionId)) {
+        queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
+          // Key the error to the latest assistant turn so it lands beside the
+          // turn that failed and a later turn's error becomes its own message
+          // instead of overwriting this one. Falls back to the session id when
+          // no assistant turn exists yet (e.g. error before any output).
+          const turnKey = latestAssistantMessageId(current) ?? sessionId;
+          // Note: turnKey matches the snapshot's per-turn key (the errored
+          // assistant message id) so a reload reconciles instead of
+          // duplicating; the sessionId fallback only applies when the run
+          // errored before any assistant message existed.
+          return upsertMessage(current, createSessionErrorUIMessage(turnKey, errorText));
+        });
+      }
+    }
     return;
   }
 
@@ -617,7 +700,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
     if (!isTrackedSession(entry, part.sessionID)) return;
-    const mapped = toUIPart(part);
+    const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
     const pending = entry.pendingDeltas.get(part.id);
     // Seed the new part with any deltas that arrived before this
@@ -657,7 +740,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       const existing = current.find((m) => m.id === part.messageID);
       const role = existing?.role ?? inferStubRole(current);
       const withMessage = upsertMessage(current, { id: part.messageID, role, parts: [] });
-      return upsertPart(withMessage, part.messageID, part.id, seededPart);
+      const seededPartId = getPartMetadataId(seededPart) ?? part.id;
+      let next = upsertPart(withMessage, part.messageID, seededPartId, seededPart);
+      for (const attachment of attachments) {
+        const attachmentId = getPartMetadataId(attachment);
+        if (attachmentId) next = upsertPart(next, part.messageID, attachmentId, attachment);
+      }
+      return next;
     });
     if (pending) entry.pendingDeltas.delete(part.id);
     return;

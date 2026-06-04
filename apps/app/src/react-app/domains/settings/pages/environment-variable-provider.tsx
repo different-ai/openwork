@@ -1,14 +1,10 @@
 import { createContext, use, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutateFunction } from "@tanstack/react-query";
+import { toast } from "@/components/ui/sonner";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import {
-  readOpenworkEnvPendingChanges,
-  writeOpenworkEnvPendingChanges,
-} from "@/app/lib/openwork-env-runtime";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { clearOpenworkEnvSystemContextCache } from "../../session/sync/env-context";
+import { clearOpenworkEnvSystemContextCache } from "@/react-app/domains/session/sync/env-context";
 import type { EnvironmentVariableItem } from "./environment-variable-table";
 
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -42,9 +38,13 @@ type UseEnvironmentVariableListOptions = {
   runtimeKey?: string | null;
 };
 
+export function environmentUserEnvQueryKey(runtimeKey?: string | null) {
+  return ["settings", "environment", "user-env", runtimeKey];
+}
+
 export function useEnvironmentVariableList(options: UseEnvironmentVariableListOptions) {
   return useQuery({
-    queryKey: ["settings", "environment", "user-env", options.runtimeKey],
+    queryKey: environmentUserEnvQueryKey(options.runtimeKey),
     queryFn: async () => {
       if (!options.client || options.isRemoteWorkspace) {
         return { items: [] };
@@ -92,13 +92,15 @@ interface EnvironmentVariableProviderProps {
 }
 
 export function EnvironmentVariableProvider({ children, client, runtimeKey, onApplyChanges }: EnvironmentVariableProviderProps) {
-  const { showToast } = useStatusToasts();
   const queryClient = useQueryClient();
 
   const { data } = useQuery({
     queryKey: ["settings", "environment", "pending-changes", runtimeKey],
-    queryFn: () => readOpenworkEnvPendingChanges(runtimeKey),
-    staleTime: Infinity,
+    queryFn: async () => {
+      if (!client) return false;
+      return (await client.getUserEnvStatus(runtimeKey)).pendingChanges;
+    },
+    staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
   
@@ -106,30 +108,23 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
     mutationFn: async () => onApplyChanges?.(),
     onSuccess: (result) => {
       clearOpenworkEnvSystemContextCache();
-      writeOpenworkEnvPendingChanges(false);
       queryClient.setQueryData(["settings", "environment", "pending-changes", runtimeKey], false);
-      showToast({
-        title: result?.statusMessage ?? t("settings.environment.apply_success"),
-        tone: "success",
-      });
+      client?.setUserEnvPendingChanges(false, runtimeKey).catch(() => undefined);
+      toast.success(result?.statusMessage ?? t("settings.environment.apply_success"));
     },
     onError: (error) => {
-      showToast({
-        title: error.message,
-        tone: "error",
-      });
+      toast.error(error.message);
     },
   });
 
   const markChangesPending = useCallback(() => {
     clearOpenworkEnvSystemContextCache();
-    writeOpenworkEnvPendingChanges(true, runtimeKey);
-
     queryClient.setQueryData(["settings", "environment", "pending-changes", runtimeKey], true);
     resetApply();
+    client?.setUserEnvPendingChanges(true, runtimeKey).catch(() => undefined);
 
-    showToast({ title: t("settings.environment.restart_required"), tone: "info" });
-  }, [resetApply, queryClient, runtimeKey, showToast]);
+    toast.info(t("settings.environment.restart_required"));
+  }, [client, resetApply, queryClient, runtimeKey]);
 
   const { mutate: modifyAsync, isPending: isModifying, reset: resetModify, error: modifyError } = useMutation({
     mutationFn: async (nextEditor: EnvironmentEditorDraft) => {
@@ -144,12 +139,9 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
       }
 
       const key = nextEditor.key.trim();
-      const existingItems = queryClient.getQueryData<{ items: EnvironmentVariableItem[] }>([
-        "settings",
-        "environment",
-        "user-env",
-        runtimeKey,
-      ])?.items;
+      const existingItems = queryClient.getQueryData<{ items: EnvironmentVariableItem[] }>(
+        environmentUserEnvQueryKey(runtimeKey),
+      )?.items;
 
       if (nextEditor.mode === "add" && existingItems?.some((item) => item.key === key)) {
         throw new Error(t("settings.environment.validation_duplicate"));
@@ -161,7 +153,7 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
       markChangesPending();
 
       await queryClient.invalidateQueries({
-        queryKey: ["settings", "environment", "user-env", runtimeKey],
+        queryKey: environmentUserEnvQueryKey(runtimeKey),
       });
     },
   }); 
@@ -180,14 +172,11 @@ export function EnvironmentVariableProvider({ children, client, runtimeKey, onAp
       markChangesPending();
 
       await queryClient.invalidateQueries({
-        queryKey: ["settings", "environment", "user-env", runtimeKey],
+        queryKey: environmentUserEnvQueryKey(runtimeKey),
       });
     },
     onError: (error) => {
-      showToast({
-        title: error.message,
-        tone: "error",
-      });
+      toast.error(error.message);
     },
   });
   const value = useMemo<EnvironmentVariableContextValue>(() => ({
