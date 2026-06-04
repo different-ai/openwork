@@ -126,7 +126,6 @@ export function CloudWorkersView({
         setOpeningWorkerId(null);
       }
     },
-<<<<<<< HEAD
     [activeOrgId, baseUrl, client, connectRemoteWorkspace],
   );
 
