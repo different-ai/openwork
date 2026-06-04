@@ -7,8 +7,24 @@ export type ManagedOpencodeServer = {
   username: string;
   password: string;
   pid: number | null;
+  execution: OpencodeExecutionSnapshot;
   close: () => void;
 };
+
+export type OpencodeExecutionEnvEntry = {
+  name: string;
+  value: string;
+  redacted: boolean;
+};
+
+export type OpencodeExecutionSnapshot = {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: OpencodeExecutionEnvEntry[];
+};
+
+const SECRET_ENV_PATTERN = /(TOKEN|PASSWORD|USERNAME|AUTH|SECRET|KEY|CREDENTIAL)/i;
 
 function randomSecret(): string {
   return randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
@@ -41,14 +57,28 @@ export async function createManagedOpencodeServer(options: {
   const username = randomSecret();
   const password = randomSecret();
   const args = ["serve", "--hostname", hostname, "--port", String(port), "--cors", "*"];
+  const command = options.bin?.trim() || "opencode";
+  const env = {
+    ...process.env,
+    ...options.env,
+    OPENCODE_SERVER_USERNAME: username,
+    OPENCODE_SERVER_PASSWORD: password,
+  };
+  const injectedEnv = Object.entries({
+    ...(options.env ?? {}),
+    OPENCODE_SERVER_USERNAME: username,
+    OPENCODE_SERVER_PASSWORD: password,
+  })
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .map(([name, value]) => ({
+      name,
+      value: SECRET_ENV_PATTERN.test(name) ? "<redacted>" : value,
+      redacted: SECRET_ENV_PATTERN.test(name),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
   const child: ChildProcess = spawn(options.bin?.trim() || "opencode", args, {
     cwd: options.cwd,
-    env: {
-      ...process.env,
-      ...options.env,
-      OPENCODE_SERVER_USERNAME: username,
-      OPENCODE_SERVER_PASSWORD: password,
-    },
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -84,6 +114,12 @@ export async function createManagedOpencodeServer(options: {
     username,
     password,
     pid: child.pid ?? null,
+    execution: {
+      command,
+      args,
+      cwd: options.cwd,
+      env: injectedEnv,
+    },
     close() {
       if (!child.killed) child.kill();
     },

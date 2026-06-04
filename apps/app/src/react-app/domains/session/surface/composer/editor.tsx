@@ -32,6 +32,7 @@ import {
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
+import { decodeComposerMentionValue, encodeComposerMentionValue } from "./mention-encoding";
 
 type EditorProps = {
   value: string;
@@ -68,6 +69,15 @@ type SerializedComposerSlashCommandNode = Spread<
   SerializedTextNode
 >;
 
+type SerializedComposerSkillNode = Spread<
+  {
+    skillName: string;
+    type: "composer-skill";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
 class ComposerMentionNode extends TextNode {
   __value: string;
   __kind: "agent" | "file";
@@ -85,7 +95,7 @@ class ComposerMentionNode extends TextNode {
   }
 
   constructor(value = "", kind: "agent" | "file" = "file", key?: NodeKey) {
-    super(`@${value}`, key);
+    super(`@${encodeComposerMentionValue(value)}`, key);
     this.__value = value;
     this.__kind = kind;
   }
@@ -214,6 +224,74 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
+class ComposerSkillNode extends TextNode {
+  __skillName: string;
+
+  static override getType() {
+    return "composer-skill";
+  }
+
+  static override clone(node: ComposerSkillNode) {
+    return new ComposerSkillNode(node.__skillName, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSkillNode) {
+    return $createComposerSkillNode(serializedNode.skillName);
+  }
+
+  constructor(skillName = "", key?: NodeKey) {
+    super(`[skill ${skillName}]`, key);
+    this.__skillName = skillName;
+  }
+
+  override exportJSON(): SerializedComposerSkillNode {
+    return {
+      ...super.exportJSON(),
+      skillName: this.__skillName,
+      type: "composer-skill",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig) {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11";
+    dom.textContent = this.__skillName;
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    dom.title = `Skill: ${this.__skillName}`;
+    return dom;
+  }
+
+  override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
+    if (prevNode.__skillName !== this.__skillName) {
+      dom.textContent = this.__skillName;
+      dom.title = `Skill: ${this.__skillName}`;
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerSkillNode(skillName: string) {
+  return $applyNodeReplacement(new ComposerSkillNode(skillName));
+}
+
 function pastedTextChipLabel(lines: number) {
   return `Pasted · ${lines} line${lines === 1 ? "" : "s"}`;
 }
@@ -332,7 +410,7 @@ function $createComposerPastedTextNode(label: string, lines: number) {
   return $applyNodeReplacement(new ComposerPastedTextNode(label, lines));
 }
 
-type ComposerInlineTokenNode = ComposerMentionNode | ComposerSlashCommandNode | ComposerPastedTextNode;
+type ComposerInlineTokenNode = ComposerMentionNode | ComposerSlashCommandNode | ComposerSkillNode | ComposerPastedTextNode;
 
 function setSelectionAfterNode(node: ComposerInlineTokenNode) {
   const parent = node.getParent();
@@ -394,7 +472,7 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[pasted text [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(/(\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   for (const segment of segments) {
     if (!segment) continue;
@@ -406,8 +484,13 @@ function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pa
         continue;
       }
     }
+    const skillMatch = segment.match(/^\[skill (.+)\]$/);
+    if (skillMatch?.[1]) {
+      paragraph.append($createComposerSkillNode(skillMatch[1]));
+      continue;
+    }
     if (segment.startsWith("@")) {
-      const token = segment.slice(1);
+      const token = decodeComposerMentionValue(segment.slice(1));
       const kind = mentions[token];
       if (kind) {
         paragraph.append($createComposerMentionNode(token, kind));
@@ -598,7 +681,7 @@ function MentionChipNavigationPlugin() {
         // --- Mention / pasted-text chips: atomic delete (same as before) ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
@@ -606,7 +689,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isElementNode(anchorNode)) {
           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
-          if (previous instanceof ComposerSlashCommandNode || previous instanceof ComposerMentionNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerSlashCommandNode || previous instanceof ComposerMentionNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
             previous.remove();
             return true;
           }
@@ -626,7 +709,7 @@ function MentionChipNavigationPlugin() {
 
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
-          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode || previous instanceof ComposerPastedTextNode) {
+          if (previous instanceof ComposerMentionNode || previous instanceof ComposerSlashCommandNode || previous instanceof ComposerSkillNode || previous instanceof ComposerPastedTextNode) {
             setSelectionBeforeNode(previous);
             return true;
           }
@@ -644,14 +727,14 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
-        if (anchorNode instanceof ComposerMentionNode || anchorNode instanceof ComposerSlashCommandNode || anchorNode instanceof ComposerPastedTextNode) {
+        if (anchorNode instanceof ComposerMentionNode || anchorNode instanceof ComposerSlashCommandNode || anchorNode instanceof ComposerSkillNode || anchorNode instanceof ComposerPastedTextNode) {
           setSelectionAfterNode(anchorNode);
           return true;
         }
 
         if ($isElementNode(anchorNode)) {
           const current = anchorNode.getChildAtIndex(selection.anchor.offset);
-          if (current instanceof ComposerMentionNode || current instanceof ComposerSlashCommandNode || current instanceof ComposerPastedTextNode) {
+          if (current instanceof ComposerMentionNode || current instanceof ComposerSlashCommandNode || current instanceof ComposerSkillNode || current instanceof ComposerPastedTextNode) {
             setSelectionAfterNode(current);
             return true;
           }
@@ -691,7 +774,7 @@ export function LexicalPromptEditor(props: EditorProps) {
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerPastedTextNode],
+        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode],
         editorState: () => {
           setPrompt(props.value, props.mentions, props.pastedText);
         },

@@ -56,7 +56,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
 import {
   RadioGroup,
@@ -335,57 +335,59 @@ export function ResourceSelectionPage() {
         ) : (
           <PageContent>
             <ScrollArea className="px-2.5">
-            <Accordion
-              multiple
-              className="rounded-2xl border border-border bg-transparent shadow-none before:hidden"
-            >
-              {/* AI Providers */}
-              {providers.length > 0 ? (
-                <Section
-                  icon={<CloudIcon className="size-5 text-foreground/60" />}
-                  title="AI Providers"
-                  description="Models you can use in your workspace."
-                  count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
+              <ScrollAreaViewport>
+                <Accordion
+                  multiple
+                  className="rounded-2xl border border-border bg-transparent shadow-none before:hidden"
                 >
-                  {providers.map((provider) => (
-                    <ProviderCard
-                      key={provider.id}
-                      provider={provider}
-                      selectedDefault={selectedDefault}
-                      onSelectDefault={setSelectedDefault}
-                    />
-                  ))}
-                </Section>
-              ) : null}
+                  {/* AI Providers */}
+                  {providers.length > 0 ? (
+                    <Section
+                      icon={<CloudIcon className="size-5 text-foreground/60" />}
+                      title="AI Providers"
+                      description="Models you can use in your workspace."
+                      count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
+                    >
+                      {providers.map((provider) => (
+                        <ProviderCard
+                          key={provider.id}
+                          provider={provider}
+                          selectedDefault={selectedDefault}
+                          onSelectDefault={setSelectedDefault}
+                        />
+                      ))}
+                    </Section>
+                  ) : null}
 
-              {/* Marketplaces */}
-              {marketplaces.length > 0 ? (
-                <Section
-                  icon={<Square3Stack3DIcon className="size-5 text-foreground/60" />}
-                  title="Marketplaces"
-                  description="App stores with extensions and plugins for your workspace."
-                  count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
-                >
-                  {marketplaces.map((mp) => (
-                    <MarketplaceCard key={mp.id} marketplace={mp} />
-                  ))}
-                </Section>
-              ) : null}
+                  {/* Marketplaces */}
+                  {marketplaces.length > 0 ? (
+                    <Section
+                      icon={<Square3Stack3DIcon className="size-5 text-foreground/60" />}
+                      title="Marketplaces"
+                      description="App stores with extensions and plugins for your workspace."
+                      count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
+                    >
+                      {marketplaces.map((mp) => (
+                        <MarketplaceCard key={mp.id} marketplace={mp} />
+                      ))}
+                    </Section>
+                  ) : null}
 
-              {/* Workers */}
-              {workers.length > 0 ? (
-                <Section
-                  icon={<ServerStackIcon className="size-5 text-foreground/60" />}
-                  title="Cloud Workers"
-                  description="Remote machines that can run tasks for you."
-                  count={`${workers.length} worker${workers.length === 1 ? "" : "s"}`}
-                >
-                  {workers.map((worker) => (
-                    <WorkerCard key={worker.workerId} worker={worker} />
-                  ))}
-                </Section>
-              ) : null}
-            </Accordion>
+                  {/* Workers */}
+                  {workers.length > 0 ? (
+                    <Section
+                      icon={<ServerStackIcon className="size-5 text-foreground/60" />}
+                      title="Cloud Workers"
+                      description="Remote machines that can run tasks for you."
+                      count={`${workers.length} worker${workers.length === 1 ? "" : "s"}`}
+                    >
+                      {workers.map((worker) => (
+                        <WorkerCard key={worker.workerId} worker={worker} />
+                      ))}
+                    </Section>
+                  ) : null}
+                </Accordion>
+              </ScrollAreaViewport>
             </ScrollArea>
             {/* Selected default indicator */}
             {selectedDefault ? (

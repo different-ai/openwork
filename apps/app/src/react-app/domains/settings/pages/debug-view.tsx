@@ -20,6 +20,7 @@ import type {
   ReleaseChannel,
   StartupPreference,
 } from "../../../../app/types";
+import type { OpencodeExecutionSnapshot } from "../../../../app/lib/desktop-types";
 import { formatRelativeTime, isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,7 @@ type RuntimeServiceCard = StatusPill & {
   lines: string[];
   stdout?: string | null;
   stderr?: string | null;
+  execution?: OpencodeExecutionSnapshot | null;
   error?: string | null;
 };
 
@@ -206,6 +208,54 @@ function StatusBanner(props: { tone: "success" | "error" | "info"; message: stri
   );
 }
 
+function shellQuote(value: string) {
+  if (/^[A-Za-z0-9_/:=.,@+-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function formatExecutionCommand(execution: OpencodeExecutionSnapshot) {
+  return [execution.command, ...execution.args].map(shellQuote).join(" ");
+}
+
+function ExecutionDetails(props: { execution: OpencodeExecutionSnapshot }) {
+  return (
+    <div className="rounded-xl border border-blue-6/30 bg-blue-3/20 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-blue-11">OpenCode execution</div>
+          <div className="text-[11px] text-dls-secondary">Command, working directory, and OpenWork-injected environment.</div>
+        </div>
+        <div className="shrink-0 rounded-full border border-blue-7/30 bg-blue-7/10 px-2 py-1 text-[10px] font-medium text-blue-11">
+          redacted
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div>
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-dls-secondary">Command</div>
+          <pre className={miniPreClass}>{formatExecutionCommand(props.execution)}</pre>
+        </div>
+        <div>
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-dls-secondary">Working directory</div>
+          <pre className={miniPreClass}>{props.execution.cwd}</pre>
+        </div>
+        <div>
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-dls-secondary">Injected environment</div>
+          <div className="max-h-64 overflow-auto rounded-lg border border-dls-border bg-dls-sidebar/30">
+            {props.execution.env.length > 0 ? props.execution.env.map((entry) => (
+              <div key={entry.name} className="grid gap-2 border-b border-dls-border/50 p-2 last:border-b-0 md:grid-cols-[180px_minmax(0,1fr)]">
+                <div className="font-mono text-[11px] font-semibold text-dls-text">{entry.name}</div>
+                <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-dls-secondary">{entry.value}</pre>
+              </div>
+            )) : (
+              <div className="p-2 text-[11px] text-dls-secondary">No injected environment captured.</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ServiceCardProps = {
   title: string;
   description: string;
@@ -213,6 +263,7 @@ type ServiceCardProps = {
   lines: string[];
   stdout?: string | null;
   stderr?: string | null;
+  execution?: OpencodeExecutionSnapshot | null;
   error?: string | null;
   restarting: boolean;
   restartLabel: string;
@@ -239,6 +290,8 @@ function ServiceCard(props: ServiceCardProps) {
       </div>
 
       <div className="space-y-1"><DebugLines lines={props.lines} /></div>
+
+      {props.execution ? <ExecutionDetails execution={props.execution} /> : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -380,6 +433,7 @@ export function DebugView(props: DebugViewProps) {
             lines={props.openworkCard.lines}
             stdout={props.openworkCard.stdout ?? null}
             stderr={props.openworkCard.stderr ?? null}
+            execution={props.openworkCard.execution ?? null}
             error={props.openworkCard.error ?? null}
             restarting={props.openworkServerRestarting}
             restartLabel={t("settings.restart_openwork_server")}
@@ -398,6 +452,7 @@ export function DebugView(props: DebugViewProps) {
             lines={props.engineCard.lines}
             stdout={props.engineCard.stdout ?? null}
             stderr={props.engineCard.stderr ?? null}
+            execution={props.engineCard.execution ?? null}
             error={props.engineCard.error ?? null}
             restarting={props.opencodeRestarting}
             restartLabel={t("settings.restart_opencode")}

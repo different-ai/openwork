@@ -12,7 +12,20 @@ export type SessionTreeState = {
   ancestorIdsBySessionId: Map<string, string[]>;
   descendantCountBySessionId: Map<string, number>;
   activeIds: Set<string>;
+  streamingIds: Set<string>;
 };
+
+export const isSessionArchived = (session: SessionListItem): boolean =>
+  typeof session.time?.archived === "number" && session.time.archived > 0;
+
+export const isStreamingSessionStatus = (status: string | undefined) =>
+  status === "running" ||
+  status === "busy" ||
+  status === "retry" ||
+  status === "streaming" ||
+  status === "thinking" ||
+  status === "responding" ||
+  status === "waiting";
 
 const normalizeSessionParentID = (session: SessionListItem) => {
   const parentID = session.parentID?.trim();
@@ -27,6 +40,46 @@ export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => 
   });
 };
 
+/** Split sessions into active vs. archived. Archived sessions live in their own section. */
+export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
+  const active: SessionListItem[] = [];
+  const archived: SessionListItem[] = [];
+  for (const session of sessions) {
+    (isSessionArchived(session) ? archived : active).push(session);
+  }
+  return { active, archived };
+};
+
+/**
+ * Order root sessions: pinned first, then manual order, then server recency.
+ */
+export const orderRootSessions = (
+  roots: SessionListItem[],
+  pinnedIds: Set<string>,
+  orderIds: string[],
+): SessionListItem[] => {
+  const byId = new Map(roots.map((root) => [root.id, root]));
+  const ordered: SessionListItem[] = [];
+  const used = new Set<string>();
+
+  for (const id of orderIds) {
+    const root = byId.get(id);
+    if (!root || used.has(id)) continue;
+    ordered.push(root);
+    used.add(id);
+  }
+  for (const root of roots) {
+    if (used.has(root.id)) continue;
+    ordered.push(root);
+    used.add(root.id);
+  }
+
+  // Stable partition: pinned roots float to the top, preserving relative order.
+  const pinned = ordered.filter((root) => pinnedIds.has(root.id));
+  const rest = ordered.filter((root) => !pinnedIds.has(root.id));
+  return [...pinned, ...rest];
+};
+
 export const buildSessionTreeState = (
   sessions: WorkspaceSessionGroup["sessions"],
   sessionStatusById: Record<string, string> | undefined,
@@ -35,9 +88,13 @@ export const buildSessionTreeState = (
   const ancestorIdsBySessionId = new Map<string, string[]>();
   const descendantCountBySessionId = new Map<string, number>();
   const activeIds = new Set<string>();
-  const sessionIds = new Set(sessions.map((session) => session.id));
+  const streamingIds = new Set<string>();
+  // Archived sessions render in their own flat section, so they never join the
+  // active tree (neither as roots nor as children of active sessions).
+  const visibleSessions = sessions.filter((session) => !isSessionArchived(session));
+  const sessionIds = new Set(visibleSessions.map((session) => session.id));
 
-  sessions.forEach((session) => {
+  visibleSessions.forEach((session) => {
     const parentID = normalizeSessionParentID(session);
     if (!parentID || !sessionIds.has(parentID)) return;
     const siblings = childrenByParent.get(parentID) ?? [];
@@ -49,20 +106,24 @@ export const buildSessionTreeState = (
     ancestorIdsBySessionId.set(session.id, ancestors);
     const children = childrenByParent.get(session.id) ?? [];
     let descendantCount = 0;
-    let subtreeActive = (sessionStatusById?.[session.id] ?? "idle") !== "idle";
+    const ownStatus = sessionStatusById?.[session.id] ?? "idle";
+    let subtreeActive = ownStatus !== "idle";
+    let subtreeStreaming = isStreamingSessionStatus(ownStatus);
 
     children.forEach((child) => {
       const childState = walk(child, [...ancestors, session.id]);
       descendantCount += 1 + childState.descendantCount;
       subtreeActive = subtreeActive || childState.subtreeActive;
+      subtreeStreaming = subtreeStreaming || childState.subtreeStreaming;
     });
 
     descendantCountBySessionId.set(session.id, descendantCount);
     if (subtreeActive) activeIds.add(session.id);
-    return { descendantCount, subtreeActive };
+    if (subtreeStreaming) streamingIds.add(session.id);
+    return { descendantCount, subtreeActive, subtreeStreaming };
   };
 
-  getRootSessions(sessions).forEach((session) => {
+  getRootSessions(visibleSessions).forEach((session) => {
     walk(session, []);
   });
 
@@ -71,6 +132,7 @@ export const buildSessionTreeState = (
     ancestorIdsBySessionId,
     descendantCountBySessionId,
     activeIds,
+    streamingIds,
   };
 };
 
@@ -80,8 +142,11 @@ export const flattenSessionRows = (
   tree: SessionTreeState,
   expandedSessionIds: Set<string>,
   forcedExpandedSessionIds: Set<string>,
+  pinnedIds: Set<string> = EMPTY_SET,
+  orderIds: string[] = EMPTY_ARRAY,
 ) => {
-  const roots = getRootSessions(sessions).slice(0, rootLimit);
+  const { active } = partitionArchivedSessions(sessions);
+  const orderedRoots = orderRootSessions(getRootSessions(active), pinnedIds, orderIds).slice(0, rootLimit);
   const rows: FlattenedSessionRow[] = [];
   const visited = new Set<string>();
 
@@ -96,9 +161,12 @@ export const flattenSessionRows = (
     children.forEach((child) => walk(child, depth + 1));
   };
 
-  roots.forEach((root) => walk(root, 0));
+  orderedRoots.forEach((root) => walk(root, 0));
   return rows;
 };
+
+const EMPTY_SET: Set<string> = new Set();
+const EMPTY_ARRAY: string[] = [];
 
 export const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||

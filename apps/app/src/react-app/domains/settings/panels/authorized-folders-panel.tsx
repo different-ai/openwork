@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useReducer, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState, type SetStateAction } from "react";
 import { Folder, Info, Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -26,12 +26,8 @@ import {
 import {
   authorizedFoldersReducer,
   buildAuthorizedFoldersStatus,
-  ensureRecord,
   initialAuthorizedFoldersState,
-  mergeAuthorizedFoldersIntoExternalDirectory,
   normalizeAuthorizedFolderPath,
-  readAuthorizedFoldersFromConfig,
-  type AuthorizedFoldersState,
 } from "./authorized-folders-panel-state";
 import {
   SettingsNotice,
@@ -119,6 +115,7 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
 }
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
+  const [serverWorkspaceRoot, setServerWorkspaceRoot] = useState("");
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
     initialAuthorizedFoldersState,
@@ -130,14 +127,10 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     status: authorizedFoldersStatus,
     error: authorizedFoldersError,
   } = folderState;
-  const setFolderState = <K extends keyof AuthorizedFoldersState>(
-    key: K,
-    value: SetStateAction<AuthorizedFoldersState[K]>,
-  ) => dispatchFolderState({ type: "set", key, value });
-  const setAuthorizedFolders = (value: SetStateAction<string[]>) => setFolderState("folders", value);
-  const setAuthorizedFoldersSaving = (value: SetStateAction<boolean>) => setFolderState("saving", value);
-  const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => setFolderState("status", value);
-  const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => setFolderState("error", value);
+  const setAuthorizedFolders = (value: SetStateAction<string[]>) => dispatchFolderState({ type: "set", key: "folders", value });
+  const setAuthorizedFoldersSaving = (value: SetStateAction<boolean>) => dispatchFolderState({ type: "set", key: "saving", value });
+  const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "status", value });
+  const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "error", value });
 
   const openworkServerReady = props.openworkServerStatus === "connected";
   const openworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
@@ -160,10 +153,10 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
 
   const canPickAuthorizedFolder =
     isDesktopRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
-  const workspaceRootFolder = props.selectedWorkspaceRoot.trim();
+  const workspaceRootFolder = serverWorkspaceRoot || props.selectedWorkspaceRoot.trim();
   const visibleAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;
-    return root ? [root, ...authorizedFolders] : authorizedFolders;
+    return root ? [root, ...authorizedFolders.filter((folder) => folder !== root)] : authorizedFolders;
   }, [authorizedFolders, workspaceRootFolder]);
 
   useEffect(() => {
@@ -171,6 +164,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     const openworkWorkspaceId = props.runtimeWorkspaceId;
 
     if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
+      setServerWorkspaceRoot("");
       dispatchFolderState({ type: "reset" });
       return;
     }
@@ -180,13 +174,13 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
 
     void (async () => {
       try {
-        const config = await openworkClient.getConfig(openworkWorkspaceId);
+        const response = await openworkClient.listAuthorizedFolders(openworkWorkspaceId);
         if (cancelled) return;
-        const next = readAuthorizedFoldersFromConfig(ensureRecord(config.opencode));
+        setServerWorkspaceRoot(response.workspaceRoot.trim());
         dispatchFolderState({
           type: "loadSuccess",
-          folders: next.folders,
-          status: buildAuthorizedFoldersStatus(Object.keys(next.hiddenEntries).length),
+          folders: response.folders,
+          status: buildAuthorizedFoldersStatus(response.hiddenCount),
         });
       } catch (error) {
         if (cancelled) return;
@@ -215,26 +209,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     setAuthorizedFoldersStatus(t("context_panel.saving_folders"));
 
     try {
-      const currentConfig = await openworkClient.getConfig(openworkWorkspaceId);
-      const currentAuthorizedFolders = readAuthorizedFoldersFromConfig(
-        ensureRecord(currentConfig.opencode),
-      );
-      const nextExternalDirectory = mergeAuthorizedFoldersIntoExternalDirectory(
-        nextFolders,
-        currentAuthorizedFolders.hiddenEntries,
-      );
-
-      await openworkClient.patchConfig(openworkWorkspaceId, {
-        opencode: {
-          permission: {
-            external_directory: nextExternalDirectory,
-          },
-        },
-      });
-      setAuthorizedFolders(nextFolders);
+      const response = await openworkClient.setAuthorizedFolders(openworkWorkspaceId, nextFolders);
+      setAuthorizedFolders(response.folders);
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
-          Object.keys(currentAuthorizedFolders.hiddenEntries).length,
+          response.hiddenCount,
           t("context_panel.folders_updated"),
         ),
       );
@@ -248,7 +227,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     } finally {
       setAuthorizedFoldersSaving(false);
     }
-  }, [canWriteConfig, props]);
+  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId]);
 
   const removeAuthorizedFolder = useCallback(async (folder: string) => {
     const nextFolders = authorizedFolders.filter((entry) => entry !== folder);

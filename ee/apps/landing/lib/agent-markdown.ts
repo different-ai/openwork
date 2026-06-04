@@ -46,7 +46,7 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 - API access
 - Skill Hub Manager
 - Bring your own LLM keys, distributed to your team
-- CTA: [Start team plan](https://app.openworklabs.com/checkout)
+- CTA: [Start team plan](https://app.openworklabs.com/dashboard/billing)
 
 ## Enterprise — Custom pricing
 

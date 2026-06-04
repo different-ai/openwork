@@ -78,6 +78,12 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
+  "minimax/minimax-m3": {
+    upstreamModel: "minimax/minimax-m3",
+    displayName: "OpenWork: MiniMax M3",
+    enabled: true,
+    usageFactor: 1,
+  },
   "z-ai/glm-5.1": {
     upstreamModel: "z-ai/glm-5.1",
     displayName: "OpenWork: GLM-5.1",

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -52,6 +52,7 @@ export type UserOrgSummary = {
   role: string
   orgMemberId: string
   membershipId: string
+  memberCount: number
   createdAt: Date
   updatedAt: Date
 }
@@ -672,6 +673,7 @@ export async function updateOrganizationSettings(input: {
   name?: string
   allowedEmailDomains?: readonly string[] | null
   allowedDesktopVersions?: readonly string[] | null
+  requireSso?: boolean
 }) {
   const nextName = typeof input.name === "string" ? input.name.trim() : null
   if (typeof input.name === "string" && !nextName) {
@@ -685,7 +687,7 @@ export async function updateOrganizationSettings(input: {
   if (input.allowedEmailDomains !== undefined) {
     updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
   }
-  if (input.allowedDesktopVersions !== undefined) {
+  if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined) {
     const rows = await db
       .select({ metadata: OrganizationTable.metadata })
       .from(OrganizationTable)
@@ -701,10 +703,16 @@ export async function updateOrganizationSettings(input: {
       ...normalizeOrganizationMetadata(existingOrganization.metadata).metadata,
     } as Record<string, unknown>
 
-    if (input.allowedDesktopVersions === null) {
-      delete nextMetadata.allowedDesktopVersions
-    } else {
-      nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
+    if (input.allowedDesktopVersions !== undefined) {
+      if (input.allowedDesktopVersions === null) {
+        delete nextMetadata.allowedDesktopVersions
+      } else {
+        nextMetadata.allowedDesktopVersions = input.allowedDesktopVersions
+      }
+    }
+
+    if (input.requireSso !== undefined) {
+      nextMetadata.requireSso = input.requireSso
     }
 
     updates.metadata = normalizeOrganizationMetadata(nextMetadata).metadata
@@ -760,6 +768,22 @@ export async function listUserOrgs(userId: UserId) {
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
+  const organizationIds = memberships.map((row) => row.organization.id)
+  const memberCounts = new Map<OrgId, number>()
+  if (organizationIds.length > 0) {
+    const counts = await db
+      .select({
+        organizationId: MemberTable.organizationId,
+        memberCount: count(),
+      })
+      .from(MemberTable)
+      .where(and(inArray(MemberTable.organizationId, organizationIds), isNull(MemberTable.removedAt)))
+      .groupBy(MemberTable.organizationId)
+    for (const row of counts) {
+      memberCounts.set(row.organizationId, row.memberCount)
+    }
+  }
+
   return memberships.map((row) => ({
     id: row.organization.id,
     name: row.organization.name,
@@ -770,6 +794,7 @@ export async function listUserOrgs(userId: UserId) {
     role: row.role,
     orgMemberId: row.membershipId,
     membershipId: row.membershipId,
+    memberCount: memberCounts.get(row.organization.id) ?? 0,
     createdAt: row.organization.createdAt,
     updatedAt: row.organization.updatedAt,
   })) satisfies UserOrgSummary[]
@@ -1022,21 +1047,14 @@ export async function removeOrganizationMember(input: {
     return null
   }
 
-  const teams = await db
-    .select({ id: TeamTable.id })
-    .from(TeamTable)
-    .where(eq(TeamTable.organizationId, input.organizationId))
-
   await db.transaction(async (tx) => {
-    for (const team of teams) {
-      await tx
-        .delete(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, team.id), eq(TeamMemberTable.orgMembershipId, member.id)))
-    }
+    await tx
+      .delete(TeamMemberTable)
+      .where(eq(TeamMemberTable.orgMembershipId, member.id))
 
     await tx
       .update(MemberTable)
-      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null })
+      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null, userId: null })
       .where(eq(MemberTable.id, member.id))
   })
 

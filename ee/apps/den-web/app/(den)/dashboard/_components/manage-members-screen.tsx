@@ -24,7 +24,7 @@ import {
   getMembersRoute,
   splitRoleString,
 } from "../../_lib/den-org";
-import { type OrgLimitError, getOrgLimitError } from "../../_lib/den-flow";
+import { type OrgLimitError, type OrgPaymentRequiredError, getOrgLimitError, getOrgPaymentRequiredError } from "../../_lib/den-flow";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -127,6 +127,7 @@ export function ManageMembersScreen() {
     orgError,
     mutationBusy,
     inviteMember,
+    startSeatCheckout,
     cancelInvitation,
     updateMemberRole,
     removeMember,
@@ -156,6 +157,7 @@ export function ManageMembersScreen() {
     Record<string, string[]>
   >({});
   const [limitDialogError, setLimitDialogError] = useState<OrgLimitError | null>(null);
+  const [seatBillingDialogError, setSeatBillingDialogError] = useState<OrgPaymentRequiredError | null>(null);
 
   const assignableRoles = useMemo(
     () => (orgContext?.roles ?? []).filter((role) => !role.protected),
@@ -170,6 +172,7 @@ export function ManageMembersScreen() {
       ),
     [orgContext?.currentMember.isOwner, orgContext?.currentMember.role],
   );
+  const canStartSeatCheckout = orgContext?.currentMember.isOwner === true;
 
   const tabCounts: Record<MembersTab, number> = {
     members: orgContext?.members.length ?? 0,
@@ -283,6 +286,12 @@ export function ManageMembersScreen() {
               await inviteMember({ email: inviteEmail, role: inviteRole });
               resetInviteForm();
             } catch (error) {
+              const paymentRequiredError = getOrgPaymentRequiredError(error);
+              if (paymentRequiredError) {
+                setSeatBillingDialogError(paymentRequiredError);
+                return;
+              }
+
               const limitError = getOrgLimitError(error);
               if (limitError) {
                 setLimitDialogError(limitError);
@@ -613,6 +622,26 @@ export function ManageMembersScreen() {
         feedbackHref={feedbackHref}
         onClose={() => setLimitDialogError(null)}
       />
+      <OrgLimitDialog
+        open={Boolean(seatBillingDialogError)}
+        eyebrow="Seat billing"
+        title="Subscribe to add more users"
+        message="The first 5 users in your organization are free, additional users are charged at $10 per user per month"
+        detail={canStartSeatCheckout ? null : "Only workspace owners can start billing checkout."}
+        closeLabel="Cancel"
+        actionLabel="Subscribe"
+        actionLoading={mutationBusy === "seat-checkout"}
+        actionDisabled={!canStartSeatCheckout}
+        onClose={() => setSeatBillingDialogError(null)}
+        onAction={() => {
+          if (!canStartSeatCheckout) {
+            return;
+          }
+          void startSeatCheckout().catch((error) => {
+            setPageError(error instanceof Error ? error.message : "Could not start seat billing checkout.");
+          });
+        }}
+      />
 
       {pageError ? (
         <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
@@ -640,8 +669,10 @@ export function ManageMembersScreen() {
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
             <p className="text-[15px] text-gray-400">
-              {access.canInviteMembers
+              {access.canManageMembers
                 ? "Invite people, update their role, or remove them from the organization."
+                : access.canRemoveMembers
+                  ? "Invite people or remove non-owner members from the organization."
                 : "View who is in the organization and what role they currently hold."}
             </p>
             {toolbarAction ? (
@@ -667,7 +698,7 @@ export function ManageMembersScreen() {
                 ? false
                 : isInvited
                   ? access.canInviteMembers || access.canCancelInvitations
-                  : access.canManageMembers;
+                  : access.canManageMembers || access.canRemoveMembers;
 
               return (
                 <div
@@ -753,7 +784,7 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
-                            {!isInvited && access.canManageMembers ? (
+                            {!isInvited && access.canRemoveMembers ? (
                               <button
                                 type="button"
                                 onClick={() => {

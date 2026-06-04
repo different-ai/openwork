@@ -1,16 +1,16 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { toast } from "@/components/ui/sonner";
 
-import type { CloudImportedProvider } from "../../../../app/cloud/import-state";
-import type { DenOrgLlmProvider } from "../../../../app/lib/den";
+import type { CloudImportedProvider } from "@/app/cloud/import-state";
+import type { DenOrgLlmProvider } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { useCloudSession } from "../cloud/cloud-session-provider";
-import { CloudProvidersSection, type CloudProviderRow } from "../cloud/sections";
-import type { useDenSession } from "../cloud/use-den-session";
-import { SettingsNotice, SettingsStack } from "../settings-section";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import { CloudProvidersSection, type CloudProviderRow } from "@/react-app/domains/settings/cloud/sections";
+import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
+import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
 
 type CloudProvidersSession = Pick<
   ReturnType<typeof useDenSession>,
@@ -21,6 +21,7 @@ type ProviderActionKind = "import" | "remove" | "sync";
 export type CloudProvidersViewProps = {
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  embedded?: boolean;
   importedCloudProviders: Record<string, CloudImportedProvider>;
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
@@ -36,6 +37,7 @@ const sameStringList = (a: string[], b: string[]) =>
 export function CloudProvidersView({
   cloudOrgProviders,
   connectCloudProvider,
+  embedded = false,
   importedCloudProviders,
   onOpenAccount,
   refreshCloudOrgProviders,
@@ -43,7 +45,6 @@ export function CloudProvidersView({
   session,
 }: CloudProvidersViewProps) {
   const { activeOrganization: activeOrg, authToken, isSignedIn, user } = useCloudSession();
-  const { showToast } = useStatusToasts();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
   const [actionKind, setActionKind] = React.useState<ProviderActionKind | null>(null);
@@ -98,12 +99,11 @@ export function CloudProvidersView({
         session.syncCurrentDenSettings();
         const items = await refreshCloudOrgProviders({ force: !quiet });
         if (!quiet) {
-          showToast({
-            title: items.length > 0
+          toast.info(
+            items.length > 0
               ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
               : `No cloud providers are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
-            tone: "info",
-          });
+          );
         }
       } catch (error) {
         if (!quiet) {
@@ -119,7 +119,6 @@ export function CloudProvidersView({
       activeOrgId,
       authToken,
       session.syncCurrentDenSettings,
-      showToast,
     ],
   );
 
@@ -138,10 +137,7 @@ export function CloudProvidersView({
 
       try {
         const message = await connectCloudProvider(cloudProviderId);
-        showToast({
-          title: `${message || t("den.imported_provider", { name: providerName })} ${t("den.reload_workspace")}`,
-          tone: "success",
-        });
+        toast.success(message || t("den.imported_provider", { name: providerName }));
       } catch (error) {
         setActionError(
           error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
@@ -151,7 +147,7 @@ export function CloudProvidersView({
         setActionKind(null);
       }
     },
-    [actionId, connectCloudProvider, showToast],
+    [actionId, connectCloudProvider],
   );
 
   const removeProvider = React.useCallback(
@@ -164,10 +160,7 @@ export function CloudProvidersView({
 
       try {
         const message = await removeCloudProvider(cloudProviderId);
-        showToast({
-          title: `${message || t("den.removed_provider", { name: providerName })} ${t("den.reload_workspace")}`,
-          tone: "success",
-        });
+        toast.success(message || t("den.removed_provider", { name: providerName }));
       } catch (error) {
         setActionError(
           error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }),
@@ -177,7 +170,7 @@ export function CloudProvidersView({
         setActionKind(null);
       }
     },
-    [actionId, removeCloudProvider, showToast],
+    [actionId, removeCloudProvider],
   );
 
   const syncProvider = React.useCallback(
@@ -190,10 +183,7 @@ export function CloudProvidersView({
 
       try {
         await connectCloudProvider(cloudProviderId);
-        showToast({
-          title: `${t("den.synced_provider", { name: providerName })} ${t("den.reload_workspace")}`,
-          tone: "success",
-        });
+        toast.success(t("den.synced_provider", { name: providerName }));
       } catch (error) {
         setActionError(
           error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
@@ -203,39 +193,46 @@ export function CloudProvidersView({
         setActionKind(null);
       }
     },
-    [actionId, connectCloudProvider, showToast],
+    [actionId, connectCloudProvider],
   );
 
   if (!isSignedIn) {
-    return (
+    const notice = (
+      <SettingsNotice>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span>{t("skills.share_team_sign_in_hint")}</span>
+          <Button size="sm" onClick={onOpenAccount}>
+            {t("skills.share_team_sign_in")}
+          </Button>
+        </div>
+      </SettingsNotice>
+    );
+    return embedded ? notice : (
       <SettingsStack>
         <Separator />
-        <SettingsNotice>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>{t("skills.share_team_sign_in_hint")}</span>
-            <Button size="sm" onClick={onOpenAccount}>
-              {t("skills.share_team_sign_in")}
-            </Button>
-          </div>
-        </SettingsNotice>
+        {notice}
       </SettingsStack>
     );
   }
 
-  return (
+  const section = (
+    <CloudProvidersSection
+      actionError={actionError}
+      actionId={actionId}
+      actionKind={actionKind}
+      busy={busy}
+      rows={rows}
+      onImport={importProvider}
+      onRefresh={refresh}
+      onRemove={undefined}
+      onSync={syncProvider}
+    />
+  );
+
+  return embedded ? section : (
     <SettingsStack>
       <Separator />
-      <CloudProvidersSection
-        actionError={actionError}
-        actionId={actionId}
-        actionKind={actionKind}
-        busy={busy}
-        rows={rows}
-        onImport={importProvider}
-        onRefresh={refresh}
-        onRemove={undefined}
-        onSync={syncProvider}
-      />
+      {section}
     </SettingsStack>
   );
 }

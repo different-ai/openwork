@@ -1,13 +1,12 @@
 /** @jsxImportSource react */
 import {
-  useCallback,
   useEffect,
   useMemo,
   useReducer,
   useRef,
   type SetStateAction,
 } from "react";
-import { ArrowLeft, Cloud, FolderPlus, Globe, Loader2 } from "lucide-react";
+import { ArrowLeft, FolderPlus, Globe, Loader2 } from "lucide-react";
 
 import {
   Dialog,
@@ -20,24 +19,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { t } from "../../../i18n";
-import {
-  buildDenAuthUrl,
-  createDenClient,
-  type DenOrgSummary,
-  type DenWorkerSummary,
-  readDenSettings,
-  resolveDenBaseUrls,
-  writeDenSettings,
-} from "../../../app/lib/den";
 import type { WorkspacePreset } from "../../../app/types";
-import { usePlatform } from "../../kernel/platform";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
 import {
   createInitialWorkspaceLocalState,
   createWorkspaceLocalReducer,
   type CreateWorkspaceLocalState,
 } from "./create-workspace-modal-state";
-import { CreateWorkspaceSharedPanel } from "./create-workspace-shared-panel";
 import {
   modalBodyClass,
   pillGhostClass,
@@ -51,55 +39,8 @@ import type {
   RemoteWorkspaceInput,
 } from "./types";
 
-function workerStatusMeta(status: string) {
-  const normalized = status.trim().toLowerCase();
-  switch (normalized) {
-    case "healthy":
-      return {
-        label: t("dashboard.worker_status_ready"),
-        tone: "ready" as const,
-        canOpen: true,
-      };
-    case "provisioning":
-    case "starting":
-      return {
-        label: t("dashboard.worker_status_starting"),
-        tone: "warning" as const,
-        canOpen: false,
-      };
-    case "failed":
-    case "error":
-      return {
-        label: t("dashboard.worker_status_attention"),
-        tone: "error" as const,
-        canOpen: false,
-      };
-    case "stopped":
-      return {
-        label: t("dashboard.worker_status_stopped"),
-        tone: "neutral" as const,
-        canOpen: false,
-      };
-    default:
-      return {
-        label: normalized
-          ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
-          : t("common.unknown"),
-        tone: "neutral" as const,
-        canOpen: normalized === "ready",
-      };
-  }
-}
-
-function workerSecondaryLine(worker: DenWorkerSummary) {
-  const parts = [worker.provider?.trim() || t("dashboard.cloud_worker")];
-  if (worker.instanceUrl?.trim()) parts.push(worker.instanceUrl.trim());
-  return parts.join(" · ");
-}
-
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteUrlRef = useRef<HTMLInputElement | null>(null);
-  const platform = usePlatform();
 
   const [localState, dispatchLocal] = useReducer(
     createWorkspaceLocalReducer,
@@ -112,20 +53,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     pickingFolder,
     showProgressDetails,
     now,
-    cloudSettings,
     remoteUrl,
     remoteToken,
     remoteDisplayName,
     remoteTokenVisible,
-    orgs,
-    activeOrgId,
-    orgsBusy,
-    orgsError,
-    workers,
-    workersBusy,
-    workersError,
-    openingWorkerId,
-    workerSearch,
   } = localState;
   const setLocal = <K extends keyof CreateWorkspaceLocalState>(
     key: K,
@@ -136,20 +67,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
   const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
   const setNow = (value: SetStateAction<number>) => setLocal("now", value);
-  const setCloudSettings = (value: SetStateAction<ReturnType<typeof readDenSettings>>) => setLocal("cloudSettings", value);
   const setRemoteUrl = (value: SetStateAction<string>) => setLocal("remoteUrl", value);
   const setRemoteToken = (value: SetStateAction<string>) => setLocal("remoteToken", value);
   const setRemoteDisplayName = (value: SetStateAction<string>) => setLocal("remoteDisplayName", value);
   const setRemoteTokenVisible = (value: SetStateAction<boolean>) => setLocal("remoteTokenVisible", value);
-  const setOrgs = (value: SetStateAction<DenOrgSummary[]>) => setLocal("orgs", value);
-  const setActiveOrgId = (value: SetStateAction<string>) => setLocal("activeOrgId", value);
-  const setOrgsBusy = (value: SetStateAction<boolean>) => setLocal("orgsBusy", value);
-  const setOrgsError = (value: SetStateAction<string | null>) => setLocal("orgsError", value);
-  const setWorkers = (value: SetStateAction<DenWorkerSummary[]>) => setLocal("workers", value);
-  const setWorkersBusy = (value: SetStateAction<boolean>) => setLocal("workersBusy", value);
-  const setWorkersError = (value: SetStateAction<string | null>) => setLocal("workersError", value);
-  const setOpeningWorkerId = (value: SetStateAction<string | null>) => setLocal("openingWorkerId", value);
-  const setWorkerSearch = (value: SetStateAction<string>) => setLocal("workerSearch", value);
   const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
@@ -169,40 +90,10 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const hasSelectedFolder = Boolean(selectedFolder?.trim());
   const localError = (props.localError ?? "").trim() || null;
   const remoteError = (props.remoteError ?? "").trim() || null;
-  const isSignedIn = Boolean(cloudSettings.authToken?.trim());
-  const denClient = useMemo(
-    () =>
-      createDenClient({
-        baseUrl: cloudSettings.baseUrl,
-        token: cloudSettings.authToken ?? "",
-      }),
-    [cloudSettings.authToken, cloudSettings.baseUrl],
-  );
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
     return Math.max(0, Math.floor((now - progress.startedAt) / 1000));
   }, [now, progress]);
-  const filteredWorkers = useMemo(() => {
-    const query = workerSearch.trim().toLowerCase();
-    if (!query) return workers;
-    return workers.filter((worker) => {
-      const haystack = [
-        worker.workerName,
-        worker.provider,
-        worker.instanceUrl,
-        worker.status,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [workerSearch, workers]);
-
-  const modalWidthClass =
-    screen === "shared"
-      ? "max-w-2xl sm:max-w-2xl"
-      : "max-w-xl sm:max-w-xl";
 
   const headerTitle = (() => {
     switch (screen) {
@@ -210,8 +101,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         return t("dashboard.create_local_workspace_title");
       case "remote":
         return t("dashboard.create_remote_custom_title");
-      case "shared":
-        return t("dashboard.create_shared_title");
       default:
         return props.title ?? t("dashboard.create_workspace_title");
     }
@@ -223,10 +112,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         return t("dashboard.create_local_workspace_subtitle");
       case "remote":
         return t("dashboard.create_remote_custom_subtitle");
-      case "shared":
-        return isSignedIn
-          ? t("dashboard.create_shared_subtitle_signed_in")
-          : t("dashboard.create_shared_subtitle_signed_out");
       default:
         return props.subtitle ?? t("dashboard.create_workspace_subtitle");
     }
@@ -235,26 +120,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    dispatchLocal({ type: "reset", settings: readDenSettings() });
-  }, [props.open]);
-
-  // React to Den session changes.
-  useEffect(() => {
-    if (!props.open) return;
-    const handler = () => {
-      const settings = readDenSettings();
-      setCloudSettings(settings);
-      setActiveOrgId(settings.activeOrgId?.trim() ?? "");
-    };
-    window.addEventListener(
-      "openwork-den-session-updated",
-      handler as EventListener,
-    );
-    return () =>
-      window.removeEventListener(
-        "openwork-den-session-updated",
-        handler as EventListener,
-      );
+    dispatchLocal({ type: "reset" });
   }, [props.open]);
 
   // Tick the "elapsed" clock while submitting.
@@ -275,85 +141,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     return () => cancelAnimationFrame(frame);
   }, [props.open, screen]);
 
-  const applyActiveOrg = useCallback(
-    (nextOrg: DenOrgSummary | null) => {
-      setActiveOrgId(nextOrg?.id ?? "");
-      const nextSettings = {
-        ...cloudSettings,
-        activeOrgId: nextOrg?.id ?? null,
-        activeOrgSlug: nextOrg?.slug ?? null,
-        activeOrgName: nextOrg?.name ?? null,
-      };
-      writeDenSettings(nextSettings);
-      setCloudSettings(nextSettings);
-    },
-    [cloudSettings],
-  );
-
-  const refreshOrgs = useCallback(async () => {
-    if (!isSignedIn) return;
-    setOrgsBusy(true);
-    setOrgsError(null);
-    try {
-      const { orgs: nextOrgs, defaultOrgId } = await denClient.listOrgs();
-      setOrgs(nextOrgs);
-      const preferred = cloudSettings.activeOrgId?.trim();
-      const nextActive =
-        nextOrgs.find((org) => org.id === preferred) ??
-        nextOrgs.find((org) => org.id === defaultOrgId) ??
-        nextOrgs[0] ??
-        null;
-      applyActiveOrg(nextActive);
-    } catch (error) {
-      setOrgsError(
-        error instanceof Error
-          ? error.message
-          : t("dashboard.error_load_orgs"),
-      );
-    } finally {
-      setOrgsBusy(false);
-    }
-  }, [
-    applyActiveOrg,
-    cloudSettings.activeOrgId,
-    denClient,
-    isSignedIn,
-  ]);
-
-  const refreshWorkers = useCallback(
-    async (orgId = activeOrgId.trim()) => {
-      if (!orgId || !isSignedIn) return;
-      setWorkersBusy(true);
-      setWorkersError(null);
-      try {
-        const nextWorkers = await denClient.listWorkers(orgId);
-        setWorkers(nextWorkers);
-      } catch (error) {
-        setWorkersError(
-          error instanceof Error
-            ? error.message
-            : t("dashboard.error_load_shared_workspaces"),
-        );
-      } finally {
-        setWorkersBusy(false);
-      }
-    },
-    [activeOrgId, denClient, isSignedIn],
-  );
-
-  // Load orgs/workers when the shared tab is active and signed in.
-  useEffect(() => {
-    if (!props.open || screen !== "shared" || !isSignedIn) return;
-    void refreshOrgs();
-  }, [isSignedIn, props.open, refreshOrgs, screen]);
-
-  useEffect(() => {
-    if (!props.open || screen !== "shared" || !isSignedIn) return;
-    const orgId = activeOrgId.trim();
-    if (!orgId) return;
-    void refreshWorkers(orgId);
-  }, [activeOrgId, isSignedIn, props.open, refreshWorkers, screen]);
-
   const handlePickFolder = async () => {
     if (pickingFolder) return;
     setPickingFolder(true);
@@ -366,14 +153,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     } finally {
       setPickingFolder(false);
     }
-  };
-
-  const openCloudSignIn = () => {
-    platform.openLink(buildDenAuthUrl(cloudSettings.baseUrl, "sign-in"));
-  };
-
-  const openCloudDashboard = () => {
-    platform.openLink(resolveDenBaseUrls(cloudSettings.baseUrl).baseUrl);
   };
 
   const handleRemoteSubmit = async () => {
@@ -389,54 +168,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     );
   };
 
-  const handleOpenWorker = async (worker: DenWorkerSummary) => {
-    if (!props.onConfirmRemote) return;
-    const orgId = activeOrgId.trim();
-    if (!orgId) {
-      setWorkersError(t("dashboard.error_choose_org"));
-      return;
-    }
-    setOpeningWorkerId(worker.workerId);
-    setWorkersError(null);
-    try {
-      const tokens = await denClient.getWorkerTokens(worker.workerId, orgId);
-      const openworkUrl = tokens.openworkUrl?.trim() ?? "";
-      const accessToken =
-        tokens.ownerToken?.trim() || tokens.clientToken?.trim() || "";
-      if (!openworkUrl || !accessToken) {
-        throw new Error(t("dashboard.error_workspace_not_ready"));
-      }
-      const ok = await Promise.resolve(
-        props.onConfirmRemote({
-          openworkHostUrl: openworkUrl,
-          openworkToken: accessToken,
-          openworkClientToken: tokens.clientToken?.trim() || null,
-          openworkHostToken: tokens.hostToken?.trim() || null,
-          directory: null,
-          displayName: worker.workerName,
-          closeModal: true,
-        }),
-      );
-      if (ok === false) {
-        throw new Error(
-          t("dashboard.error_connect_worker", {
-            name: worker.workerName,
-          }),
-        );
-      }
-    } catch (error) {
-      setWorkersError(
-        error instanceof Error
-          ? error.message
-          : t("dashboard.error_connect_worker", {
-              name: worker.workerName,
-            }),
-      );
-    } finally {
-      setOpeningWorkerId(null);
-    }
-  };
-
   const handleLocalSubmit = async () => {
     props.onConfirm(preset, selectedFolder);
   };
@@ -450,7 +181,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     >
       <DialogContent
         showCloseButton={showClose}
-        className={`flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden ${modalWidthClass}`}
+        className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden sm:max-w-xl"
       >
         <DialogHeader className="flex-row">
           {screen !== "chooser" ? (
@@ -500,13 +231,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 icon={Globe}
                 onClick={() => setScreen("remote")}
               />
-              <WorkspaceOptionCard
-                title={t("dashboard.create_shared_title")}
-                description={t("dashboard.chooser_shared_desc")}
-                icon={Cloud}
-                onClick={() => setScreen("shared")}
-              />
-
               {props.onImportConfig ? (
                 <div className="pt-2">
                   <button
@@ -614,32 +338,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           </>
         ) : null}
 
-        {screen === "shared" ? (
-          <CreateWorkspaceSharedPanel
-            signedIn={isSignedIn}
-            orgs={orgs}
-            activeOrgId={activeOrgId}
-            onActiveOrgChange={(orgId) => {
-              const nextOrg = orgs.find((org) => org.id === orgId) ?? null;
-              applyActiveOrg(nextOrg);
-            }}
-            orgsBusy={orgsBusy}
-            orgsError={orgsError}
-            workers={workers}
-            workersBusy={workersBusy}
-            workersError={workersError}
-            workerSearch={workerSearch}
-            onWorkerSearchInput={setWorkerSearch}
-            filteredWorkers={filteredWorkers}
-            openingWorkerId={openingWorkerId}
-            workerStatusMeta={(status) => workerStatusMeta(status)}
-            workerSecondaryLine={(worker) => workerSecondaryLine(worker)}
-            onOpenWorker={(worker) => void handleOpenWorker(worker)}
-            onOpenCloudSignIn={openCloudSignIn}
-            onRefreshWorkers={() => void refreshWorkers()}
-            onOpenCloudDashboard={openCloudDashboard}
-          />
-        ) : null}
       </DialogContent>
     </Dialog>
   );

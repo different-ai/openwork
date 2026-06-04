@@ -1,46 +1,32 @@
 /** @jsxImportSource react */
-import { useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkServerStatus } from "@/app/lib/openwork-server";
-import type { EngineInfo } from "@/app/lib/desktop-types";
+import type { OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
-  AdvancedConnectionSection,
   AdvancedDeveloperSection,
-  AdvancedFeatureFlagsSection,
-  AdvancedOpencodeSection,
+  AdvancedRuntimeMigrationSection,
   AdvancedRuntimeSection,
 } from "./advanced-view-sections";
-import { ConfigView, type ConfigViewProps } from "./config-view";
 
 export type AdvancedViewProps = {
   busy: boolean;
-  baseUrl: string;
-  headerStatus: string;
   clientConnected: boolean;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkReconnectBusy: boolean;
-  reconnectOpenworkServer: () => Promise<boolean>;
-  engineInfo: EngineInfo | null;
-  restartLocalServer: () => Promise<boolean>;
-  stopHost: () => void;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
   opencodeDevModeEnabled: boolean;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
-  opencodeEnableExa: boolean;
-  toggleOpencodeEnableExa: () => void;
-  microsandboxCreateSandboxEnabled: boolean;
-  toggleMicrosandboxCreateSandbox: () => void;
-  configView: ConfigViewProps;
+  canMigrateRuntimeConfig: boolean;
+  migrateRuntimeConfig: () => Promise<{ migrated: boolean; keys: string[] }>;
+  getRuntimeConfigStatus: () => Promise<OpenworkRuntimeConfigStatus>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -50,16 +36,16 @@ export function AdvancedView(props: AdvancedViewProps) {
     advancedLocalReducer,
     initialAdvancedLocalState,
   );
+  const [configStatus, setConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [configStatusBusy, setConfigStatusBusy] = useState(false);
+  const [configStatusError, setConfigStatusError] = useState<string | null>(null);
   const {
-    reconnectStatus: openworkReconnectStatus,
-    reconnectError: openworkReconnectError,
-    restartBusy: openworkRestartBusy,
-    restartStatus: openworkRestartStatus,
-    restartError: openworkRestartError,
     deepLinkOpen: debugDeepLinkOpen,
     deepLinkInput: debugDeepLinkInput,
     deepLinkBusy: debugDeepLinkBusy,
     deepLinkStatus: debugDeepLinkStatus,
+    migrationBusy,
+    migrationStatus,
   } = localState;
 
   const clientStatusLabel = (() => {
@@ -98,41 +84,16 @@ export function AdvancedView(props: AdvancedViewProps) {
     }
   })();
 
-  const isLocalEngineRunning = Boolean(props.engineInfo?.running);
+  const clientDetailLines = props.clientConnected
+    ? ["Chat and task creation can use the OpenCode engine for this workspace."]
+    : [
+        "Chat and task creation may fail until OpenCode restarts.",
+        "OpenWork server config sources below can still be inspected.",
+      ];
 
-  const handleReconnectOpenworkServer = async () => {
-    if (props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()) return;
-    dispatchLocal({ type: "reconnectStart" });
-    try {
-      const ok = await props.reconnectOpenworkServer();
-      if (!ok) {
-        dispatchLocal({ type: "reconnectError", error: t("settings.reconnect_failed") });
-        return;
-      }
-      dispatchLocal({ type: "reconnectStatus", status: t("settings.reconnected") });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      dispatchLocal({ type: "reconnectError", error: message || t("settings.reconnect_server_failed") });
-    }
-  };
-
-  const handleRestartLocalServer = async () => {
-    if (props.busy || openworkRestartBusy) return;
-    dispatchLocal({ type: "restartStart" });
-    try {
-      const ok = await props.restartLocalServer();
-      if (!ok) {
-        dispatchLocal({ type: "restartError", error: t("settings.restart_failed") });
-        return;
-      }
-      dispatchLocal({ type: "restartStatus", status: t("settings.restarted") });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      dispatchLocal({ type: "restartError", error: message || t("settings.restart_server_failed") });
-    } finally {
-      dispatchLocal({ type: "restartDone" });
-    }
-  };
+  const openworkDetailLines = props.openworkServerStatus === "connected"
+    ? ["Runtime DB, workspace config, and migration diagnostics are available."]
+    : ["Runtime config diagnostics need the OpenWork server connection."];
 
   const submitDebugDeepLink = async () => {
     const rawUrl = debugDeepLinkInput.trim();
@@ -155,27 +116,70 @@ export function AdvancedView(props: AdvancedViewProps) {
     }
   };
 
+  const refreshRuntimeConfigStatus = async () => {
+    if (!props.canMigrateRuntimeConfig) {
+      setConfigStatus(null);
+      return;
+    }
+    setConfigStatusBusy(true);
+    setConfigStatusError(null);
+    try {
+      setConfigStatus(await props.getRuntimeConfigStatus());
+    } catch (error) {
+      setConfigStatusError(error instanceof Error ? error.message : "Failed to load runtime config status.");
+    } finally {
+      setConfigStatusBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshRuntimeConfigStatus();
+  }, [props.canMigrateRuntimeConfig]);
+
+  const migrateRuntimeConfig = async () => {
+    if (props.busy || migrationBusy || !props.canMigrateRuntimeConfig) return;
+    dispatchLocal({ type: "migrationStart" });
+    try {
+      const result = await props.migrateRuntimeConfig();
+      await refreshRuntimeConfigStatus();
+      dispatchLocal({
+        type: "migrationStatus",
+        status: result.migrated
+          ? `Migrated legacy runtime config: ${result.keys.join(", ")}.`
+          : "No legacy runtime config found for this workspace.",
+      });
+    } catch (error) {
+      dispatchLocal({
+        type: "migrationStatus",
+        status: error instanceof Error ? error.message : "Failed to migrate legacy runtime config.",
+      });
+    } finally {
+      dispatchLocal({ type: "migrationDone" });
+    }
+  };
+
   return (
     <LayoutStack>
       <AdvancedRuntimeSection
-        engineInfo={props.engineInfo}
         clientStatusLabel={clientStatusLabel}
         clientTone={clientTone}
+        clientDetailLines={clientDetailLines}
         openworkStatusLabel={openworkStatusLabel}
         openworkTone={openworkTone}
+        openworkDetailLines={openworkDetailLines}
       />
 
-      <Separator />
-
-      <AdvancedOpencodeSection
+      <AdvancedRuntimeMigrationSection
         busy={props.busy}
-        enabled={props.opencodeEnableExa}
-        onToggle={props.toggleOpencodeEnableExa}
+        canMigrate={props.canMigrateRuntimeConfig}
+        migrationBusy={migrationBusy}
+        migrationStatus={migrationStatus}
+        configStatus={configStatus}
+        configStatusBusy={configStatusBusy}
+        configStatusError={configStatusError}
+        onRefresh={refreshRuntimeConfigStatus}
+        onMigrate={migrateRuntimeConfig}
       />
-
-      <Separator />
-
-      {/* Feature flags section removed -- microsandbox is always on */}
 
       <AdvancedDeveloperSection
         busy={props.busy}
@@ -190,33 +194,6 @@ export function AdvancedView(props: AdvancedViewProps) {
         onDeepLinkInput={(input) => dispatchLocal({ type: "deepLinkInput", input })}
         onSubmitDeepLink={submitDebugDeepLink}
       />
-
-      <Separator />
-
-      <AdvancedConnectionSection
-        busy={props.busy}
-        headerStatus={props.headerStatus}
-        baseUrl={props.baseUrl}
-        openworkServerUrl={props.openworkServerUrl}
-        openworkServerStatus={props.openworkServerStatus}
-        openworkReconnectBusy={props.openworkReconnectBusy}
-        isLocalEngineRunning={isLocalEngineRunning}
-        restartBusy={openworkRestartBusy}
-        reconnectStatus={openworkReconnectStatus}
-        reconnectError={openworkReconnectError}
-        restartStatus={openworkRestartStatus}
-        restartError={openworkRestartError}
-        onReconnect={handleReconnectOpenworkServer}
-        onRestart={handleRestartLocalServer}
-        onStopHost={props.stopHost}
-      />
-
-      {props.developerMode ? (
-        <>
-          <Separator />
-          <ConfigView {...props.configView} />
-        </>
-      ) : null}
     </LayoutStack>
   );
 }

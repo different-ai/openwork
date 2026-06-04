@@ -37,7 +37,6 @@ For a containerized worker runtime, start from the [Docker packaging](https://gi
 - Worker runtimes use filesystem state and opencode SQLite data inside the mounted workspace/data paths.
 - The Den control plane uses a MySQL-compatible database. Local Docker uses MySQL 8.4; production can use standard MySQL or PlanetScale-compatible credentials.
 - Postgres is not required by the current Den deployment path.
-- The share service stores public bundle payloads in Vercel Blob in our hosted setup. Local/dev can fall back to filesystem storage. If you self-host share, use equivalent object storage or leave share disabled.
 
 ## Auth and SSO
 
@@ -70,7 +69,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 
 - We use Render: our current hosted service and worker deployment path.
 - Daytona: optional sandbox provider for cloud workers.
-- Vercel: optional Den web/share hosting and worker DNS automation.
+- Vercel: optional Den web hosting and worker DNS automation.
 - PostHog: optional analytics for public web surfaces. You can point it at self-hosted PostHog with `NEXT_PUBLIC_POSTHOG_HOST`, or remove/clear the key in your self-hosted web build if you do not want analytics.
 - Polar: optional billing/paywall for hosted cloud workers.
 - Loops: optional user sync and lifecycle messaging.

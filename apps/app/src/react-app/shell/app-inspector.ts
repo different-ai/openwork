@@ -6,7 +6,7 @@
  * refreshRouteState() call — without crawling the UI tree.
  *
  * Consumers read via `window.__openwork` from a devtools console or from
- * Chrome-MCP `evaluate_script`. The surface is intentionally plain JSON so
+ * browser-tool `evaluate_script`. The surface is intentionally plain JSON so
  * it survives postMessage-style bridges.
  *
  * Writers are any component that wants to publish a named slice via

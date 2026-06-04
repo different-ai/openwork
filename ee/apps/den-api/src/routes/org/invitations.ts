@@ -7,9 +7,9 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
+import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, idParamSchema, normalizeRoleName } from "./shared.js"
@@ -41,6 +41,15 @@ const inviteEmailDomainNotAllowedSchema = z.object({
   allowedEmailDomains: z.array(z.string()),
 }).meta({ ref: "InviteEmailDomainNotAllowedError" })
 
+const invitePaymentRequiredSchema = z.object({
+  error: z.literal("payment_required"),
+  reason: z.literal("seat_subscription_required"),
+  subscriptionType: z.literal("seat"),
+  currentCount: z.number(),
+  freeSeatCount: z.number(),
+  message: z.string(),
+}).meta({ ref: "InvitePaymentRequiredError" })
+
 type InvitationId = typeof InvitationTable.$inferSelect.id
 
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
@@ -57,6 +66,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
         400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
+        402: jsonResponse("A seat subscription is required before inviting more members.", invitePaymentRequiredSchema),
         403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
@@ -124,15 +134,16 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       .limit(1)
 
     if (!existingInvitation[0]) {
-      const memberLimit = await getOrganizationLimitStatus(payload.organization.id, "members")
-      if (memberLimit.exceeded) {
+      const seatEligibility = await getOrganizationSeatAddEligibility(payload.organization.id)
+      if (!seatEligibility.allowed) {
         return c.json({
-          error: "org_limit_reached",
-          limitType: "members",
-          limit: memberLimit.limit,
-          currentCount: memberLimit.currentCount,
-          message: `This workspace currently supports up to ${memberLimit.limit} members. Contact support to increase the limit.`,
-        }, 409)
+          error: "payment_required",
+          reason: "seat_subscription_required",
+          subscriptionType: "seat",
+          currentCount: seatEligibility.currentCount,
+          freeSeatCount: seatEligibility.freeSeatCount,
+          message: `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing before inviting another member.`,
+        }, 402)
       }
     }
 

@@ -42,7 +42,6 @@ export type BillingSummary = {
   featureGateEnabled: boolean;
   hasActivePlan: boolean;
   checkoutRequired: boolean;
-  checkoutUrl: string | null;
   portalUrl: string | null;
   price: BillingPrice | null;
   subscription: BillingSubscription | null;
@@ -57,6 +56,15 @@ export type OrgLimitError = {
   limitType: "members" | "workers";
   currentCount: number;
   limit: number;
+};
+
+export type OrgPaymentRequiredError = {
+  error: "payment_required";
+  reason: "seat_subscription_required";
+  subscriptionType: "seat";
+  message: string;
+  currentCount: number;
+  freeSeatCount: number;
 };
 
 export type AuthUser = {
@@ -395,6 +403,31 @@ export function getOrgLimitError(payload: unknown): OrgLimitError | null {
   };
 }
 
+export function getOrgPaymentRequiredError(payload: unknown): OrgPaymentRequiredError | null {
+  if (!isRecord(payload) || payload.error !== "payment_required") {
+    return null;
+  }
+
+  if (
+    payload.reason !== "seat_subscription_required" ||
+    payload.subscriptionType !== "seat" ||
+    typeof payload.message !== "string" ||
+    typeof payload.currentCount !== "number" ||
+    typeof payload.freeSeatCount !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    error: "payment_required",
+    reason: "seat_subscription_required",
+    subscriptionType: "seat",
+    message: payload.message,
+    currentCount: payload.currentCount,
+    freeSeatCount: payload.freeSeatCount,
+  };
+}
+
 export function getUser(payload: unknown): AuthUser | null {
   if (!isRecord(payload) || !isRecord(payload.user)) {
     return null;
@@ -417,13 +450,6 @@ export function getToken(payload: unknown): string | null {
     return null;
   }
   return typeof payload.token === "string" ? payload.token : null;
-}
-
-export function getCheckoutUrl(payload: unknown): string | null {
-  if (!isRecord(payload) || !isRecord(payload.polar)) {
-    return null;
-  }
-  return typeof payload.polar.checkoutUrl === "string" ? payload.polar.checkoutUrl : null;
 }
 
 export function getWorker(payload: unknown): WorkerLaunch | null {
@@ -606,7 +632,7 @@ export function getBillingSummary(payload: unknown): BillingSummary | null {
     return null;
   }
 
-  const billing = payload.billing;
+  const billing = isRecord(payload.billing.polar) ? payload.billing.polar : payload.billing;
   const featureGateEnabled = billing.featureGateEnabled;
   const hasActivePlan = billing.hasActivePlan;
   const checkoutRequired = billing.checkoutRequired;
@@ -623,7 +649,6 @@ export function getBillingSummary(payload: unknown): BillingSummary | null {
     featureGateEnabled,
     hasActivePlan,
     checkoutRequired,
-    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
     portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
     price: getBillingPrice(billing.price),
     subscription: getBillingSubscription(billing.subscription),
