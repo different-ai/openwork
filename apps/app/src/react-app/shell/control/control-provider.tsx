@@ -404,6 +404,51 @@ export function useControlAction(action: OpenworkControlAction | null | false | 
   }, [actionId, registerAction]);
 }
 
+/**
+ * Register a dynamic list of control actions. Unlike calling useControlAction
+ * per item, this scales to an arbitrary, changing number of actions without
+ * violating the rules of hooks. Each action is tracked by its stable id; the
+ * latest closure for that id is always used, and removed ids are unregistered.
+ */
+export function useControlActions(actions: readonly OpenworkControlAction[]) {
+  const control = useOpenworkControl();
+  const registerAction = control?.registerAction;
+
+  // One ref per action id, so executeAction always sees the freshest closure.
+  const refsById = useRef<Map<string, { current: OpenworkControlAction | null }>>(new Map());
+  for (const action of actions) {
+    const existing = refsById.current.get(action.id);
+    if (existing) {
+      existing.current = action;
+    } else {
+      refsById.current.set(action.id, { current: action });
+    }
+  }
+
+  const ids = actions.map((action) => action.id).join("\u0000");
+
+  useEffect(() => {
+    if (!registerAction) return undefined;
+    const liveIds = new Set(actions.map((action) => action.id));
+    // Drop refs for ids that no longer exist.
+    for (const id of Array.from(refsById.current.keys())) {
+      if (!liveIds.has(id)) refsById.current.delete(id);
+    }
+    const cleanups = actions.map((action) => {
+      const ref = refsById.current.get(action.id);
+      return ref ? registerAction(action.id, ref) : undefined;
+    });
+    return () => {
+      for (const cleanup of cleanups) cleanup?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerAction, ids]);
+}
+
+import { SETTINGS_TAB_VALUES } from "../../../app/types";
+
+const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(SETTINGS_TAB_VALUES);
+
 export function OpenworkRouteControlActions() {
   const navigate = useNavigate();
 
@@ -457,14 +502,72 @@ export function OpenworkRouteControlActions() {
       sideEffect: "navigation",
       execute: () => navigate("/settings/appearance"),
     },
+    {
+      id: "settings.panel.open",
+      label: "Open a settings panel",
+      description: "Navigate to a specific settings panel by tab id.",
+      sideEffect: "navigation",
+      requiresArgs: true,
+      args: [
+        {
+          name: "panel",
+          type: "string",
+          required: true,
+          description:
+            "Settings tab: general | ai | preferences | permissions | shell | extensions | skills | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-workers | cloud-providers | cloud-marketplaces",
+        },
+      ],
+      previewArgs: { panel: "ai" },
+      execute: (args) => {
+        const requested = (args as { panel?: unknown } | undefined)?.panel;
+        const panel = typeof requested === "string" ? requested.trim() : "";
+        if (!SETTINGS_TABS.has(panel)) {
+          return {
+            ok: false,
+            error: `Unknown settings panel: ${panel || "(empty)"}. Expected one of ${Array.from(SETTINGS_TABS).join(", ")}.`,
+          };
+        }
+        navigate(`/settings/${panel}`);
+        return { ok: true, panel };
+      },
+    },
+    {
+      id: "route.back",
+      label: "Go back",
+      description: "Navigate back one entry in history.",
+      sideEffect: "navigation",
+      execute: () => navigate(-1),
+    },
+    {
+      id: "route.forward",
+      label: "Go forward",
+      description: "Navigate forward one entry in history.",
+      sideEffect: "navigation",
+      execute: () => navigate(1),
+    },
+    {
+      id: "help.capabilities",
+      label: "What can OpenWork do?",
+      description: "List the main capabilities of OpenWork.",
+      sideEffect: "none",
+      execute: () => ({
+        capabilities: [
+          { id: "browse", label: "Browse the web", description: "Control a browser to navigate, scrape, and automate web tasks." },
+          { id: "providers", label: "AI model providers", description: "Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers." },
+          { id: "extensions", label: "MCP extensions", description: "Add MCP servers for Google Workspace, GitHub, databases, and more." },
+          { id: "voice", label: "Voice mode", description: "Talk to OpenWork with real-time voice using OpenAI Realtime." },
+          { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
+          { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
+          { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
+          { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
+          { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
+          { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
+        ],
+        hint: "Use settings.panel.open to configure any of these. For example: settings.panel.open({panel:'ai'}) for providers, settings.panel.open({panel:'extensions'}) for MCPs.",
+      }),
+    },
   ], [navigate]);
 
-  useControlAction(actions[0]);
-  useControlAction(actions[1]);
-  useControlAction(actions[2]);
-  useControlAction(actions[3]);
-  useControlAction(actions[4]);
-  useControlAction(actions[5]);
-  useControlAction(actions[6]);
+  useControlActions(actions);
   return null;
 }

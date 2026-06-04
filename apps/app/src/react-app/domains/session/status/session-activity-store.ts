@@ -12,6 +12,7 @@ type SessionActivityRecord = {
   runActive: boolean;
   assistantOutput: boolean;
   errorActive: boolean;
+  errorMessage: string | null;
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
@@ -30,6 +31,7 @@ type SessionActivityStore = {
   recordsByWorkspaceId: Record<string, Record<string, SessionActivityRecord>>;
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
+  getSessionError: (workspaceId: string, sessionId: string) => string | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
@@ -37,7 +39,7 @@ type SessionActivityStore = {
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
-  setError: (workspaceId: string, sessionId: string) => void;
+  setError: (workspaceId: string, sessionId: string, message?: string) => void;
   clearError: (workspaceId: string, sessionId: string) => void;
   setCompacting: (workspaceId: string, sessionId: string, compacting: boolean) => void;
   removeSession: (workspaceId: string, sessionId: string) => void;
@@ -48,6 +50,7 @@ const createRecord = (): SessionActivityRecord => ({
   runActive: false,
   assistantOutput: false,
   errorActive: false,
+  errorMessage: null,
   compacting: false,
   waitingPermissionIds: [],
   waitingQuestionIds: [],
@@ -134,6 +137,22 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
   getStatus: (workspaceId, sessionId) => (
     get().statusesByWorkspaceId[workspaceId]?.[sessionId] ?? "idle"
   ),
+  getSessionError: (workspaceId, sessionId) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+
+    if (!workspace || !session) {
+      return null;
+    }
+
+    const record = get().recordsByWorkspaceId[workspace]?.[session];
+
+    if (!record?.errorActive) {
+      return null;
+    }
+
+    return record.errorMessage;
+  },
   seedWorkspaceSessions: (workspaceId, sessions) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -155,6 +174,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
               runActive,
               assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
               errorActive: runActive ? false : record.errorActive,
+              errorMessage: runActive ? null : record.errorMessage,
               compacting: runActive ? record.compacting : false,
               waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
               waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -178,6 +198,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         runActive,
         assistantOutput: runActive && assistantOutput,
         errorActive: runActive ? false : record.errorActive,
+        errorMessage: runActive ? null : record.errorMessage,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -196,6 +217,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         runActive,
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
+        errorMessage: runActive ? null : record.errorMessage,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -250,13 +272,14 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       [kind === "permission" ? "waitingPermissionIds" : "waitingQuestionIds"]: ids,
     })));
   },
-  setError: (workspaceId, sessionId) => {
+  setError: (workspaceId, sessionId, message) => {
     const workspace = workspaceId.trim();
     const session = sessionId.trim();
     if (!workspace || !session) return;
     set((state) => updateRecord(state, workspace, session, (record) => ({
       ...record,
       errorActive: true,
+      errorMessage: message ? message : "Session failed",
       runActive: false,
       assistantOutput: false,
       compacting: false,
@@ -269,6 +292,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspace, session, (record) => ({
       ...record,
       errorActive: false,
+      errorMessage: null,
     })));
   },
   setCompacting: (workspaceId, sessionId, compacting) => {
@@ -279,6 +303,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       ...record,
       compacting,
       errorActive: compacting ? false : record.errorActive,
+      errorMessage: compacting ? null : record.errorMessage,
     })));
   },
   removeSession: (workspaceId, sessionId) => {

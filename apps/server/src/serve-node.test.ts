@@ -88,4 +88,36 @@ describe("serve", () => {
     expect(second.port).toBe(port);
     await second.stop();
   });
+
+  test("does not log expected connection aborts as unhandled errors", async () => {
+    const errors: unknown[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    const server = await serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        if (new URL(request.url).pathname === "/health") {
+          return Response.json({ ok: true });
+        }
+        throw new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET" } });
+      },
+    });
+
+    try {
+      await fetch(`http://127.0.0.1:${server.port}/abort`).catch(() => undefined);
+      await delay(25);
+      expect(errors).toEqual([]);
+
+      const health = await fetch(`http://127.0.0.1:${server.port}/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ ok: true });
+    } finally {
+      console.error = originalError;
+      await server.stop();
+    }
+  });
 });

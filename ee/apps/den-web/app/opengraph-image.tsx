@@ -94,7 +94,7 @@ export default function OpenGraphImage() {
                 "Open source",
                 "50+ integrations and LLMs",
                 "Free first worker",
-                "Polar billing for scale"
+                "Organization billing for scale"
               ].map((label) => (
                 <div
                   key={label}
@@ -158,7 +158,7 @@ export default function OpenGraphImage() {
                 ["9:41 AM", "GitHub", "Reviewed PR #247, approved"],
                 ["10:12 AM", "Slack", "Flagged invoice #1092 as duplicate"],
                 ["1:30 PM", "Linear", "Triaged 8 issues, 2 critical"],
-                ["3:15 PM", "Polar", "Checkout return ready for launch"]
+                ["3:15 PM", "Billing", "Subscription portal ready"]
               ].map(([time, source, detail]) => (
                 <div
                   key={`${time}-${source}`}

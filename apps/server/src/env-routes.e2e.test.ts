@@ -138,6 +138,72 @@ describe("env routes", () => {
     expect(body.items[0]).toMatchObject({ key: "ANTHROPIC_API_KEY", value: "sk-ant-abc" });
   });
 
+  test("GET /env can return metadata without raw values", async () => {
+    const { base } = await boot();
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({ entries: [{ key: "WITH_VALUE", value: "secret" }, { key: "EMPTY_VALUE", value: "" }] }),
+    });
+
+    const list = await fetch(`${base}/env?includeValues=false`, { headers: hostAuth() });
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as { items: Array<{ key: string; hasValue: boolean; value?: string }> };
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0]).toMatchObject({ key: "EMPTY_VALUE", hasValue: false });
+    expect(body.items[1]).toMatchObject({ key: "WITH_VALUE", hasValue: true });
+    expect(Object.prototype.hasOwnProperty.call(body.items[0], "value")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(body.items[1], "value")).toBe(false);
+  });
+
+  test("GET /env/:key reveals one raw value", async () => {
+    const { base } = await boot();
+    await fetch(`${base}/env`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({ key: "ANTHROPIC_API_KEY", value: "sk-ant-abc" }),
+    });
+
+    const reveal = await fetch(`${base}/env/ANTHROPIC_API_KEY`, { headers: hostAuth() });
+    expect(reveal.status).toBe(200);
+    expect(await reveal.json()).toMatchObject({
+      item: { key: "ANTHROPIC_API_KEY", value: "sk-ant-abc" },
+    });
+
+    const missing = await fetch(`${base}/env/MISSING`, { headers: hostAuth() });
+    expect(missing.status).toBe(404);
+  });
+
+  test("GET and PUT /env/status track pending changes per runtime", async () => {
+    const { base } = await boot();
+
+    const initial = await fetch(`${base}/env/status?runtimeKey=runtime-a`, { headers: hostAuth() });
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toEqual({ runtimeKey: "runtime-a", pendingChanges: false });
+
+    const setPending = await fetch(`${base}/env/status`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({ runtimeKey: "runtime-a", pendingChanges: true }),
+    });
+    expect(setPending.status).toBe(200);
+    expect(await setPending.json()).toEqual({ runtimeKey: "runtime-a", pendingChanges: true });
+
+    const otherRuntime = await fetch(`${base}/env/status?runtimeKey=runtime-b`, { headers: hostAuth() });
+    expect(await otherRuntime.json()).toEqual({ runtimeKey: "runtime-b", pendingChanges: false });
+
+    const updated = await fetch(`${base}/env/status?runtimeKey=runtime-a`, { headers: hostAuth() });
+    expect(await updated.json()).toEqual({ runtimeKey: "runtime-a", pendingChanges: true });
+
+    const cleared = await fetch(`${base}/env/status`, {
+      method: "PUT",
+      headers: hostAuth(),
+      body: JSON.stringify({ runtimeKey: "runtime-a", pendingChanges: false }),
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({ runtimeKey: "runtime-a", pendingChanges: false });
+  });
+
   test("GET /env/keys returns names without values", async () => {
     const { base } = await boot();
     await fetch(`${base}/env`, {

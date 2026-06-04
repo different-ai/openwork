@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ensureWorkspaceFiles } from "./workspace-init.js";
-import { openworkExtensionsPreviewPluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "openwork-workspace-init-"));
@@ -16,13 +16,13 @@ async function withWorkspace(fn: (root: string) => Promise<void>) {
 }
 
 describe("ensureWorkspaceFiles", () => {
-  test("creates default agent with artifact guidance for new workspaces", async () => {
+  test("creates OpenWork workspace config without writing opencode config", async () => {
     await withWorkspace(async (root) => {
       const result = await ensureWorkspaceFiles(root, "starter");
-      const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
-      expect(agent).toContain("OpenWork Artifacts");
-      expect(agent).toContain("reports/artifact-eval.xlsx");
-      expect(result.reloadReasons.sort()).toEqual(["agents", "config"]);
+      const openwork = await readFile(join(root, ".opencode", "openwork.json"), "utf8");
+      await expect(readFile(join(root, "opencode.jsonc"), "utf8")).rejects.toThrow();
+      expect(openwork).toContain('"authorizedRoots"');
+      expect(result.reloadReasons).toEqual([]);
 
       const secondResult = await ensureWorkspaceFiles(root, "starter");
       expect(secondResult).toEqual({ changed: false, reloadReasons: [] });
@@ -36,6 +36,27 @@ describe("ensureWorkspaceFiles", () => {
     expect(plugin).toContain("openwork_extension_call");
   });
 
+  test("uses external resources plugin path in packaged Electron", () => {
+    const previousResourcesPath = process.resourcesPath;
+    const resourcesPath = join("/Applications", "OpenWork.app", "Contents", "Resources");
+    process.resourcesPath = resourcesPath;
+    try {
+      const pluginPath = openworkPluginPath(
+        "openwork-extensions-preview",
+        join(resourcesPath, "app.asar", "server", "dist"),
+      );
+
+      expect(pluginPath).toBe(join(resourcesPath, "opencode-plugins", "openwork-extensions-preview.js"));
+      expect(pluginPath).not.toContain("app.asar");
+    } finally {
+      if (previousResourcesPath) {
+        process.resourcesPath = previousResourcesPath;
+      } else {
+        delete process.resourcesPath;
+      }
+    }
+  });
+
   test("does not create workspace extension preview plugin", async () => {
     await withWorkspace(async (root) => {
       await ensureWorkspaceFiles(root, "starter");
@@ -43,15 +64,15 @@ describe("ensureWorkspaceFiles", () => {
     });
   });
 
-  test("adds artifact guidance to existing OpenWork agents", async () => {
+  test("does not rewrite existing OpenWork agents", async () => {
     await withWorkspace(async (root) => {
       await mkdir(join(root, ".opencode", "agents"), { recursive: true });
       await writeFile(join(root, ".opencode", "agents", "openwork.md"), "---\ndescription: Old\n---\n\nOld instructions\n", "utf8");
       const result = await ensureWorkspaceFiles(root, "starter");
       const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
       expect(agent).toContain("Old instructions");
-      expect(agent).toContain("OpenWork Artifacts");
-      expect(result.reloadReasons.sort()).toEqual(["agents", "config"]);
+      expect(agent).not.toContain("OpenWork Artifacts");
+      expect(result.reloadReasons).toEqual([]);
     });
   });
 
@@ -90,7 +111,7 @@ describe("ensureWorkspaceFiles", () => {
     });
   });
 
-  test("repairs desktop-created schema-only opencode config", async () => {
+  test("does not repair or inject into desktop-created schema-only opencode config", async () => {
     await withWorkspace(async (root) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
       await writeFile(join(root, ".opencode", "openwork.json"), "{}\n", "utf8");
@@ -103,9 +124,11 @@ describe("ensureWorkspaceFiles", () => {
       const result = await ensureWorkspaceFiles(root, "starter");
       const config = await readFile(configPath, "utf8");
 
-      expect(config).toContain('"default_agent": "openwork"');
-      expect(config).toContain('"opencode-chrome-devtools"');
-      expect(result.reloadReasons).toContain("config");
+      expect(config).toBe(`{
+  "$schema": "https://opencode.ai/config.json"
+}
+`);
+      expect(result.reloadReasons).not.toContain("config");
     });
   });
 });

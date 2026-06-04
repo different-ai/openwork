@@ -12,8 +12,12 @@ export type AuthorizedFoldersState = {
   error: string | null;
 };
 
+type AuthorizedFoldersSetAction = {
+  [K in keyof AuthorizedFoldersState]: { type: "set"; key: K; value: SetStateAction<AuthorizedFoldersState[K]> };
+}[keyof AuthorizedFoldersState];
+
 type AuthorizedFoldersAction =
-  | { type: "set"; key: keyof AuthorizedFoldersState; value: SetStateAction<any> }
+  | AuthorizedFoldersSetAction
   | { type: "reset" }
   | { type: "loadStart" }
   | { type: "loadSuccess"; folders: string[]; status: string | null }
@@ -56,52 +60,11 @@ export function authorizedFoldersReducer(
   }
 }
 
-export const ensureRecord = (value: unknown): Record<string, unknown> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-};
-
 export const normalizeAuthorizedFolderPath = (input: string | null | undefined) => {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
   const withoutWildcard = trimmed.replace(/[\\/]\*+$/, "");
   return normalizeDirectoryQueryPath(withoutWildcard);
-};
-
-const authorizedFolderToExternalDirectoryKey = (folder: string) => {
-  const normalized = normalizeAuthorizedFolderPath(folder);
-  if (!normalized) return "";
-  return normalized === "/" ? "/*" : `${normalized}/*`;
-};
-
-const externalDirectoryKeyToAuthorizedFolder = (key: string, value: unknown) => {
-  if (value !== "allow") return null;
-  const trimmed = key.trim();
-  if (!trimmed) return null;
-  if (trimmed === "/*") return "/";
-  if (!trimmed.endsWith("/*")) return null;
-  return normalizeAuthorizedFolderPath(trimmed.slice(0, -2));
-};
-
-export const readAuthorizedFoldersFromConfig = (opencodeConfig: Record<string, unknown>) => {
-  const permission = ensureRecord(opencodeConfig.permission);
-  const externalDirectory = ensureRecord(permission.external_directory);
-  const folders: string[] = [];
-  const hiddenEntries: Record<string, unknown> = {};
-  const seen = new Set<string>();
-
-  for (const [key, value] of Object.entries(externalDirectory)) {
-    const folder = externalDirectoryKeyToAuthorizedFolder(key, value);
-    if (!folder) {
-      hiddenEntries[key] = value;
-      continue;
-    }
-    if (seen.has(folder)) continue;
-    seen.add(folder);
-    folders.push(folder);
-  }
-
-  return { folders, hiddenEntries };
 };
 
 export const buildAuthorizedFoldersStatus = (preservedCount: number, action?: string) => {
@@ -113,17 +76,4 @@ export const buildAuthorizedFoldersStatus = (preservedCount: number, action?: st
       : null;
   if (action && preservedLabel) return `${action} ${preservedLabel}`;
   return action ?? preservedLabel;
-};
-
-export const mergeAuthorizedFoldersIntoExternalDirectory = (
-  folders: string[],
-  hiddenEntries: Record<string, unknown>,
-): Record<string, unknown> | undefined => {
-  const next: Record<string, unknown> = { ...hiddenEntries };
-  for (const folder of folders) {
-    const key = authorizedFolderToExternalDirectoryKey(folder);
-    if (!key) continue;
-    next[key] = "allow";
-  }
-  return Object.keys(next).length ? next : undefined;
 };

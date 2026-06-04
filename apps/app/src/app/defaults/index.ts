@@ -11,8 +11,6 @@
  */
 
 export {
-  DEFAULT_VISIBLE_MODELS,
   RECOMMENDED_MODEL_PATTERNS,
-  isDefaultVisibleModel,
   isRecommendedModel,
 } from "./models";

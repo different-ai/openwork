@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import { useEffect, useId, useState, type SetStateAction } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
 import {
   Dialog,
@@ -25,6 +27,7 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import {
   EnvironmentVariableProvider,
+  environmentUserEnvQueryKey,
   type ApplyEnvironmentChangesResult,
   type EnvironmentEditorDraft,
   useEnvironmentVariableApplyChanges,
@@ -33,7 +36,7 @@ import {
   useEnvironmentVariableRemove,
   useIsEnvironmentVariableChangesPending,
 } from "./environment-variable-provider";
-import { SettingsNotice, Spinner } from "../settings-section";
+import { SettingsNotice, Spinner } from "@/react-app/domains/settings/settings-section";
 import {
   EnvironmentVariableTableItem,
   EnvironmentVariableTable,
@@ -50,8 +53,7 @@ import {
   LayoutSectionItemFootnote,
   LayoutSectionTitle,
   LayoutStack,
-} from "../settings-layout";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
+} from "@/react-app/domains/settings/settings-layout";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 
 type EnvItem = EnvironmentVariableItem;
@@ -125,11 +127,52 @@ type EnvironmentSettingsPanelProps = {
 
 function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
   const isPendingChanges = useIsEnvironmentVariableChangesPending();
+  const queryClient = useQueryClient();
   const { data, error, isLoading } = useEnvironmentVariableList({
     client: props.client,
     isRemoteWorkspace: props.isRemoteWorkspace,
     runtimeKey: props.runtimeKey,
   });
+
+  const readEnvironmentValue = async (item: EnvItem) => {
+    if (typeof item.value === "string") return item.value;
+    if (!item.hasValue) {
+      queryClient.setQueryData<{ items: EnvItem[] }>(
+        environmentUserEnvQueryKey(props.runtimeKey),
+        (current) => {
+          if (!current) return current;
+          return {
+            items: current.items.map((entry) =>
+              entry.key === item.key ? { ...entry, value: "" } : entry,
+            ),
+          };
+        },
+      );
+      return "";
+    }
+    if (!props.client) throw new Error(t("app.unknown_error"));
+
+    const response = await props.client.getUserEnv(item.key);
+    queryClient.setQueryData<{ items: EnvItem[] }>(
+      environmentUserEnvQueryKey(props.runtimeKey),
+      (current) => {
+        if (!current) return current;
+        return {
+          items: current.items.map((entry) =>
+            entry.key === item.key
+              ? {
+                  ...entry,
+                  value: response.item.value,
+                  hasValue: response.item.hasValue,
+                  updatedAt: response.item.updatedAt,
+                }
+              : entry,
+          ),
+        };
+      },
+    );
+    return response.item.value;
+  };
 
   const openAdd = () => {
     if (!props.canEdit) {
@@ -142,7 +185,11 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
     if (!props.canEdit) {
       return;
     }
-    props.onEditorChange({ mode: "edit", key: item.key, value: item.value });
+    void readEnvironmentValue(item)
+      .then((value) => props.onEditorChange({ mode: "edit", key: item.key, value }))
+      .catch((readError) => {
+        toast.error(readError instanceof Error ? readError.message : t("app.unknown_error"));
+      });
   };
 
   return (
@@ -185,6 +232,7 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
           canEdit={props.canEdit}
           onAdd={openAdd}
           onEdit={openEdit}
+          onRevealValue={readEnvironmentValue}
         />
       ) : null}
 
@@ -213,7 +261,6 @@ type EnvironmentPendingChangesProps = {
 };
 
 function EnvironmentPendingChanges(props: EnvironmentPendingChangesProps) {
-  const { showToast } = useStatusToasts();
   const [applyConfirmOpen, setApplyConfirmOpen] = useState(false);
   const { isApplying, error } = useEnvironmentVariableApplyChanges();
 
@@ -238,10 +285,7 @@ function EnvironmentPendingChanges(props: EnvironmentPendingChangesProps) {
               size="sm"
               onClick={() => {
                 if (props.applyBlocked) {
-                  showToast({
-                    title: props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks"),
-                    tone: "warning",
-                  });
+                  toast.warning(props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks"));
                   return;
                 }
                 setApplyConfirmOpen(true);
@@ -271,12 +315,32 @@ type EnvironmentItemsTableProps = {
   canEdit: boolean;
   onAdd: () => void;
   onEdit: (item: EnvItem) => void;
+  onRevealValue: (item: EnvItem) => Promise<string>;
 };
 
 function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [revealing, setRevealing] = useState<Record<string, boolean>>({});
   const [deleteCandidate, setDeleteCandidate] = useState<EnvItem | null>(null);
   const { isRemoving } = useEnvironmentVariableRemove();
+
+  const toggleReveal = async (key: string) => {
+    const item = props.items.find((entry) => entry.key === key);
+    if (revealed[key] && typeof item?.value === "string") {
+      setRevealed((current) => ({ ...current, [key]: false }));
+      return;
+    }
+    if (!item) return;
+    setRevealing((current) => ({ ...current, [key]: true }));
+    try {
+      await props.onRevealValue(item);
+      setRevealed((current) => ({ ...current, [key]: true }));
+    } catch (readError) {
+      toast.error(readError instanceof Error ? readError.message : t("app.unknown_error"));
+    } finally {
+      setRevealing((current) => ({ ...current, [key]: false }));
+    }
+  };
 
   if (props.loading && props.items.length === 0) {
     return <EnvironmentVariableTableLoading />;
@@ -293,11 +357,12 @@ function EnvironmentItemsTable(props: EnvironmentItemsTableProps) {
             <EnvironmentVariableTableItem
               key={item.key}
               item={item}
-              isRevealed={Boolean(revealed[item.key])}
+              isRevealed={Boolean(revealed[item.key]) && typeof item.value === "string"}
               canEdit={props.canEdit}
               deleting={isRemoving && deleteCandidate?.key === item.key}
+              revealing={Boolean(revealing[item.key])}
               onEdit={props.onEdit}
-              onToggleReveal={(key) => setRevealed((current) => ({ ...current, [key]: !current[key] }))}
+              onToggleReveal={(key) => void toggleReveal(key)}
               onDelete={setDeleteCandidate}
             />
           ))}
@@ -481,4 +546,3 @@ export function EnvironmentApplyModal(props: EnvironmentApplyModalProps) {
     />
   );
 }
-

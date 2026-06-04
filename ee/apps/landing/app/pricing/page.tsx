@@ -28,7 +28,7 @@ const pricingSchema = {
       name: "Team Starter",
       price: "50",
       priceCurrency: "USD",
-      url: "https://app.openworklabs.com/checkout",
+      url: "https://app.openworklabs.com/dashboard/billing",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",

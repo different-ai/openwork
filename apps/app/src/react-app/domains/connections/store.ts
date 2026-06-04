@@ -128,6 +128,54 @@ export function createConnectionsStore(options: {
 
   const getOpenworkSnapshot = () => options.openworkServer.getSnapshot();
 
+  const resolveOpenworkWorkspaceId = async () => {
+    const current = options.runtimeWorkspaceId()?.trim();
+    if (current) return current;
+    const openworkSnapshot = getOpenworkSnapshot();
+    if (openworkSnapshot.openworkServerStatus !== "connected" || !openworkSnapshot.openworkServerClient) {
+      return null;
+    }
+    const ensured = (await options.ensureRuntimeWorkspaceId?.())?.trim();
+    if (ensured) return ensured;
+    return options.workspaceType() === "local" ? options.selectedWorkspaceId().trim() || null : null;
+  };
+
+  const resolveConfigOpenworkTarget = async (mode: "read" | "write") => {
+    const openworkSnapshot = getOpenworkSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
+    const hasOpenworkTarget =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient && openworkWorkspaceId);
+    const canUseOpenworkServer =
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+    return {
+      openworkClient,
+      openworkWorkspaceId,
+      hasOpenworkTarget,
+      canUseOpenworkServer,
+    };
+  };
+
+  const resolveMcpOpenworkTarget = async (mode: "read" | "write") => {
+    const openworkSnapshot = getOpenworkSnapshot();
+    const openworkClient = openworkSnapshot.openworkServerClient;
+    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
+    const hasOpenworkTarget =
+      openworkSnapshot.openworkServerStatus === "connected" &&
+      Boolean(openworkClient && openworkWorkspaceId);
+    const canUseOpenworkServer =
+      hasOpenworkTarget &&
+      openworkSnapshot.openworkServerCapabilities?.mcp?.[mode] !== false;
+    return {
+      openworkClient,
+      openworkWorkspaceId,
+      hasOpenworkTarget,
+      canUseOpenworkServer,
+    };
+  };
+
   const filterConfiguredStatuses = (status: McpStatusMap, entries: McpServerEntry[]) => {
     const configured = new Set(entries.map((entry) => entry.name));
     return Object.fromEntries(
@@ -137,20 +185,18 @@ export function createConnectionsStore(options: {
 
   const readMcpConfigFile = async (scope: "project" | "global"): Promise<OpencodeConfigFile | null> => {
     const projectDir = options.projectDir().trim();
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.config?.read;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveConfigOpenworkTarget("read");
 
     if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
       return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
     }
 
-    if (!isDesktopRuntime()) {
+    if (hasOpenworkTarget) {
+      return null;
+    }
+
+    if (options.workspaceType() !== "local" || !isDesktopRuntime()) {
       return null;
     }
 
@@ -171,7 +217,7 @@ export function createConnectionsStore(options: {
     }
 
     const mountedBaseUrl =
-      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, options.runtimeWorkspaceId()) ?? openworkBaseUrl;
+      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, await resolveOpenworkWorkspaceId()) ?? openworkBaseUrl;
     activeClient = createClient(`${mountedBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
       token,
       mode: "openwork",
@@ -181,25 +227,7 @@ export function createConnectionsStore(options: {
   };
 
   const resolveWritableOpenworkTarget = async () => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    let openworkWorkspaceId = options.runtimeWorkspaceId();
-    const openworkCapabilities = openworkSnapshot.openworkServerCapabilities;
-    if (!openworkWorkspaceId && openworkClient && openworkSnapshot.openworkServerStatus === "connected") {
-      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.()) ?? null;
-    }
-
-    const canUseOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkCapabilities?.mcp?.write;
-
-    return {
-      openworkClient,
-      openworkWorkspaceId,
-      canUseOpenworkServer: Boolean(canUseOpenworkServer),
-    };
+    return resolveMcpOpenworkTarget("write");
   };
 
   const resolveProjectDir = async (activeClient: Client | null, currentProjectDir: string) => {
@@ -223,26 +251,23 @@ export function createConnectionsStore(options: {
 
   const listMcpFromOpenworkServer = async (projectDir: string) => {
     const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId =
-      options.runtimeWorkspaceId()?.trim() ||
-      options.selectedWorkspaceId().trim() ||
-      ((await options.ensureRuntimeWorkspaceId?.()) ?? "")?.trim();
-    const canTryOpenworkServer =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient) &&
-      Boolean(openworkWorkspaceId) &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.read !== false;
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+      await resolveMcpOpenworkTarget("read");
+    const canTryOpenworkServer = canUseOpenworkServer;
 
     recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-check", {
       workspaceType: options.workspaceType(),
       projectDir: projectDir || null,
       openworkStatus: openworkSnapshot.openworkServerStatus,
       hasOpenworkClient: Boolean(openworkClient),
-      openworkWorkspaceId: openworkWorkspaceId || null,
+      openworkWorkspaceId: openworkWorkspaceId ?? null,
       canReadMcp: openworkSnapshot.openworkServerCapabilities?.mcp?.read ?? null,
       canTryOpenworkServer,
     });
+
+    if (hasOpenworkTarget && !canTryOpenworkServer) {
+      throw new Error("OpenWork server cannot read MCP config for this workspace.");
+    }
 
     if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
 
@@ -343,7 +368,8 @@ export function createConnectionsStore(options: {
       recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-error", {
         message: error instanceof Error ? error.message : String(error),
       });
-      if (isRemoteWorkspace) {
+      const serverTarget = await resolveMcpOpenworkTarget("read").catch(() => null);
+      if (isRemoteWorkspace || serverTarget?.hasOpenworkTarget) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -470,13 +496,21 @@ export function createConnectionsStore(options: {
       projectDir: projectDir || null,
     });
 
-    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
       await resolveWritableOpenworkTarget();
 
     if (isRemoteWorkspace && !canUseOpenworkServer) {
       setStateField("mcpStatus", "OpenWork server unavailable. MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "openwork-server-unavailable",
+      });
+      return;
+    }
+
+    if (hasOpenworkTarget && !canUseOpenworkServer) {
+      setStateField("mcpStatus", "OpenWork server MCP config is read-only.");
+      finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "openwork-server-read-only",
       });
       return;
     }
@@ -489,7 +523,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!isRemoteWorkspace && !projectDir) {
+    if (!isRemoteWorkspace && !projectDir && !canUseOpenworkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace",
@@ -497,8 +531,8 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    const activeClient = await ensureActiveClient();
-    if (!activeClient) {
+    const activeClient = canUseOpenworkServer ? options.client() ?? await ensureActiveClient().catch(() => null) : await ensureActiveClient();
+    if (!activeClient && !canUseOpenworkServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "no-active-client",
@@ -506,8 +540,8 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    const resolvedProjectDir = await resolveProjectDir(activeClient, projectDir);
-    if (!resolvedProjectDir) {
+    const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
+    if (!resolvedProjectDir && !canUseOpenworkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace-after-discovery",
@@ -573,6 +607,9 @@ export function createConnectionsStore(options: {
           config: mcpEntryConfig,
         });
       } else {
+        if (!activeClient || !resolvedProjectDir) {
+          throw new Error(t("mcp.connect_server_first"));
+        }
         const configFile = await readOpencodeConfig("project", resolvedProjectDir) as OpencodeConfigFile;
 
         const raw = configFile.exists && configFile.content?.trim()
@@ -618,6 +655,9 @@ export function createConnectionsStore(options: {
         // `workspace_not_found` after the config write already succeeded.
         setStateField("mcpStatuses", filterConfiguredStatuses(snapshot.mcpStatuses, snapshot.mcpServers));
       } else {
+        if (!activeClient || !resolvedProjectDir) {
+          throw new Error(t("mcp.connect_server_first"));
+        }
         const mcpAddConfig =
           entryType === "remote"
             ? {
@@ -710,11 +750,16 @@ export function createConnectionsStore(options: {
       (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
     const projectDir = options.projectDir().trim();
 
-    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
       await resolveWritableOpenworkTarget();
 
     if (isRemoteWorkspace && !canUseOpenworkServer) {
       setStateField("mcpStatus", "OpenWork server unavailable. MCP auth is read-only.");
+      return;
+    }
+
+    if (hasOpenworkTarget && !canUseOpenworkServer) {
+      setStateField("mcpStatus", "OpenWork server MCP auth is read-only.");
       return;
     }
 
@@ -723,14 +768,14 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    const activeClient = await ensureActiveClient();
-    if (!activeClient) {
+    const activeClient = canUseOpenworkServer ? options.client() : await ensureActiveClient();
+    if (!activeClient && !canUseOpenworkServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       return;
     }
 
-    const resolvedProjectDir = await resolveProjectDir(activeClient, projectDir);
-    if (!resolvedProjectDir) {
+    const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
+    if (!resolvedProjectDir && !canUseOpenworkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       return;
     }
@@ -742,6 +787,9 @@ export function createConnectionsStore(options: {
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
       } else {
+        if (!activeClient || !resolvedProjectDir) {
+          throw new Error(t("mcp.connect_server_first"));
+        }
         try {
           await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
         } catch {
@@ -751,8 +799,10 @@ export function createConnectionsStore(options: {
       }
 
       try {
-        const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
-        setStateField("mcpStatuses", status as McpStatusMap);
+        if (activeClient && resolvedProjectDir) {
+          const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
+          setStateField("mcpStatuses", status as McpStatusMap);
+        }
       } catch {
         // ignore
       }
@@ -771,18 +821,16 @@ export function createConnectionsStore(options: {
     try {
       setStateField("mcpStatus", null);
 
-      const openworkSnapshot = getOpenworkSnapshot();
-      const openworkClient = openworkSnapshot.openworkServerClient;
-      const openworkWorkspaceId = options.runtimeWorkspaceId();
-      const canUseOpenworkServer =
-        openworkSnapshot.openworkServerStatus === "connected" &&
-        openworkClient &&
-        openworkWorkspaceId &&
-        openworkSnapshot.openworkServerCapabilities?.mcp?.write;
+      const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
+        await resolveWritableOpenworkTarget();
 
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.removeMcp(openworkWorkspaceId, name);
       } else {
+        if (hasOpenworkTarget) {
+          setStateField("mcpStatus", "OpenWork server MCP config is read-only.");
+          return;
+        }
         const projectDir = options.projectDir().trim();
         if (!projectDir) {
           setStateField("mcpStatus", t("mcp.pick_workspace_first"));
@@ -849,14 +897,8 @@ export function createConnectionsStore(options: {
   // from the existing reload-required popup; no extra banner here.
   async function setMcpEnabled(name: string, enabled: boolean) {
     try {
-      const openworkSnapshot = getOpenworkSnapshot();
-      const openworkClient = openworkSnapshot.openworkServerClient;
-      const openworkWorkspaceId = options.runtimeWorkspaceId();
-      const canUseOpenworkServer =
-        openworkSnapshot.openworkServerStatus === "connected" &&
-        openworkClient &&
-        openworkWorkspaceId &&
-        openworkSnapshot.openworkServerCapabilities?.mcp?.write;
+      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+        await resolveWritableOpenworkTarget();
 
       if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
         setStateField("mcpStatus", t("mcp.toggle_requires_server"));
@@ -897,7 +939,11 @@ export function createConnectionsStore(options: {
     lastWorkspaceContextKey = workspaceContextKey;
     lastProjectDir = projectDir;
 
-    if (!started || disposed || !isDesktopRuntime() || !changed) {
+    if (!started || disposed || !changed) {
+      return;
+    }
+
+    if (!isDesktopRuntime() && getOpenworkSnapshot().openworkServerStatus !== "connected") {
       return;
     }
 

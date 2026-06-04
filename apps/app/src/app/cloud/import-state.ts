@@ -27,6 +27,14 @@ export type CloudImportedProvider = {
   importedAt: number | null;
 };
 
+export type CloudImportedMarketplace = {
+  marketplaceId: string;
+  name: string;
+  updatedAt: string | null;
+  pluginIds: string[];
+  importedAt: number | null;
+};
+
 export type CloudImportedPluginFile = {
   configObjectId: string;
   versionId: string | null;
@@ -50,6 +58,7 @@ export type WorkspaceCloudImports = {
   skillHubs: Record<string, CloudImportedSkillHub>;
   skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
+  marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
 };
 
@@ -67,6 +76,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
   const rawSkillHubs = isRecord(cloudImports.skillHubs) ? cloudImports.skillHubs : {};
   const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
+  const rawMarketplaces = isRecord(cloudImports.marketplaces) ? cloudImports.marketplaces : {};
   const rawPlugins = isRecord(cloudImports.plugins) ? cloudImports.plugins : {};
 
   const skillHubs = Object.fromEntries(
@@ -140,6 +150,27 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
+  const marketplaces = Object.fromEntries(
+    Object.entries(rawMarketplaces).flatMap(([key, entry]) => {
+      if (!isRecord(entry)) return [];
+      const marketplaceId = typeof entry.marketplaceId === "string"
+        ? entry.marketplaceId.trim()
+        : key.trim();
+      const name = typeof entry.name === "string" ? entry.name.trim() : marketplaceId;
+      if (!marketplaceId || !name) return [];
+      const imported = {
+        marketplaceId,
+        name,
+        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
+        pluginIds: readStringArray(entry.pluginIds),
+        importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
+          ? entry.importedAt
+          : null,
+      } satisfies CloudImportedMarketplace;
+      return [[marketplaceId, imported] as const];
+    }),
+  );
+
   const plugins = Object.fromEntries(
     Object.entries(rawPlugins).flatMap(([key, entry]) => {
       if (!isRecord(entry)) return [];
@@ -181,7 +212,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
-  return { skillHubs, skills, providers, plugins };
+  return { skillHubs, skills, providers, marketplaces, plugins };
 }
 
 export function withWorkspaceCloudImports(
@@ -194,6 +225,7 @@ export function withWorkspaceCloudImports(
       skillHubs: cloudImports.skillHubs,
       skills: cloudImports.skills,
       providers: cloudImports.providers,
+      marketplaces: cloudImports.marketplaces,
       plugins: cloudImports.plugins,
     },
   };

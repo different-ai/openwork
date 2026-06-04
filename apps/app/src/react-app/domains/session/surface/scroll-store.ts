@@ -1,13 +1,13 @@
 import { create } from "zustand";
 
-export const SESSION_SCROLL_STORAGE_KEY = "openwork:session-scroll:v1";
+const SESSION_SCROLL_STORAGE_KEY = "openwork:session-scroll:v1";
 
-export type StickyBottomSessionScrollState = {
+type StickyBottomSessionScrollState = {
   mode: "stickyBottom";
   topClippedMessageId: string | null;
 };
 
-export type ManualSessionScrollState = {
+type ManualSessionScrollState = {
   mode: "manual";
   scrollTop: number;
   topClippedMessageId: string | null;
@@ -15,9 +15,9 @@ export type ManualSessionScrollState = {
 
 export type SessionScrollState = StickyBottomSessionScrollState | ManualSessionScrollState;
 
-export type SessionScrollStateById = Record<string, SessionScrollState>;
+type SessionScrollStateById = Record<string, SessionScrollState>;
 
-export const INITIAL_SESSION_SCROLL_STATE: StickyBottomSessionScrollState = {
+const INITIAL_SESSION_SCROLL_STATE: StickyBottomSessionScrollState = {
   mode: "stickyBottom",
   topClippedMessageId: null,
 };
@@ -86,6 +86,20 @@ export function getSessionScrollState(
 ): SessionScrollState {
   if (!sessionId) return INITIAL_SESSION_SCROLL_STATE;
   return sessions[sessionId] ?? INITIAL_SESSION_SCROLL_STATE;
+}
+
+export function selectSessionIsStickyBottom(
+  sessions: SessionScrollStateById,
+  sessionId: string | null | undefined,
+): boolean {
+  return getSessionScrollState(sessions, sessionId).mode === "stickyBottom";
+}
+
+export function selectSessionTopClippedMessageId(
+  sessions: SessionScrollStateById,
+  sessionId: string | null | undefined,
+): string | null {
+  return getSessionScrollState(sessions, sessionId).topClippedMessageId;
 }
 
 function setSessionStickyBottom(
