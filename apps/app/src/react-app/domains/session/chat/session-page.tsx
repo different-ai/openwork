@@ -56,6 +56,7 @@ import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, type OpenTarget } from "../artifacts/open-target";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
+import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -178,6 +179,8 @@ export type SessionPageProps = {
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
   settingsSlot?: React.ReactNode;
+  terminalOpen?: boolean;
+  onTerminalOpenChange?: (open: boolean) => void;
 };
 
 function getSidebarInitialLoading(props: SessionPageSidebarProps) {
@@ -822,8 +825,9 @@ export function SessionPage(props: SessionPageProps) {
             </div>
           </header>
 
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            <div className="relative min-w-0 flex-1 overflow-hidden bg-dls-surface mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+          <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 overflow-hidden">
+            <ResizablePanel minSize="180px" className="min-h-0">
+            <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
               {showStartupSkeleton ? (
                 <div className="px-6 py-14" role="status" aria-live="polite">
                   <div className="mx-auto max-w-2xl space-y-6">
@@ -1114,7 +1118,20 @@ export function SessionPage(props: SessionPageProps) {
                 </div>
               ) : null}
             </div>
-          </div>
+            </ResizablePanel>
+            {props.terminalOpen ? (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize="280px" minSize="160px" maxSize="55%" className="min-h-0">
+                  <TerminalDock
+                    workspaceRoot={props.selectedWorkspaceRoot}
+                    isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
+                    onClose={() => props.onTerminalOpenChange?.(false)}
+                  />
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
 
           {shellConfig.statusBar ? (
             <StatusBar

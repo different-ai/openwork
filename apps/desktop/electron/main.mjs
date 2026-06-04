@@ -31,6 +31,8 @@ import {
 } from "./remote-workspace.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
@@ -45,6 +47,40 @@ const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/late
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+const terminalProcesses = new Map();
+let nextTerminalId = 1;
+
+function defaultTerminalShell() {
+  if (process.platform === "win32") return process.env.COMSPEC || "powershell.exe";
+  return process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+}
+
+async function resolveTerminalCwd(cwd) {
+  const fallback = os.homedir();
+  if (typeof cwd !== "string" || !cwd.trim()) return fallback;
+  const candidate = path.resolve(cwd);
+  const info = await stat(candidate).catch(() => null);
+  return info?.isDirectory() ? candidate : fallback;
+}
+
+function terminalForSender(event, terminalId) {
+  const terminal = terminalProcesses.get(String(terminalId ?? ""));
+  if (!terminal || terminal.webContentsId !== event.sender.id) return null;
+  return terminal;
+}
+
+function killTerminal(terminalId) {
+  const terminal = terminalProcesses.get(terminalId);
+  if (!terminal) return;
+  terminalProcesses.delete(terminalId);
+  try { terminal.process.kill(); } catch { /* already gone */ }
+}
+
+function killTerminalsForWebContents(webContentsId) {
+  for (const [terminalId, terminal] of terminalProcesses.entries()) {
+    if (terminal.webContentsId === webContentsId) killTerminal(terminalId);
+  }
+}
 
 function computerUseHelperExecutablePath() {
   const appPath = computerUseHelperAppPath();
@@ -3013,6 +3049,56 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
   const granted = await systemPreferences.askForMediaAccess("microphone");
   const after = systemPreferences.getMediaAccessStatus("microphone");
   return { platform: process.platform, before, after, granted };
+});
+
+// ── Terminal IPC ────────────────────────────────────────────────────────
+ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+  const cwd = await resolveTerminalCwd(options?.cwd);
+  const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
+  const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
+  const terminalId = `term_${nextTerminalId++}`;
+  const shellPath = defaultTerminalShell();
+  const child = pty.spawn(shellPath, [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      OPENWORK_TERMINAL: "1",
+    },
+  });
+
+  terminalProcesses.set(terminalId, { process: child, webContentsId: event.sender.id });
+  event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
+  child.onData((data) => {
+    if (event.sender.isDestroyed()) return;
+    event.sender.send("openwork:terminal:data", { terminalId, data });
+  });
+  child.onExit(({ exitCode, signal }) => {
+    terminalProcesses.delete(terminalId);
+    if (event.sender.isDestroyed()) return;
+    event.sender.send("openwork:terminal:exit", { terminalId, exitCode, signal });
+  });
+
+  return { terminalId };
+});
+ipcMain.handle("openwork:terminal:write", (event, terminalId, data) => {
+  const terminal = terminalForSender(event, terminalId);
+  if (!terminal || typeof data !== "string") return;
+  terminal.process.write(data);
+});
+ipcMain.handle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
+  const terminal = terminalForSender(event, terminalId);
+  if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
+  terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
+});
+ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
+  const terminal = terminalForSender(event, terminalId);
+  if (!terminal) return;
+  killTerminal(String(terminalId));
 });
 
 // ── Embedded browser IPC ────────────────────────────────────────────────

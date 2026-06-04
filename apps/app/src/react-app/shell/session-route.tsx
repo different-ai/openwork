@@ -118,7 +118,7 @@ import {
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import { CommandPalette, type AccessibleTargetOption, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { CommandPalette, type PaletteItem, type SessionOption as PaletteSessionOption } from "./command-palette";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { useBootState } from "./boot-state";
 import {
@@ -588,6 +588,7 @@ export function SessionRoute() {
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [paletteAccessibleTargets, setPaletteAccessibleTargets] = useState<OpenTarget[]>([]);
   // Model picker modal state (ported from settings-route; previously the
   // session "Pick a model" button navigated to /settings/general, which is a
@@ -2518,6 +2519,7 @@ export function SessionRoute() {
   // Global shortcuts:
   //   Cmd/Ctrl+N  -> new task in selected workspace
   //   Cmd/Ctrl+K  -> toggle command palette
+  //   Cmd/Ctrl+J  -> toggle terminal panel (matches VS Code)
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
@@ -2542,6 +2544,11 @@ export function SessionRoute() {
     if (key === "k") {
       event.preventDefault();
       setCommandPaletteOpen((value) => !value);
+      return;
+    }
+    if (key === "j") {
+      event.preventDefault();
+      setTerminalOpen((value) => !value);
     }
   });
 
@@ -2654,6 +2661,20 @@ export function SessionRoute() {
     });
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
+
+  const terminalPaletteItems = useMemo<PaletteItem[]>(() => [
+    {
+      id: "terminal.toggle",
+      title: terminalOpen ? "Hide terminal" : "Show terminal",
+      detail: "Toggle the integrated terminal panel for this workspace",
+      meta: "Cmd/Ctrl+J",
+      searchText: "terminal shell command line console show hide toggle",
+      action: () => {
+        setCommandPaletteOpen(false);
+        setTerminalOpen((value) => !value);
+      },
+    },
+  ], [terminalOpen]);
 
   const handleReorderWorkspaces = useCallback((workspaceIds: string[]) => {
     const activeWorkspaceIds = new Set(workspacesRef.current.map((workspace) => workspace.id));
@@ -2915,6 +2936,8 @@ export function SessionRoute() {
           }}
         />
       }
+      terminalOpen={terminalOpen}
+      onTerminalOpenChange={setTerminalOpen}
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,
@@ -3171,6 +3194,7 @@ export function SessionRoute() {
         }
       }}
       sessions={paletteSessionOptions}
+      extraItems={terminalPaletteItems}
     />
     <ModelPickerModal
       open={modelPickerOpen}

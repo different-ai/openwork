@@ -125,6 +125,14 @@ declare global {
         onPanelOpened?: (callback: () => void) => () => void;
         onPanelClosed?: (callback: () => void) => () => void;
       };
+      terminal?: {
+        create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;
+        write?: (terminalId: string, data: string) => Promise<void>;
+        resize?: (terminalId: string, cols: number, rows: number) => Promise<void>;
+        kill?: (terminalId: string) => Promise<void>;
+        onData?: (callback: (payload: { terminalId: string; data: string }) => void) => () => void;
+        onExit?: (callback: (payload: { terminalId: string; exitCode: number | null; signal?: number }) => void) => () => void;
+      };
       meta?: {
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
