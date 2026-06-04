@@ -1,0 +1,147 @@
+# docker-compose.den-static.yml — Den static deployment stack
+#
+# Use this file for self-hosted Den deployments where worker runtimes already
+# exist and Den should allocate them from a fixed pool.
+
+x-shared: &shared
+  restart: unless-stopped
+
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --performance_schema=OFF
+      - --innodb-buffer-pool-size=64M
+      - --innodb-log-buffer-size=8M
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEN_MYSQL_ROOT_PASSWORD:?DEN_MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: openwork_den
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$DEN_MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    ports:
+      - "${DEN_MYSQL_PORT:-3306}:3306"
+    volumes:
+      - den-mysql-data:/var/lib/mysql
+
+  den:
+    <<: *shared
+    build:
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile.den
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${DEN_API_PORT:-8788}:8788"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    environment:
+      CI: "true"
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-0}
+      DATABASE_URL: mysql://root:${DEN_MYSQL_ROOT_PASSWORD}@mysql:3306/openwork_den
+      BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:?DEN_BETTER_AUTH_SECRET is required}
+      DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY is required}
+      BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:?DEN_BETTER_AUTH_URL is required}
+      DEN_MCP_RESOURCE_URL: ${DEN_MCP_RESOURCE_URL:-}
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${DEN_BETTER_AUTH_TRUSTED_ORIGINS:?DEN_BETTER_AUTH_TRUSTED_ORIGINS is required}
+      PORT: "8788"
+      CORS_ORIGINS: ${DEN_CORS_ORIGINS:?DEN_CORS_ORIGINS is required}
+      PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:?DEN_PROVISIONER_MODE is required}
+      WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
+      STATIC_WORKER_URLS: ${DEN_STATIC_WORKER_URLS:?DEN_STATIC_WORKER_URLS is required}
+      STATIC_WORKER_TOKEN_MAP_JSON: ${DEN_STATIC_WORKER_TOKEN_MAP_JSON:?DEN_STATIC_WORKER_TOKEN_MAP_JSON is required}
+      STATIC_WORKER_HEALTH_PATH: ${DEN_STATIC_WORKER_HEALTH_PATH:-/health}
+      STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS:-10000}
+      STATIC_WORKER_HEALTHCHECK_INTERVAL_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_INTERVAL_MS:-1000}
+      DEN_ENTRA_TENANT_ID: ${DEN_ENTRA_TENANT_ID:-}
+      DEN_ENTRA_CLIENT_ID: ${DEN_ENTRA_CLIENT_ID:-}
+      DEN_ENTRA_CLIENT_SECRET: ${DEN_ENTRA_CLIENT_SECRET:-}
+      DEN_ENTRA_AUTO_JOIN_ENABLED: ${DEN_ENTRA_AUTO_JOIN_ENABLED:-false}
+      DEN_ENTRA_AUTO_JOIN_ORG_ID: ${DEN_ENTRA_AUTO_JOIN_ORG_ID:-}
+      DEN_ENTRA_AUTO_JOIN_ORG_SLUG: ${DEN_ENTRA_AUTO_JOIN_ORG_SLUG:-}
+      DEN_ENTRA_ADMIN_GROUP_IDS: ${DEN_ENTRA_ADMIN_GROUP_IDS:-}
+      DEN_ENTRA_MEMBER_GROUP_IDS: ${DEN_ENTRA_MEMBER_GROUP_IDS:-}
+      EMAIL_FROM: ${DEN_EMAIL_FROM:?DEN_EMAIL_FROM is required}
+      RESEND_API_KEY: ${DEN_RESEND_API_KEY:-}
+      SMTP_HOST: ${DEN_SMTP_HOST:-}
+      SMTP_PORT: ${DEN_SMTP_PORT:-}
+      SMTP_USER: ${DEN_SMTP_USER:-}
+      SMTP_PASS: ${DEN_SMTP_PASS:-}
+      SMTP_SECURE: ${DEN_SMTP_SECURE:-false}
+      POLAR_FEATURE_GATE_ENABLED: ${POLAR_FEATURE_GATE_ENABLED:-false}
+      POLAR_API_BASE: ${POLAR_API_BASE:-}
+      POLAR_ACCESS_TOKEN: ${POLAR_ACCESS_TOKEN:-}
+      POLAR_PRODUCT_ID: ${POLAR_PRODUCT_ID:-}
+      POLAR_BENEFIT_ID: ${POLAR_BENEFIT_ID:-}
+      POLAR_SUCCESS_URL: ${POLAR_SUCCESS_URL:-}
+      POLAR_RETURN_URL: ${POLAR_RETURN_URL:-}
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+      DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-}
+      DAYTONA_WORKER_PROXY_BASE_URL: ${DEN_DAYTONA_WORKER_PROXY_BASE_URL:-http://localhost:8789}
+
+  worker-proxy:
+    <<: *shared
+    build:
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile.den-worker-proxy
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${DEN_WORKER_PROXY_PORT:-8789}:8789"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/unknown').then((res)=>process.exit([404,502].includes(res.status)?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    environment:
+      CI: "true"
+      DATABASE_URL: mysql://root:${DEN_MYSQL_ROOT_PASSWORD}@mysql:3306/openwork_den
+      PORT: "8789"
+      OPENWORK_DAYTONA_ENV_PATH: ${OPENWORK_DAYTONA_ENV_PATH:-}
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+      DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+      DAYTONA_OPENWORK_PORT: ${DAYTONA_OPENWORK_PORT:-8787}
+      DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: ${DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS:-86400}
+
+  web:
+    <<: *shared
+    build:
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile.den-web
+    command: ["sh", "-lc", "npm run build && npm run start"]
+    depends_on:
+      den:
+        condition: service_healthy
+    ports:
+      - "${DEN_WEB_PORT:-3005}:3005"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/api/den/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+    environment:
+      CI: "true"
+      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-0}
+      DEN_API_BASE: http://den:8788
+      DEN_AUTH_FALLBACK_BASE: http://den:8788
+      DEN_AUTH_ORIGIN: ${DEN_BETTER_AUTH_URL:?DEN_BETTER_AUTH_URL is required}
+      NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL: ${DEN_BETTER_AUTH_URL:?DEN_BETTER_AUTH_URL is required}
+
+volumes:
+  den-mysql-data:
