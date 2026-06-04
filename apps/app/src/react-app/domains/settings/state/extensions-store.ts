@@ -558,6 +558,13 @@ export function createExtensionsStore(options: {
 
   const refreshImportedCloudPlugins = async () => {
     try {
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const result = await target.openworkClient.listCloudPlugins(target.openworkWorkspaceId);
+        setStateField("importedCloudMarketplaces", result.marketplaces);
+        setStateField("importedCloudPlugins", result.plugins);
+        return result.plugins;
+      }
       const config = await readWorkspaceOpenworkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       setStateField("importedCloudMarketplaces", cloudImports.marketplaces);
@@ -1494,6 +1501,26 @@ export function createExtensionsStore(options: {
       if (!token || !orgId) throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
       const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const resolved = await client.getOrgPluginResolved(orgId, plugin);
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const marketplace = marketplaceId ? findCloudMarketplace(marketplaceId) : null;
+        const result = await target.openworkClient.installCloudPlugin(target.openworkWorkspaceId, {
+          marketplaceId,
+          marketplace,
+          resolved,
+        });
+        await refreshSkills({ force: true });
+        await refreshCloudOrgMarketplaces({ force: true });
+        void refreshDesktopCloudSync({
+          openworkClient: target.openworkClient,
+          workspaceId: target.openworkWorkspaceId,
+        }).catch(() => null);
+        return {
+          ok: true,
+          message: `Imported ${plugin.name} with ${result.item.files.length} file${result.item.files.length === 1 ? "" : "s"}.`,
+          files: result.item.files,
+        };
+      }
       const files = await applyCloudOrgPluginImport(marketplaceId, resolved);
       await refreshSkills({ force: true });
       await refreshCloudOrgMarketplaces({ force: true });
@@ -1517,6 +1544,21 @@ export function createExtensionsStore(options: {
     setStateField("cloudOrgMarketplacesStatus", null);
 
     try {
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const result = await target.openworkClient.removeCloudPlugin(target.openworkWorkspaceId, pluginId);
+        await refreshSkills({ force: true });
+        await refreshCloudOrgMarketplaces({ force: true });
+        void refreshDesktopCloudSync({
+          openworkClient: target.openworkClient,
+          workspaceId: target.openworkWorkspaceId,
+        }).catch(() => null);
+        return {
+          ok: true,
+          message: `Removed ${result.item.name}.`,
+        };
+      }
+
       const imported = snapshot.importedCloudPlugins[pluginId];
       if (!imported) throw new Error("Marketplace package is not installed in this workspace.");
 

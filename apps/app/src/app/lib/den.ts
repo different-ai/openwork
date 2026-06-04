@@ -988,6 +988,17 @@ function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
   });
 }
 
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
     return null;
@@ -996,7 +1007,7 @@ function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | n
   return {
     id: value.id,
     name: value.name,
-    config: isRecord(value.config) ? value.config : {},
+    config: parseJsonRecord(value.config),
     createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
   };
 }
@@ -1019,7 +1030,7 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     source: value.source,
     providerId: value.providerId,
     name: value.name,
-    providerConfig: isRecord(value.providerConfig) ? value.providerConfig : {},
+    providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {

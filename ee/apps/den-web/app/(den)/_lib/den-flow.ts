@@ -58,6 +58,15 @@ export type OrgLimitError = {
   limit: number;
 };
 
+export type OrgPaymentRequiredError = {
+  error: "payment_required";
+  reason: "seat_subscription_required";
+  subscriptionType: "seat";
+  message: string;
+  currentCount: number;
+  freeSeatCount: number;
+};
+
 export type AuthUser = {
   id: string;
   email: string;
@@ -391,6 +400,31 @@ export function getOrgLimitError(payload: unknown): OrgLimitError | null {
     limitType: payload.limitType,
     currentCount: payload.currentCount,
     limit: payload.limit,
+  };
+}
+
+export function getOrgPaymentRequiredError(payload: unknown): OrgPaymentRequiredError | null {
+  if (!isRecord(payload) || payload.error !== "payment_required") {
+    return null;
+  }
+
+  if (
+    payload.reason !== "seat_subscription_required" ||
+    payload.subscriptionType !== "seat" ||
+    typeof payload.message !== "string" ||
+    typeof payload.currentCount !== "number" ||
+    typeof payload.freeSeatCount !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    error: "payment_required",
+    reason: "seat_subscription_required",
+    subscriptionType: "seat",
+    message: payload.message,
+    currentCount: payload.currentCount,
+    freeSeatCount: payload.freeSeatCount,
   };
 }
 

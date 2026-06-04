@@ -154,7 +154,7 @@ export function MemberDashboardScreen() {
               Your access in {activeOrg?.name ?? "OpenWork"}
             </h1>
             <p className="mt-3 max-w-[620px] text-[14px] leading-7 text-white/60">
-              Everything below is already available to your desktop app. Admin-only configuration stays hidden unless your role changes.
+              Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces become available after you sign in to the app.
             </p>
           </div>
           <div className="rounded-[22px] border border-white/10 bg-white/[0.06] p-5">
@@ -186,7 +186,7 @@ export function MemberDashboardScreen() {
           icon={Store}
           title="Marketplaces"
           value={marketplacesLoading ? "Loading" : `${marketplaces.length}`}
-          detail="Connected plugin marketplaces available to this workspace."
+          detail="Plugin collections assigned to you or everyone in your org."
           tone="amber"
         />
         <SummaryCard
@@ -275,7 +275,7 @@ export function MemberDashboardScreen() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">Marketplaces</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Plugin marketplaces visible to your account.</p>
+              <p className="mt-1 text-[13px] text-gray-500">Marketplaces contain plugins and sync into the app after sign-in.</p>
             </div>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
               {marketplaces.length} visible

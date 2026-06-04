@@ -30,7 +30,7 @@ Run these before shipping changes that touch:
    You should see the OpenWork target.
 3. Enable control mode:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "window.__openworkControl.setEnabled(true); 'ok'" })
    ```
 
@@ -43,7 +43,7 @@ Run these before shipping changes that touch:
 Steps:
 1. Read the workspace `opencode.jsonc`:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "fetch('/workspace/' + location.hash.split('/')[2] + '/opencode-config').then(r => r.text())" })
    ```
    Or check the file directly on disk.
@@ -67,12 +67,12 @@ visibly navigate.
 Steps:
 1. Create a new session:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: "window.__openworkControl.execute('session.create_task')" })
    ```
 2. Type and send the prompt:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(async () => {
        const ctrl = window.__openworkControl;
        await ctrl.execute('composer.set_text', { text: 'Use the OpenWork Browser extension to navigate to https://example.com and tell me the page title' });
@@ -126,7 +126,7 @@ enabled extensions from the catalog.
 Steps:
 1. Open the tool menu:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        const btn = Array.from(document.querySelectorAll('button')).find(b => b.title === 'Commands, skills, and MCPs');
        if (btn) { btn.click(); return 'opened'; }
@@ -135,7 +135,7 @@ Steps:
    ```
 2. Click the Extensions tab:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        const tabs = document.querySelectorAll('button');
        for (let i = 0; i < tabs.length; i++) {
@@ -179,7 +179,7 @@ the composer menu.
 Steps:
 1. Disable OpenWork Browser:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        localStorage.setItem('openwork.extension.disabled.openwork-browser', '1');
        window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {
@@ -191,7 +191,7 @@ Steps:
 2. Open the Extensions menu and count extensions.
 3. Re-enable:
    ```
-   browser_evaluate({ browser_url: CDP_URL, target_id: APP_TARGET,
+   browser_eval({ browser_url: CDP_URL, target_id: APP_TARGET,
      expression: `(() => {
        localStorage.removeItem('openwork.extension.disabled.openwork-browser');
        window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', {

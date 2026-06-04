@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { toast } from "@/components/ui/sonner";
 
 import {
   buildDenAuthUrl,
@@ -13,14 +14,13 @@ import {
   resolveDenBaseUrls,
   writeDenSettings,
   type DenOrgSummary,
-} from "../../../../app/lib/den";
+} from "@/app/lib/den";
 import {
   denSessionUpdatedEvent,
   dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
-} from "../../../../app/lib/den-session-events";
+} from "@/app/lib/den-session-events";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
 import { useCloudSession } from "./cloud-session-provider";
 
 type SettingsTone = "ready" | "warning" | "neutral" | "error";
@@ -67,7 +67,6 @@ export function useDenSession({
   developerMode,
   openLink,
 }: UseDenSessionProps) {
-  const { showToast } = useStatusToasts();
   const {
     authToken,
     baseUrl,
@@ -324,10 +323,7 @@ export function useDenSession({
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
         }
         if (!quiet && response.orgs.length > 0) {
-          showToast({
-            title: t("den.status_loaded_orgs", { count: response.orgs.length }),
-            tone: "info",
-          });
+          toast.info(t("den.status_loaded_orgs", { count: response.orgs.length }));
         }
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
@@ -335,7 +331,7 @@ export function useDenSession({
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, setActiveOrganization, showToast],
+    [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
   );
 
   React.useEffect(() => {
@@ -495,7 +491,7 @@ export function useDenSession({
 
       setOrgsBusy(false);
     },
-    [authToken, baseUrl, client, orgs, setActiveOrganization, showToast],
+    [authToken, baseUrl, client, orgs, setActiveOrganization],
   );
 
   // User is signed in, orgs loaded, multiple orgs available, but none selected yet.

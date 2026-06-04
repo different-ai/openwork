@@ -12,10 +12,15 @@ directories:
 files:
   - electron/**/*
   - server/**/*
+  - "!server/dist/opencode-plugins/**"
   - package.json
 extraResources:
   - from: ../app/dist
     to: app-dist
+  - from: server/dist/opencode-plugins
+    to: opencode-plugins
+    filter:
+      - "*.js"
 asar: true
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs

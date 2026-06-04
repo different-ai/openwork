@@ -1,14 +1,14 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { toast } from "@/components/ui/sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { useStatusToasts } from "../../shell-feedback/status-toasts";
-import { useCloudSession } from "../cloud/cloud-session-provider";
-import { CloudWorkersSection, type CloudWorker } from "../cloud/sections";
-import { SettingsNotice, SettingsStack } from "../settings-section";
+import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
+import { CloudWorkersSection, type CloudWorker } from "@/react-app/domains/settings/cloud/sections";
+import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
 
 export type CloudWorkersViewProps = {
   connectRemoteWorkspace: (input: {
@@ -30,7 +30,6 @@ export function CloudWorkersView({
   onOpenAccount,
 }: CloudWorkersViewProps) {
   const { activeOrganization: activeOrg, authToken, baseUrl, client, isSignedIn, user } = useCloudSession();
-  const { showToast } = useStatusToasts();
   const [workersBusy, setWorkersBusy] = React.useState(false);
   const [openingWorkerId, setOpeningWorkerId] = React.useState<string | null>(null);
   const [attachBusy, setAttachBusy] = React.useState(false);
@@ -58,8 +57,8 @@ export function CloudWorkersView({
         const nextWorkers = await client.listWorkers(activeOrgId, 20);
         setWorkers(nextWorkers);
         if (!quiet) {
-          showToast({
-            title: nextWorkers.length > 0
+          toast.info(
+            nextWorkers.length > 0
               ? t("den.status_loaded_workers", {
                   count: nextWorkers.length,
                   name: activeOrg?.name ?? t("den.active_org_title"),
@@ -67,8 +66,7 @@ export function CloudWorkersView({
               : t("den.status_no_workers", {
                   name: activeOrg?.name ?? t("den.active_org_title"),
                 }),
-            tone: "info",
-          });
+          );
         }
       } catch (error) {
         setWorkersError(error instanceof Error ? error.message : t("den.error_load_workers"));
@@ -76,7 +74,7 @@ export function CloudWorkersView({
         setWorkersBusy(false);
       }
     },
-    [activeOrg, activeOrgId, authToken, client, showToast],
+    [activeOrg, activeOrgId, authToken, client],
   );
 
   React.useEffect(() => {
@@ -117,10 +115,7 @@ export function CloudWorkersView({
           throw new Error(t("den.error_open_worker", { name: workerName }));
         }
 
-        showToast({
-          title: t("den.status_opened_worker", { name: workerName }),
-          tone: "success",
-        });
+        toast.success(t("den.status_opened_worker", { name: workerName }));
       } catch (error) {
         setWorkersError(
           error instanceof Error
@@ -131,7 +126,8 @@ export function CloudWorkersView({
         setOpeningWorkerId(null);
       }
     },
-    [activeOrgId, baseUrl, client, connectRemoteWorkspace, showToast],
+<<<<<<< HEAD
+    [activeOrgId, baseUrl, client, connectRemoteWorkspace],
   );
 
   const attachStaticWorker = React.useCallback(async () => {
@@ -160,10 +156,7 @@ export function CloudWorkersView({
       });
       setWorkers((current) => [worker, ...current.filter((entry) => entry.workerId !== worker.workerId)]);
       setStaticWorkerForm((current) => ({ ...current, url: "", clientToken: "", hostToken: "" }));
-      showToast({
-        title: `Attached ${worker.workerName}`,
-        tone: "success",
-      });
+      toast.success(`Attached ${worker.workerName}`);
       void refreshWorkers(true);
     } catch (error) {
       const status = typeof error === "object" && error !== null && "status" in error ? Number((error as { status?: unknown }).status) : null;
@@ -173,7 +166,7 @@ export function CloudWorkersView({
     } finally {
       setAttachBusy(false);
     }
-  }, [activeOrgId, client, refreshWorkers, showToast, staticWorkerForm]);
+  }, [activeOrgId, client, refreshWorkers, staticWorkerForm]);
 
   if (!isSignedIn) {
     return (

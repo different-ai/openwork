@@ -2,7 +2,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
-import { createInferenceCheckoutSession, createInferencePortalSession, getOrgBillingSummary } from "../../stripe-billing.js"
+import { createInferenceCheckoutSession, createInferencePortalSession, createSeatCheckoutSession, getOrgBillingSummary, syncSeatCheckoutSession } from "../../stripe-billing.js"
 import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
@@ -11,7 +11,10 @@ import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner } from "./shared.js"
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
+const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat"]).optional() })
 const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripeCheckoutResponse" })
+const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
+const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
 const stripePortalResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripePortalResponse" })
 
 function getRequestOrigin(c: { req: { raw: Request } }) {
@@ -30,6 +33,35 @@ function billingReturnUrl(c: { req: { raw: Request } }) {
 
 function checkoutSuccessUrl(c: { req: { raw: Request } }) {
   return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}`
+}
+
+function appendSeatCheckoutParams(input: string) {
+  const separator = input.includes("?") ? "&" : "?"
+  const sessionParam = input.includes("session_id=") ? "" : "&session_id={CHECKOUT_SESSION_ID}"
+  return `${input}${separator}stripe_checkout=seat${sessionParam}`
+}
+
+function seatCheckoutReturnUrl(c: { req: { raw: Request } }) {
+  const configured = env.stripe.billingSuccessUrl ?? env.stripe.billingCancelUrl
+  if (!configured) {
+    return billingReturnUrl(c)
+  }
+
+  try {
+    const url = new URL(configured, getRequestOrigin(c))
+    if (url.pathname.includes("/dashboard/billing")) {
+      url.pathname = "/dashboard/billing"
+    }
+    url.search = ""
+    url.hash = ""
+    return url.toString()
+  } catch {
+    return billingReturnUrl(c)
+  }
+}
+
+function seatCheckoutSuccessUrl(c: { req: { raw: Request } }) {
+  return appendSeatCheckoutParams(seatCheckoutReturnUrl(c))
 }
 
 function checkoutCancelUrl(c: { req: { raw: Request } }) {
@@ -98,13 +130,20 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       if (!email) {
         return c.json({ error: "user_email_required" }, 400)
       }
+      const body = await c.req.json().catch(() => ({}))
+      const parsed = stripeCheckoutRequestSchema.safeParse(body)
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", details: parsed.error }, 400)
+      }
       const payload = c.get("organizationContext")
-      const session = await createInferenceCheckoutSession({
+      const subscriptionType = parsed.data.type ?? "inference"
+      const createCheckoutSession = subscriptionType === "seat" ? createSeatCheckoutSession : createInferenceCheckoutSession
+      const session = await createCheckoutSession({
         organizationId: payload.organization.id,
         orgMemberId: payload.currentMember.id,
         email,
         name: user.name ?? email,
-        successUrl: checkoutSuccessUrl(c),
+        successUrl: subscriptionType === "seat" ? seatCheckoutSuccessUrl(c) : checkoutSuccessUrl(c),
         cancelUrl: checkoutCancelUrl(c),
       })
       return c.json({ url: session.url })
@@ -136,6 +175,47 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         returnUrl: billingReturnUrl(c),
       })
       return c.json({ url: session.url })
+    },
+  )
+
+  app.post(
+    "/v1/billing/stripe/checkout/sync",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "Sync a completed Stripe Checkout session",
+      responses: {
+        200: jsonResponse("Stripe Checkout session synced successfully.", stripeCheckoutSyncResponseSchema),
+        401: jsonResponse("The caller must be signed in to sync billing.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners can sync billing.", forbiddenSchema),
+      },
+    }),
+    requireUserMiddleware,
+    resolveOrganizationContextMiddleware,
+    async (c) => {
+      const permission = ensureOwner(c)
+      if (!permission.ok) {
+        return c.json(permission.response, 403)
+      }
+      const body = await c.req.json().catch(() => ({}))
+      const parsed = stripeCheckoutSyncRequestSchema.safeParse(body)
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", details: parsed.error }, 400)
+      }
+      const payload = c.get("organizationContext")
+      const row = await syncSeatCheckoutSession({
+        organizationId: payload.organization.id,
+        sessionId: parsed.data.sessionId,
+      }).catch((error) => {
+        if (error instanceof Error && (error.message === "stripe_checkout_session_org_mismatch" || error.message.includes("No such checkout.session"))) {
+          return "org_mismatch"
+        }
+        throw error
+      })
+      if (row === "org_mismatch") {
+        return c.json({ error: "stripe_checkout_session_not_found" }, 404)
+      }
+      return c.json({ synced: Boolean(row) })
     },
   )
 }

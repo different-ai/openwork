@@ -1,5 +1,6 @@
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -162,6 +163,56 @@ async function applyElectronUpdaterFeed(app, updater) {
   return state;
 }
 
+function runDefaults(args) {
+  return new Promise((resolve) => {
+    execFile("/usr/bin/defaults", args, (error) => {
+      // Best-effort: a failure here just means we fall back to Squirrel's
+      // default move-based install. Never block the update on it.
+      if (error) console.warn("[updater] defaults write failed", error?.message ?? error);
+      resolve(undefined);
+    });
+  });
+}
+
+// Squirrel.Mac's `ShipIt` helper (which swaps the .app on macOS) reads its
+// options from this NSUserDefaults domain.
+const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.openwork.ShipIt";
+
+// Squirrel.Mac defaults to moving the *entire* app bundle through a temp
+// directory. On repeat installs that move can leave the staged bundle missing,
+// producing:
+//   "Failed to copy bundle … no such file or directory"
+//   "Too many attempts to install, aborting update"
+// and silently relaunching the OLD app (so the in-app version looks updated
+// while the on-disk renderer stays stale). Enabling DirectContentsWrite makes
+// ShipIt write file contents in place instead of moving whole bundles, which
+// avoids the ENOENT abort.
+async function enableSquirrelDirectContentsWrite() {
+  if (process.platform !== "darwin") return;
+  await runDefaults(["write", SHIP_IT_DEFAULTS_DOMAIN, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
+}
+
+// Path of the ShipIt cache that, when stuck, keeps aborting future installs.
+// Exported for tests.
+export function staleUpdaterStatePaths(app) {
+  if (process.platform !== "darwin") return [];
+  const home = app.getPath("home");
+  return [path.join(home, "Library", "Caches", SHIP_IT_DEFAULTS_DOMAIN)];
+}
+
+// Remove a previously-failed, half-applied update so the next attempt starts
+// from a clean slate. A stuck `ShipIt` state (after "Too many attempts to
+// install, aborting update") can otherwise keep aborting future installs.
+async function cleanStaleUpdaterState(app) {
+  for (const target of staleUpdaterStatePaths(app)) {
+    try {
+      await rm(target, { recursive: true, force: true });
+    } catch (error) {
+      console.warn("[updater] failed to clean stale state", target, error?.message ?? error);
+    }
+  }
+}
+
 // electron-updater wiring. Packaged-only; dev builds skip this so the
 // updater doesn't try to probe a non-existent release channel.
 export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
@@ -190,6 +241,15 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       if (autoUpdaterInstance) {
         autoUpdaterInstance.autoDownload = false;
         autoUpdaterInstance.autoInstallOnAppQuit = true;
+        // Differential (blockmap) downloads reconstruct the update zip from the
+        // installed app + a diff. On macOS that reconstructed bundle is what
+        // feeds Squirrel's fragile move-based install, and is a common trigger
+        // for the "Failed to copy bundle … no such file" abort. Download the
+        // full zip instead — alpha builds are swapped wholesale anyway.
+        autoUpdaterInstance.disableDifferentialDownload = true;
+        // Make Squirrel.Mac write contents in place rather than moving whole
+        // bundles (see enableSquirrelDirectContentsWrite for why).
+        await enableSquirrelDirectContentsWrite();
         autoUpdaterInstance.on("error", (err) => {
           console.warn("[updater] error", err);
         });
@@ -273,6 +333,9 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       if (!checkedUpdateVersion) {
         return { ok: false, reason: "No update available." };
       }
+      // Clear any stuck ShipIt state from a prior aborted install so this
+      // download applies cleanly on quit.
+      await cleanStaleUpdaterState(app);
       await updater.downloadUpdate();
       return { ok: true };
     } catch (error) {
@@ -284,6 +347,9 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
+      // Re-assert the in-place-write default right before the swap; the ShipIt
+      // defaults domain may have been wiped when stale state was cleaned.
+      await enableSquirrelDirectContentsWrite();
       updater.quitAndInstall(false, true);
       return { ok: true };
     } catch (error) {

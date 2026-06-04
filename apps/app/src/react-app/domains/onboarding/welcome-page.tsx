@@ -13,7 +13,7 @@ import {
   PageTitlebarRegion,
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 interface BrandIconProps {
@@ -120,6 +120,13 @@ function ShowcasePanel() {
 
 type WelcomePageProps = {
   onGetStarted: () => void;
+  getStartedLabel?: string;
+  busy?: boolean;
+  error?: string | null;
+  manualFolder?: string;
+  onManualFolderChange?: (value: string) => void;
+  onUseManualFolder?: () => void;
+  showManualFolder?: boolean;
 };
 
 type OnboardingStepProps = {
@@ -142,7 +149,16 @@ function OnboardingStep({ number, title, children }: OnboardingStepProps) {
   );
 }
 
-export function WelcomePage({ onGetStarted }: WelcomePageProps) {
+export function WelcomePage({
+  onGetStarted,
+  getStartedLabel,
+  busy,
+  error,
+  manualFolder,
+  onManualFolderChange,
+  onUseManualFolder,
+  showManualFolder,
+}: WelcomePageProps) {
   return (
     <Page className="min-h-screen">
       <PageBackground />
@@ -150,73 +166,102 @@ export function WelcomePage({ onGetStarted }: WelcomePageProps) {
       <PageTitlebarRegion />
 
       <ScrollArea className="relative z-10">
-        <div className="flex min-h-screen">
-        {/* ---- Left: onboarding steps ---- */}
-        <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
-          <div className="flex w-full max-w-md flex-col gap-10">
-            {/* Header */}
-            <PageHeader className="text-left">
-              <PageTitle>{t("welcome.title")}</PageTitle>
-              <PageDescription>{t("welcome.subtitle")}</PageDescription>
-            </PageHeader>
+        <ScrollAreaViewport>
+          <div className="flex min-h-screen">
+            {/* ---- Left: onboarding steps ---- */}
+            <div className="flex w-full flex-col items-center justify-center px-8 py-16 lg:w-[45%] lg:px-12">
+              <div className="flex w-full max-w-md flex-col gap-10">
+                {/* Header */}
+                <PageHeader className="text-left">
+                  <PageTitle>{t("welcome.title")}</PageTitle>
+                  <PageDescription>{t("welcome.subtitle")}</PageDescription>
+                </PageHeader>
 
-            {/* Steps */}
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                  Get started
-                </h2>
+                {/* Steps */}
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-2">
+                    <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                      Get started
+                    </h2>
+                  </div>
+                  <OnboardingStep number="1" title="Pick a folder">
+                    Choose any folder on your machine to get started.
+                  </OnboardingStep>
+                  <OnboardingStep number="2" title="Chat">
+                    Describe what you need. OpenWork handles the rest.
+                  </OnboardingStep>
+                  <OnboardingStep number="3" title="Interact">
+                    Review results, approve actions, and iterate.
+                  </OnboardingStep>
+                </div>
+
+                <div className="space-y-2">
+                  <Button
+                    size="lg"
+                    className="w-full"
+                    onClick={onGetStarted}
+                    disabled={busy}
+                  >
+                    {busy ? t("welcome.creating_workspace") : (getStartedLabel || t("welcome.get_started"))}
+                  </Button>
+                  {error ? (
+                    <p className="text-center text-xs text-destructive">{error}</p>
+                  ) : null}
+                  {showManualFolder ? (
+                    <div className="rounded-xl border border-dashed border-border p-3">
+                      <label className="grid gap-2 text-xs font-medium text-muted-foreground">
+                        Daytona folder path
+                        <input
+                          className="h-9 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground outline-none focus:border-ring"
+                          value={manualFolder ?? ""}
+                          onChange={(event) => onManualFolderChange?.(event.target.value)}
+                          placeholder="/workspace/my-project"
+                        />
+                      </label>
+                      <Button
+                        className="mt-2 w-full"
+                        variant="outline"
+                        onClick={onUseManualFolder}
+                        disabled={busy || !manualFolder?.trim()}
+                      >
+                        Use this folder
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <OnboardingStep number="1" title="Select a folder">
-                Pick any folder on your machine to create a workspace.
-              </OnboardingStep>
-              <OnboardingStep number="2" title="Chat">
-                Describe what you need. OpenWork handles the rest.
-              </OnboardingStep>
-              <OnboardingStep number="3" title="Interact">
-                Review results, approve actions, and iterate.
-              </OnboardingStep>
             </div>
 
-            <Button
-              size="lg"
-              className="w-full"
-              onClick={onGetStarted}
-            >
-              {t("welcome.get_started")}
-            </Button>
-          </div>
-        </div>
+            {/* ---- Right: shader outer card > white inner card ---- */}
+            <div className="hidden lg:flex lg:w-[55%] lg:items-center lg:justify-center lg:p-6">
+              <div className="relative w-full max-w-xl overflow-hidden rounded-3xl">
+                {/* Shader background */}
+                <div className="absolute inset-0 z-0">
+                  <PaperGrainGradient
+                    className="size-full bg-white"
+                    speed={0}
+                    scale={1}
+                    rotation={0}
+                    offsetX={0}
+                    offsetY={0}
+                    softness={0.5}
+                    intensity={0.5}
+                    noise={0.25}
+                    shape="corners"
+                    frame={37706.748}
+                    colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
+                    colorBack="#00000000"
+                  />
+                </div>
 
-        {/* ---- Right: shader outer card > white inner card ---- */}
-        <div className="hidden lg:flex lg:w-[55%] lg:items-center lg:justify-center lg:p-6">
-          <div className="relative w-full max-w-xl overflow-hidden rounded-3xl">
-            {/* Shader background */}
-            <div className="absolute inset-0 z-0">
-              <PaperGrainGradient
-                className="size-full bg-white"
-                speed={0}
-                scale={1}
-                rotation={0}
-                offsetX={0}
-                offsetY={0}
-                softness={0.5}
-                intensity={0.5}
-                noise={0.25}
-                shape="corners"
-                frame={37706.748}
-                colors={["#0E33D9", "#FF7E2E", "#FFE340", "#000000"]}
-                colorBack="#00000000"
-              />
-            </div>
-
-            {/* Inner white card */}
-            <div className="relative z-10 m-3 rounded-2xl bg-background p-7">
-              <ShowcasePanel />
+                {/* Inner white card */}
+                <div className="relative z-10 m-3 rounded-2xl bg-background p-7">
+                  <ShowcasePanel />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        </div>
+        </ScrollAreaViewport>
       </ScrollArea>
     </Page>
   );

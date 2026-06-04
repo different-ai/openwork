@@ -1,8 +1,9 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, Loader2, RefreshCw, Settings2 } from "lucide-react";
 
-import { desktopBridge } from "../../../app/lib/desktop";
+import { desktopBridge } from "@/app/lib/desktop";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import { registerExtensionConfig } from "./extension-registry";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +35,7 @@ type ComputerUseConfigProps = {
   connecting: boolean;
   onConnect?: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
+  onPermissionsChange?: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -44,6 +48,7 @@ registerExtensionConfig("computer-use", (ctx) => (
     connecting={ctx.computerUse?.connecting ?? false}
     onConnect={ctx.computerUse?.onConnect}
     onRefresh={ctx.computerUse?.onRefresh}
+    onPermissionsChange={ctx.computerUse?.onPermissionsChange}
   />
 ));
 
@@ -55,9 +60,9 @@ function hasDesktopBridge() {
   return typeof window !== "undefined" && Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop);
 }
 
-function normalize(value: unknown): PermissionResult {
+function parsePermissionResult(value: unknown): PermissionResult {
   if (typeof value !== "object" || value === null) {
-    return { ok: false, accessibility: false, screenRecording: false, error: "Unreadable response." };
+    throw new Error("Unreadable response.");
   }
   return {
     ok: "ok" in value && value.ok === true,
@@ -67,63 +72,75 @@ function normalize(value: unknown): PermissionResult {
   };
 }
 
-function errMsg(e: unknown) {
-  return e instanceof Error ? e.message : String(e);
-}
+const PERMISSIONS_QUERY_KEY = ["computer-use", "permissions"] as const;
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function ComputerUseConfig(props: ComputerUseConfigProps) {
-  const [result, setResult] = useState<PermissionResult | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function ComputerUseConfig({
+  connected,
+  connecting,
+  onConnect,
+  onRefresh,
+  onPermissionsChange,
+}: ComputerUseConfigProps) {
+  const queryClient = useQueryClient();
 
-  // Spawn --check → fresh TCC read. Works whether or not the GUI is open.
-  const verify = useCallback(async () => {
+  // Fresh TCC read via --check; works whether or not the setup GUI is open.
+  const {
+    data: result = null,
+    isFetching,
+    error: checkError,
+    refetch,
+  } = useQuery({
+    queryKey: PERMISSIONS_QUERY_KEY,
+    queryFn: async () => parsePermissionResult(await desktopBridge.checkComputerUsePermissions()),
+    enabled: hasDesktopBridge(),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  // Opens the setup GUI; it returns a fresh read that becomes the cached state.
+  const {
+    mutate: grant,
+    isPending: isGrantPending,
+    error: grantError,
+    reset: resetGrant,
+  } = useMutation({
+    mutationFn: async () => {
+      if (!hasDesktopBridge()) {
+        throw new Error("Computer Use is Mac only and requires the OpenWork desktop app on macOS.");
+      }
+
+      return parsePermissionResult(await desktopBridge.openComputerUsePermissionSetup());
+    },
+    onSuccess: (next) => {
+      queryClient.setQueryData(PERMISSIONS_QUERY_KEY, next);
+    },
+  });
+
+  const isBusy = isFetching || isGrantPending;
+  const error = (grantError ?? checkError)?.message ?? result?.error ?? null;
+
+  // Bubble the latest read up to the parent.
+  useEffect(() => {
+    if (result) {
+      onPermissionsChange?.({ accessibility: result.accessibility, screenRecording: result.screenRecording });
+    }
+  }, [result, onPermissionsChange]);
+
+  // Clear a stale setup error, then re-read permissions.
+  const verify = () => {
     if (!hasDesktopBridge()) {
-      setError("Computer Use is Mac only and requires the OpenWork desktop app on macOS.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
-      const raw = await desktopBridge.checkComputerUsePermissions();
-      const next = normalize(raw);
-      setResult(next);
-      if (next.error) setError(next.error);
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
 
-  // Check on mount.
-  useEffect(() => { void verify(); }, [verify]);
-
-  // Open the setup GUI then immediately re-verify.
-  const grant = async () => {
-    if (!hasDesktopBridge()) {
-      setError("Computer Use is Mac only and requires the OpenWork desktop app on macOS.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const raw = await desktopBridge.openComputerUsePermissionSetup();
-      const next = normalize(raw);
-      setResult(next);
-      if (next.error) setError(next.error);
-    } catch (e) {
-      setError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
+    resetGrant();
+    void refetch();
   };
 
-  const allGranted = result?.accessibility === true && result.screenRecording === true;
+  const allGranted = result?.accessibility === true && result.screenRecording;
 
   return (
     <Card variant="outline" size="sm">
@@ -133,8 +150,8 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
           Computer Use only works on Mac. Connect the local MCP server and grant the macOS permissions it needs to control apps.
         </CardDescription>
         <CardAction>
-          <Button variant="ghost" size="icon-sm" onClick={() => void verify()} disabled={busy}>
-            <RefreshCw className={busy ? "animate-spin" : ""} />
+          <Button variant="ghost" size="icon-sm" onClick={() => void verify()} disabled={isBusy}>
+            <RefreshCw className={cn(isBusy && "animate-spin")} />
           </Button>
         </CardAction>
       </CardHeader>
@@ -151,16 +168,16 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
         <SetupRow
           title="1. Connect Computer Use MCP"
           description="Adds the local Computer Use server to this workspace so Composer can use the computer-control tools."
-          complete={props.connected}
+          complete={connected}
         >
           <Button
             className="min-h-10 w-full whitespace-normal text-center lg:w-auto"
-            onClick={() => void props.onConnect?.()}
-            disabled={!props.onConnect || props.connected || props.connecting}
+            onClick={() => void onConnect?.()}
+            disabled={!onConnect || connected || connecting}
           >
-            {props.connecting ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
+            {connecting ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
             <span className="min-w-0 break-words">
-              {props.connected ? "Configured" : props.connecting ? "Connecting…" : "Connect MCP"}
+              {connected ? "Configured" : connecting ? "Connecting…" : "Connect MCP"}
             </span>
           </Button>
         </SetupRow>
@@ -172,7 +189,7 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
           complete={allGranted}
         >
           <div className="flex w-full min-w-0 flex-col gap-3">
-            <div className="grid gap-2 xl:grid-cols-2">
+            <div className="grid gap-2">
               <Pill label="Accessibility" granted={result?.accessibility === true} checked={result !== null} />
               <Pill label="Screen Recording" granted={result?.screenRecording === true} checked={result !== null} />
             </div>
@@ -180,15 +197,15 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
             <Button
               className="min-h-10 w-full justify-center whitespace-normal text-center"
               onClick={() => void grant()}
-              disabled={busy}
+              disabled={isBusy}
             >
-              {busy ? (
+              {isBusy ? (
                 <Loader2 className="size-4 shrink-0 animate-spin" />
               ) : (
                 <Settings2 className="size-4 shrink-0" />
               )}
-              <span className="min-w-0 break-words">
-                {busy ? "Opening…" : allGranted ? "Reopen helper" : "Grant permissions"}
+              <span className="min-w-0 wrap-break-word">
+                {isBusy ? "Opening…" : allGranted ? "Reopen helper" : "Grant permissions"}
               </span>
             </Button>
           </div>
@@ -196,28 +213,26 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
       </CardContent>
 
       <CardFooter className="border-t border-border">
-        <div className="flex w-full flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex w-full flex-col gap-3">
           <p className="text-xs text-muted-foreground">
             {allGranted
               ? "Permissions verified. Try a Composer prompt that uses Computer Use."
               : "After granting permissions in the helper, click Verify."}
           </p>
-          <div className="flex w-full flex-col gap-2 xl:w-auto xl:flex-row">
-            {props.onRefresh ? (
+          <div className="flex w-full justify-end gap-2">
+            {onRefresh ? (
               <Button
-                className="min-h-10 w-full whitespace-normal text-center xl:w-auto"
                 variant="outline"
-                onClick={() => void props.onRefresh?.()}
+                onClick={() => void onRefresh?.()}
               >
-                Refresh MCP
+                Refresh
               </Button>
             ) : null}
             <Button
-              className="min-h-10 w-full whitespace-normal text-center xl:w-auto"
               onClick={() => void verify()}
-              disabled={busy}
+              disabled={isBusy}
             >
-              {busy ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
+              {isBusy ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
               Verify permissions
             </Button>
           </div>
@@ -231,10 +246,17 @@ export function ComputerUseConfig(props: ComputerUseConfigProps) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function SetupRow(props: { title: string; description: string; complete: boolean; children: ReactNode }) {
+interface SetupRowProps {
+  title: string;
+  description: string;
+  complete: boolean;
+  children: ReactNode;
+}
+
+function SetupRow(props: SetupRowProps) {
   return (
     <div className="rounded-xl border border-border bg-card p-3">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+      <div className="flex flex-col gap-3">
         <div className="flex min-w-0 flex-1 gap-3">
           <StatusIcon complete={props.complete} />
           <div className="min-w-0">
@@ -242,14 +264,19 @@ function SetupRow(props: { title: string; description: string; complete: boolean
             <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{props.description}</div>
           </div>
         </div>
-        <div className="w-full min-w-0 xl:w-[min(22rem,44%)]">{props.children}</div>
+        <div className="w-full min-w-0">{props.children}</div>
       </div>
     </div>
   );
 }
 
-function Pill(props: { label: string; granted: boolean; checked: boolean }) {
-  const { label, granted, checked } = props;
+interface PillProps {
+  label: string;
+  granted: boolean;
+  checked: boolean;
+}
+
+function Pill({ label, granted, checked }: PillProps) {
   return (
     <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
       <div className="flex items-center gap-2 text-sm">
@@ -257,9 +284,12 @@ function Pill(props: { label: string; granted: boolean; checked: boolean }) {
         <span className="truncate">{label}</span>
       </div>
       <span
-        className={`shrink-0 text-xs font-medium ${
-          !checked ? "text-muted-foreground" : granted ? "text-green-11" : "text-amber-11"
-        }`}
+        className={cn(
+          "shrink-0 text-xs font-medium",
+          !checked && "text-muted-foreground",
+          checked && granted && "text-green-11",
+          checked && !granted && "text-amber-11",
+        )}
       >
         {!checked ? "…" : granted ? "Granted" : "Needed"}
       </span>
@@ -267,13 +297,19 @@ function Pill(props: { label: string; granted: boolean; checked: boolean }) {
   );
 }
 
-function StatusIcon(props: { complete: boolean; muted?: boolean }) {
+interface StatusIconProps {
+  complete: boolean;
+  muted?: boolean;
+}
+
+function StatusIcon(props: StatusIconProps) {
   if (props.complete) {
     return <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-green-11" />;
   }
+
   return (
     <CircleAlert
-      className={`mt-0.5 size-4 shrink-0 ${props.muted ? "text-muted-foreground" : "text-amber-11"}`}
+      className={cn("mt-0.5 size-4 shrink-0", props.muted ? "text-muted-foreground" : "text-amber-11")}
     />
   );
 }

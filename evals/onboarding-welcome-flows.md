@@ -33,6 +33,37 @@ Before running any eval:
 
 3. Reload the app. It should redirect to `/welcome`.
 
+## Founder / designer review bar
+
+These evals are not just smoke tests. A passing recording must prove two things:
+
+- **The main flow works**: the user reaches chat, selects a usable model, runs a task, and sees a response.
+- **The main flow is good**: the recording makes the user intent, product value, and friction visible without needing code context.
+
+For each recorded onboarding scenario, capture:
+
+- Raw video from first visible welcome screen through first completed task response.
+- Screenshots at welcome, model/provider choice, provider connected, model selected, task submitted, and response complete.
+- A timestamp table with: welcome visible, workspace selected, provider choice visible, provider connected, model selected, first task submitted, first response complete.
+- Funnel metrics: total time to first task response, click count, reload count, blocking errors, and user-visible dead ends.
+- Friction notes written in product language, for example: “user leaves chat for settings,” “reload required before value,” or “payment/sign-in appears before value is demonstrated.”
+- Any automation boundary, especially native folder picker workarounds in CDP. Do not hide these from founder/design review.
+
+Recommended first task prompt for value validation:
+
+```text
+Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.
+```
+
+Pass criteria for every value-flow recording:
+
+- The user can understand why they are choosing this model/provider path.
+- The flow returns to chat or keeps chat visibly accessible after provider setup.
+- A usable model is selected before the task is run.
+- The task is submitted from the composer with the normal “Run task” action.
+- The recording shows a model response, not just provider setup.
+- The summary identifies any friction severe enough to block activation.
+
 ---
 
 ## Flow 20 — Welcome screen renders on first launch
@@ -51,7 +82,7 @@ Steps:
    - "Your computer, but it works for you." subtitle.
    - Six capability cards: spreadsheets, browser, files, automate,
      content, APIs.
-   - A "Get started" button.
+   - A "Pick a folder to get started" button on desktop.
 5. No sidebar, no session chrome, no loading overlay.
 
 Tool recipe:
@@ -63,7 +94,7 @@ Pass criteria:
 - URL is `/welcome`.
 - Heading "Welcome to OpenWork" is visible.
 - All six capability cards are present.
-- "Get started" button is visible and clickable.
+- "Pick a folder to get started" button is visible and clickable on desktop.
 - No sidebar or session layout is rendered.
 
 Known regressions this catches:
@@ -74,35 +105,35 @@ Known regressions this catches:
 
 ---
 
-## Flow 21 — Get started opens workspace creation modal
+## Flow 21 — Welcome CTA starts workspace creation
 
-**Why**: The "Get started" button is the single CTA on the welcome
-page. It must open the `CreateWorkspaceModal` with the chooser screen
-(local / remote / cloud).
+**Why**: The welcome CTA is the single first-run action. On desktop it
+opens the native folder picker directly; on non-desktop it falls back to
+the `CreateWorkspaceModal` chooser.
 
 Steps:
-1. From `/welcome`, click "Get started".
-2. Expect: the `CreateWorkspaceModal` overlay appears.
-3. Expect: the modal shows three option cards:
+1. From `/welcome`, click "Pick a folder to get started".
+2. Desktop expect: native folder picker opens with title "Authorize folder".
+3. Non-desktop expect: the `CreateWorkspaceModal` overlay appears.
+4. Non-desktop expect: the modal shows two option cards:
    - "Local workspace"
    - "Connect custom remote"
-   - "Shared workspaces"
-4. Click the close button (X).
-5. Expect: modal closes, welcome page is still visible.
+5. If the modal appears, click the close button (X).
+6. Expect: modal closes, welcome page is still visible.
 
 Tool recipe:
 ```
 chrome-devtools_take_snapshot
-chrome-devtools_click { uid: <Get started button> }
+chrome-devtools_click { uid: <Pick a folder button> }
 chrome-devtools_take_snapshot
 chrome-devtools_click { uid: <Close modal button> }
 chrome-devtools_take_snapshot
 ```
 
 Pass criteria:
-- Modal opens on "Get started" click.
-- All three workspace type options are visible.
-- Closing the modal returns to the welcome page (stays on `/welcome`).
+- Desktop native picker or non-desktop modal opens from the welcome CTA.
+- Non-desktop modal shows both workspace type options.
+- Closing the modal or cancelling the picker returns to the welcome page.
 
 Known regressions this catches:
 - `CreateWorkspaceModal` not rendering because `open` prop isn't wired.
@@ -274,7 +305,76 @@ Pass criteria:
 
 ---
 
+## Flow 27 — Bring your own API key reaches first task value
+
+**Why**: Provider setup is not the product value. The user should connect a provider, pick a usable model, and run a first task in chat without being stranded in settings.
+
+Steps:
+1. Start from a clean first-run app at `/welcome` with no workspaces.
+2. Create a local workspace through the welcome CTA.
+3. On “Power your first task,” choose “Bring your own API key.”
+4. Expect: the provider connector opens from the session surface and keeps composer return focus.
+5. Connect OpenAI with a valid temporary key, or use an explicitly labeled test key only when validating UI copy.
+6. Expect: after saving the key, the model picker opens automatically.
+7. Select an OpenAI model.
+8. Expect: the app returns to the composer.
+9. Submit the recommended first task prompt.
+10. Expect: a model response appears in the chat transcript.
+
+Founder/designer pass criteria:
+- The recording shows why the user is connecting a provider and what they do next.
+- The user does not need to discover a toast to continue to model selection.
+- The user reaches a completed response in chat.
+- Friction is recorded if the flow leaves chat, requires a reload, or hides the next step.
+
+---
+
+## Flow 28 — OpenWork Models path explains payment before value
+
+**Why**: OpenWork Models is the preferred business path, but it must make the tradeoff clear: pay/sign in through OpenWork Cloud to skip API keys, then return to task execution.
+
+Steps:
+1. Start from a clean first-run app at `/welcome` with no workspaces.
+2. Create a local workspace through the welcome CTA.
+3. On “Power your first task,” choose “Use OpenWork Models.”
+4. Expect: the user sees the OpenWork Models value proposition and sign-in/payment CTA.
+5. If a paid/signed-in test account is available, complete sign-in, select an OpenWork model, and run the recommended first task prompt.
+6. If no paid/signed-in test account is available, record the exact stop point and mark the run as “funnel blocked before task value.”
+
+Founder/designer pass criteria:
+- The recording clearly shows the paid path and what value it unlocks.
+- The summary states whether payment/sign-in blocks first task execution.
+- If blocked, the summary proposes the smallest product fix, such as demo credits, a trial task, or an inline fallback to bring-your-own-key.
+
+---
+
+## Flow 29 — Ollama local model reaches first task value
+
+**Why**: Local model onboarding should prove that users can understand setup requirements, connect an available local model, reload if needed, and still reach chat value.
+
+Steps:
+1. Start from a clean first-run app at `/welcome` with no workspaces.
+2. Create a local workspace through the welcome CTA.
+3. Choose “Skip and use the free model” or enter the workspace, then open Extensions.
+4. Open the Ollama setup card.
+5. Expect: the UI explains whether Ollama is running and lists available local models.
+6. Select an available model and click “Add to workspace.”
+7. If a reload is required, click “Reload now” and include that in the friction metrics.
+8. Confirm AI Providers shows “Ollama (local).”
+9. Select the Ollama model, return to chat, and submit the recommended first task prompt.
+10. Expect: a response appears, or the summary marks model-runtime failure separately from onboarding UI failure.
+
+Founder/designer pass criteria:
+- The recording shows the local-model prerequisite in plain language.
+- The reload requirement is measured as funnel friction.
+- The user reaches a completed chat response when a real local model is available.
+- If the eval uses a mock Ollama endpoint, the recording and summary label it clearly and do not claim model-quality success.
+
+---
+
 ## Change log
 
 - 2026-04-29 — initial doc for the onboarding welcome feature
   (Flows 20-26).
+- 2026-06-03 — added founder/designer value-flow criteria and first task
+  activation evals (Flows 27-29).

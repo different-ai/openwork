@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
+import { ArrowRight, CheckCircle2, KeyRound, X } from "lucide-react";
 
 import { t } from "@/i18n";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -10,7 +11,6 @@ import {
   LayoutSectionDescription,
   LayoutSectionHeader,
   LayoutSectionItem,
-  LayoutSectionItemDescription,
   LayoutSectionItemFootnote,
   LayoutSectionItemHeader,
   LayoutSectionItemHeaderActions,
@@ -43,6 +43,7 @@ export type AiSettingsViewProps = {
   cloudProviderIds?: Set<string>;
   showOpenWorkModelsSubscribe?: boolean;
   onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  onDismissOpenWorkModels?: () => void | Promise<void>;
   cloudProvidersView?: ReactNode;
 };
 
@@ -93,22 +94,47 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         </LayoutSectionItem>
 
         {props.showOpenWorkModelsSubscribe ? (
-          <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-6 bg-blue-2/30 px-4 py-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <ProviderIcon providerId="openwork" size={20} className="text-blue-11" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-dls-text">OpenWork Models</div>
-                <div className="text-xs text-muted-foreground">
-                  Frontier intelligence, hand picked for your team&apos;s most ambitious work.
+          <LayoutSectionItem className="relative overflow-hidden rounded-2xl border border-blue-6 bg-blue-2/30 px-4 py-4">
+            <button
+              type="button"
+              className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full text-blue-11 transition-colors hover:bg-blue-3/70"
+              onClick={() => void props.onDismissOpenWorkModels?.()}
+              aria-label="Dismiss OpenWork Models banner"
+            >
+              <X className="size-3.5" />
+            </button>
+            <div className="flex flex-col gap-4 pr-8 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 gap-3">
+                <ProviderIcon providerId="openwork" size={22} className="mt-0.5 shrink-0 text-blue-11" />
+                <div className="min-w-0 space-y-2">
+                  <div>
+                    <div className="text-sm font-medium text-dls-text">OpenWork Models</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      Hosted frontier models for OpenWork tasks without managing provider API keys.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-blue-11">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5">
+                      <CheckCircle2 className="size-3" /> Managed by OpenWork Cloud
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5">
+                      <KeyRound className="size-3" /> No API key setup
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Pricing is handled through OpenWork Cloud. You can continue using OpenCode Zen or your own providers.
+                  </p>
                 </div>
               </div>
+              <Button
+                className="shrink-0"
+                onClick={() => void props.onSubscribeOpenWorkModels?.()}
+                disabled={props.busy || props.providerAuthBusy}
+              >
+                Subscribe
+                <ArrowRight className="ml-1.5 size-3.5" />
+              </Button>
             </div>
-            <Button
-              onClick={() => void props.onSubscribeOpenWorkModels?.()}
-              disabled={props.busy || props.providerAuthBusy}
-            >
-              Subscribe
-            </Button>
           </LayoutSectionItem>
         ) : null}
 
@@ -127,6 +153,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       {props.cloudProviderIds?.has(provider.id) ? (
                         <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
                           Cloud
+                        </span>
+                      ) : null}
+                      {provider.source === "env" ? (
+                        <span className="shrink-0 rounded-full border border-amber-6 bg-amber-2 px-2 py-0.5 text-[10px] font-medium text-amber-11">
+                          {providerSourceLabel("env")}
                         </span>
                       ) : null}
                     </div>

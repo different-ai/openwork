@@ -179,7 +179,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     return token;
   });
-  const [sessionHydrated, setSessionHydrated] = useState(false);
+  const [sessionHydrated, setSessionHydrated] = useState(true);
   const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
   const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
   const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
@@ -1041,6 +1041,28 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const token = getToken(payload);
 
       if (authMode === "sign-up" && !token) {
+        const signInResult = await requestJson("/api/auth/sign-in/email", {
+          method: "POST",
+          body: JSON.stringify({
+            email: trimmedEmail,
+            password,
+          })
+        });
+
+        if (signInResult.response.ok) {
+          return await finalizeEmailPasswordSignIn(authMode, trimmedEmail, signInResult.payload);
+        }
+
+        if (signInResult.response.status !== 403) {
+          setAuthError(getErrorMessage(signInResult.payload, `Authentication failed with ${signInResult.response.status}.`));
+          trackPosthogEvent("den_auth_failed", {
+            mode: authMode,
+            method: "email",
+            status: signInResult.response.status
+          });
+          return null;
+        }
+
         setUser(null);
         openVerificationStep(trimmedEmail, `We emailed a 6-digit verification code to ${trimmedEmail}. Enter it below to finish creating your account.`);
         appendEvent("info", "Verification code sent", trimmedEmail);
@@ -1684,9 +1706,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const hydrateSession = async () => {
-      await refreshSession(true);
-      if (!cancelled) {
-        setSessionHydrated(true);
+      try {
+        await refreshSession(true);
+      } finally {
+        if (!cancelled) {
+          setSessionHydrated(true);
+        }
       }
     };
 

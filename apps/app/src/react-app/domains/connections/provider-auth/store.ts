@@ -1397,6 +1397,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         .filter((id) => id !== localProviderId && id !== existingImported?.providerId);
       options.setDisabledProviders(nextDisabledProviders);
       options.markOpencodeConfigReloadRequired();
+      await refreshProviders({ dispose: true });
       refreshSnapshot();
       emitChange();
       return `${t("status.connected")} ${provider.name}`;

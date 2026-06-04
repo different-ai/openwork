@@ -24,6 +24,7 @@ async function createWorkspaceRoot() {
   await writeFile(join(root, "reports", "artifact-eval.csv"), "name,revenue\nAda,10\nGrace,20\n", "utf8");
   await writeFile(join(root, "reports", "index.html"), "<!doctype html><h1>Artifact site</h1>", "utf8");
   await writeFile(join(root, "reports", "artifact-eval.xlsx"), new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4]));
+  await writeFile(join(root, "reports", "artifact-eval.pptx"), new Uint8Array([80, 75, 3, 4, 5, 6, 7, 8]));
   return root;
 }
 
@@ -54,7 +55,7 @@ function auth(token: string) {
 }
 
 describe("artifact file routes", () => {
-  test("resolve, read, write, and download markdown/csv/xlsx/html artifacts", async () => {
+  test("resolve, read, write, and download markdown/csv/xlsx/pptx/html artifacts", async () => {
     const root = await createWorkspaceRoot();
     const { base, token } = await startOpenworkServer(root);
 
@@ -67,6 +68,7 @@ describe("artifact file routes", () => {
           { kind: "file", value: "Workspace/32423/reports/artifact-eval.md", confidence: 80 },
           { kind: "file", value: "reports/artifact-eval.csv", confidence: 80 },
           { kind: "file", value: "reports/artifact-eval.xlsx", confidence: 80 },
+          { kind: "file", value: "reports/artifact-eval.pptx", confidence: 80 },
           { kind: "file", value: "reports/index.html", confidence: 80 },
           { kind: "file", value: "reports/missing.md", confidence: 80 },
           { kind: "url", value: "http://localhost:4321", confidence: 80 },
@@ -79,6 +81,7 @@ describe("artifact file routes", () => {
     expect(resolved.items.find((item) => item.value === "reports/artifact-eval.md")).toMatchObject({ exists: true, preview: "markdown", confidence: 95 });
     expect(resolved.items.find((item) => item.value === "reports/artifact-eval.csv")).toMatchObject({ exists: true, preview: "sheet" });
     expect(resolved.items.find((item) => item.value === "reports/artifact-eval.xlsx")).toMatchObject({ exists: true, preview: "sheet" });
+    expect(resolved.items.find((item) => item.value === "reports/artifact-eval.pptx")).toMatchObject({ exists: true, preview: "slides", contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" });
     expect(resolved.items.find((item) => item.value === "reports/index.html")).toMatchObject({ exists: true, preview: "html" });
     expect(resolved.items.find((item) => item.value === "reports/missing.md")).toMatchObject({ exists: false });
     expect(resolved.items.find((item) => item.value === "http://localhost:4321/")).toMatchObject({ kind: "url", preview: "browser" });
