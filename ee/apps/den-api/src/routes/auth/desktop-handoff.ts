@@ -7,6 +7,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { jsonValidator, requireUserMiddleware } from "../../middleware/index.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -80,6 +81,29 @@ function isWebAppHost(hostname: string) {
     || normalized.startsWith("app.")
 }
 
+function configuredBrowserOrigins() {
+  const values = [env.betterAuthUrl, ...env.betterAuthTrustedOrigins]
+  return Array.from(new Set(values
+    .filter((value) => value && value !== "*")
+    .map((value) => {
+      try {
+        return new URL(value).origin.replace(/\/+$/, "")
+      } catch {
+        return null
+      }
+    })
+    .filter((value): value is string => Boolean(value))))
+}
+
+function isConfiguredBrowserOrigin(origin: string) {
+  try {
+    const normalized = new URL(origin).origin.replace(/\/+$/, "")
+    return configuredBrowserOrigins().includes(normalized)
+  } catch {
+    return false
+  }
+}
+
 function withDenProxyPath(origin: string) {
   const url = new URL(origin)
   const pathname = url.pathname.replace(/\/+$/, "")
@@ -95,7 +119,10 @@ function resolveDesktopDenBaseUrl(request: Request) {
   if (originHeader) {
     try {
       const originUrl = new URL(originHeader)
-      if ((originUrl.protocol === "https:" || originUrl.protocol === "http:") && isWebAppHost(originUrl.hostname)) {
+      if (
+        (originUrl.protocol === "https:" || originUrl.protocol === "http:")
+        && (isWebAppHost(originUrl.hostname) || isConfiguredBrowserOrigin(originUrl.origin))
+      ) {
         return withDenProxyPath(originUrl.origin)
       }
     } catch {
@@ -115,14 +142,14 @@ function resolveDesktopDenBaseUrl(request: Request) {
   const origin = `${protocol}://${targetHost}`
   try {
     const url = new URL(origin)
-    if (isWebAppHost(url.hostname)) {
+    if (isWebAppHost(url.hostname) || isConfiguredBrowserOrigin(url.origin)) {
       return withDenProxyPath(url.origin)
     }
   } catch {
     // Ignore invalid forwarded origins.
   }
 
-  return origin
+  return withDenProxyPath(env.betterAuthUrl)
 }
 
 function buildOpenworkDeepLink(input: {
