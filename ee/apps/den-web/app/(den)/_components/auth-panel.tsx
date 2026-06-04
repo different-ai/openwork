@@ -336,8 +336,6 @@ export function AuthPanel({
             if (target && !isSamePathname(pathname, target)) {
               router.replace(target);
             }
-          } else if (next === "checkout" && !isSamePathname(pathname, "/checkout")) {
-            router.replace("/checkout");
           }
         }}
       >

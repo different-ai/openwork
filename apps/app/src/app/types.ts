@@ -24,6 +24,7 @@ export type SidebarSessionItem = {
   time?: {
     updated?: number | null;
     created?: number | null;
+    archived?: number | null;
   };
   directory?: string | null;
 };
@@ -95,6 +96,7 @@ export type PromptMode = "prompt" | "shell";
 export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
+  | { type: "skill"; name: string }
   | { type: "file"; path: string; label?: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
@@ -172,24 +174,27 @@ export type EngineRuntime = "direct";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
-export type SettingsTab =
-  | "general"
-  | "ai"
-  | "preferences"
-  | "permissions"
-  | "shell"
-  | "cloud-account"
-  | "cloud-marketplaces"
-  | "cloud-workers"
-  | "cloud-providers"
-  | "skills"
-  | "extensions"
-  | "environment"
-  | "advanced"
-  | "appearance"
-  | "updates"
-  | "recovery"
-  | "debug";
+export const SETTINGS_TAB_VALUES = [
+  "general",
+  "ai",
+  "preferences",
+  "permissions",
+  "shell",
+  "cloud-account",
+  "cloud-marketplaces",
+  "cloud-workers",
+  "cloud-providers",
+  "skills",
+  "extensions",
+  "environment",
+  "advanced",
+  "appearance",
+  "updates",
+  "recovery",
+  "debug",
+] as const;
+
+export type SettingsTab = (typeof SETTINGS_TAB_VALUES)[number];
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 

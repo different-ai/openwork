@@ -75,7 +75,7 @@ describe("reload event API", () => {
 
     const configResponse = await fetch(`${base}/workspace/ws_1/config`, { headers: auth(token) });
     expect(configResponse.status).toBe(200);
-    expect(await readFile(join(root, "opencode.jsonc"), "utf8")).toContain("default_agent");
+    await expect(readFile(join(root, "opencode.jsonc"), "utf8")).rejects.toThrow();
 
     await sleep(1200);
     expect(await readEvents(base, token)).toEqual([]);

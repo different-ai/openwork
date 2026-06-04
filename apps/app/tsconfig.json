@@ -19,6 +19,7 @@
     "types": ["vite/client", "node"]
   },
   "include": [
+    "globals.d.ts",
     "src/index.react.tsx",
     "src/components/**/*",
     "src/i18n/**/*",

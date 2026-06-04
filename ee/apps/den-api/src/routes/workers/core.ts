@@ -5,7 +5,6 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
@@ -109,13 +108,8 @@ const orgLimitReachedSchema = z.object({
 }).meta({ ref: "WorkerOrgLimitReachedError" })
 
 const paymentRequiredSchema = z.object({
-  error: z.literal("payment_required"),
+  error: z.literal("cloud_worker_billing_unavailable"),
   message: z.string(),
-  polar: z.object({
-    checkoutUrl: z.string().nullable(),
-    productId: z.string().nullable().optional(),
-    benefitId: z.string().nullable().optional(),
-  }).passthrough(),
 }).meta({ ref: "WorkerPaymentRequiredError" })
 
 const userEmailRequiredSchema = z.object({
@@ -221,13 +215,8 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
 
       if (!access.allowed) {
         return c.json({
-          error: "payment_required",
-          message: "Launching a cloud worker requires an active OpenWork Cloud plan.",
-          polar: {
-            checkoutUrl: access.checkoutUrl,
-            productId: env.polar.productId,
-            benefitId: env.polar.benefitId,
-          },
+          error: "cloud_worker_billing_unavailable",
+          message: "Creating new cloud workers requires an existing OpenWork Cloud plan. New self-serve purchases are no longer available.",
         }, 402)
       }
 

@@ -1,13 +1,20 @@
 import { ApiError } from "../errors.js";
+import type { EnvService } from "../env-file.js";
 import type { ServerConfig } from "../types.js";
 import {
   callGoogleWorkspaceExtensionAction,
   GOOGLE_WORKSPACE_EXTENSION_ACTIONS,
   GOOGLE_WORKSPACE_EXTENSION_ID,
 } from "./google-workspace.js";
+import {
+  callOpenAiImageGenerationExtensionAction,
+  OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
+  OPENAI_IMAGE_GENERATION_EXTENSION_ID,
+} from "./openai-image-generation.js";
 
 const OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS = [
   ...GOOGLE_WORKSPACE_EXTENSION_ACTIONS,
+  ...OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -27,7 +34,7 @@ export function listExperimentalExtensionActions(extensionId: string) {
     : OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS;
 }
 
-export async function callExperimentalExtensionAction(config: ServerConfig, input: unknown) {
+export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown) {
   if (!isRecord(input)) {
     throw new ApiError(400, "invalid_payload", "Expected extension action call payload");
   }
@@ -45,6 +52,11 @@ export async function callExperimentalExtensionAction(config: ServerConfig, inpu
 
   if (extensionId === GOOGLE_WORKSPACE_EXTENSION_ID) {
     const result = await callGoogleWorkspaceExtensionAction(config, action, args, context);
+    if (result) return result;
+  }
+
+  if (extensionId === OPENAI_IMAGE_GENERATION_EXTENSION_ID) {
+    const result = await callOpenAiImageGenerationExtensionAction(config, env, action, args, context);
     if (result) return result;
   }
 

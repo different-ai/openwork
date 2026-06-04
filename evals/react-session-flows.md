@@ -745,7 +745,7 @@ Known regressions this catches:
 
 ### Browser tool recipe
 
-Use `browser_evaluate` against the Electron CDP target. The snippets below use
+Use `browser_eval` against the Electron CDP target. The snippets below use
 the OpenWork inspector and React Query cache so the eval can assert transcript
 state directly instead of relying on a visual snapshot cadence.
 

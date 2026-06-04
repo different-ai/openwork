@@ -16,6 +16,20 @@ export type EngineInfo = {
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+  execution: OpencodeExecutionSnapshot | null;
+};
+
+export type OpencodeExecutionEnvEntry = {
+  name: string;
+  value: string;
+  redacted: boolean;
+};
+
+export type OpencodeExecutionSnapshot = {
+  command: string;
+  args: string[];
+  cwd: string;
+  env: OpencodeExecutionEnvEntry[];
 };
 
 export type OpenworkServerInfo = {
@@ -35,6 +49,7 @@ export type OpenworkServerInfo = {
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+  managedOpencodeExecution: OpencodeExecutionSnapshot | null;
 };
 
 export type EngineDoctorResult = {
