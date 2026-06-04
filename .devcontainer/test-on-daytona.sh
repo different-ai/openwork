@@ -97,7 +97,7 @@ MAX_WAIT=90
 DAYTONA_EVAL_SNAPSHOT="${DAYTONA_EVAL_SNAPSHOT:-openwork-eval-vnc}"
 DAYTONA_SECRETS_VOLUME="${DAYTONA_SECRETS_VOLUME:-openwork-eval-secrets}"
 DAYTONA_SECRETS_MOUNT="${DAYTONA_SECRETS_MOUNT:-/daytona-secrets}"
-DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-${DAYTONA_SECRETS_MOUNT}/openai.env}"
+DAYTONA_SECRETS_ENV="${DAYTONA_SECRETS_ENV:-${DAYTONA_SECRETS_MOUNT}}"
 DAYTONA_ARTIFACTS_VOLUME="${DAYTONA_ARTIFACTS_VOLUME:-openwork-eval-artifacts}"
 DAYTONA_ARTIFACTS_MOUNT="${DAYTONA_ARTIFACTS_MOUNT:-/daytona-artifacts}"
 DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS="${DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS:---disable-gpu --disable-dev-shm-usage --enable-unsafe-swiftshader}"
@@ -212,7 +212,7 @@ fi
 if [ "$ARTIFACTS_ENABLED" -eq 1 ]; then
   echo ""
   echo "==> Starting artifacts download server..."
-  daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; mkdir -p \"$DAYTONA_ARTIFACTS_MOUNT/recordings\"; nohup python3 -m http.server $ARTIFACTS_PORT --directory \"$DAYTONA_ARTIFACTS_MOUNT\" >/tmp/daytona-artifacts.log 2>&1 &'"
+  daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; mkdir -p \"$DAYTONA_ARTIFACTS_MOUNT/recordings\" \"$DAYTONA_ARTIFACTS_MOUNT/screenshots\" \"$DAYTONA_ARTIFACTS_MOUNT/validation\"; nohup python3 -m http.server $ARTIFACTS_PORT --directory \"$DAYTONA_ARTIFACTS_MOUNT\" >/tmp/daytona-artifacts.log 2>&1 &'"
 fi
 
 echo ""
@@ -252,6 +252,7 @@ if [ "$RECORD_VIDEO" -eq 1 ]; then
   echo ""
   echo "==> Starting Daytona display recording..."
   daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace; DISPLAY=:99 .devcontainer/start-daytona-recording.sh --detach --output \"$RECORDING_PATH\" --size \"$RECORDING_SIZE\" --fps \"$RECORDING_FPS\"'"
+  echo "    Recording is active. Begin the user-visible flow after the ready banner below."
 fi
 
 echo ""
@@ -261,7 +262,7 @@ else
   echo "==> opencode sidecar: not running (workspace may need creation first)"
 fi
 
-echo "==> Secrets env: ${DAYTONA_SECRETS_ENV} (sourced if present)"
+echo "==> Secrets env: ${DAYTONA_SECRETS_ENV} (file or directory, sourced if present)"
 if [ -n "$DEN_BASE_URL" ]; then
   echo "==> Den base URL: $DEN_BASE_URL"
 fi
@@ -285,12 +286,15 @@ echo "  Electron CDP:  $CDP_URL"
 echo "  noVNC visual:  $NOVNC_URL"
 if [ "$ARTIFACTS_ENABLED" -eq 1 ]; then
   echo "  Artifacts:     $ARTIFACTS_URL"
+  echo "  Screenshot:"
+  echo "    daytona exec $SANDBOX -- 'bash .devcontainer/capture-daytona-screenshot.sh'"
 fi
 if [ "$RECORD_VIDEO" -eq 1 ]; then
   echo "  Recording:     $RECORDING_URL"
   echo ""
   echo "  Stop recording:"
-  echo "    daytona exec $SANDBOX -- 'pkill -INT -f \"ffmpeg.*x11grab\"'"
+  echo "    daytona exec $SANDBOX -- 'bash .devcontainer/stop-daytona-recording.sh'"
+  echo "  Validate recording duration before using it as evidence."
 fi
 echo ""
 echo "  Connect browser tools:"

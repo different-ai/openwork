@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -52,6 +52,7 @@ export type UserOrgSummary = {
   role: string
   orgMemberId: string
   membershipId: string
+  memberCount: number
   createdAt: Date
   updatedAt: Date
 }
@@ -767,6 +768,22 @@ export async function listUserOrgs(userId: UserId) {
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
+  const organizationIds = memberships.map((row) => row.organization.id)
+  const memberCounts = new Map<OrgId, number>()
+  if (organizationIds.length > 0) {
+    const counts = await db
+      .select({
+        organizationId: MemberTable.organizationId,
+        memberCount: count(),
+      })
+      .from(MemberTable)
+      .where(and(inArray(MemberTable.organizationId, organizationIds), isNull(MemberTable.removedAt)))
+      .groupBy(MemberTable.organizationId)
+    for (const row of counts) {
+      memberCounts.set(row.organizationId, row.memberCount)
+    }
+  }
+
   return memberships.map((row) => ({
     id: row.organization.id,
     name: row.organization.name,
@@ -777,6 +794,7 @@ export async function listUserOrgs(userId: UserId) {
     role: row.role,
     orgMemberId: row.membershipId,
     membershipId: row.membershipId,
+    memberCount: memberCounts.get(row.organization.id) ?? 0,
     createdAt: row.organization.createdAt,
     updatedAt: row.organization.updatedAt,
   })) satisfies UserOrgSummary[]

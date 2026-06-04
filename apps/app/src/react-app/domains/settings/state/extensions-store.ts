@@ -56,11 +56,13 @@ import {
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
+  type CloudImportedMarketplace,
   type CloudImportedPlugin,
   type CloudImportedPluginFile,
   type CloudImportedSkill,
   type CloudImportedSkillHub,
 } from "../../../../app/cloud/import-state";
+import { refreshDesktopCloudSync } from "../../../../app/cloud/desktop-cloud-sync";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -95,6 +97,7 @@ export type ExtensionsStoreSnapshot = {
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: string | null;
+  importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
@@ -130,6 +133,7 @@ type MutableState = {
   importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: string | null;
+  importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
@@ -331,6 +335,7 @@ export function createExtensionsStore(options: {
     importedCloudSkillHubs: {},
     cloudOrgMarketplaces: [],
     cloudOrgMarketplacesStatus: null,
+    importedCloudMarketplaces: {},
     importedCloudPlugins: {},
     hubRepo: DEFAULT_HUB_REPO,
     hubRepos: [DEFAULT_HUB_REPO],
@@ -404,6 +409,7 @@ export function createExtensionsStore(options: {
       importedCloudSkillHubs: state.importedCloudSkillHubs,
       cloudOrgMarketplaces: state.cloudOrgMarketplaces,
       cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
+      importedCloudMarketplaces: state.importedCloudMarketplaces,
       importedCloudPlugins: state.importedCloudPlugins,
       hubRepo: state.hubRepo,
       hubRepos: state.hubRepos,
@@ -552,14 +558,43 @@ export function createExtensionsStore(options: {
 
   const refreshImportedCloudPlugins = async () => {
     try {
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const result = await target.openworkClient.listCloudPlugins(target.openworkWorkspaceId);
+        setStateField("importedCloudMarketplaces", result.marketplaces);
+        setStateField("importedCloudPlugins", result.plugins);
+        return result.plugins;
+      }
       const config = await readWorkspaceOpenworkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
+      setStateField("importedCloudMarketplaces", cloudImports.marketplaces);
       setStateField("importedCloudPlugins", cloudImports.plugins);
       return cloudImports.plugins;
     } catch {
+      setStateField("importedCloudMarketplaces", {});
       setStateField("importedCloudPlugins", {});
       return {};
     }
+  };
+
+  const persistImportedCloudMarketplaces = async (nextMarketplaces: Record<string, CloudImportedMarketplace>) => {
+    const config = await readWorkspaceOpenworkConfigRecord();
+    const cloudImports = readWorkspaceCloudImports(config);
+    const nextCloudImports = {
+      ...cloudImports,
+      marketplaces: nextMarketplaces,
+    };
+    const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
+    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    if (!persisted) {
+      throw new Error("OpenWork server unavailable. Connect to manage imported cloud marketplaces.");
+    }
+    setStateField("importedCloudMarketplaces", nextMarketplaces);
+    const target = await resolveWorkspaceServerTarget();
+    void refreshDesktopCloudSync({
+      openworkClient: target.openworkClient,
+      workspaceId: target.openworkWorkspaceId,
+    }).catch(() => null);
   };
 
   const persistImportedCloudSkillHubs = async (nextSkillHubs: Record<string, CloudImportedSkillHub>) => {
@@ -593,16 +628,25 @@ export function createExtensionsStore(options: {
   const persistImportedCloudPlugins = async (nextPlugins: Record<string, CloudImportedPlugin>) => {
     const config = await readWorkspaceOpenworkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
-    const nextConfig = withWorkspaceCloudImports(config, {
+    const nextCloudImports = {
       ...cloudImports,
       plugins: nextPlugins,
-    });
+    };
+    const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
     const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error("OpenWork server unavailable. Connect to manage imported cloud plugins.");
     }
     setStateField("importedCloudPlugins", nextPlugins);
+    const target = await resolveWorkspaceServerTarget();
+    void refreshDesktopCloudSync({
+      openworkClient: target.openworkClient,
+      workspaceId: target.openworkWorkspaceId,
+    }).catch(() => null);
   };
+
+  const findCloudMarketplace = (marketplaceId: string) =>
+    snapshot.cloudOrgMarketplaces.find((entry) => entry.marketplace.id === marketplaceId)?.marketplace ?? null;
 
   const buildCloudSkillContent = (name: string, description: string, body: string) => {
     const safeDescription = description.replace(/\s+/g, " ").trim();
@@ -1073,6 +1117,24 @@ export function createExtensionsStore(options: {
       },
     } satisfies Record<string, CloudImportedPlugin>;
     await persistImportedCloudPlugins(nextPlugins);
+
+    if (marketplaceId) {
+      const marketplace = findCloudMarketplace(marketplaceId);
+      const existingMarketplace = snapshot.importedCloudMarketplaces[marketplaceId] ?? null;
+      const pluginIds = new Set(existingMarketplace?.pluginIds ?? []);
+      pluginIds.add(resolved.plugin.id);
+      await persistImportedCloudMarketplaces({
+        ...snapshot.importedCloudMarketplaces,
+        [marketplaceId]: {
+          marketplaceId,
+          name: marketplace?.name ?? existingMarketplace?.name ?? marketplaceId,
+          updatedAt: marketplace?.updatedAt ?? existingMarketplace?.updatedAt ?? null,
+          pluginIds: [...pluginIds].toSorted(),
+          importedAt: existingMarketplace?.importedAt ?? Date.now(),
+        },
+      });
+    }
+
     return files;
   };
 
@@ -1439,6 +1501,26 @@ export function createExtensionsStore(options: {
       if (!token || !orgId) throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
       const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
       const resolved = await client.getOrgPluginResolved(orgId, plugin);
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const marketplace = marketplaceId ? findCloudMarketplace(marketplaceId) : null;
+        const result = await target.openworkClient.installCloudPlugin(target.openworkWorkspaceId, {
+          marketplaceId,
+          marketplace,
+          resolved,
+        });
+        await refreshSkills({ force: true });
+        await refreshCloudOrgMarketplaces({ force: true });
+        void refreshDesktopCloudSync({
+          openworkClient: target.openworkClient,
+          workspaceId: target.openworkWorkspaceId,
+        }).catch(() => null);
+        return {
+          ok: true,
+          message: `Imported ${plugin.name} with ${result.item.files.length} file${result.item.files.length === 1 ? "" : "s"}.`,
+          files: result.item.files,
+        };
+      }
       const files = await applyCloudOrgPluginImport(marketplaceId, resolved);
       await refreshSkills({ force: true });
       await refreshCloudOrgMarketplaces({ force: true });
@@ -1462,6 +1544,21 @@ export function createExtensionsStore(options: {
     setStateField("cloudOrgMarketplacesStatus", null);
 
     try {
+      const target = await resolveWorkspaceServerTarget();
+      if (target.openworkClient && target.openworkWorkspaceId) {
+        const result = await target.openworkClient.removeCloudPlugin(target.openworkWorkspaceId, pluginId);
+        await refreshSkills({ force: true });
+        await refreshCloudOrgMarketplaces({ force: true });
+        void refreshDesktopCloudSync({
+          openworkClient: target.openworkClient,
+          workspaceId: target.openworkWorkspaceId,
+        }).catch(() => null);
+        return {
+          ok: true,
+          message: `Removed ${result.item.name}.`,
+        };
+      }
+
       const imported = snapshot.importedCloudPlugins[pluginId];
       if (!imported) throw new Error("Marketplace package is not installed in this workspace.");
 
@@ -2774,6 +2871,7 @@ export function createExtensionsStore(options: {
     importedCloudSkillHubs: () => snapshot.importedCloudSkillHubs,
     cloudOrgMarketplaces: () => snapshot.cloudOrgMarketplaces,
     cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
+    importedCloudMarketplaces: () => snapshot.importedCloudMarketplaces,
     importedCloudPlugins: () => snapshot.importedCloudPlugins,
     hubRepo: () => snapshot.hubRepo,
     hubRepos: () => snapshot.hubRepos,

@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.15.1",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
@@ -26,9 +26,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opencode-ai/sdk": "^1.14.38",
+    "@opencode-ai/sdk": "^1.15.12",
     "better-sqlite3": "^11.10.0",
     "chrome-devtools-mcp": "0.17.0",
+    "drizzle-orm": "^0.45.1",
     "electron-updater": "^6.3.9",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
@@ -41,5 +42,5 @@
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0",
-  "opencodeRouterVersion": "0.14.0"
+  "opencodeRouterVersion": "0.15.1"
 }

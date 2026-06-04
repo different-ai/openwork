@@ -20,10 +20,20 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import {
   SidebarInset,
@@ -135,6 +145,7 @@ export type SessionPageProps = {
   busyHint: string | null;
   startupPhase: BootPhase;
   providerConnectedIds: string[];
+  hasUsableModel?: boolean;
   providers?: ProviderListItem[];
   mcpConnectedCount: number;
   onSendFeedback: () => void;
@@ -155,8 +166,10 @@ export type SessionPageProps = {
   respondQuestion?: (requestID: string, answers: string[][]) => void;
   statusBar?: Partial<StatusBarOverrides>;
   notFoundMessage?: string | null;
+  onOpenProviderAuth?: () => void;
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
+  onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
   settingsSlot?: React.ReactNode;
@@ -219,6 +232,16 @@ function writeHiddenAccessibleTargetIds(workspaceId: string | null | undefined, 
   }
 }
 
+function controlObjectArg(args: unknown) {
+  return args && typeof args === "object" && !Array.isArray(args) ? args : null;
+}
+
+function controlStringArg(args: unknown, key: string) {
+  const object = controlObjectArg(args);
+  const value = object ? Reflect.get(object, key) : null;
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
@@ -276,6 +299,9 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createGroupLabel, setCreateGroupLabel] = useState("");
+  const [createGroupWorkspaceId, setCreateGroupWorkspaceId] = useState<string | null>(null);
   const browserPanelRef = usePanelRef();
   const preserveSidePanelOnPanelOpenRef = useRef(false);
 
@@ -367,8 +393,42 @@ export function SessionPage(props: SessionPageProps) {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
   const openBrowserRailPane = useCallback(() => {
+    // Opening the browser pane should land on a usable page, not an empty
+    // panel that forces the user to click "+". If no browser tab exists yet,
+    // create one (defaults to the new-tab URL in the main process).
+    const opening = !panelRailActive;
+    if (opening && isElectronRuntime()) {
+      const hasBrowserTab = sessionPanelState.tabs.some((tab) => tab.type === "browser");
+      if (!hasBrowserTab) {
+        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.();
+      }
+    }
     toggleCurrentSidePanel("panel");
-  }, [toggleCurrentSidePanel]);
+  }, [panelRailActive, sessionPanelState.tabs, toggleCurrentSidePanel]);
+  const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.open_url",
+    label: "Open URL in built-in browser",
+    description: "Create or select an OpenWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
+    sideEffect: "navigation",
+    requiresArgs: true,
+    args: [
+      { name: "url", type: "string", required: true, description: "The website URL to open." },
+      { name: "provider", type: "string", description: "Browser provider. Use builtin or auto. External is reserved for future support." },
+    ],
+    previewArgs: { url: "https://example.com", provider: "builtin" },
+    disabled: !isElectronRuntime(),
+    execute: async (args) => {
+      const url = controlStringArg(args, "url");
+      if (!url) return { ok: false, error: "Missing URL." };
+      const provider = controlStringArg(args, "provider") || "builtin";
+      if (provider !== "auto" && provider !== "builtin") {
+        return { ok: false, error: `Browser provider is not available yet: ${provider}` };
+      }
+      setCurrentSidePanel("panel");
+      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
+    },
+  }), [setCurrentSidePanel]);
+  useControlAction(openBrowserUrlControlAction);
   const openArtifactRailPane = useCallback(() => {
     if (!hasArtifactTargets || !props.selectedSessionId) return;
     const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);
@@ -494,7 +554,7 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceDisplay.displayName?.trim() ||
     props.selectedWorkspaceDisplay.name?.trim() ||
     t("session.workspace_fallback");
-  const providerCount = props.providerConnectedIds.length;
+  const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
@@ -617,7 +677,7 @@ export function SessionPage(props: SessionPageProps) {
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
           showInitialLoading={sidebarInitialLoading}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession)}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
@@ -631,6 +691,14 @@ export function SessionPage(props: SessionPageProps) {
             setSessionActionId(sessionId);
             setDeleteOpen(true);
           } : undefined}
+          onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
+            void props.onArchiveSession?.(sessionId, archived);
+          } : undefined}
+          onOpenCreateGroupModal={(workspaceId) => {
+            setCreateGroupWorkspaceId(workspaceId);
+            setCreateGroupLabel("");
+            setCreateGroupOpen(true);
+          }}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
           onShareWorkspace={props.sidebar.onShareWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
@@ -839,11 +907,32 @@ export function SessionPage(props: SessionPageProps) {
                       <div className="w-full max-w-md space-y-6">
                         <div className="space-y-1 text-center">
                           <h2 className="text-lg font-semibold text-dls-text">
-                            {t("session.select_or_create_session")}
+                            {providerCount === 0
+                              ? t("session.connect_model_to_start")
+                              : t("session.select_or_create_session")}
                           </h2>
-                          <p className="text-xs text-dls-secondary">Try one of these to get started:</p>
+                          <p className="text-xs text-dls-secondary">
+                            {providerCount === 0
+                              ? "Add an AI model provider so your tasks can run."
+                              : "Try one of these to get started:"}
+                          </p>
                         </div>
                         <div className="space-y-2">
+                          {providerCount === 0 ? (
+                            <button
+                              type="button"
+                              className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
+                              onClick={() => props.onOpenProviderAuth?.()}
+                            >
+                              <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
+                              <div>
+                                <div className="text-[13px] font-medium text-dls-text">Connect a model provider</div>
+                                <div className="mt-0.5 text-[11px] text-dls-secondary">
+                                  Add an API key for Anthropic, OpenAI, Google, or other providers
+                                </div>
+                              </div>
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="flex w-full items-start gap-3 rounded-xl border border-dls-border bg-dls-surface p-3.5 text-left transition-colors hover:bg-dls-hover"
@@ -872,7 +961,7 @@ export function SessionPage(props: SessionPageProps) {
                           >
                             <img src="/openwork-mark.svg" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Automate a browser task</div>
+                              <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
                               <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>
                             </div>
                           </button>
@@ -1055,6 +1144,39 @@ export function SessionPage(props: SessionPageProps) {
           }}
         />
       ) : null}
+
+      <Dialog open={createGroupOpen} onOpenChange={(open) => { if (!open) setCreateGroupOpen(false); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("session_management.new_group")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            type="text"
+            value={createGroupLabel}
+            onChange={(e) => setCreateGroupLabel(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && createGroupLabel.trim()) {
+                if (createGroupWorkspaceId) useSessionManagementStore.getState().createGroup(createGroupWorkspaceId, createGroupLabel.trim());
+                setCreateGroupOpen(false);
+              }
+            }}
+            placeholder={t("session_management.new_group_prompt")}
+          />
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" type="button" />}>{t("common.cancel")}</DialogClose>
+            <Button
+              type="button"
+              disabled={!createGroupLabel.trim()}
+              onClick={() => {
+                if (createGroupWorkspaceId) useSessionManagementStore.getState().createGroup(createGroupWorkspaceId, createGroupLabel.trim());
+                setCreateGroupOpen(false);
+              }}
+            >
+              {t("common.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {props.shareWorkspaceModal ? <ShareWorkspaceModal {...props.shareWorkspaceModal} /> : null}
 

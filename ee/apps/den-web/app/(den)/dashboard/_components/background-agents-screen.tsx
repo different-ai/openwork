@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   Bot,
@@ -13,14 +12,11 @@ import {
   KeyRound,
   Monitor,
   MoreHorizontal,
-  Plus,
   RefreshCw,
   Search,
 } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { DenButton } from "../../_components/ui/button";
-import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
   buildOpenworkAppConnectUrl,
@@ -31,10 +27,7 @@ import {
   requestJson,
   type WorkerListItem,
 } from "../../_lib/den-flow";
-import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { useDenFlow } from "../../_providers/den-flow-provider";
-import { getBackgroundAgentsRoute } from "../../_lib/den-org";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ConnectionDetails = {
   openworkUrl: string | null;
@@ -293,8 +286,6 @@ function SandboxCard({
 }
 
 export function BackgroundAgentsScreen() {
-  const router = useRouter();
-  const { orgSlug } = useOrgDashboard();
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null);
   const [connectBusyWorkerId, setConnectBusyWorkerId] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -308,25 +299,9 @@ export function BackgroundAgentsScreen() {
     workersBusy,
     workersLoadedOnce,
     workersError,
-    launchBusy,
-    launchWorker,
-    orgLimitError,
-    clearOrgLimitError,
     renameWorker,
     renameBusyWorkerId,
   } = useDenFlow();
-  const feedbackHref = buildDenFeedbackUrl({
-    pathname: getBackgroundAgentsRoute(orgSlug),
-    orgSlug,
-    topic: "workspace-limits",
-  });
-
-  async function handleAddWorkspace() {
-    const result = await launchWorker({ source: "manual" });
-    if (result === "checkout") {
-      router.push("/checkout");
-    }
-  }
 
   async function loadConnectionDetails(workerId: string, workerName: string) {
     setConnectBusyWorkerId(workerId);
@@ -411,27 +386,8 @@ export function BackgroundAgentsScreen() {
       description="Run selected workflows in the background without asking each teammate to run them locally. Coming soon."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
-      <OrgLimitDialog
-        open={Boolean(orgLimitError)}
-        title={orgLimitError?.limitType === "workers" ? "Worker limit reached" : "Member limit reached"}
-        message={orgLimitError?.message ?? "This workspace reached its current plan limit."}
-        detail={
-          orgLimitError
-            ? `${orgLimitError.currentCount} of ${orgLimitError.limit} ${orgLimitError.limitType} are already in use.`
-            : null
-        }
-        feedbackHref={feedbackHref}
-        onClose={clearOrgLimitError}
-      />
-
-      <div className="mb-10 flex items-center gap-3">
-        <DenButton
-          icon={Plus}
-          loading={launchBusy}
-          onClick={() => void handleAddWorkspace()}
-        >
-          Add workspace
-        </DenButton>
+      <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
+        New cloud workspaces are no longer available from this page. Existing workspaces remain available below.
       </div>
 
       {workersError ? (
@@ -470,7 +426,7 @@ export function BackgroundAgentsScreen() {
             <div className="rounded-2xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
               {workerQuery.trim()
                 ? "No workspaces match that search yet."
-                : "No workspaces launched yet. Add one to start connecting cloud workflows."}
+                : "No workspaces launched yet."}
             </div>
           ) : (
             filteredWorkers.map((sandbox) => (

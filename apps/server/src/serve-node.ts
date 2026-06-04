@@ -195,7 +195,19 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
   let boundPort = port;
 
   return new Promise<ServeResult>((resolve, reject) => {
-    server.on("error", reject);
+    // The caller probes port availability before calling us, but that
+    // check-then-bind is racy: a just-stopped server may not have released the
+    // socket yet. On EADDRINUSE, retry once with an OS-assigned free port
+    // (port 0) instead of failing the whole startup.
+    let retriedFreePort = false;
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" && !retriedFreePort) {
+        retriedFreePort = true;
+        server.listen(0, hostname);
+        return;
+      }
+      reject(error);
+    });
     server.listen(port, hostname, () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {

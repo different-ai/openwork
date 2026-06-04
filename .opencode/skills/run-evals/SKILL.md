@@ -18,10 +18,20 @@ Run the OpenWork UI evaluation flows against a real Electron app. Prefer a fresh
 - `daytona` CLI installed and logged in (`daytona login`)
 - Using the "Different AI" org (`daytona organization use "Different AI"`)
 - The `.devcontainer/` files exist in the repo
-- Optional OpenAI coverage: reusable Daytona volume `openwork-eval-secrets`
-  populated once with `bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken`
+- Optional provider coverage: reusable Daytona volume `openwork-eval-secrets`
+  populated with `.env` files using `bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken`
 
 ## Workflow
+
+Use these Daytona skills when an eval touches a specific area:
+
+- `daytona-electron-test` for launching and driving the real Electron app.
+- `daytona-flow-validator` for the observe -> act -> observe/assert -> evidence loop.
+- `daytona-cloud-server` for Den server sandbox startup and health checks.
+- `daytona-electron-den` for two-sandbox Electron + Den cloud flows.
+- `daytona-chrome-cdp` for standalone Chrome in Daytona, separate from Electron.
+- `daytona-secrets-volume` for adding or checking provider keys and eval secrets.
+- `daytona-recording-artifacts` for screenshots, recordings, before/after videos, and PR evidence.
 
 ### Preferred path: helper script
 
@@ -33,11 +43,11 @@ bash .devcontainer/test-on-daytona.sh <branch-or-commit>
 ```
 
 The helper creates a fresh VNC-capable Daytona sandbox from the reusable
-`openwork-eval-vnc` snapshot when present, falls back to the VNC Dockerfile when
-needed, mounts the reusable `openwork-eval-secrets:/daytona-secrets` volume,
-mounts the reusable `openwork-eval-pnpm-store` pnpm cache volume, starts
-XFCE/noVNC, Vite, and Electron with Daytona-safe graphics flags, waits for CDP,
-then prints the CDP and noVNC URLs.
+`openwork-eval-vnc` snapshot, mounts the reusable
+`openwork-eval-secrets:/daytona-secrets` volume, mounts the reusable
+`openwork-eval-pnpm-store` pnpm cache volume, starts XFCE/noVNC, Vite, and
+Electron with Daytona-safe graphics flags, waits for CDP, then prints the CDP
+and noVNC URLs. If the snapshot is missing, create it before rerunning.
 
 Refresh the snapshot when dependencies or base setup change:
 
@@ -48,14 +58,16 @@ bash .devcontainer/create-daytona-openwork-snapshot.sh
 The snapshot intentionally excludes `node_modules` to stay below Daytona's 20 GB
 snapshot limit. Dependency installs reuse the pnpm store volume.
 
-For OpenAI/provider eval coverage, create/populate the volume once before the
+For provider eval coverage, create/populate the volume once before the
 first run:
 
 ```bash
 bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken
+bash .devcontainer/setup-daytona-secrets-volume.sh .anthropic anthropic.env
 ```
 
-Do not print the key. Future eval sandboxes reuse the same volume.
+Do not print keys. Future eval sandboxes reuse the same volume and source every
+`/daytona-secrets/*.env` file before Electron starts.
 
 ### Verify helper output
 
@@ -90,20 +102,25 @@ If the app shows the Welcome page, create a workspace:
 Read the eval file from `evals/` and execute each step using the browser tools.
 
 For each step:
-1. Execute the `browser_evaluate` / `browser_click` / `browser_screenshot` call
-2. Verify the expected outcome
-3. Report pass/fail
+1. Observe the current state with `browser_snapshot` or `browser_eval`.
+2. Execute the `browser_eval`, `browser_click`, `browser_fill`, or screenshot call.
+3. Observe again.
+4. Assert the expected URL, text, state, process, log, or API result.
+5. Capture screenshot/recording evidence when the visible state matters.
+
+Use the `daytona-flow-validator` skill for pass/fail decisions. If there is no
+post-action assertion, report `Incomplete`, not `Passed`.
 
 ### Key techniques
 
 **Clicking buttons:**
 ```
-browser_evaluate({ browser_url: URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('BUTTON_TEXT') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
+browser_eval({ browser_url: URL, expression: "(function() { var btns = document.querySelectorAll('button'); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.indexOf('BUTTON_TEXT') !== -1) { btns[i].click(); return 'clicked'; } } return 'not found'; })()" })
 ```
 
 **Typing in Lexical editors:**
 ```
-browser_evaluate({ browser_url: URL, expression: "(function() { var e = document.querySelector('[contenteditable=true]'); e.focus(); document.execCommand('insertText', false, 'YOUR TEXT'); return 'typed'; })()" })
+browser_eval({ browser_url: URL, expression: "(function() { var e = document.querySelector('[contenteditable=true]'); e.focus(); var d = new DataTransfer(); d.setData('text/plain', 'YOUR TEXT'); e.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: d })); return e.innerText; })()" })
 ```
 
 **Injecting folder path (bypass native picker):**
@@ -111,13 +128,59 @@ Use the `__reactFiber$` → `CreateWorkspaceModal` reducer dispatch with `{ key:
 
 **Checking page state:**
 ```
-browser_evaluate({ browser_url: URL, expression: "document.body.innerText.substring(0, 500)" })
+browser_eval({ browser_url: URL, expression: "document.body.innerText.substring(0, 500)" })
 ```
 
 **Screenshots:**
 ```
 browser_screenshot({ browser_url: URL })
 ```
+
+Also capture persistent Daytona screenshots at critical checkpoints when the
+artifacts volume is mounted:
+
+```bash
+daytona exec "$SANDBOX" -- 'bash .devcontainer/capture-daytona-screenshot.sh'
+```
+
+Use browser snapshots/assertions for AI validation, screenshots for visual
+checkpoints, and recordings for human PR evidence.
+
+### Recording eval runs
+
+Record eval runs when the user asks for PR evidence or the change is visual.
+Use the built-in Daytona recording mechanism:
+
+**Start with recording from the beginning:**
+```bash
+bash .devcontainer/test-on-daytona.sh <branch> --record-video --recording-name <eval-name>
+```
+
+**Start a new recording mid-sandbox** (e.g. after switching branches):
+```bash
+daytona exec "$SANDBOX" -- "bash -lc 'cd /workspace && DISPLAY=:99 .devcontainer/start-daytona-recording.sh --detach --output /daytona-artifacts/recordings/<name>.mp4'"
+```
+
+**Stop recording:**
+```bash
+daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
+```
+
+**Get the download URL:**
+```bash
+ARTIFACTS_URL=$(daytona preview-url "$SANDBOX" -p 8090 2>/dev/null | grep -v "^time=")
+echo "${ARTIFACTS_URL}/recordings/<name>.mp4"
+```
+
+Recordings are saved to the persistent `openwork-eval-artifacts` volume and
+survive sandbox deletion. Always use `stop-daytona-recording.sh` (not
+`kill -9`) so ffmpeg finalizes the mp4 properly.
+
+Screenshots are saved to `/daytona-artifacts/screenshots` and are served by the
+same port 8090 artifacts URL.
+
+For before/after comparison recordings, see the "Recording before/after
+comparisons" section in the `daytona-electron-test` skill.
 
 ### Local fallback
 
@@ -135,7 +198,8 @@ For UI flow verification, start the local app and attach browser tools to the lo
 pnpm dev
 ```
 
-Report clearly whether the result came from Daytona or the local fallback.
+Report clearly whether the result came from Daytona or the local fallback. A
+local fallback cannot be reported as a successful Daytona validation.
 
 ### Teardown
 

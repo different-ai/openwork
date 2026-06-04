@@ -1,6 +1,6 @@
 import type { WorkspacePreset } from "../../../app/types";
 
-export type CreateWorkspaceScreen = "chooser" | "local" | "remote" | "shared";
+export type CreateWorkspaceScreen = "chooser" | "local" | "remote";
 
 export type RemoteWorkspaceInput = {
   openworkHostUrl?: string | null;

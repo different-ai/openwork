@@ -10,7 +10,6 @@
 ### Optional env vars
 
 - `NEXT_PUBLIC_CAL_URL` - enterprise booking link
-- `NEXT_PUBLIC_DEN_CHECKOUT_URL` - Polar checkout URL for the Den preorder CTA
 - `EMAIL_FROM` - sender for feedback emails (for example `OpenWork <team@openworklabs.com>`)
 - `RESEND_API_KEY` - Resend API key for feedback emails
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` - SMTP fallback for feedback emails when Resend is not configured
