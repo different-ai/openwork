@@ -149,7 +149,13 @@ function resolveDesktopDenBaseUrl(request: Request) {
     // Ignore invalid forwarded origins.
   }
 
-  return withDenProxyPath(env.betterAuthUrl)
+  try {
+    return withDenProxyPath(new URL(env.betterAuthUrl).origin)
+  } catch {
+    // Ignore invalid configured URL.
+  }
+
+  return "https://app.openworklabs.com/api/den"
 }
 
 function buildOpenworkDeepLink(input: {

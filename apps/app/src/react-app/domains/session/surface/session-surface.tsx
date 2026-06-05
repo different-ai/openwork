@@ -95,7 +95,7 @@ export type SessionSurfaceProps = {
   selectedModel: ModelRef;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
-  onSendDraft: (draft: ComposerDraft) => void;
+  onSendDraft: (draft: ComposerDraft, sessionId: string) => void;
   onDraftChange: (draft: ComposerDraft) => void;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
@@ -124,9 +124,9 @@ export type SessionSurfaceProps = {
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   providerConnectedCount?: number;
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
-  onRevertToMessage?: (messageId: string) => void;
-  onForkAtMessage?: (messageId: string) => void;
-  onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }) => void;
+  onRevertToMessage?: (messageId: string, sessionId: string) => void;
+  onForkAtMessage?: (messageId: string, sessionId: string) => void;
+  onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }, sessionId?: string) => void;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -583,8 +583,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!autoOpenTarget || chatStreaming) return;
     if (autoOpenedTargetRef.current === autoOpenTarget.id) return;
     autoOpenedTargetRef.current = autoOpenTarget.id;
-    props.onOpenTarget?.(autoOpenTarget, { auto: true });
-  }, [autoOpenTarget, chatStreaming, props.onOpenTarget]);
+    props.onOpenTarget?.(autoOpenTarget, { auto: true }, props.sessionId);
+  }, [autoOpenTarget, chatStreaming, props.onOpenTarget, props.sessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -716,7 +716,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setSending(true);
     setAwaitingAssistantBaseline(renderedMessages.length);
     try {
-      await props.onSendDraft(nextDraft);
+      await props.onSendDraft(nextDraft, props.sessionId);
       draftAttachments.forEach(revokeAttachmentPreview);
       setSending(false);
     } catch (nextError) {
@@ -1040,12 +1040,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [typeComposerText]);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
-    props.onRevertToMessage?.(messageId);
-  }, [props.onRevertToMessage]);
+    props.onRevertToMessage?.(messageId, props.sessionId);
+  }, [props.onRevertToMessage, props.sessionId]);
 
   const handleForkAtMessage = useCallback((messageId: string) => {
-    props.onForkAtMessage?.(messageId);
-  }, [props.onForkAtMessage]);
+    props.onForkAtMessage?.(messageId, props.sessionId);
+  }, [props.onForkAtMessage, props.sessionId]);
 
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
