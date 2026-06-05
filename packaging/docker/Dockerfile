@@ -14,9 +14,47 @@ RUN apt-get update \
   && npm install -g pnpm@10.27.0 \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . .
-
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN mkdir -p \
+    apps/app \
+    apps/desktop \
+    apps/opencode-router \
+    apps/orchestrator \
+    apps/server \
+    apps/ui-demo \
+    ee/apps/den-api \
+    ee/apps/den-web \
+    ee/apps/den-worker-proxy \
+    ee/apps/inference \
+    ee/apps/landing \
+    ee/packages/den-db \
+    ee/packages/utils \
+    packages/email \
+    packages/handsfree \
+    packages/openwork-ui-mcp \
+    packages/types \
+    packages/ui
+COPY apps/app/package.json apps/app/package.json
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/opencode-router/package.json apps/opencode-router/package.json
+COPY apps/orchestrator/package.json apps/orchestrator/package.json
+COPY apps/server/package.json apps/server/package.json
+COPY apps/ui-demo/package.json apps/ui-demo/package.json
+COPY ee/apps/den-api/package.json ee/apps/den-api/package.json
+COPY ee/apps/den-web/package.json ee/apps/den-web/package.json
+COPY ee/apps/den-worker-proxy/package.json ee/apps/den-worker-proxy/package.json
+COPY ee/apps/inference/package.json ee/apps/inference/package.json
+COPY ee/apps/landing/package.json ee/apps/landing/package.json
+COPY ee/packages/den-db/package.json ee/packages/den-db/package.json
+COPY ee/packages/utils/package.json ee/packages/utils/package.json
+COPY packages/email/package.json packages/email/package.json
+COPY packages/handsfree/package.json packages/handsfree/package.json
+COPY packages/openwork-ui-mcp/package.json packages/openwork-ui-mcp/package.json
+COPY packages/types/package.json packages/types/package.json
+COPY packages/ui/package.json packages/ui/package.json
 RUN pnpm install --frozen-lockfile
+
+COPY . .
 
 # Persistent directories (mount volumes here on PaaS/SSH).
 ENV OPENWORK_DATA_DIR=/data/openwork-orchestrator
