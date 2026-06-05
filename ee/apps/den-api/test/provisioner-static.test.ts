@@ -385,6 +385,47 @@ test("static attach route re-checks duplicate URL inside lock before insert", as
   expect(store.workers).toHaveLength(0)
 })
 
+test("static attach route checks worker quota inside lock before insert", async () => {
+  const store = createFakeStaticAttachStore()
+  let lockActive = false
+  let quotaCheckedInsideLock = false
+  const app = new Hono()
+  workersCoreModule.registerStaticWorkerAttachRoute(app as never, {
+    data: store.data as never,
+    lookup: async () => [{ address: "203.0.113.10", family: 4 }],
+    fetchReachable: async () => undefined,
+    getWorkerLimit: async () => {
+      quotaCheckedInsideLock = lockActive
+      return { exceeded: true, limit: 1, currentCount: 1 }
+    },
+    lock: async (run) => {
+      lockActive = true
+      try {
+        return await run(store.data as never)
+      } finally {
+        lockActive = false
+      }
+    },
+    middlewares: [
+      async (c, next) => {
+        const userId = createDenTypeId("user")
+        const orgId = createDenTypeId("organization")
+        c.set("user", { id: userId, email: "admin@example.com" })
+        c.set("activeOrganizationId", orgId)
+        c.set("organizationContext", { currentMember: { id: createDenTypeId("member"), userId, role: "admin", createdAt: new Date(), isOwner: false } })
+        await next()
+      },
+      jsonValidator(workersSharedModule.attachStaticWorkerSchema),
+    ] as never,
+  })
+
+  const response = await postStaticAttach(app)
+  expect(response.status).toBe(409)
+  await expect(response.json()).resolves.toMatchObject({ error: "org_limit_reached" })
+  expect(quotaCheckedInsideLock).toBe(true)
+  expect(store.workers).toHaveLength(0)
+})
+
 test("static attach route rejects invalid URL", async () => {
   const { app } = createStaticAttachRouteApp({})
   const response = await postStaticAttach(app, { url: "ftp://worker.example.com" })

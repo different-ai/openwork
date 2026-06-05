@@ -288,17 +288,6 @@ export function registerStaticWorkerAttachRoute(app: Hono<{ Variables: WorkerRou
       return c.json(staticAttachDuplicateResponse(), 409)
     }
 
-    const workerLimit = await getWorkerLimit(normalizedOrgId, "workers")
-    if (workerLimit.exceeded) {
-      return c.json({
-        error: "org_limit_reached",
-        limitType: "workers",
-        limit: workerLimit.limit,
-        currentCount: workerLimit.currentCount,
-        message: `This workspace currently supports up to ${workerLimit.limit} workers. Contact support to increase the limit.`,
-      }, 409)
-    }
-
     try {
       await fetchReachable(validatedUrl, input.clientToken.trim(), input.hostToken.trim())
     } catch (error) {
@@ -313,10 +302,15 @@ export function registerStaticWorkerAttachRoute(app: Hono<{ Variables: WorkerRou
     const activityToken = input.activityToken?.trim() || token()
     const now = new Date()
 
-    const inserted = await lock(async (tx) => {
+    const insertResult = await lock(async (tx) => {
       const duplicateRows = await findActiveStaticWorkerByUrl(tx, normalizedUrl)
       if (duplicateRows.length > 0) {
-        return false
+        return { status: "duplicate" as const }
+      }
+
+      const workerLimit = await getWorkerLimit(normalizedOrgId, "workers")
+      if (workerLimit.exceeded) {
+        return { status: "limit" as const, workerLimit }
       }
 
       await tx.insert(WorkerTable).values({
@@ -361,11 +355,21 @@ export function registerStaticWorkerAttachRoute(app: Hono<{ Variables: WorkerRou
         url: normalizedUrl,
         status: "healthy",
       } as never)
-      return true
+      return { status: "inserted" as const }
     })
 
-    if (!inserted) {
+    if (insertResult.status === "duplicate") {
       return c.json(staticAttachDuplicateResponse(), 409)
+    }
+
+    if (insertResult.status === "limit") {
+      return c.json({
+        error: "org_limit_reached",
+        limitType: "workers",
+        limit: insertResult.workerLimit.limit,
+        currentCount: insertResult.workerLimit.currentCount,
+        message: `This workspace currently supports up to ${insertResult.workerLimit.limit} workers. Contact support to increase the limit.`,
+      }, 409)
     }
 
     return c.json({
