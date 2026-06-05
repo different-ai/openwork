@@ -1,0 +1,200 @@
+apps/app/src/app/lib/openwork-server.ts
+  h_2169b0bd9b5c87 1,120
+AGENTS.md
+  h_2169b0bd9b5c87 40-44,55,57-59,70-73,75-77
+apps/app/src/components/tools/webfetch.tsx
+  ai_agent 18-30
+apps/app/src/app/index.css
+  s_fcf1d23bf40354::t_e0a637898154e8 473-481
+  s_fcf1d23bf40354::t_448f926811b935 467-472
+apps/app/src/components/markdown/markdown.tsx
+  s_fcf1d23bf40354::t_0dd682241b9f04 231
+apps/app/src/components/chat/message-list.tsx
+  s_4be0b65e1384ad::t_060d300dc41a08 5
+  s_6101bf1ba7ce56::t_e3a68102648bf6 7,12,16,26,63
+  h_2169b0bd9b5c87 24,62
+  s_4be0b65e1384ad::t_4c44f22619141a 8-11
+apps/app/src/lib/messages.ts
+  h_2169b0bd9b5c87 1-4,6-9
+apps/app/src/components/chat/utils.ts
+  h_2169b0bd9b5c87 36-39,41-42
+  s_6101bf1ba7ce56::t_e83c727ce77013 2,28-31
+  s_359989caf8db74::t_054ed33f43eeb4 16-27,32,124,142
+apps/app/src/components/chat/message-list-provider.tsx
+  s_6101bf1ba7ce56::t_331d27e60879c0 99,101
+apps/app/src/react-app/domains/session/surface/session-surface.tsx
+  s_2428b03837f9d2::t_16bc943f68016a 531,535,539-544,547
+apps/app/src/components/ui/tool.tsx
+  s_567adf52689db9::t_42cdf84dc75030 23-24,26-29,31-33
+  s_e21ae61f51413c::t_61d5af82720f33 95
+  s_e21ae61f51413c::t_98b130abc63d98 4-9
+  s_567adf52689db9::t_4a43782a2cda05 38,40-53,56-57,60-61
+  s_567adf52689db9::t_305222de742c25 39
+  s_e21ae61f51413c::t_6b26002acd59f3 91-92,98-105,107-118,120-127,129-145
+  s_567adf52689db9::t_649795af050c18 93
+apps/app/src/components/tools/websearch.tsx
+  ai_agent 24-34,40
+apps/app/src/components/tools/collapsible-tool.tsx
+  s_00127610e08842::t_344f50de822cce 36,40,42-43,54,59,70
+apps/app/src/react-app/domains/session/surface/markdown.tsx
+  s_fcf1d23bf40354::t_269d954e9b1e07 178
+apps/app/src/components/ui/text-shimmer.tsx
+  ai_agent 1-39
+apps/app/src/components/chat/conversation-step.tsx
+  s_a685cbc0c015e6::t_a51fdd8b251c86 231-235,244,254,268
+  s_1b2ac912d00fca::t_e5b78d9f42063f 375,379
+  s_1b2ac912d00fca::t_c52a2d7c099836 353-355,357,359-362,364-371,378
+  s_359989caf8db74::t_cb40aff0cb2fa0 41,238-243,255-267
+  s_359989caf8db74::t_cfd300afb93628 163
+  s_dac289caec7b77::t_76ffac9cc5ba65 171,191
+  s_0ea242d1ac758d::t_e3478614a52dd6 126-131,190
+  s_1b2ac912d00fca::t_20bf475f6449d4 352,356,358,363,373-374,376-377,380-382
+  s_78426d135c4256::t_93bd92c84c1b20 16
+  s_a685cbc0c015e6::t_f6fd6937a1d62c 12
+  s_359989caf8db74::t_511e209c11e717 104-116
+  s_dac289caec7b77::t_9a2af957e4dd73 269
+  s_dac289caec7b77::t_fdeb189dc0c8fc 246-253
+  s_78426d135c4256::t_3e4b0081812b8c 145
+  s_1b2ac912d00fca::t_40eb004e103342 28
+  s_78426d135c4256::t_550d92e00de1fd 36,42-54,59-82
+  s_78426d135c4256::t_2e715aec15bc14 55-58
+  s_359989caf8db74::t_8ec3ed741cb7cb 37
+apps/app/src/components/chat/message.tsx
+  s_a50c557880f09e::t_e16cef52bd13b5 354-371,375
+  s_4be0b65e1384ad::t_b2896a9cfd608d 420
+  s_359989caf8db74::t_34b027447037ec 235-254,426-430
+  s_6101bf1ba7ce56::t_bfa04ed2996674 5-67
+  s_4be0b65e1384ad::t_80c26e3c85ddbe 461
+  s_6101bf1ba7ce56::t_82bb8a64c10b35 314-350,372-374
+  s_4be0b65e1384ad::t_662e16bf3d7b23 170
+  s_6101bf1ba7ce56::t_8834e6cfa9159e 422-425,484-500
+  s_4be0b65e1384ad::t_95bf407055578d 544
+  s_4be0b65e1384ad::t_f7cc18775303c5 191
+apps/server/src/session-read-model.ts
+  h_2169b0bd9b5c87 29-37,45-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ecd308626ddaa164aa5f5f59189c9003e41df560",
+  "prompts": {},
+  "humans": {
+    "h_2169b0bd9b5c87": {
+      "author": "Jean P.D. Meijer <jean@analoginterface.io>"
+    }
+  },
+  "sessions": {
+    "s_00127610e08842": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9327aa36-ff0d-48dc-b294-2204b995d0ac",
+        "model": "claude-opus-4-8-thinking-xhigh-fast"
+      },
+      "human_author": null
+    },
+    "s_0ea242d1ac758d": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "922f58d3-67bc-48e9-9201-8630fdc0afbf",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_1b2ac912d00fca": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3ccf90a7-330e-4c35-9a36-a9edbca0d25c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_2428b03837f9d2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "77623cd6-9e90-4625-a264-8cbbdb708d8f",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_359989caf8db74": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "90f71de5-c250-4a75-9fe3-3e6e4fc817f9",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_4be0b65e1384ad": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "fac03e8c-8262-4a0e-ae82-095620882cac",
+        "model": "composer-2.5"
+      },
+      "human_author": null
+    },
+    "s_567adf52689db9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3b25de69-f4f7-400f-b18b-5987321d3897",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_6101bf1ba7ce56": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7488510a-30bc-4f50-88a5-acd73e9c3fa2",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_78426d135c4256": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "83a26461-b633-4817-9342-a515af0b1c2e",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_a50c557880f09e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bd35f8f3-1ecb-4e40-9473-51caf651386d",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    },
+    "s_a685cbc0c015e6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c7fa3de0-a103-4d5d-9f4a-68d12d5dad84",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_dac289caec7b77": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "eb15b55d-8157-4608-96ec-472360e19a25",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_e21ae61f51413c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2e96c15c-63d3-41a7-8702-e4dffad94fb7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_fcf1d23bf40354": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "64ae5ca6-6de8-420f-9489-c0634a645bd7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
