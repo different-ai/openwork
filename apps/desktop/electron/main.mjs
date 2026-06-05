@@ -1528,22 +1528,6 @@ async function writeJsonFileAtomic(outputPath, value) {
   await rename(tempPath, outputPath);
 }
 
-function normalizeDesktopBootstrapConfig(input) {
-  const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
-  if (!baseUrl) {
-    throw new Error("baseUrl is required");
-  }
-
-  const apiBaseUrl =
-    typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
-      ? input.apiBaseUrl.trim()
-      : null;
-  return {
-    baseUrl,
-    apiBaseUrl,
-    requireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN || input?.requireSignin === true,
-  };
-}
 async function getDesktopBootstrapConfig() {
   const errors = [];
   for (const candidate of desktopBootstrapCandidates()) {
