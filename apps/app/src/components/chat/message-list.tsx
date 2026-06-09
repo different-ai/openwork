@@ -85,7 +85,35 @@ interface ToolMessageProps {
   part: ToolUIPart | DynamicToolUIPart
 }
 
-const ToolMessage = ({ part }: ToolMessageProps) => {
+/**
+ * Error boundary around tool-part rendering. Tool inputs from streamed or
+ * interrupted runs can violate their type contracts (partial/undefined
+ * input); without this boundary a single bad part unmounts the entire app
+ * (white screen). Seen in production on v0.15.3 via a todowrite part with
+ * missing input.todos.
+ */
+class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("[tool-part] render failed", error)
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="text-xs text-muted-foreground">Tool step unavailable</div>
+      )
+    }
+    return <ToolMessageInner part={this.props.part} />
+  }
+}
+
+const ToolMessageInner = ({ part }: ToolMessageProps) => {
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
   }

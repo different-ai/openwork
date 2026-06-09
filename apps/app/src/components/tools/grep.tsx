@@ -9,7 +9,7 @@ interface GrepToolProps {
 }
 
 function getGrepToolTitle(part: GrepToolPart): string | null {
-  const pattern = part.input.pattern.trim()
+  const pattern = part.input?.pattern?.trim() ?? ""
 
   if (part.state === "output-error") {
     return pattern
@@ -25,7 +25,7 @@ function getGrepToolTitle(part: GrepToolPart): string | null {
 }
 
 function getGrepToolDetail(part: GrepToolPart): string | undefined {
-  const root = part.input.path?.trim()
+  const root = part.input?.path?.trim()
   if (!root) {
     return undefined
   }
