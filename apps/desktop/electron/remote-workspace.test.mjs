@@ -2,6 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  discoverOpenworkWorkspace,
+  fetchOpenworkWorkspaceList,
+  openworkWorkspaceDiscoveryHeaders,
   openworkWorkspaceDisplayName,
   selectOpenworkWorkspaceForConnection,
 } from "./remote-workspace.mjs";
@@ -97,5 +100,47 @@ describe("openworkWorkspaceDisplayName", () => {
       }),
       "Demo",
     );
+  });
+});
+
+describe("OpenWork workspace discovery client", () => {
+  it("builds normal discovery headers with bearer auth only", () => {
+    const headers = openworkWorkspaceDiscoveryHeaders("remote-client-token");
+
+    assert.equal(headers.get("Authorization"), "Bearer remote-client-token");
+    assert.equal(headers.has("X-OpenWork-Host-Token"), false);
+  });
+
+  it("does not forward host tokens to /workspaces even when stored", async () => {
+    const requests = [];
+    const discovered = await discoverOpenworkWorkspace({
+      hostUrl: "https://worker.example.test",
+      token: "remote-client-token",
+      hostToken: "remote-host-token",
+      directory: "/workspace/project",
+      fetchImpl: async (url, init) => {
+        requests.push({ url, headers: init.headers });
+        return Response.json({
+          items: [{ id: "ws_project", name: "Project", path: "/workspace/project" }],
+        });
+      },
+    });
+
+    assert.equal(discovered?.id, "ws_project");
+    assert.equal(requests[0].url, "https://worker.example.test/workspaces");
+    assert.equal(requests[0].headers.get("Authorization"), "Bearer remote-client-token");
+    assert.equal(requests[0].headers.has("X-OpenWork-Host-Token"), false);
+  });
+
+  it("uses the normal client path for workspace list fetches", async () => {
+    const list = await fetchOpenworkWorkspaceList("https://worker.example.test/", "remote-client-token", {
+      fetchImpl: async (_url, init) => {
+        assert.equal(init.headers.get("Authorization"), "Bearer remote-client-token");
+        assert.equal(init.headers.get("X-OpenWork-Host-Token"), null);
+        return Response.json({ items: [] });
+      },
+    });
+
+    assert.deepEqual(list, { items: [] });
   });
 });

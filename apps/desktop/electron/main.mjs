@@ -26,9 +26,10 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import { parseOpencodeConfig } from "./opencode-config-json.mjs";
 import {
+  discoverOpenworkWorkspace,
   openworkWorkspaceDisplayName,
-  selectOpenworkWorkspaceForConnection,
 } from "./remote-workspace.mjs";
+import { desktopFetch } from "./desktop-fetch.mjs";
 import {
   defaultDesktopBootstrapConfig,
   desktopBootstrapCandidates,
@@ -1737,32 +1738,6 @@ function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
   return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
 }
 
-async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
-  const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  const headers = new Headers();
-  const bearerToken = String(token ?? "").trim();
-  const hostAuthToken = String(hostToken ?? "").trim();
-  if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
-  if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
-
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
-  const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
-  return selectOpenworkWorkspaceForConnection(list, directory);
-}
-
 async function readWorkspaceOpenworkConfig(workspacePath) {
   const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
   if (!(await pathExists(openworkPath))) {
@@ -2442,7 +2417,6 @@ async function handleDesktopInvoke(event, command, ...args) {
         const discovered = await discoverOpenworkWorkspace({
           hostUrl: openworkHostUrl ?? baseUrl,
           token: input.openworkToken,
-          hostToken: input.openworkHostToken,
           directory,
         });
         if (!discovered?.id) {
@@ -2520,7 +2494,6 @@ async function handleDesktopInvoke(event, command, ...args) {
             const discovered = await discoverOpenworkWorkspace({
               hostUrl: hostUrl ?? nextBaseUrl,
               token: nextWorkspace.openworkToken,
-              hostToken: nextWorkspace.openworkHostToken,
               directory,
             });
             if (!discovered?.id) {
@@ -2902,33 +2875,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       return undefined;
     }
     case "__fetch": {
-      const url = String(args[0] ?? "").trim();
-      const init = args[1] ?? {};
-      if (!url) throw new Error("URL is required.");
-      const timeoutMs = Number(init.timeoutMs);
-      const signal = Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)))
-        : undefined;
-      let response;
-      try {
-        response = await fetch(url, {
-          method: typeof init.method === "string" ? init.method : undefined,
-          headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-          body: typeof init.body === "string" ? init.body : undefined,
-          signal,
-        });
-      } catch (error) {
-        if (signal?.aborted) {
-          throw new Error(`Fetch timed out after ${Math.max(1, Math.floor(timeoutMs))}ms`);
-        }
-        throw error;
-      }
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
-      };
+      return desktopFetch(args[0], args[1]);
     }
     case "__homeDir":
       return os.homedir();

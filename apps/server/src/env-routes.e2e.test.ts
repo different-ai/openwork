@@ -113,6 +113,16 @@ describe("env routes", () => {
     const clientRoute = await fetch(`${base}/workspaces`, { headers: hostAuth() });
     expect(clientRoute.status).toBe(401);
 
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "viewer", label: "workspace discovery viewer" }),
+    });
+    expect(issued.status).toBe(201);
+    const body = (await issued.json()) as { token: string };
+    const bearerRoute = await fetch(`${base}/workspaces`, { headers: { authorization: `Bearer ${body.token}` } });
+    expect(bearerRoute.status).toBe(200);
+
     const hostOnlyRoute = await fetch(`${base}/env/keys`, { headers: hostAuth() });
     expect(hostOnlyRoute.status).toBe(200);
     expect(await hostOnlyRoute.json()).toEqual({ keys: [] });
