@@ -488,6 +488,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
   const pollMcpServersAfterReloadRef = useRef<(() => void | Promise<void>) | null>(null);
+  const createRemoteWorkspaceFlowRef = useRef<
+    | ((input: {
+        openworkHostUrl?: string | null;
+        openworkToken?: string | null;
+        directory?: string | null;
+        displayName?: string | null;
+      }) => Promise<boolean>)
+    | null
+  >(null);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
   const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
@@ -711,7 +720,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             return false;
           }
         },
-        createRemoteWorkspaceFlow: async () => false,
+        createRemoteWorkspaceFlow: async (input) =>
+          createRemoteWorkspaceFlowRef.current ? createRemoteWorkspaceFlowRef.current(input) : false,
       }),
     [],
   );
@@ -2004,6 +2014,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setCreateWorkspaceRemoteBusy(false);
     }
   };
+  createRemoteWorkspaceFlowRef.current = handleCreateRemoteWorkspace;
 
   const handleReconnectMessagingServer = useCallback(async () => {
     const ok = await openworkServerStore.reconnectOpenworkServer();
@@ -2267,7 +2278,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "cloud-workers":
         return (
           <CloudWorkersView
-            connectRemoteWorkspace={async () => false}
+            connectRemoteWorkspace={handleCreateRemoteWorkspace}
             onOpenAccount={openCloudAccountSettings}
           />
         );
