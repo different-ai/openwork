@@ -146,10 +146,13 @@ async function getExistingSignupAutoWorkerResponse(input: {
   const instance = await getLatestWorkerInstance(existingWorker.id)
   const tokensAndConnect = await getWorkerTokensAndConnect(existingWorker)
   const tokens = "tokens" in tokensAndConnect ? tokensAndConnect.tokens : undefined
+  if (!tokens) {
+    return null
+  }
 
   return {
     worker: toWorkerResponse(existingWorker, input.userId),
-    ...(tokens ? { tokens } : {}),
+    tokens,
     instance: toInstanceResponse(instance),
     launch: { mode: "existing", pollAfterMs: 0 },
   }
@@ -234,7 +237,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         userId: user.id,
       })
       if (existingSignupAutoWorker) {
-        return c.json(existingSignupAutoWorker)
+        return c.json(existingSignupAutoWorker, 202)
       }
     }
 

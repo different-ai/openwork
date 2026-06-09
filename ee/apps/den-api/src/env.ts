@@ -300,6 +300,13 @@ export function parseStaticWorkersEnv(input: StaticWorkersEnvInput) {
             })
             continue
           }
+          if (Object.prototype.hasOwnProperty.call(tokenMap, normalizedUrl)) {
+            issues.push({
+              path: "STATIC_WORKER_TOKEN_MAP_JSON",
+              message: `STATIC_WORKER_TOKEN_MAP_JSON contains duplicate key for ${normalizedUrl}`,
+            })
+            continue
+          }
           tokenMap[normalizedUrl] = pair
         }
 
