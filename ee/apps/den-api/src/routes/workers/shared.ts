@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuditEventTable,
   AuthUserTable,
@@ -13,22 +13,38 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
-import { db } from "../../db.js"
+import { db, dbClient } from "../../db.js"
 import { env } from "../../env.js"
 import type { UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
-import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
+import {
+  checkStaticWorkerHealth,
+  deprovisionWorker,
+  getStaticWorkerTokenPairForUrl,
+  normalizeStaticWorkerUrl,
+  provisionWorker,
+  selectStaticWorkerUrlFromPool,
+  verifyStaticWorkerRuntimeAccess,
+} from "../../workers/provisioner.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 
 export const createWorkerSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   destination: z.enum(["local", "cloud"]),
+  source: z.enum(["manual", "signup_auto"]).optional(),
   workspacePath: z.string().optional(),
   sandboxBackend: z.string().optional(),
   imageVersion: z.string().optional(),
 })
+
+export function shouldUseSignupAutoExistingWorker(input: {
+  destination: "local" | "cloud"
+  source?: "manual" | "signup_auto"
+}) {
+  return input.destination === "cloud" && input.source === "signup_auto"
+}
 
 export const updateWorkerSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -56,6 +72,14 @@ type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 export type WorkerId = WorkerRow["id"]
 type OrgId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
+type StaticAssignmentDb = Pick<typeof db, "execute" | "insert" | "select" | "update">
+type MySqlLockConnection = {
+  query: (statement: string, values?: unknown[]) => Promise<unknown>
+  release: () => void
+}
+type MySqlLockPool = {
+  getConnection: () => Promise<MySqlLockConnection>
+}
 
 export const token = () => randomBytes(32).toString("hex")
 
@@ -74,6 +98,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeUrl(value: string): string {
   return value.trim().replace(/\/+$/, "")
 }
+
+const STATIC_PROVISIONING_LOCK_NAME = "den_static_provisioner_assignment"
 
 function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openworkUrl: string } | null {
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
@@ -284,6 +310,180 @@ export async function getLatestWorkerInstance(workerId: WorkerId) {
   return rows[0] ?? null
 }
 
+async function getUnavailableStaticWorkerUrls() {
+  if (env.provisionerMode !== "static") {
+    return []
+  }
+
+  const rows = await db
+    .select({ url: WorkerInstanceTable.url })
+    .from(WorkerInstanceTable)
+    .where(
+      and(
+        eq(WorkerInstanceTable.provider, "static"),
+        inArray(WorkerInstanceTable.status, ["provisioning", "healthy"]),
+      ),
+    )
+
+  return rows.map((row) => normalizeUrl(row.url)).filter(Boolean)
+}
+
+function staticReservationStaleBefore() {
+  return new Date(Date.now() - env.staticWorkers.reservationTtlMs)
+}
+
+async function markStaleStaticReservationsFailed(tx: StaticAssignmentDb) {
+  await tx
+    .update(WorkerInstanceTable)
+    .set({ status: "failed" })
+    .where(
+      and(
+        eq(WorkerInstanceTable.provider, "static"),
+        eq(WorkerInstanceTable.status, "provisioning"),
+        sql`${WorkerInstanceTable.updated_at} < ${staticReservationStaleBefore()}`,
+      ),
+    )
+}
+
+export function readMySqlLockAcquired(result: unknown) {
+  const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result
+  if (!Array.isArray(rows)) {
+    return 0
+  }
+  const first = rows[0]
+  if (first && typeof first === "object" && "acquired" in first) {
+    return Number((first as { acquired: unknown }).acquired)
+  }
+  return 0
+}
+
+function getMySqlLockPool(): MySqlLockPool {
+  if (dbClient && typeof dbClient === "object" && "getConnection" in dbClient && typeof dbClient.getConnection === "function") {
+    return dbClient as MySqlLockPool
+  }
+  throw new Error("Static worker assignment locking requires MySQL DB_MODE")
+}
+
+export async function withStaticAssignmentLockUsing<T>(input: {
+  pool: MySqlLockPool
+  transaction: (run: (tx: StaticAssignmentDb) => Promise<T>) => Promise<T>
+  run: (tx: StaticAssignmentDb) => Promise<T>
+}) {
+  const connection = await input.pool.getConnection()
+  let lockAcquired = false
+
+  try {
+    const lockRows = await connection.query(`SELECT GET_LOCK(?, 10) AS acquired`, [STATIC_PROVISIONING_LOCK_NAME])
+    const acquired = readMySqlLockAcquired(lockRows)
+
+    if (acquired !== 1) {
+      throw new Error("Timed out waiting for static worker assignment lock")
+    }
+
+    lockAcquired = true
+    return await input.transaction(input.run)
+  } finally {
+    if (lockAcquired) {
+      await connection.query(`SELECT RELEASE_LOCK(?)`, [STATIC_PROVISIONING_LOCK_NAME])
+    }
+    connection.release()
+  }
+}
+
+export async function withStaticAssignmentLock<T>(run: (tx: StaticAssignmentDb) => Promise<T>) {
+  return withStaticAssignmentLockUsing({
+    pool: getMySqlLockPool(),
+    transaction: (callback) => db.transaction(callback),
+    run,
+  })
+}
+
+async function reserveStaticWorkerInstance(input: {
+  workerId: WorkerId
+}) {
+  return withStaticAssignmentLock(async (tx) => {
+    await markStaleStaticReservationsFailed(tx)
+
+    const rows = await tx
+      .select({ url: WorkerInstanceTable.url })
+      .from(WorkerInstanceTable)
+      .where(
+        and(
+          eq(WorkerInstanceTable.provider, "static"),
+          inArray(WorkerInstanceTable.status, ["provisioning", "healthy"]),
+        ),
+      )
+
+    const url = normalizeStaticWorkerUrl(selectStaticWorkerUrlFromPool(input.workerId, {
+      ...env.staticWorkers,
+      unavailableUrls: rows.map((row) => row.url),
+    }))
+    const tokens = getStaticWorkerTokenPairForUrl(url, env.staticWorkers)
+    const instanceId = createDenTypeId("workerInstance")
+
+    await tx.insert(WorkerInstanceTable).values({
+      id: instanceId,
+      worker_id: input.workerId,
+      provider: "static",
+      region: "on-prem",
+      url,
+      status: "provisioning",
+    })
+
+    await tx
+      .update(WorkerTokenTable)
+      .set({ token: tokens.hostToken })
+      .where(and(eq(WorkerTokenTable.worker_id, input.workerId), eq(WorkerTokenTable.scope, "host")))
+
+    await tx
+      .update(WorkerTokenTable)
+      .set({ token: tokens.clientToken })
+      .where(and(eq(WorkerTokenTable.worker_id, input.workerId), eq(WorkerTokenTable.scope, "client")))
+
+    return { instanceId, url, tokens }
+  })
+}
+
+async function continueStaticCloudProvisioning(input: {
+  workerId: WorkerId
+  name: string
+  hostToken: string
+  clientToken: string
+  activityToken: string
+}) {
+  const reservation = await reserveStaticWorkerInstance({ workerId: input.workerId })
+
+  try {
+    await checkStaticWorkerHealth(reservation.url, env.staticWorkers)
+    await verifyStaticWorkerRuntimeAccess(reservation.url, reservation.tokens, env.staticWorkers)
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(WorkerTable)
+        .set({ status: "healthy" })
+        .where(eq(WorkerTable.id, input.workerId))
+
+      await tx
+        .update(WorkerInstanceTable)
+        .set({ status: "healthy" })
+        .where(eq(WorkerInstanceTable.id, reservation.instanceId))
+    })
+  } catch (error) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(WorkerTable)
+        .set({ status: "failed" })
+        .where(eq(WorkerTable.id, input.workerId))
+
+      await tx
+        .update(WorkerInstanceTable)
+        .set({ status: "failed" })
+        .where(eq(WorkerInstanceTable.id, reservation.instanceId))
+    })
+    throw error
+  }
+}
+
 export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   if (!instance) {
     return null
@@ -327,12 +527,18 @@ export async function continueCloudProvisioning(input: {
   activityToken: string
 }) {
   try {
+    if (env.provisionerMode === "static") {
+      await continueStaticCloudProvisioning(input)
+      return
+    }
+
     const provisioned = await provisionWorker({
       workerId: input.workerId,
       name: input.name,
       hostToken: input.hostToken,
       clientToken: input.clientToken,
       activityToken: input.activityToken,
+      unavailableStaticWorkerUrls: await getUnavailableStaticWorkerUrls(),
     })
 
     await db

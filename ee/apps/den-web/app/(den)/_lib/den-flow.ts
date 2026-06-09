@@ -148,6 +148,8 @@ export type OnboardingIntent = {
   authMethod: AuthMethod;
 };
 
+export type OnboardingAutoLaunchDecision = "idle" | "wait" | "complete_existing" | "launch";
+
 type PosthogClient = {
   capture?: (eventName: string, properties?: Record<string, unknown>) => void;
   identify?: (distinctId?: string, properties?: Record<string, unknown>) => void;
@@ -251,6 +253,40 @@ export function deriveOnboardingWorkerName(user: AuthUser): string {
   const owner = base || DEFAULT_WORKER_NAME;
   const suffix = owner.endsWith("s") ? "' Worker" : "'s Worker";
   return normalizeWorkerName(`${owner}${suffix}`);
+}
+
+export function getOnboardingAutoLaunchDecision(input: {
+  userId: string | null;
+  activeOrganizationId: string | null;
+  onboardingIntent: OnboardingIntent | null;
+  billingSummary: BillingSummary | null;
+  workersLoadedOnce: boolean;
+  ownedWorkerCount: number;
+  launchBusy: boolean;
+  currentAutoLaunchKey: string | null;
+}): OnboardingAutoLaunchDecision {
+  if (!input.userId || !input.onboardingIntent?.shouldLaunch || input.onboardingIntent.completed) {
+    return "idle";
+  }
+
+  if (!input.activeOrganizationId || !input.billingSummary || !input.workersLoadedOnce) {
+    return "wait";
+  }
+
+  if (input.ownedWorkerCount > 0) {
+    return "complete_existing";
+  }
+
+  if (input.billingSummary.featureGateEnabled && !input.billingSummary.hasActivePlan) {
+    return "wait";
+  }
+
+  if (input.launchBusy) {
+    return "wait";
+  }
+
+  const autoLaunchKey = `${input.activeOrganizationId}:${input.onboardingIntent.workerName || DEFAULT_WORKER_NAME}`;
+  return input.currentAutoLaunchKey === autoLaunchKey ? "wait" : "launch";
 }
 
 export function getSocialCallbackUrl(): string {

@@ -31,6 +31,7 @@ import {
   getBillingSummary,
   getEmailDomain,
   getErrorMessage,
+  getOnboardingAutoLaunchDecision,
   getOrgLimitError,
   getRuntimeServiceLabel,
   getSocialCallbackUrl,
@@ -215,6 +216,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
+  const [activeOrganizationId, setActiveOrganizationId] = useState<string | null>(null);
 
   const [onboardingIntent, setOnboardingIntent] = useState<OnboardingIntent | null>(null);
   const onboardingAutoLaunchKeyRef = useRef<string | null>(null);
@@ -906,6 +908,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", headers }, 12000);
     if (!response.ok) {
+      setActiveOrganizationId(null);
       return {
         orgs: [],
         activeOrgId: null,
@@ -913,7 +916,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    return parseOrgListPayload(payload);
+    const orgDirectory = parseOrgListPayload(payload);
+    setActiveOrganizationId(orgDirectory.activeOrgId ?? orgDirectory.orgs[0]?.id ?? null);
+    return orgDirectory;
   }
 
   async function resolveDashboardRoute() {
@@ -1189,6 +1194,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setBillingSummary(null);
     setBillingError(null);
     setOrgLimitError(null);
+    setActiveOrganizationId(null);
     setBillingBusy(false);
     setBillingLoadedOnce(false);
     setTokenFetchedForWorkerId(null);
@@ -1724,6 +1730,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) {
+      setActiveOrganizationId(null);
       setWorkers([]);
       setWorkersLoadedOnce(false);
       setWorkersError(null);
@@ -1917,36 +1924,35 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [desktopAuthRequested, user?.id, authToken, desktopRedirectUrl, desktopRedirectBusy, desktopRedirectAttempted, desktopAuthScheme]);
 
   useEffect(() => {
-    if (!user || !onboardingPending) {
+    const decision = getOnboardingAutoLaunchDecision({
+      userId: user?.id ?? null,
+      activeOrganizationId,
+      onboardingIntent,
+      billingSummary,
+      workersLoadedOnce,
+      ownedWorkerCount,
+      launchBusy,
+      currentAutoLaunchKey: onboardingAutoLaunchKeyRef.current,
+    });
+
+    if (decision === "idle") {
       onboardingAutoLaunchKeyRef.current = null;
       return;
     }
 
-    if (!billingSummary) {
-      return;
-    }
-
-    if (billingSummary.featureGateEnabled && !billingSummary.hasActivePlan) {
-      return;
-    }
-
-    if (ownedWorkerCount > 0) {
+    if (decision === "complete_existing") {
       markOnboardingComplete();
       return;
     }
 
-    if (launchBusy) {
+    if (decision !== "launch" || !user || !onboardingIntent) {
       return;
     }
 
-    const autoLaunchKey = `${user.id}:${onboardingIntent?.workerName ?? DEFAULT_WORKER_NAME}`;
-    if (onboardingAutoLaunchKeyRef.current === autoLaunchKey) {
-      return;
-    }
-
+    const autoLaunchKey = `${activeOrganizationId}:${onboardingIntent.workerName || DEFAULT_WORKER_NAME}`;
     onboardingAutoLaunchKeyRef.current = autoLaunchKey;
-    markOnboardingComplete();
-  }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
+    void launchWorker({ source: "signup_auto", workerNameOverride: onboardingIntent.workerName });
+  }, [activeOrganizationId, billingSummary, launchBusy, onboardingIntent, onboardingPending, ownedWorkerCount, user?.id, workersLoadedOnce]);
 
   useEffect(() => {
     if (!user) {

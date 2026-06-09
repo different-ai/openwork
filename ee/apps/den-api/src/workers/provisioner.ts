@@ -27,6 +27,11 @@ export type ProvisionedInstance = {
   region?: string
 }
 
+export type StaticWorkerTokenPair = {
+  clientToken: string
+  hostToken: string
+}
+
 export type StaticWorkerConfig = {
   urls: string[]
   healthPath: string
@@ -34,6 +39,7 @@ export type StaticWorkerConfig = {
   healthcheckIntervalMs: number
   reservationTtlMs?: number
   unavailableUrls?: string[]
+  tokenMap?: Record<string, StaticWorkerTokenPair>
 }
 
 type StaticWorkerReservation = {
@@ -203,6 +209,47 @@ function safeNormalizeWorkerUrl(value: string) {
   }
 }
 
+export function getStaticWorkerTokenPairForUrl(url: string, config: StaticWorkerConfig) {
+  const normalizedUrl = normalizeStaticWorkerUrl(url)
+  const pair = config.tokenMap?.[normalizedUrl]
+  if (!pair?.clientToken.trim() || !pair.hostToken.trim()) {
+    throw new Error(`STATIC_WORKER_TOKEN_MAP_JSON is missing token pair for ${normalizedUrl}`)
+  }
+  return {
+    clientToken: pair.clientToken.trim(),
+    hostToken: pair.hostToken.trim(),
+  }
+}
+
+async function fetchStaticWorkerRuntime(url: string, path: string, headers: Record<string, string>, timeoutMs: number) {
+  return fetch(`${url.replace(/\/$/, "")}${path}`, {
+    method: "GET",
+    redirect: "manual",
+    headers: { Accept: "application/json", ...headers },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+}
+
+export async function verifyStaticWorkerRuntimeAccess(
+  url: string,
+  tokens: StaticWorkerTokenPair,
+  config: Pick<StaticWorkerConfig, "healthcheckTimeoutMs">,
+) {
+  const clientResponse = await fetchStaticWorkerRuntime(url, "/workspaces", {
+    Authorization: `Bearer ${tokens.clientToken}`,
+  }, config.healthcheckTimeoutMs)
+  if (!clientResponse.ok) {
+    throw new Error(`Worker rejected configured static client token with HTTP ${clientResponse.status}`)
+  }
+
+  const hostResponse = await fetchStaticWorkerRuntime(url, "/env/keys", {
+    "X-OpenWork-Host-Token": tokens.hostToken,
+  }, config.healthcheckTimeoutMs)
+  if (!hostResponse.ok) {
+    throw new Error(`Worker rejected configured static host token with HTTP ${hostResponse.status}`)
+  }
+}
+
 function pruneExpiredStaticWorkerReservations(now = Date.now()) {
   for (const [url, reservation] of staticWorkerReservations) {
     if (reservation.expiresAt <= now) {
@@ -268,7 +315,7 @@ function reserveStaticWorkerUrl(workerId: string, url: string, ttlMs: number) {
   })
 }
 
-function releaseStaticWorkerUrl(workerId: string, url: string) {
+export function releaseStaticWorkerUrl(workerId: string, url: string) {
   const reservation = staticWorkerReservations.get(url)
   if (reservation?.workerId === workerId) {
     staticWorkerReservations.delete(url)
@@ -293,6 +340,10 @@ export async function provisionStaticWorker(
       config.healthcheckIntervalMs,
       config.healthPath,
     )
+    const tokens = config.tokenMap?.[url]
+    if (tokens) {
+      await verifyStaticWorkerRuntimeAccess(url, tokens, config)
+    }
   } catch (error) {
     releaseStaticWorkerUrl(input.workerId, url)
     throw error
