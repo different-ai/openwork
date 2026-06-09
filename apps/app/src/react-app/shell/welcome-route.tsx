@@ -28,6 +28,7 @@ import { buildDenAuthUrl, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
+import { useDenAuth } from "../domains/cloud/den-auth-provider";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -109,15 +110,21 @@ export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
   const platform = usePlatform();
+  const denAuth = useDenAuth();
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
   const [manualFolder, setManualFolder] = useState("");
 
-  // If user already completed onboarding, redirect away immediately.
+  // Cloud-signed-in users should continue through org onboarding rather than
+  // the local workspace welcome flow.
   useEffect(() => {
+    if (denAuth.isSignedIn) {
+      navigate("/onboarding", { replace: true });
+      return;
+    }
     if (local.prefs.hasCompletedOnboarding) {
       navigate("/session", { replace: true });
     }
-  }, [local.prefs.hasCompletedOnboarding, navigate]);
+  }, [denAuth.isSignedIn, local.prefs.hasCompletedOnboarding, navigate]);
 
   const markOnboardingComplete = useCallback(() => {
     local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));

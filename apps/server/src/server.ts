@@ -4770,9 +4770,17 @@ async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
+  if (workspace.remoteType === "openwork" && (isWindowsDirectory(explicit) || isWindowsDirectory(workspace.path))) {
+    return null;
+  }
   if (explicit) return normalizeOpencodeDirectory(explicit);
   if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+function isWindowsDirectory(directory: string | undefined): boolean {
+  const value = directory?.trim() ?? "";
+  return /^[a-z]:[\\/]/i.test(value) || value.startsWith("\\\\") || value.startsWith("//");
 }
 
 function normalizeOpencodeDirectory(directory: string): string {

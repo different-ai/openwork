@@ -37,6 +37,7 @@ import {
   writeOpenworkServerSettings,
 } from "@/app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
+import { useLocal } from "../../kernel/local-provider";
 import { useBootState } from "../../shell/boot-state";
 import { writeActiveWorkspaceId } from "../../shell/session-memory";
 import { workspaceSessionRoute } from "../../shell/workspace-routes";
@@ -217,6 +218,7 @@ export function OrgOnboardingPage() {
 export function ResourceSelectionPage() {
   const navigate = useNavigate();
   const platform = usePlatform();
+  const local = useLocal();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
 
@@ -271,8 +273,15 @@ export function ResourceSelectionPage() {
   });
 
   const connectHealthyWorker = useCallback(async () => {
+    if (!orgId) {
+      return null;
+    }
+
     const healthyWorker = workers.find((worker) => worker.status === "healthy") ?? null;
-    if (!healthyWorker || !orgId) {
+    if (!healthyWorker) {
+      if (workers.length > 0) {
+        throw new Error("No healthy cloud worker is attached to this organization yet.");
+      }
       return null;
     }
 
@@ -342,13 +351,14 @@ export function ResourceSelectionPage() {
       }
 
       const workspaceId = await connectHealthyWorker();
+      local.setPrefs((previous) => ({ ...previous, hasCompletedOnboarding: true }));
       navigate(workspaceId ? workspaceSessionRoute(workspaceId) : "/session", { replace: true });
     } catch (error) {
       setContinueError(error instanceof Error ? error.message : "Could not connect the shared worker.");
     } finally {
       setContinueBusy(false);
     }
-  }, [connectHealthyWorker, navigate, providers, selectedDefault]);
+  }, [connectHealthyWorker, local, navigate, providers, selectedDefault]);
 
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
   const hasResources = providers.length > 0 || marketplaces.length > 0 || workers.length > 0;

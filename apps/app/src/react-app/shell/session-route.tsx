@@ -1424,8 +1424,8 @@ export function SessionRoute() {
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
-    navigate("/welcome", { replace: true });
-  }, [loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+    navigate(denAuth.isSignedIn ? "/onboarding" : "/welcome", { replace: true });
+  }, [denAuth.isSignedIn, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every
