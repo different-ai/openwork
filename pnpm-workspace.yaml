@@ -24,5 +24,6 @@ allowBuilds:
   electron: true
   esbuild: true
   msw: false
+  node-pty: true
   protobufjs: true
   sharp: true

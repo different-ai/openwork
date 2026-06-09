@@ -91,6 +91,7 @@ export type CommandPaletteProps = {
   onHideAccessibleTarget?: (target: AccessibleTargetOption) => void;
   /** Optional: sessions for the second mode. */
   sessions: SessionOption[];
+  extraItems?: PaletteItem[];
 };
 
 /**
@@ -151,6 +152,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         setMode("accessible-items");
       },
     },
+    ...(props.extraItems ?? []),
     {
       id: "open-settings",
       title: t("settings.tab_general"),
