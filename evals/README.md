@@ -12,6 +12,30 @@ They are not unit tests. They intentionally exercise the running stack
 (OpenCode + OpenWork server + React UI) so regressions in wiring — not just
 types — get caught.
 
+## Coded flows (programmatic runner)
+
+A growing subset of flows is codified under [`flows/`](./flows) and executed by
+the zero-dependency runner in [`runner/`](./runner) with machine-checkable
+assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
+reports with screenshots.
+
+```bash
+pnpm evals --list                 # show available coded flows
+pnpm evals --all                  # run everything runnable
+pnpm evals --flow app-smoke       # run one flow
+pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
+```
+
+The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
+`pnpm dev`) by default. Flows that need cloud credentials declare
+`requiredEnv` and are skipped (not failed) when the env is missing — e.g.
+`cloud-signin-handoff` needs `OPENWORK_EVAL_DEN_API_URL` and
+`OPENWORK_EVAL_DEN_TOKEN`. Reports land in `evals/results/<run-id>/`
+(gitignored). A non-zero exit code means at least one flow failed.
+
+The markdown specs below remain the source narrative; when codifying a flow,
+link the spec via the flow's `spec` field.
+
 ## How to run
 
 ### Option A: On Daytona (recommended)
