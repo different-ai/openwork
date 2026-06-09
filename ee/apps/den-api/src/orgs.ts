@@ -326,7 +326,7 @@ async function getInvitationById(invitationIdRaw: string) {
 async function findActiveMemberForUser(input: {
   organizationId: OrgId
   userId: UserId
-}) {
+}): Promise<MemberRow | null> {
   const rows = await db
     .select()
     .from(MemberTable)
@@ -340,7 +340,7 @@ async function claimInvitationPlaceholderMember(input: {
   invitation: InvitationRow
   userId: UserId
   role: string
-}) {
+}): Promise<MemberRow | null> {
   const placeholderRows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
