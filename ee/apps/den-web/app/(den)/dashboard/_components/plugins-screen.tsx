@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import {
   Cable,
   FileText,
+  Plus,
   Puzzle,
   Search,
   Server,
@@ -18,7 +19,7 @@ import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants } from "../../_components/ui/button";
-import { getIntegrationsRoute, getPluginRoute } from "../../_lib/den-org";
+import { getIntegrationsRoute, getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
@@ -186,6 +187,10 @@ export function PluginsScreen() {
             />
           </div>
         </div>
+        <Link href={getNewPluginRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
+          <Plus size={15} />
+          Create plugin
+        </Link>
       </div>
 
       {error ? (
