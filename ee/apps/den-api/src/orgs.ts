@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthAccountTable,
@@ -295,21 +295,115 @@ function getInvitationStatus(invitation: Pick<InvitationRow, "status" | "expires
   return invitation.expiresAt > new Date() ? "pending" : "expired"
 }
 
-async function getInvitationById(invitationIdRaw: string) {
-  let invitationId
+export function parseInvitationLookupIdentifier(invitationIdOrTokenRaw: string) {
+  const invitationIdOrToken = invitationIdOrTokenRaw.trim()
+  let invitationId: InvitationRow["id"] | null = null
   try {
-    invitationId = normalizeDenTypeId("invitation", invitationIdRaw)
-  } catch {
-    return null
-  }
+    invitationId = normalizeDenTypeId("invitation", invitationIdOrToken)
+  } catch {}
 
+  return { invitationId, inviteToken: invitationIdOrToken }
+}
+
+function getInvitationLookupWhere(invitationIdOrTokenRaw: string) {
+  const { invitationId, inviteToken } = parseInvitationLookupIdentifier(invitationIdOrTokenRaw)
+
+  return invitationId
+    ? or(eq(InvitationTable.id, invitationId), eq(InvitationTable.inviteToken, inviteToken))
+    : eq(InvitationTable.inviteToken, inviteToken)
+}
+
+async function getInvitationById(invitationIdRaw: string) {
   const rows = await db
     .select()
     .from(InvitationTable)
-    .where(eq(InvitationTable.id, invitationId))
+    .where(getInvitationLookupWhere(invitationIdRaw))
     .limit(1)
 
   return rows[0] ?? null
+}
+
+async function findActiveMemberForUser(input: {
+  organizationId: OrgId
+  userId: UserId
+}) {
+  const rows = await db
+    .select()
+    .from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+async function claimInvitationPlaceholderMember(input: {
+  invitation: InvitationRow
+  userId: UserId
+  role: string
+}) {
+  const placeholderRows = await db
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.organizationId, input.invitation.organizationId),
+      eq(MemberTable.inviteId, input.invitation.id),
+      isNull(MemberTable.userId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+
+  const placeholder = placeholderRows[0]
+  if (!placeholder) {
+    return null
+  }
+
+  await db
+    .update(MemberTable)
+    .set({ userId: input.userId, role: input.role, joinedAt: new Date() })
+    .where(eq(MemberTable.id, placeholder.id))
+
+  const claimedRows = await db
+    .select()
+    .from(MemberTable)
+    .where(eq(MemberTable.id, placeholder.id))
+    .limit(1)
+
+  return claimedRows[0] ?? null
+}
+
+async function ensureInvitationTeamMembership(input: {
+  invitation: InvitationRow
+  memberId: MemberId
+}) {
+  if (!input.invitation.teamId) {
+    return
+  }
+
+  const teams = await db
+    .select({ id: TeamTable.id })
+    .from(TeamTable)
+    .where(eq(TeamTable.id, input.invitation.teamId))
+    .limit(1)
+
+  if (!teams[0]) {
+    return
+  }
+
+  const existingTeamMember = await db
+    .select({ id: TeamMemberTable.id })
+    .from(TeamMemberTable)
+    .where(and(eq(TeamMemberTable.teamId, input.invitation.teamId), eq(TeamMemberTable.orgMembershipId, input.memberId)))
+    .limit(1)
+
+  if (existingTeamMember[0]) {
+    return
+  }
+
+  await db.insert(TeamMemberTable).values({
+    id: createDenTypeId("teamMember"),
+    teamId: input.invitation.teamId,
+    orgMembershipId: input.memberId,
+  })
 }
 
 async function ensureDefaultDynamicRoles(orgId: OrgId) {
@@ -435,7 +529,7 @@ export async function ensureEntraSsoMembershipForAccount(input: {
   idToken?: string | null
 }) {
   const idToken = input.idToken ?? await latestMicrosoftIdTokenForUser(input.userId)
-  return ensureEntraSsoMembership({
+  const result = await ensureEntraSsoMembership({
     userId: input.userId,
     providerId: input.providerId,
     idToken,
@@ -476,48 +570,46 @@ export async function ensureEntraSsoMembershipForAccount(input: {
       isOwnerRole: roleIncludesOwner,
     },
   })
+
+  if (result.status === "created") {
+    await runPostOrganizationMemberChangeHooks({
+      organizationId: result.member.organizationId,
+      memberId: result.member.id,
+      change: "added",
+    })
+  }
+
+  return result
 }
 
 async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
   const availableRoles = await listAssignableRoles(invitation.organizationId)
   const role = normalizeAssignableRole(invitation.role, availableRoles)
 
-  const member = await insertMemberIfMissing({
-    organizationId: invitation.organizationId,
-    userId,
-    role,
-  })
+  let createdMember = false
+  let member = await findActiveMemberForUser({ organizationId: invitation.organizationId, userId })
 
-  if (invitation.teamId) {
-    const teams = await db
-      .select({ id: TeamTable.id })
-      .from(TeamTable)
-      .where(eq(TeamTable.id, invitation.teamId))
-      .limit(1)
-
-    if (teams[0]) {
-      const existingTeamMember = await db
-        .select({ id: TeamMemberTable.id })
-        .from(TeamMemberTable)
-        .where(and(eq(TeamMemberTable.teamId, invitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
-        .limit(1)
-
-      if (!existingTeamMember[0]) {
-        await db.insert(TeamMemberTable).values({
-          id: createDenTypeId("teamMember"),
-          teamId: invitation.teamId,
-          orgMembershipId: member.id,
-        })
-      }
-    }
+  if (!member) {
+    member = await claimInvitationPlaceholderMember({ invitation, userId, role })
   }
+
+  if (!member) {
+    member = await insertMemberIfMissing({
+      organizationId: invitation.organizationId,
+      userId,
+      role,
+    })
+    createdMember = true
+  }
+
+  await ensureInvitationTeamMembership({ invitation, memberId: member.id })
 
   await db
     .update(InvitationTable)
     .set({ status: "accepted" })
     .where(eq(InvitationTable.id, invitation.id))
 
-  return member
+  return { member, createdMember }
 }
 
 export async function acceptInvitationForUser(input: {
@@ -554,22 +646,17 @@ export async function acceptInvitationForUser(input: {
     throw new OrganizationEmailDomainRestrictionError(input.email, allowedEmailDomains ?? [])
   }
 
-  const member = await acceptInvitation(invitation, input.userId)
-  await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: member.id, change: "added" })
+  const accepted = await acceptInvitation(invitation, input.userId)
+  if (accepted.createdMember) {
+    await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: accepted.member.id, change: "added" })
+  }
   return {
     invitation,
-    member,
+    member: accepted.member,
   }
 }
 
 export async function getInvitationPreview(invitationIdRaw: string): Promise<InvitationPreview | null> {
-  let invitationId
-  try {
-    invitationId = normalizeDenTypeId("invitation", invitationIdRaw)
-  } catch {
-    return null
-  }
-
   const rows = await db
     .select({
       invitation: {
@@ -589,7 +676,7 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
     })
     .from(InvitationTable)
     .innerJoin(OrganizationTable, eq(InvitationTable.organizationId, OrganizationTable.id))
-    .where(eq(InvitationTable.id, invitationId))
+    .where(getInvitationLookupWhere(invitationIdRaw))
     .limit(1)
 
   const row = rows[0]

@@ -124,6 +124,10 @@ function buildInvitationLink(invitationId: string) {
   ).toString();
 }
 
+export function getSignUpEmailRateLimitMax(devMode = env.devMode) {
+  return devMode ? 100 : 3;
+}
+
 function hasMcpScope(scopes: readonly string[]) {
   return scopes.some((scope) => scope.startsWith("mcp:"));
 }
@@ -248,7 +252,7 @@ export const auth = betterAuth({
       },
       "/sign-up/email": {
         window: 3600,
-        max: 3,
+        max: getSignUpEmailRateLimitMax(),
       },
       "/email-otp/send-verification-otp": {
         window: 3600,
