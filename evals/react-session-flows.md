@@ -448,9 +448,8 @@ Known regressions this catches:
 
 ## Desktop (Tauri) specifics
 
-The same evals run against the Tauri desktop app (`pnpm dev`). Use the shared
-`evals/desktop-runner.md` (companion doc) for the AppleScript + cliclick
-runner. Key differences:
+The same evals run against the desktop app (`pnpm dev`) over CDP — see
+`evals/README.md` for the runner options. Key differences:
 
 - Focus-within reveals the `+` and `…` buttons on every workspace row, not just
   on hover. Clicking the row first (or pressing Tab) ensures they're
