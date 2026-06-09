@@ -595,6 +595,16 @@ export async function googleWorkspaceRunScopeSmokeTest(config: ServerConfig) {
   });
 }
 
+export async function googleWorkspaceSetActiveAccount(config: ServerConfig, accountId: string) {
+  const vault = await readGoogleWorkspaceVault(config);
+  const accounts = googleWorkspaceAccountRecords(vault);
+  const account = accounts.find((entry) => googleWorkspaceAccountId(entry) === accountId);
+  if (!account) throw new ApiError(404, "google_workspace_account_not_found", "Google Workspace account is not connected.");
+  await writeGoogleWorkspaceAccountsVault(config, accounts, accountId);
+  const nextVault = await readGoogleWorkspaceVault(config);
+  return googleWorkspaceStatusPayload(nextVault, { testStatus: "Default Google Workspace account updated." });
+}
+
 export async function googleWorkspaceDisconnect(config: ServerConfig, accountId: string | null = null) {
   const vault = await readGoogleWorkspaceVault(config);
   const accounts = googleWorkspaceAccountRecords(vault);

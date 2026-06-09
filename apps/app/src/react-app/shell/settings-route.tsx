@@ -2232,6 +2232,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
                 builtInConnectingName={connectionsSnapshot.mcpConnectingName}
+                builtInEntries={extensionItems.builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : [])}
                 configSlotForBuiltIn={extensionController.configSlotForEntry}
                 isBuiltInConnected={extensionController.isConnected}
                 extensionItems={extensionItems.items}
@@ -2256,6 +2257,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             enablementContext={enablementContext}
             builtInExtensionsDisabled={builtInExtensionsDisabled}
             builtInConnectingName={connectionsSnapshot.mcpConnectingName}
+            builtInEntries={extensionItems.builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : [])}
             configSlotForBuiltIn={extensionController.configSlotForEntry}
             isBuiltInConnected={extensionController.isConnected}
             extensionItems={extensionItems.items}

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ServerConfig } from "../types.js";
-import { googleWorkspaceDisconnect, googleWorkspaceStatus } from "./google-workspace.js";
+import { googleWorkspaceDisconnect, googleWorkspaceSetActiveAccount, googleWorkspaceStatus } from "./google-workspace.js";
 
 function createTestConfig(): ServerConfig {
   const tempDir = join(
@@ -119,6 +119,23 @@ describe("Google Workspace extension", () => {
     const status = await googleWorkspaceDisconnect(config, "sub-one");
     expect(status.connected).toBe(true);
     expect(status.accounts.map((account) => account.email)).toEqual(["two@example.com"]);
+    expect(status.activeAccountId).toBe("sub-two");
+  });
+
+  test("can update the active account", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one"), accountRecord("two@example.com", "sub-two")],
+    });
+
+    const status = await googleWorkspaceSetActiveAccount(config, "sub-two");
+    expect(status.account?.email).toBe("two@example.com");
+    expect(status.accounts.map((account) => account.email)).toEqual(["one@example.com", "two@example.com"]);
     expect(status.activeAccountId).toBe("sub-two");
   });
 });
