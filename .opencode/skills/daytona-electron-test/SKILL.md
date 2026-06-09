@@ -60,9 +60,10 @@ source every `/daytona-secrets/*.env` file before Electron starts.
 - **Artifacts volume:** use `openwork-eval-artifacts:/daytona-artifacts` for
   screenshots, validation notes, and recordings that survive sandbox deletion.
 
-Validation standard: use `daytona-flow-validator`. Prove behavior with CDP
-assertions first, capture a PNG screenshot at important states for quick
-AI/human review, and record MP4 video for end-to-end PR evidence.
+Validation standard: use `daytona-flow-validator`. Default proof format is
+frame-by-frame HTML — named PNGs in a browseable index served on port 8090.
+Use video only for interactions that need motion (streaming, animations,
+loading states). See `daytona-recording-artifacts` for the frame workflow.
 
 Before sharing screenshot URLs, inspect the saved PNG itself per
 `daytona-flow-validator`. Do not post screenshots that are covered by native
