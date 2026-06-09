@@ -4,6 +4,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type SetStateAction,
 } from "react";
 import { ArrowLeft, FolderPlus, Globe, Loader2 } from "lucide-react";
@@ -32,6 +33,7 @@ import {
   tagClass,
 } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
+import { preflightRemoteWorkspaceConnection } from "./remote-workspace-diagnostics";
 import { RemoteWorkspaceFields } from "./remote-workspace-fields";
 import type {
   CreateWorkspaceModalProps,
@@ -41,6 +43,8 @@ import type {
 
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const remoteUrlRef = useRef<HTMLInputElement | null>(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
 
   const [localState, dispatchLocal] = useReducer(
     createWorkspaceLocalReducer,
@@ -76,6 +80,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const showClose = props.showClose ?? true;
   const submitting = props.submitting ?? false;
   const remoteSubmitting = props.remoteSubmitting ?? false;
+  const remoteBusy = remoteSubmitting || preflightBusy;
   const workerSubmitting = props.workerSubmitting ?? false;
   const progress = props.submittingProgress ?? null;
   const workerDisabled = Boolean(props.workerDisabled);
@@ -89,7 +94,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   );
   const hasSelectedFolder = Boolean(selectedFolder?.trim());
   const localError = (props.localError ?? "").trim() || null;
-  const remoteError = (props.remoteError ?? "").trim() || null;
+  const remoteError = preflightError ?? ((props.remoteError ?? "").trim() || null);
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
     return Math.max(0, Math.floor((now - progress.startedAt) / 1000));
@@ -121,6 +126,8 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   useEffect(() => {
     if (!props.open) return;
     dispatchLocal({ type: "reset" });
+    setPreflightBusy(false);
+    setPreflightError(null);
   }, [props.open]);
 
   // Tick the "elapsed" clock while submitting.
@@ -157,6 +164,17 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
 
   const handleRemoteSubmit = async () => {
     if (!props.onConfirmRemote) return;
+    setPreflightBusy(true);
+    setPreflightError(null);
+    const preflight = await preflightRemoteWorkspaceConnection({
+      hostUrl: remoteUrl,
+      token: remoteToken,
+    });
+    setPreflightBusy(false);
+    if (!preflight.ok) {
+      setPreflightError(preflight.message);
+      return;
+    }
     await Promise.resolve(
       props.onConfirmRemote({
         openworkHostUrl: remoteUrl.trim(),
@@ -187,7 +205,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           {screen !== "chooser" ? (
             <Button
               onClick={() => setScreen("chooser")}
-              disabled={submitting || remoteSubmitting}
+              disabled={submitting || remoteBusy}
               variant="ghost"
               size="icon"
               aria-label={t("dashboard.modal_back")}
@@ -300,7 +318,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                 }
                 displayName={remoteDisplayName}
                 onDisplayNameInput={setRemoteDisplayName}
-                submitting={remoteSubmitting}
+                submitting={remoteBusy}
                 hostInputRef={remoteUrlRef}
                 title={t("dashboard.remote_server_details_title")}
                 description={t("dashboard.remote_server_details_hint")}
@@ -314,17 +332,17 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
               ) : null}
               <div className="flex justify-end gap-3">
                 <DialogClose
-                  disabled={remoteSubmitting}
-                  render={<Button variant="outline" disabled={remoteSubmitting} />}
+                  disabled={remoteBusy}
+                  render={<Button variant="outline" disabled={remoteBusy} />}
                 >
                   {t("common.cancel")}
                 </DialogClose>
                 <Button
                   type="button"
-                  disabled={!remoteUrl.trim() || remoteSubmitting}
+                  disabled={!remoteUrl.trim() || remoteBusy}
                   onClick={() => void handleRemoteSubmit()}
                 >
-                  {remoteSubmitting ? (
+                  {remoteBusy ? (
                     <span className="inline-flex items-center gap-2">
                       <Loader2 size={16} className="animate-spin" />
                       {t("dashboard.connecting")}

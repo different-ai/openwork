@@ -218,6 +218,49 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
   };
 }
 
+export type RemoteWorkspacePreflightResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Quick reachability check before persisting a new remote worker connection.
+ * Unlike `testRemoteWorkspaceConnection`, the token is optional (the connect
+ * form allows token-less servers) and no workspace entry needs to exist yet.
+ */
+export async function preflightRemoteWorkspaceConnection(input: {
+  hostUrl: string;
+  token?: string | null;
+}): Promise<RemoteWorkspacePreflightResult> {
+  const normalized = normalizeOpenworkServerUrl(trim(input.hostUrl));
+  if (!normalized || !isValidHttpEndpoint(normalized)) {
+    return { ok: false, message: "Enter a valid worker URL starting with http:// or https://." };
+  }
+
+  const baseUrl = stripOpenworkWorkspaceMount(normalized);
+  const label = endpointLabel(baseUrl);
+  const token = trim(input.token);
+  const client = createOpenworkServerClient({ baseUrl, token: token || undefined });
+
+  try {
+    const health = await client.health();
+    if (!health?.ok) {
+      return { ok: false, message: `Cannot reach ${label}. The server responded but reported an unhealthy status. Check the URL and try again.` };
+    }
+  } catch (error) {
+    return { ok: false, message: `Cannot reach ${label}. ${describeUnknownError(error)} Check the URL and try again.` };
+  }
+
+  if (token) {
+    try {
+      await client.capabilities();
+    } catch (error) {
+      if (isServerErrorStatus(error, [401, 403])) {
+        return { ok: false, message: `Token was rejected by ${label}. Check the token and try again.` };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
 export async function testRemoteWorkspaceConnection(
   workspace: WorkspaceInfo,
   options: TestOptions = {},
