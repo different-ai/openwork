@@ -1,8 +1,9 @@
 FROM node:22-bookworm-slim
 
+ARG TARGETARCH
 ARG BUN_VERSION=1.3.8
 ARG BUN_DOWNLOAD_URL=
-ARG BUN_LINUX_X64_SHA256=0322b17f0722da76a64298aad498225aedcbf6df1008a1dee45e16ecb226a3f1
+ARG BUN_SHA256=
 
 WORKDIR /repo
 
@@ -14,13 +15,19 @@ RUN apt-get update \
     tar \
     unzip \
   && npm install -g pnpm@11.4.0 \
-  && bun_url="${BUN_DOWNLOAD_URL:-https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip}" \
-  && curl -fsSLo /tmp/bun-linux-x64.zip "$bun_url" \
-  && echo "$BUN_LINUX_X64_SHA256  /tmp/bun-linux-x64.zip" | sha256sum -c - \
-  && unzip -q /tmp/bun-linux-x64.zip -d /tmp \
-  && install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun \
+  && case "${TARGETARCH:-amd64}" in \
+    amd64) bun_artifact=bun-linux-x64.zip; bun_sha=0322b17f0722da76a64298aad498225aedcbf6df1008a1dee45e16ecb226a3f1 ;; \
+    arm64) bun_artifact=bun-linux-aarch64.zip; bun_sha=4e9deb6814a7ec7f68725ddd97d0d7b4065bcda9a850f69d497567e995a7fa33 ;; \
+    *) echo "Unsupported Bun TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+  esac \
+  && bun_url="${BUN_DOWNLOAD_URL:-https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${bun_artifact}}" \
+  && bun_sha="${BUN_SHA256:-$bun_sha}" \
+  && curl -fsSLo "/tmp/${bun_artifact}" "$bun_url" \
+  && echo "$bun_sha  /tmp/${bun_artifact}" | sha256sum -c - \
+  && unzip -q "/tmp/${bun_artifact}" -d /tmp \
+  && install -m 0755 "/tmp/${bun_artifact%.zip}/bun" /usr/local/bin/bun \
   && bun --version | grep -qx "$BUN_VERSION" \
-  && rm -rf /tmp/bun-linux-x64 /tmp/bun-linux-x64.zip \
+  && rm -rf "/tmp/${bun_artifact%.zip}" "/tmp/${bun_artifact}" \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
