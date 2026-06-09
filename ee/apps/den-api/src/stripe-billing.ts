@@ -475,6 +475,10 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
 }
 
 export async function syncInferenceSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
+  if (!env.stripe.secretKey) {
+    return
+  }
+
   const row = await findInferenceSubscriptionByOrg(input.organizationId)
   if (!row || !ACTIVE_STATUSES.has(row.status) || !row.stripe_subscription_item_id) {
     return
@@ -488,6 +492,10 @@ export async function syncInferenceSubscriptionQuantityAfterMemberChange(input: 
 }
 
 export async function syncSeatSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
+  if (!env.stripe.secretKey) {
+    return
+  }
+
   const row = await findSeatSubscriptionByOrg(input.organizationId)
   if (!row || !ACTIVE_STATUSES.has(row.status) || !row.stripe_subscription_item_id) {
     return
