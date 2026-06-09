@@ -2142,6 +2142,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             autoCompactContext={autoCompactContext}
             autoCompactContextBusy={autoCompactContextBusy}
             onToggleAutoCompactContext={toggleAutoCompactContext}
+            analyticsEnabled={local.prefs.analyticsEnabled}
+            onToggleAnalytics={() => {
+              local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
+            }}
           />
         );
       case "shell":

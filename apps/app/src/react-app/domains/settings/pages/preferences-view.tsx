@@ -22,6 +22,8 @@ export type PreferencesViewProps = {
   autoCompactContext: boolean;
   autoCompactContextBusy: boolean;
   onToggleAutoCompactContext: () => void;
+  analyticsEnabled: boolean;
+  onToggleAnalytics: () => void;
 };
 
 export function PreferencesView(props: PreferencesViewProps) {
@@ -60,6 +62,28 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.autoCompactContext}
                 disabled={props.busy || props.autoCompactContextBusy}
                 onCheckedChange={props.onToggleAutoCompactContext}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.privacy_title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.privacy_section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.analytics_toggle")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.analytics_toggle_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label={t("settings.analytics_toggle")}
+                checked={props.analyticsEnabled}
+                disabled={props.busy}
+                onCheckedChange={props.onToggleAnalytics}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

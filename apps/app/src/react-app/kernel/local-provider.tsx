@@ -39,6 +39,11 @@ export type LocalPreferences = {
    * workspace list is empty, the app redirects to /welcome.
    */
   hasCompletedOnboarding: boolean;
+  /**
+   * Anonymous product analytics (PostHog). On by default with a visible
+   * opt-out in Settings -> Preferences. Never includes message content.
+   */
+  analyticsEnabled: boolean;
 };
 
 type LocalContextValue = {
@@ -63,6 +68,7 @@ const INITIAL_PREFS: LocalPreferences = {
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,
+  analyticsEnabled: true,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {

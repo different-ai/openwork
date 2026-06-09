@@ -23,6 +23,7 @@ import {
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { resolveOpenworkConnection } from "./openwork-connection";
+import { captureAnalyticsEvent } from "../../app/lib/analytics";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
@@ -183,6 +184,7 @@ export function WelcomeRoute() {
               { token: serverToken, mode: "openwork" },
             ).session.create({ directory: workspacePath || undefined }));
             targetSessionId = session.id;
+            captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
           } catch {
             // Best-effort first task creation.
           }

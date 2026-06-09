@@ -6,6 +6,7 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
+import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
@@ -721,6 +722,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSending(false);
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
+      captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       setComposerDraft(props.sessionId, "");
@@ -783,6 +785,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       await abortSessionSafe(opencodeClient, props.sessionId);
+      captureAnalyticsEvent("task_run_stopped", {});
       await snapshotQuery.refetch();
     } catch (nextError) {
       setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
