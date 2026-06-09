@@ -22,6 +22,9 @@ extraResources:
     filter:
       - "*.js"
 asar: true
+asarUnpack:
+  - node_modules/.pnpm/@lydell+node-pty*/**
+  - node_modules/node-pty/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs

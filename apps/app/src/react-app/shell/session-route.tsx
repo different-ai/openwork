@@ -118,7 +118,7 @@ import {
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import { CommandPalette, type AccessibleTargetOption, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { CommandPalette, type PaletteItem, type SessionOption as PaletteSessionOption } from "./command-palette";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { useBootState } from "./boot-state";
 import {
@@ -588,6 +588,7 @@ export function SessionRoute() {
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [paletteAccessibleTargets, setPaletteAccessibleTargets] = useState<OpenTarget[]>([]);
   // Model picker modal state (ported from settings-route; previously the
   // session "Pick a model" button navigated to /settings/general, which is a
@@ -2120,19 +2121,21 @@ export function SessionRoute() {
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/general");
       },
-      onSendDraft: async (draft: ComposerDraft) => {
+      onSendDraft: async (draft: ComposerDraft, sessionId: string) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return;
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) return;
         if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         if (draft.mode === "shell") {
-          await shellInSession(opencodeClient, selectedSessionId, text);
+          await shellInSession(opencodeClient, targetSessionId, text);
           return;
         }
 
         if (draft.command) {
           const result = await opencodeClient.session.command({
-            sessionID: selectedSessionId,
+            sessionID: targetSessionId,
             command: draft.command.name,
             arguments: draft.command.arguments,
           });
@@ -2149,11 +2152,11 @@ export function SessionRoute() {
           port: openworkServerHostInfoState?.port ?? null,
         });
         const envSystemContext = await buildOpenworkEnvSystemContext(client, {
-          cacheKey: selectedSessionId,
+          cacheKey: targetSessionId,
           runtimeKey: envRuntimeKey,
         });
         const result = await opencodeClient.session.promptAsync({
-          sessionID: selectedSessionId,
+          sessionID: targetSessionId,
           parts,
           model: local.prefs.defaultModel ?? undefined,
           agent: selectedAgent ?? undefined,
@@ -2199,24 +2202,28 @@ export function SessionRoute() {
       },
       isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
       isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
-      onRevertToMessage: (messageId: string) => {
+      onRevertToMessage: (messageId: string, sessionId: string) => {
         void (async () => {
+          const targetSessionId = sessionId.trim() || selectedSessionId;
+          if (!targetSessionId) return;
           try {
             // Abort any running generation first, like the actions-store does
-            try { await opencodeClient.session.abort({ sessionID: selectedSessionId }); } catch { /* ok if not running */ }
-            await revertSession(opencodeClient, selectedSessionId, messageId);
+            try { await opencodeClient.session.abort({ sessionID: targetSessionId }); } catch { /* ok if not running */ }
+            await revertSession(opencodeClient, targetSessionId, messageId);
             // Force a full reload of the session to pick up reverted state
-            navigateToWorkspaceSession(selectedWorkspaceId, selectedSessionId);
+            navigateToWorkspaceSession(selectedWorkspaceId, targetSessionId);
             void refreshRouteState();
           } catch (error) {
             console.warn("[revert] failed", error);
           }
         })();
       },
-      onForkAtMessage: (messageId: string) => {
+      onForkAtMessage: (messageId: string, sessionId: string) => {
         void (async () => {
+          const targetSessionId = sessionId.trim() || selectedSessionId;
+          if (!targetSessionId) return;
           try {
-            const forked = await forkSession(opencodeClient, selectedSessionId, messageId);
+            const forked = await forkSession(opencodeClient, targetSessionId, messageId);
             writeLastSessionFor(selectedWorkspaceId, forked.id);
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
             setSessionsByWorkspaceId((current) => ({
@@ -2512,6 +2519,7 @@ export function SessionRoute() {
   // Global shortcuts:
   //   Cmd/Ctrl+N  -> new task in selected workspace
   //   Cmd/Ctrl+K  -> toggle command palette
+  //   Cmd/Ctrl+J  -> toggle terminal panel (matches VS Code)
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
@@ -2536,6 +2544,11 @@ export function SessionRoute() {
     if (key === "k") {
       event.preventDefault();
       setCommandPaletteOpen((value) => !value);
+      return;
+    }
+    if (key === "j") {
+      event.preventDefault();
+      setTerminalOpen((value) => !value);
     }
   });
 
@@ -2648,6 +2661,20 @@ export function SessionRoute() {
     });
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
+
+  const terminalPaletteItems = useMemo<PaletteItem[]>(() => [
+    {
+      id: "terminal.toggle",
+      title: terminalOpen ? "Hide terminal" : "Show terminal",
+      detail: "Toggle the integrated terminal panel for this workspace",
+      meta: "Cmd/Ctrl+J",
+      searchText: "terminal shell command line console show hide toggle",
+      action: () => {
+        setCommandPaletteOpen(false);
+        setTerminalOpen((value) => !value);
+      },
+    },
+  ], [terminalOpen]);
 
   const handleReorderWorkspaces = useCallback((workspaceIds: string[]) => {
     const activeWorkspaceIds = new Set(workspacesRef.current.map((workspace) => workspace.id));
@@ -2909,6 +2936,8 @@ export function SessionRoute() {
           }}
         />
       }
+      terminalOpen={terminalOpen}
+      onTerminalOpenChange={setTerminalOpen}
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,
@@ -3165,6 +3194,7 @@ export function SessionRoute() {
         }
       }}
       sessions={paletteSessionOptions}
+      extraItems={terminalPaletteItems}
     />
     <ModelPickerModal
       open={modelPickerOpen}

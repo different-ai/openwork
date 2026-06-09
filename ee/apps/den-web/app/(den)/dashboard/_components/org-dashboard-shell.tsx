@@ -14,6 +14,7 @@ import {
   KeyRound,
   Laptop,
   LogOut,
+  Menu,
   MessageSquare,
   Puzzle,
   Shield,
@@ -21,6 +22,7 @@ import {
   Sparkles,
   Store,
   Users,
+  X,
 } from "lucide-react";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
@@ -373,72 +375,105 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const sidebarContent = (
+    <div className="flex flex-1 flex-col">
+      <div className="border-b border-gray-100 px-4 pb-4 pt-5">
+        <div className="flex items-center justify-between gap-3">
+          <OpenWorkMark />
+          <button
+            type="button"
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      <nav className="flex-1 px-3 py-5">
+        <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          Navigation
+        </p>
+        <div className="space-y-1">
+          {navItems.map((item) => {
+            const isDashboardRoot =
+              activeOrg && item.href === getOrgDashboardRoute(activeOrg.slug);
+            const selected =
+              item.href !== "#" &&
+              (isDashboardRoot
+                ? pathname === item.href
+                : pathname === item.href || pathname.startsWith(`${item.href}/`));
+
+            return (
+              <Link
+                key={item.label}
+                href={item.href}
+                onClick={() => setSidebarOpen(false)}
+                className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
+                  selected
+                    ? "bg-gray-100 text-gray-900"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <item.icon className="h-4 w-4" strokeWidth={1.8} />
+                  {item.label}
+                </span>
+                {item.badge ? (
+                  <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                    {item.badge}
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+
+      <div className="mt-auto p-3">
+        {orgSwitcher}
+
+        {orgBusy ? (
+          <p className="mt-3 px-2 text-[11px] text-gray-400">Refreshing workspace…</p>
+        ) : null}
+        {orgError ? (
+          <p className="mt-3 px-2 text-[11px] font-medium text-rose-600">{orgError}</p>
+        ) : null}
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa] md:flex-row">
-      <aside className="w-full shrink-0 border-b border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col md:border-b-0 md:border-r">
-        <div className="flex flex-1 flex-col">
-          <div className="border-b border-gray-100 px-4 pb-4 pt-5">
-            <div className="flex items-center justify-between gap-3">
-              <OpenWorkMark />
-              {orgBusy ? <span className="text-xs text-gray-400">Refreshing...</span> : null}
-            </div>
-          </div>
-
-          <nav className="flex-1 px-3 py-5">
-            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Navigation
-            </p>
-            <div className="space-y-1">
-              {navItems.map((item) => {
-                const isDashboardRoot =
-                  activeOrg && item.href === getOrgDashboardRoute(activeOrg.slug);
-                const selected =
-                  item.href !== "#" &&
-                  (isDashboardRoot
-                    ? pathname === item.href
-                    : pathname === item.href || pathname.startsWith(`${item.href}/`));
-
-                return (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
-                      selected
-                        ? "bg-gray-100 text-gray-900"
-                        : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-                    }`}
-                  >
-                    <span className="flex items-center gap-3">
-                      <item.icon className="h-4 w-4" strokeWidth={1.8} />
-                      {item.label}
-                    </span>
-                    {item.badge ? (
-                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                        {item.badge}
-                      </span>
-                    ) : null}
-                  </Link>
-                );
-              })}
-            </div>
-          </nav>
-
-          <div className="mt-auto p-3">
-            {orgSwitcher}
-
-            {orgBusy ? (
-              <p className="mt-3 px-2 text-[11px] text-gray-400">Refreshing workspace…</p>
-            ) : null}
-            {orgError ? (
-              <p className="mt-3 px-2 text-[11px] font-medium text-rose-600">{orgError}</p>
-            ) : null}
-          </div>
-        </div>
+      {/* Desktop sidebar — always visible at md+ */}
+      <aside className="hidden shrink-0 border-r border-gray-100 bg-white md:flex md:min-h-screen md:w-[260px] md:flex-col">
+        {sidebarContent}
       </aside>
 
+      {/* Mobile sidebar — off-canvas drawer */}
+      {sidebarOpen ? (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} aria-hidden />
+          <aside className="relative z-10 flex h-full w-[280px] max-w-[85vw] flex-col overflow-y-auto bg-white shadow-xl">
+            {sidebarContent}
+          </aside>
+        </div>
+      ) : null}
+
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-5 md:px-6">
-          <div className="flex items-center gap-2">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 md:px-6">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:hidden"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
             <span className="text-[14px] tracking-[-0.1px] text-gray-900">
               {pageTitle}
             </span>
@@ -452,7 +487,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
             >
               <MessageSquare className="h-4 w-4" />
-              Feedback
+              <span className="hidden sm:inline">Feedback</span>
             </a>
             <a
               href={OPENWORK_DOCS_URL}
@@ -461,7 +496,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
             >
               <FileText className="h-4 w-4" />
-              Docs
+              <span className="hidden sm:inline">Docs</span>
             </a>
           </div>
         </header>
