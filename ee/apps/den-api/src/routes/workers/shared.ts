@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, isNull, lt } from "@openwork-ee/den-db/drizzle"
 import {
   AuditEventTable,
   AuthUserTable,
@@ -309,6 +309,7 @@ export function toWorkerResponse(row: WorkerRow, userId: string) {
     description: row.description,
     destination: row.destination,
     status: row.status,
+    statusReason: row.status_reason,
     imageVersion: row.image_version,
     workspacePath: row.workspace_path,
     sandboxBackend: row.sandbox_backend,
@@ -337,7 +338,7 @@ export async function continueCloudProvisioning(input: {
 
     await db
       .update(WorkerTable)
-      .set({ status: provisioned.status })
+      .set({ status: provisioned.status, status_reason: null })
       .where(eq(WorkerTable.id, input.workerId))
 
     await db.insert(WorkerInstanceTable).values({
@@ -349,14 +350,39 @@ export async function continueCloudProvisioning(input: {
       status: provisioned.status,
     })
   } catch (error) {
+    const message = error instanceof Error ? error.message : "provisioning_failed"
     await db
       .update(WorkerTable)
-      .set({ status: "failed" })
+      .set({ status: "failed", status_reason: message.slice(0, 1024) })
       .where(eq(WorkerTable.id, input.workerId))
 
-    const message = error instanceof Error ? error.message : "provisioning_failed"
     console.error(`[workers] provisioning failed for ${input.workerId}: ${message}`)
   }
+}
+
+const PROVISIONING_STUCK_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * Provisioning runs as a fire-and-forget promise in `continueCloudProvisioning`.
+ * If the API process dies mid-provision, the worker row stays `provisioning`
+ * forever. This read-time sweep marks such rows as failed so users get an
+ * actionable state instead of an eternal "Starting" badge.
+ */
+export async function failStuckProvisioningWorkers(orgId: OrgId) {
+  const cutoff = new Date(Date.now() - PROVISIONING_STUCK_TIMEOUT_MS)
+  await db
+    .update(WorkerTable)
+    .set({
+      status: "failed",
+      status_reason: "Provisioning did not finish within 30 minutes. Delete this worker and launch a new one.",
+    })
+    .where(
+      and(
+        eq(WorkerTable.org_id, orgId),
+        eq(WorkerTable.status, "provisioning"),
+        lt(WorkerTable.created_at, cutoff),
+      ),
+    )
 }
 
 export async function requireCloudAccessOrPayment(input: {

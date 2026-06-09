@@ -14,6 +14,7 @@ import {
   continueCloudProvisioning,
   createWorkerSchema,
   deleteWorkerCascade,
+  failStuckProvisioningWorkers,
   getLatestWorkerInstance,
   getWorkerByIdForOrg,
   getWorkerTokensAndConnect,
@@ -45,6 +46,7 @@ const workerSchema = z.object({
   description: z.string().nullable(),
   destination: z.string(),
   status: z.string(),
+  statusReason: z.string().nullable(),
   imageVersion: z.string().nullable(),
   workspacePath: z.string().nullable(),
   sandboxBackend: z.string().nullable(),
@@ -148,6 +150,8 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     if (!orgId) {
       return c.json({ workers: [] })
     }
+
+    await failStuckProvisioningWorkers(orgId)
 
     const rows = await db
       .select()
@@ -292,6 +296,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
           description: input.description ?? null,
           destination: input.destination,
           status: workerStatus,
+          status_reason: null,
           image_version: input.imageVersion ?? null,
           workspace_path: input.workspacePath ?? null,
           sandbox_backend: input.sandboxBackend ?? null,
@@ -344,6 +349,8 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     } catch {
       return c.json({ error: "worker_not_found" }, 404)
     }
+
+    await failStuckProvisioningWorkers(orgId)
 
     const worker = await getWorkerByIdForOrg(workerId, orgId)
     if (!worker) {

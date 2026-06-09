@@ -1,0 +1,1 @@
+ALTER TABLE `worker` ADD `status_reason` varchar(1024);
