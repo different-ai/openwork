@@ -9,6 +9,7 @@ import {
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   ensureDenActiveOrganization,
+  denOriginComparisonKey,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
@@ -384,7 +385,18 @@ export function useDenSession({
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const result = await createDenClient({ baseUrl: nextBaseUrl }).exchangeDesktopHandoff(parsed.grant);
+      // When the pasted link targets the control plane we are already
+      // configured for, keep the configured apiBaseUrl. Deriving it from the
+      // link's base URL alone breaks deployments where the advertised proxy
+      // path does not match how this app actually reaches the Den API.
+      const settings = readDenSettings();
+      const targetKey = denOriginComparisonKey(nextBaseUrl);
+      const configuredApiBaseUrl =
+        denOriginComparisonKey(settings.baseUrl) === targetKey ||
+        denOriginComparisonKey(settings.apiBaseUrl ?? null) === targetKey
+          ? settings.apiBaseUrl ?? null
+          : null;
+      const result = await createDenClient({ baseUrl: nextBaseUrl, apiBaseUrl: configuredApiBaseUrl }).exchangeDesktopHandoff(parsed.grant);
       if (!result.token) {
         throw new Error(t("den.error_no_token"));
       }

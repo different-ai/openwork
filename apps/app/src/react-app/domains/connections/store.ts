@@ -9,6 +9,7 @@ import {
   type McpDirectoryInfo,
 } from "../../../app/constants";
 import { extensionResource } from "../../../app/extensions";
+import { mintCloudControlMcpToken, readDenSettings } from "../../../app/lib/den";
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
@@ -35,6 +36,40 @@ import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../.
 import type { OpenworkServerStore } from "./openwork-server-store";
 
 type SetStateAction<T> = T | ((current: T) => T);
+
+const CLOUD_MCP_SYNC_MARKER_KEY = "openwork.den.mcp.sync";
+const CLOUD_MCP_REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+type CloudMcpSyncMarker = { orgId: string; expiresAt: string };
+
+function readCloudMcpSyncMarker(): CloudMcpSyncMarker | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { orgId?: unknown }).orgId === "string" &&
+      typeof (parsed as { expiresAt?: unknown }).expiresAt === "string"
+    ) {
+      return parsed as CloudMcpSyncMarker;
+    }
+  } catch {
+    // Corrupt marker — treat as absent.
+  }
+  return null;
+}
+
+function writeCloudMcpSyncMarker(marker: CloudMcpSyncMarker) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CLOUD_MCP_SYNC_MARKER_KEY, JSON.stringify(marker));
+  } catch {
+    // Storage unavailable — sync will simply re-run next time.
+  }
+}
 
 export type ConnectionsStoreSnapshot = {
   mcpServers: McpServerEntry[];
@@ -572,6 +607,20 @@ export function createConnectionsStore(options: {
         }
       }
 
+      // Signed-in cloud users connect the Den MCP with a first-party token —
+      // no browser OAuth round-trip. Signed-out users fall back to OAuth.
+      if (entry.serverName === "openwork-cloud") {
+        try {
+          const minted = await mintCloudControlMcpToken();
+          if (minted) {
+            resolvedUrl = minted.resource;
+            resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
+          }
+        } catch {
+          // Minting failed (offline, expired session) — fall back to OAuth.
+        }
+      }
+
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
         enabled: true,
@@ -662,9 +711,9 @@ export function createConnectionsStore(options: {
           entryType === "remote"
             ? {
                 type: "remote" as const,
-                url: entry.url!,
+                url: resolvedUrl ?? entry.url!,
                 enabled: true,
-                ...(entry.oauth ? { oauth: {} } : {}),
+                ...(entry.oauth && !resolvedHeaders ? { oauth: {} } : {}),
               }
             : {
                 type: "local" as const,
@@ -685,7 +734,7 @@ export function createConnectionsStore(options: {
       options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 
-      if (entry.oauth) {
+      if (entry.oauth && !resolvedHeaders) {
         mutateState((current) => ({
           ...current,
           mcpAuthEntry: entry,
@@ -703,6 +752,7 @@ export function createConnectionsStore(options: {
         slug,
       });
     } catch (error) {
+      console.error("[mcp.connect] failed", entry.name, error);
       setStateField(
         "mcpStatus",
         error instanceof Error ? error.message : t("mcp.connect_failed"),
@@ -715,6 +765,43 @@ export function createConnectionsStore(options: {
     } finally {
       setStateField("mcpConnectingName", null);
     }
+  }
+
+  /**
+   * Background reconciliation for the Den cloud MCP: when the desktop is
+   * signed in to OpenWork Cloud with an active org, keep the
+   * `openwork-cloud` MCP entry configured with a fresh first-party token.
+   * Quiet by design — a failed mint never opens the OAuth modal.
+   */
+  async function syncCloudControlMcp(): Promise<"synced" | "unchanged" | "skipped"> {
+    const settings = readDenSettings();
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    if (!orgId || !settings.authToken?.trim()) return "skipped";
+
+    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === "openwork-cloud");
+    if (!entry) return "skipped";
+    const slug = entry.id ?? getMcpServerName(entry);
+
+    const marker = readCloudMcpSyncMarker();
+    const markerFresh =
+      marker !== null &&
+      marker.orgId === orgId &&
+      new Date(marker.expiresAt).getTime() - Date.now() > CLOUD_MCP_REFRESH_MARGIN_MS;
+    if (markerFresh && snapshot.mcpServers.some((server) => server.name === slug)) {
+      return "unchanged";
+    }
+
+    // Validate the session up front so a failed mint never reaches
+    // connectMcp's signed-out fallback (which opens the OAuth modal).
+    const minted = await mintCloudControlMcpToken().catch(() => null);
+    if (!minted) return "skipped";
+
+    await connectMcp(entry);
+    if (!snapshot.mcpServers.some((server) => server.name === slug)) {
+      return "skipped";
+    }
+    writeCloudMcpSyncMarker({ orgId, expiresAt: minted.expiresAt });
+    return "synced";
   }
 
   function authorizeMcp(entry: McpServerEntry) {
@@ -1006,6 +1093,7 @@ export function createConnectionsStore(options: {
     readMcpConfigFile,
     refreshMcpServers,
     connectMcp,
+    syncCloudControlMcp,
     authorizeMcp,
     logoutMcpAuth,
     removeMcp,

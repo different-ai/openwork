@@ -1596,6 +1596,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // the settings route owns the provider-auth store.
   useCloudProviderAutoSync(providerAuthStore.runCloudProviderSync);
 
+  // Keep the Den cloud MCP configured with a fresh first-party token while
+  // signed in: connects on sign-in, re-mints on org switch and before expiry.
+  useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
+
   useEffect(() => {
     if (route.tab !== "cloud-providers") return;
     void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
