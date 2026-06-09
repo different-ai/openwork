@@ -123,6 +123,10 @@ export DEN_CORS_ORIGINS=$DEN_WEB_ORIGIN
 export DEN_STATIC_WORKER_URLS=http://worker-01.company.local:8787,http://worker-02.company.local:8787
 export DEN_STATIC_WORKER_HEALTH_PATH=/health
 export DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS=10000
+# Optional: only needed if operators will use the admin static-attach fallback with LAN/private URLs.
+export DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=false
+export DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS=
+export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=
 export DEN_BETTER_AUTH_SECRET='<better-auth-secret>'
 export DEN_DB_ENCRYPTION_KEY='<db-encryption-key>'
 export DEN_MYSQL_ROOT_PASSWORD='<mysql-root-password>'
@@ -135,6 +139,8 @@ docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-sta
 `DEN_STATIC_WORKER_URLS` is the pool of worker runtimes that Den can allocate.
 
 `DEN_STATIC_WORKER_TOKEN_MAP_JSON` must contain one entry for every worker URL that Den is allowed to attach as a shared worker.
+
+`DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true` allows admin static-attach requests for LAN/private URLs. Prefer `DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS` or `DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS` when you only need to allow specific internal workers.
 
 ## Verify Deployment
 
