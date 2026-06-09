@@ -33,8 +33,13 @@ function readBearerToken(headers: Headers) {
   return match?.[1]?.trim() || null
 }
 
-function hashStoredToken(token: string) {
-  return crypto.createHash("sha256").update(token).digest("base64url")
+/**
+ * Hash an opaque MCP token secret (the part after the `ow_mcp_at_` prefix)
+ * for storage/lookup. Shared with the first-party mint route so the formats
+ * cannot drift.
+ */
+export function hashOpaqueMcpSecret(secret: string) {
+  return crypto.createHash("sha256").update(secret).digest("base64url")
 }
 
 function readStoredScopes(scopes: string) {
@@ -85,7 +90,7 @@ async function verifyOpaqueMcpToken(token: string) {
     return null
   }
 
-  const storedToken = hashStoredToken(token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length))
+  const storedToken = hashOpaqueMcpSecret(token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length))
   const [accessToken] = await db
     .select()
     .from(OAuthAccessTokenTable)
