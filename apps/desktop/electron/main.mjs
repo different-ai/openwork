@@ -36,6 +36,7 @@ const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
+const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
@@ -571,6 +572,14 @@ async function openSettingsFromNativeMenu() {
   win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
 }
 
+async function checkForUpdatesFromNativeMenu() {
+  const win = await createMainWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send(NATIVE_MENU_CHECK_UPDATES_EVENT);
+}
+
 async function toggleSidebarFromNativeMenu() {
   const win = await createMainWindow();
   win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
@@ -585,6 +594,12 @@ function installApplicationMenu() {
             label: APP_NAME,
             submenu: [
               { role: "about" },
+              {
+                label: "Check for Updates...",
+                click: () => {
+                  void checkForUpdatesFromNativeMenu();
+                },
+              },
               { type: "separator" },
               {
                 label: "Settings...",
@@ -608,6 +623,18 @@ function installApplicationMenu() {
     {
       label: "File",
       submenu: [
+        ...(isMac
+          ? []
+          : [
+              {
+                label: "Settings",
+                accelerator: "Control+,",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+            ]),
         { role: "close" },
       ],
     },
@@ -632,6 +659,13 @@ function installApplicationMenu() {
                   { role: "startSpeaking" },
                   { role: "stopSpeaking" },
                 ],
+              },
+              { type: "separator" },
+              {
+                label: "Settings...",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
               },
             ]
           : [
@@ -683,6 +717,17 @@ function installApplicationMenu() {
     {
       role: "help",
       submenu: [
+        ...(isMac
+          ? []
+          : [
+              {
+                label: "Check for Updates...",
+                click: () => {
+                  void checkForUpdatesFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+            ]),
         {
           label: "Docs",
           click: async () => {

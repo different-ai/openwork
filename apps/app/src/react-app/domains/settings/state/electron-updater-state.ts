@@ -5,6 +5,7 @@ import type { DenDesktopConfig } from "../../../../app/lib/den";
 import { isAlphaUpdateAllowed, isUpdateAllowed } from "../../../../app/lib/version-gate";
 import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, safeStringify } from "../../../../app/utils";
+import { useUpdateCheckRequestStore } from "./update-check-request";
 
 export type SettingsUpdateStatus = {
   state: "idle" | "checking" | "available" | "downloading" | "ready" | "error";
@@ -244,6 +245,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     autoCheckKeyRef.current = key;
     void checkForUpdates();
   }, [appVersion, checkForUpdates, releaseChannel, updateAutoCheck, updateEnv?.supported]);
+
+  // Run a check when the native "Check for Updates..." menu item was used.
+  const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
+  useEffect(() => {
+    if (updateCheckRequestedAt == null) return;
+    useUpdateCheckRequestStore.getState().clearUpdateCheckRequest();
+    void checkForUpdates();
+  }, [checkForUpdates, updateCheckRequestedAt]);
 
   const installUpdateAndRestart = useCallback(async () => {
     const bridge = electronUpdaterBridge();
