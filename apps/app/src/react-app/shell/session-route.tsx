@@ -18,6 +18,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { trackSessionActive } from "@/app/lib/den-telemetry";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
@@ -2141,6 +2142,10 @@ export function SessionRoute() {
           model_id: local.prefs.defaultModel?.modelID ?? null,
         });
         markTaskRunStart(targetSessionId);
+        // Den org adoption signal (auth-gated inside; no-op when signed out).
+        // Lives here — the live send choke point — because its previous call
+        // site was in the orphaned actions-store and never fired.
+        trackSessionActive();
 
         if (draft.mode === "shell") {
           await shellInSession(opencodeClient, targetSessionId, text);

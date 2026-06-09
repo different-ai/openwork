@@ -18,7 +18,6 @@ import {
   shellInSession,
   unrevertSession,
 } from "../../../../app/lib/opencode-session";
-import { trackSessionActive } from "../../../../app/lib/den-telemetry";
 import { finishPerf, perfNow, recordPerfLog } from "../../../../app/lib/perf-log";
 import { toSessionTransportDirectory } from "../../../../app/lib/session-scope";
 import { workspaceSessionRoute } from "../../../shell/workspace-routes";
@@ -407,7 +406,6 @@ export function createSessionActionsStore(options: {
         mark("session:create:start");
         rawResult = await c.session.create({ directory });
         mark("session:create:ok");
-        trackSessionActive();
       } catch (createErr) {
         mark("session:create:error", {
           error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
