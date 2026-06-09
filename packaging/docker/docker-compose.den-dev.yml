@@ -23,6 +23,8 @@
 #   DEN_STATIC_WORKER_URLS  — comma-separated LAN/OpenWork worker URLs for static mode
 #                           — each URL is assigned to at most one active worker_instance
 #                           — for the smoke-test service below, use http://static-worker-smoke:8787
+#   DEN_STATIC_WORKER_TOKEN_MAP_JSON
+#                           — JSON map of static worker URLs to {clientToken,hostToken}; required for static mode
 #   DEN_STATIC_WORKER_HEALTH_PATH / DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS
 #                           — optional static worker health-check overrides
 #   DEN_ENTRA_TENANT_ID / DEN_ENTRA_CLIENT_ID / DEN_ENTRA_CLIENT_SECRET
@@ -93,6 +95,7 @@ services:
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
       WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
       STATIC_WORKER_URLS: ${DEN_STATIC_WORKER_URLS:-}
+      STATIC_WORKER_TOKEN_MAP_JSON: ${DEN_STATIC_WORKER_TOKEN_MAP_JSON:-}
       STATIC_WORKER_HEALTH_PATH: ${DEN_STATIC_WORKER_HEALTH_PATH:-/health}
       STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS:-10000}
       STATIC_WORKER_HEALTHCHECK_INTERVAL_MS: ${DEN_STATIC_WORKER_HEALTHCHECK_INTERVAL_MS:-1000}
@@ -184,15 +187,39 @@ services:
       - node
       - -e
       - |
+        const clientToken = process.env.OPENWORK_TOKEN || 'static-smoke-client-token';
+        const hostToken = process.env.OPENWORK_HOST_TOKEN || 'static-smoke-host-token';
+        const json = (res, status, body) => {
+          res.writeHead(status, {'content-type':'application/json'});
+          res.end(JSON.stringify(body));
+        };
         require('http').createServer((req,res)=>{
           if (req.url === '/health') {
-            res.writeHead(200, {'content-type':'application/json'});
-            res.end(JSON.stringify({ok:true, mode:'static-worker-smoke'}));
+            json(res, 200, {ok:true, mode:'static-worker-smoke'});
             return;
           }
-          res.writeHead(404);
-          res.end('not found');
+          if (req.url === '/workspaces') {
+            const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+            if (bearer !== clientToken) {
+              json(res, 401, {error:'invalid_client_token'});
+              return;
+            }
+            json(res, 200, {workspaces:[{id:'static-smoke-workspace', name:'Static Smoke Workspace', path:'/workspace'}]});
+            return;
+          }
+          if (req.url === '/env/keys') {
+            if ((req.headers['x-openwork-host-token'] || '').trim() !== hostToken) {
+              json(res, 401, {error:'invalid_host_token'});
+              return;
+            }
+            json(res, 200, {keys:[], source:'static-worker-smoke'});
+            return;
+          }
+          json(res, 404, {error:'not_found'});
         }).listen(8787, '0.0.0.0')
+    environment:
+      OPENWORK_TOKEN: ${DEN_STATIC_WORKER_SMOKE_OPENWORK_TOKEN:-static-smoke-client-token}
+      OPENWORK_HOST_TOKEN: ${DEN_STATIC_WORKER_SMOKE_OPENWORK_HOST_TOKEN:-static-smoke-host-token}
     ports:
       - "${DEN_STATIC_WORKER_SMOKE_PORT:-8787}:8787"
     healthcheck:

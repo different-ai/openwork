@@ -24,8 +24,8 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
-    ports:
-      - "${DEN_MYSQL_PORT:-3306}:3306"
+    expose:
+      - "3306"
     volumes:
       - den-mysql-data:/var/lib/mysql
 
@@ -37,8 +37,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-    ports:
-      - "${DEN_API_PORT:-8788}:8788"
+    expose:
+      - "8788"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
@@ -102,8 +102,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-    ports:
-      - "${DEN_WORKER_PROXY_PORT:-8789}:8789"
+    expose:
+      - "8789"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/unknown').then((res)=>process.exit([404,502].includes(res.status)?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

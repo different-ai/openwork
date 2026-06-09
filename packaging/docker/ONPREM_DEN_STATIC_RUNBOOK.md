@@ -15,6 +15,7 @@ In `static` mode:
 - Den does not create Docker containers, worker VMs, or worker hosts for you
 
 The Den web URL is the normal browser-facing entrypoint. The Den API should remain internal to the Den host unless you intentionally expose it to another trusted client.
+The production static Compose file publishes only the Den web port by default; MySQL, the Den API, and the worker-proxy are reachable on the Compose network for dependent services but are not bound to host ports unless an operator adds an explicit override.
 
 Use HTTPS for the browser-facing Den web URL whenever possible. If you intentionally use HTTP on a private LAN, use that exact HTTP origin consistently for `DEN_WEB_ORIGIN`, `DEN_BETTER_AUTH_URL`, trusted origins, and any client configuration.
 
@@ -139,6 +140,8 @@ docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-sta
 `DEN_STATIC_WORKER_URLS` is the pool of worker runtimes that Den can allocate.
 
 `DEN_STATIC_WORKER_TOKEN_MAP_JSON` must contain one entry for every worker URL that Den is allowed to attach as a shared worker.
+
+When worker containers receive `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN` from environment variables or a secret manager, those supplied values remain runtime-only and are not persisted by the image. Only generated fallback token values are written to `/data/openwork-worker.env`, and that fallback should be used only for development or an operator-approved bootstrap.
 
 `DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true` allows admin static-attach requests for LAN/private URLs. Prefer `DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS` or `DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS` when you only need to allow specific internal workers.
 

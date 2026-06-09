@@ -67,6 +67,7 @@ Optional env vars (via `.env` or `export`):
 - `DEN_PROVISIONER_MODE` — `stub`, `static`, `render`, or `daytona` (defaults to `stub`)
 - `DEN_WORKER_URL_TEMPLATE` — stub worker URL template with `{workerId}` placeholder
 - `DEN_STATIC_WORKER_URLS` — comma-separated LAN/local OpenWork worker URLs used when `DEN_PROVISIONER_MODE=static`; each URL is assigned to at most one active static worker instance
+- `DEN_STATIC_WORKER_TOKEN_MAP_JSON` — JSON map of each static worker URL to `{ "clientToken": "...", "hostToken": "..." }`; required in static mode so Den validates `/workspaces` and `/env/keys` before marking workers healthy
 - `DEN_STATIC_WORKER_HEALTH_PATH` — health path checked for static workers (defaults to `/health`)
 - `DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS` — static worker health timeout (defaults to `10000`)
 
@@ -89,6 +90,7 @@ If you need a non-production compose-only smoke test before wiring a real OpenWo
 ```bash
 export DEN_PROVISIONER_MODE=static
 export DEN_STATIC_WORKER_URLS=http://static-worker-smoke:8787
+export DEN_STATIC_WORKER_TOKEN_MAP_JSON='{"http://static-worker-smoke:8787":{"clientToken":"static-smoke-client-token","hostToken":"static-smoke-host-token"}}'
 docker compose --profile static-worker-smoke -p openwork-den-static \
   -f packaging/docker/docker-compose.den-dev.yml up --build
 ```
@@ -97,11 +99,13 @@ Validate the sample endpoint from the host:
 
 ```bash
 curl http://127.0.0.1:${DEN_STATIC_WORKER_SMOKE_PORT:-8787}/health
+curl -H "Authorization: Bearer static-smoke-client-token" http://127.0.0.1:${DEN_STATIC_WORKER_SMOKE_PORT:-8787}/workspaces
+curl -H "X-OpenWork-Host-Token: static-smoke-host-token" http://127.0.0.1:${DEN_STATIC_WORKER_SMOKE_PORT:-8787}/env/keys
 ```
 
 Then create a cloud/shared worker in the Den web UI. With a reachable static worker URL, the worker should move from `provisioning` to `healthy` and show a `static` instance. If `DEN_STATIC_WORKER_URLS` is empty or the health check fails, Den marks the worker `failed` and logs a clear provisioning error instead of leaving it stuck on `Starting`.
 
-The `static-worker-smoke` service is intentionally only a health-check simulation for provisioning validation; it is not a production OpenWork runtime and will not satisfy workspace/session APIs.
+The `static-worker-smoke` service is intentionally only a provisioning-contract simulation. It serves `/health`, `/workspaces`, and `/env/keys` with coherent smoke-test tokens so Den static provisioning validates token mapping, but it is not a production OpenWork runtime and will not satisfy session APIs.
 
 ### Faster inner-loop alternative
 
@@ -227,7 +231,7 @@ Validate the worker before adding it to Den:
 curl http://192.168.1.50:8787/health
 ```
 
-For production, set `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN` from a secret manager or equivalent secure operator channel. If both variables are unset, the image generates stable per-worker fallback tokens and persists them in `/data/openwork-worker.env`; use that path only for development or an operator-approved bootstrap. Treat `/data/openwork-worker.env` as sensitive bearer-secret material.
+For production, set `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN` from a secret manager or equivalent secure operator channel. Env/secret-manager supplied tokens take precedence over `/data/openwork-worker.env` and are not written back to disk by the container. If a token is unset, the image can generate a stable per-worker fallback token and persist only generated fallback values in `/data/openwork-worker.env`; use that fallback path only for development or an operator-approved bootstrap. Treat `/data/openwork-worker.env` as sensitive bearer-secret material.
 
 ### Config
 
