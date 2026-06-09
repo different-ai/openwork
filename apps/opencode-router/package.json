@@ -1,6 +1,6 @@
 {
   "name": "opencode-router",
-  "version": "0.15.1",
+  "version": "0.15.3",
   "description": "opencode-router: Slack + Telegram bridge + directory routing for a running opencode server",
   "private": false,
   "type": "module",
@@ -44,7 +44,7 @@
     "test:npx": "bun scripts/test-npx.mjs"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.15.12",
+    "@opencode-ai/sdk": "^1.16.2",
     "@slack/socket-mode": "^2.0.5",
     "@slack/web-api": "^7.13.0",
     "commander": "^12.1.0",

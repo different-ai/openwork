@@ -63,6 +63,7 @@ import {
   createGoogleWorkspaceConnectFlowManager,
   googleWorkspaceDisconnect,
   googleWorkspaceRunScopeSmokeTest,
+  googleWorkspaceSetActiveAccount,
   googleWorkspaceStatus,
   googleWorkspaceTestConnection,
 } from "./extensions/google-workspace.js";
@@ -2075,6 +2076,14 @@ function createRoutes(
     const body = await readOptionalJsonBody(ctx.request);
     const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : null;
     return jsonResponse(await googleWorkspaceDisconnect(config, accountId));
+  });
+
+  addRoute(routes, "POST", "/experimental/google-workspace/active-account", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") throw new ApiError(403, "forbidden", "Viewer tokens cannot update Google Workspace settings");
+    const body = await readJsonBody(ctx.request);
+    const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : "";
+    if (!accountId) throw new ApiError(400, "invalid_payload", "accountId is required");
+    return jsonResponse(await googleWorkspaceSetActiveAccount(config, accountId));
   });
 
   addRoute(routes, "POST", "/experimental/google-workspace/test", "client", async () => {

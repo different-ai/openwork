@@ -72,6 +72,10 @@ type BuiltInMarketplaceRow = {
 
 type MarketplaceRow = MarketplacePackageRow | BuiltInMarketplaceRow;
 
+export function shouldShowMarketplaceRows(isSignedIn: boolean, activeOrgId: string) {
+  return isSignedIn && activeOrgId.trim().length > 0;
+}
+
 export type CloudMarketplacesViewProps = {
   extensions: DenSettingsExtensionsStore;
   embedded?: boolean;
@@ -182,6 +186,7 @@ export function CloudMarketplacesView({
   const [detailLoadingId, setDetailLoadingId] = React.useState<string | null>(null);
   const [detailError, setDetailError] = React.useState<string | null>(null);
   const activeOrgId = activeOrg?.id ?? "";
+  const canShowRows = shouldShowMarketplaceRows(isSignedIn, activeOrgId);
 
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
@@ -244,7 +249,7 @@ export function CloudMarketplacesView({
     });
   }, [builtInEntries, enablementContext, extensionItemsByBuiltInId, isBuiltInConnected]);
 
-  const rows = React.useMemo<MarketplaceRow[]>(() => [...builtInRows, ...cloudRows], [builtInRows, cloudRows]);
+  const rows = React.useMemo<MarketplaceRow[]>(() => canShowRows ? [...builtInRows, ...cloudRows] : [], [builtInRows, canShowRows, cloudRows]);
 
   React.useEffect(() => {
     if (rows.length > 0) lastRowsRef.current = rows;
@@ -253,11 +258,11 @@ export function CloudMarketplacesView({
   const displayRows = rows.length > 0 ? rows : busy ? lastRowsRef.current : rows;
 
   const marketplaceOptions = React.useMemo(
-    () => [
+    () => canShowRows ? [
       ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "OpenWork Built-ins" }] : []),
       ...marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })),
-    ],
-    [builtInRows.length, marketplaces],
+    ] : [],
+    [builtInRows.length, canShowRows, marketplaces],
   );
 
   const visibleRows = React.useMemo(() => {
@@ -388,7 +393,7 @@ export function CloudMarketplacesView({
         <SettingsSectionHeaderActions>
           <RefreshButton
             busy={busy}
-            disabled={busy || !activeOrgId}
+            disabled={busy || !canShowRows}
             onRefresh={refresh}
           >
             {t("den.refresh")}
@@ -457,7 +462,7 @@ export function CloudMarketplacesView({
 
       {!busy && displayRows.length === 0 ? (
         <SettingsListEmptyState>
-          {activeOrgId ? "No marketplace extensions are available yet." : "Choose an organization to view marketplace extensions."}
+          {!isSignedIn ? "Sign in to view marketplace extensions." : activeOrgId ? "No marketplace extensions are available yet." : "Choose an organization to view marketplace extensions."}
         </SettingsListEmptyState>
       ) : null}
 
