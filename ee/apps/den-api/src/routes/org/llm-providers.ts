@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   LlmProviderAccessTable,
@@ -423,7 +423,7 @@ async function listAccessibleProviderAccess(input: {
     .where(accessWhere)
 }
 
-async function resolveMemberIds(input: {
+export async function resolveMemberIds(input: {
   organizationId: typeof LlmProviderTable.$inferSelect.organizationId
   values: string[]
 }) {
@@ -443,7 +443,11 @@ async function resolveMemberIds(input: {
   const rows = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, memberIds)))
+    .where(and(
+      eq(MemberTable.organizationId, input.organizationId),
+      inArray(MemberTable.id, memberIds),
+      isNull(MemberTable.removedAt),
+    ))
 
   if (rows.length !== memberIds.length) {
     throw createFailure(404, "member_not_found")
@@ -555,7 +559,7 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
   }
 }
 
-async function loadLlmProviders(input: {
+export async function loadLlmProviders(input: {
   organizationId: typeof LlmProviderTable.$inferSelect.organizationId
   currentMemberId: MemberId
   memberTeams: Array<{ id: TeamId }>
@@ -611,6 +615,7 @@ async function loadLlmProviders(input: {
       member: {
         id: MemberTable.id,
         role: MemberTable.role,
+        removedAt: MemberTable.removedAt,
       },
       user: {
         id: AuthUserTable.id,
@@ -622,7 +627,11 @@ async function loadLlmProviders(input: {
     .from(LlmProviderAccessTable)
     .innerJoin(MemberTable, eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id))
     .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-    .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId)))
+    .where(and(
+      inArray(LlmProviderAccessTable.llmProviderId, providerIds),
+      isNotNull(LlmProviderAccessTable.orgMembershipId),
+      isNull(MemberTable.removedAt),
+    ))
 
   const teamAccessRows = await db
     .select({
@@ -651,6 +660,7 @@ async function loadLlmProviders(input: {
 
   const memberAccessByProviderId = new Map<LlmProviderId, typeof memberAccessRows>()
   for (const row of memberAccessRows) {
+    if (row.member.removedAt) continue
     const existing = memberAccessByProviderId.get(row.access.llmProviderId) ?? []
     existing.push(row)
     memberAccessByProviderId.set(row.access.llmProviderId, existing)
