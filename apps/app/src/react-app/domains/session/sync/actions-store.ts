@@ -64,9 +64,10 @@ const fileToDataUrl = (file: File, mimeType: string) =>
 function attachmentMime(attachment: ComposerAttachment) {
   if (attachment.kind === "image") return attachment.mimeType;
   if (attachment.mimeType === "application/pdf") return attachment.mimeType;
-  if (attachment.mimeType === "application/json") return "text/plain";
-  if (attachment.mimeType.startsWith("text/")) return "text/plain";
-  return attachment.mimeType;
+  // Everything else is sent as text. Unsupported binary mimes (e.g. Keynote)
+  // poison the server-side session history: every later prompt replays the
+  // provider's UnsupportedFunctionalityError and the session cannot recover.
+  return "text/plain";
 }
 
 export function createSessionActionsStore(options: {

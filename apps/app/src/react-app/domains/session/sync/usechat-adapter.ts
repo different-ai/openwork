@@ -45,9 +45,18 @@ function defaultErrorMessage(name: string | null, fallback: string) {
   return fallback;
 }
 
+/**
+ * Unsupported file parts live in server-side session history, so the same
+ * provider error replays on every later prompt. Tell the user how to escape.
+ */
+function withAttachmentRecoveryHint(text: string) {
+  if (!text.includes("file part media type") || !text.includes("not supported")) return text;
+  return `${text}\nAn attached file in this conversation uses a format the model can't read. Revert the conversation to before the attachment was sent, or start a new session.`;
+}
+
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
-  if (error instanceof Error) return error.message || fallback;
-  if (typeof error === "string") return error.trim() || fallback;
+  if (error instanceof Error) return withAttachmentRecoveryHint(error.message || fallback);
+  if (typeof error === "string") return withAttachmentRecoveryHint(error.trim() || fallback);
   if (!error || typeof error !== "object") return fallback;
 
   const data = recordValue(error, "data");
@@ -68,7 +77,7 @@ export function describeOpencodeSessionError(error: unknown, fallback = "Session
   if (code) lines.push(`Code: ${code}`);
   if (retries !== null) lines.push(`Retries: ${retries}`);
   if (responseBody && responseBody !== message) lines.push(`Response: ${responseBody}`);
-  if (lines.some((line) => line !== fallback)) return lines.join("\n");
+  if (lines.some((line) => line !== fallback)) return withAttachmentRecoveryHint(lines.join("\n"));
 
   const serialized = safeStringify(error);
   return serialized && serialized !== "{}" ? serialized : fallback;

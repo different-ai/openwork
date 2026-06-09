@@ -440,9 +440,9 @@ async function fileToDataUrl(file: File, mimeType: string) {
 function attachmentMime(attachment: ComposerAttachment) {
   if (attachment.kind === "image") return attachment.mimeType;
   if (attachment.mimeType === "application/pdf") return attachment.mimeType;
-  if (attachment.mimeType === "application/json") return "text/plain";
-  if (attachment.mimeType.startsWith("text/")) return "text/plain";
-  return attachment.mimeType;
+  // Everything else is sent as text; unsupported binary mimes poison
+  // server-side session history (see sync/attachment-support.ts).
+  return "text/plain";
 }
 
 async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {

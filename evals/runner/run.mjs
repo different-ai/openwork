@@ -18,7 +18,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { connect, pickAppTarget, resolveCdpBaseUrl } from "./cdp.mjs";
+import { connect, debuggerUrlFor, pickAppTarget, resolveCdpBaseUrl } from "./cdp.mjs";
 import { EvalContext } from "./context.mjs";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -79,7 +79,7 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
   }
 
   const target = await pickAppTarget(cdpBaseUrl);
-  const client = await connect(target.webSocketDebuggerUrl);
+  const client = await connect(debuggerUrlFor(cdpBaseUrl, target));
   const ctx = new EvalContext({ client, outDir, flowId: flow.id, env });
 
   try {

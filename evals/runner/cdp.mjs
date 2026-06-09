@@ -32,6 +32,21 @@ export async function pickAppTarget(baseUrl) {
 }
 
 /**
+ * Chromium reports webSocketDebuggerUrl with its own local host
+ * (e.g. ws://127.0.0.1:9825/devtools/page/<id>), which breaks when the
+ * endpoint is reached through a proxy (e.g. Daytona preview URLs).
+ * Rebuild the ws URL on the base URL's host and scheme.
+ */
+export function debuggerUrlFor(baseUrl, target) {
+  const base = new URL(baseUrl);
+  const ws = new URL(target.webSocketDebuggerUrl);
+  ws.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  ws.hostname = base.hostname;
+  ws.port = base.port;
+  return ws.toString();
+}
+
+/**
  * Probe a list of CDP base URL candidates and return the first that responds.
  */
 export async function resolveCdpBaseUrl(candidates) {
