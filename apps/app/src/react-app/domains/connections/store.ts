@@ -633,6 +633,9 @@ export function createConnectionsStore(options: {
         mcpEntryConfig["url"] = resolvedUrl;
         if (resolvedHeaders) {
           mcpEntryConfig["headers"] = resolvedHeaders;
+          // Header-authed entries must not trigger OAuth auto-detection;
+          // otherwise opencode reports "needs_auth" despite valid headers.
+          mcpEntryConfig["oauth"] = false;
         }
         if (entry.oauth && !resolvedHeaders) {
           mcpEntryConfig["oauth"] = {};
@@ -713,6 +716,7 @@ export function createConnectionsStore(options: {
                 type: "remote" as const,
                 url: resolvedUrl ?? entry.url!,
                 enabled: true,
+                ...(resolvedHeaders ? { headers: resolvedHeaders, oauth: false as const } : {}),
                 ...(entry.oauth && !resolvedHeaders ? { oauth: {} } : {}),
               }
             : {
@@ -787,7 +791,11 @@ export function createConnectionsStore(options: {
       marker !== null &&
       marker.orgId === orgId &&
       new Date(marker.expiresAt).getTime() - Date.now() > CLOUD_MCP_REFRESH_MARGIN_MS;
-    if (markerFresh && snapshot.mcpServers.some((server) => server.name === slug)) {
+    // A revoked/expired token surfaces as needs_auth or failed from opencode;
+    // while signed in, that means re-mint instead of standing pat.
+    const entryStatus = snapshot.mcpStatuses[slug]?.status;
+    const entryUnhealthy = entryStatus === "needs_auth" || entryStatus === "failed";
+    if (markerFresh && !entryUnhealthy && snapshot.mcpServers.some((server) => server.name === slug)) {
       return "unchanged";
     }
 
