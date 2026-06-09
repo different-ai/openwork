@@ -97,6 +97,7 @@ export type DenWorkerSummary = {
   workerId: string;
   workerName: string;
   status: string;
+  statusReason: string | null;
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
@@ -910,6 +911,7 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
         workerId: entry.id,
         workerName: entry.name,
         status: typeof entry.status === "string" ? entry.status : "unknown",
+        statusReason: typeof entry.statusReason === "string" && entry.statusReason.trim() ? entry.statusReason : null,
         instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
         provider: instance && typeof instance.provider === "string" ? instance.provider : null,
         isMine: Boolean(entry.isMine),

@@ -82,6 +82,7 @@ export type CloudWorker = {
   workerId: string;
   workerName: string;
   status: string;
+  statusReason: string | null;
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
@@ -127,6 +128,7 @@ function workerStatusMeta(status: string) {
 
   switch (normalized) {
     case "healthy":
+    case "ready":
       return { label: t("dashboard.worker_status_ready"), tone: "ready" as const, canOpen: true };
     case "provisioning":
       return { label: t("dashboard.worker_status_starting"), tone: "warning" as const, canOpen: false };
@@ -140,7 +142,7 @@ function workerStatusMeta(status: string) {
           ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}`
           : t("dashboard.worker_status_unknown"),
         tone: "neutral" as const,
-        canOpen: normalized === "ready",
+        canOpen: false,
       };
   }
 }
@@ -328,6 +330,11 @@ function CloudWorkerListItem({ openingWorkerId, worker, onOpenWorker }: CloudWor
             worker.instanceUrl,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
+        {status.tone === "error" && worker.statusReason ? (
+          <SettingsListItemDescription className="text-red-11">
+            {worker.statusReason}
+          </SettingsListItemDescription>
+        ) : null}
       </SettingsListItemContent>
       <Button
         variant="outline"
