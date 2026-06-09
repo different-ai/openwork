@@ -72,12 +72,16 @@ export OPENWORK_HOST_TOKEN='<worker-01-host-token>'
 docker compose -p openwork-worker-1 up --build -d
 docker compose -p openwork-worker-1 ps
 curl http://worker-01.company.local:8787/health
+curl -H "Authorization: Bearer $OPENWORK_TOKEN" http://worker-01.company.local:8787/workspaces
+curl -H "X-OpenWork-Host-Token: $OPENWORK_HOST_TOKEN" http://worker-01.company.local:8787/env/keys
 ```
 
 Expected result:
 
 - the container is running
 - `curl` returns HTTP 200 JSON from the OpenWork server
+- `/workspaces` returns at least one selectable workspace for the configured client token
+- `/env/keys` returns HTTP 200 for the configured host token
 
 This worker URL is what Den will later use in `DEN_STATIC_WORKER_URLS`.
 
@@ -107,9 +111,12 @@ Export the variables and run `docker compose` in the same shell session.
 
 In Bash, export `DEN_STATIC_WORKER_TOKEN_MAP_JSON` as a single-quoted JSON string so it reaches the container unchanged.
 
+Keep these `DEN_*` exports in the current shell until you finish `docker compose ps`, `logs`, and the health checks below. If you open a new shell, re-export the same values before running follow-up Compose commands.
+
 ```bash
 cd /path/to/openwork
 export DEN_WEB_ORIGIN=https://den.company.local
+export DEN_PROVISIONER_MODE=static
 export DEN_BETTER_AUTH_URL=$DEN_WEB_ORIGIN
 export DEN_BETTER_AUTH_TRUSTED_ORIGINS=$DEN_WEB_ORIGIN
 export DEN_CORS_ORIGINS=$DEN_WEB_ORIGIN
@@ -165,8 +172,8 @@ Expected behavior:
 
 - Den picks the first free worker URL from `DEN_STATIC_WORKER_URLS`
 - Den calls `/health` on that worker URL
-- Den verifies the configured client token against `/workspaces`
-- Den verifies the configured host token against `/env/keys`
+- Den verifies the configured client token against `/workspaces` using `Authorization: Bearer <client-token>`
+- Den verifies the configured host token against `/env/keys` using `X-OpenWork-Host-Token: <host-token>`
 - Den marks the worker `healthy` only after the runtime contract succeeds
 
 You can also add another shared worker from the Den UI later. In `static` mode, the UI can allocate a free worker URL from the pre-provisioned pool, but it cannot create a new runtime worker.
