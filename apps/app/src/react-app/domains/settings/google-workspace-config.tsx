@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
@@ -65,6 +66,7 @@ function normalizeGoogleWorkspaceAuthStatus(value: unknown): GoogleWorkspaceAuth
   return {
     configured: record.configured === true,
     missing: normalizeStringList(record.missing),
+    customClient: record.customClient === true,
     vault,
     connected: record.connected === true,
     account: normalizeGoogleWorkspaceAccount(record.account),
@@ -100,6 +102,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState("");
+  const [gmailRead, setGmailRead] = useState(false);
   const serverAvailable = Boolean(openworkServerClient);
   const hostServerAvailable = Boolean(hostOpenworkServerClient);
   const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
@@ -148,7 +151,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
   const connectGoogleWorkspace = async () => {
     if (!openworkServerClient) return null;
-    const flow = await openworkServerClient.googleWorkspaceConnectStart();
+    const flow = await openworkServerClient.googleWorkspaceConnectStart({ gmailRead: status?.customClient === true && gmailRead });
     platform.openLink(flow.authUrl);
     return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
   };
@@ -327,6 +330,19 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
                 </div>
               </div>
             ))}
+          </CardContent>
+        ) : null}
+        {status?.customClient ? (
+          <CardContent className={connectedAccounts.length > 0 ? "pt-2" : "pt-6"}>
+            <label className="flex items-start gap-2.5">
+              <Checkbox checked={gmailRead} onCheckedChange={(checked) => setGmailRead(checked === true)} disabled={Boolean(busyAction)} className="mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-card-foreground">Allow reading Gmail</span>
+                <span className="block text-xs leading-relaxed text-muted-foreground">
+                  Also request read access to your Gmail messages on the next connection. Available because you are using your own Google OAuth client.
+                </span>
+              </span>
+            </label>
           </CardContent>
         ) : null}
         <CardFooter className="flex-wrap gap-2 justify-between">
