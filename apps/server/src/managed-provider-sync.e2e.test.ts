@@ -30,6 +30,10 @@ function hostAuth() {
   return { "x-openwork-host-token": HOST_TOKEN, "content-type": "application/json" };
 }
 
+function clientAuth() {
+  return { authorization: `Bearer ${CLIENT_TOKEN}` };
+}
+
 function providerPayload() {
   return {
     revision: "sync-rev-1",
@@ -224,7 +228,7 @@ describe("managed provider sync runtime route", () => {
     });
     expect(sync.status).toBe(200);
 
-    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.all) ? body.all : [];
@@ -249,7 +253,7 @@ describe("managed provider sync runtime route", () => {
     });
     expect(sync.status).toBe(200);
 
-    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
 
@@ -265,7 +269,7 @@ describe("managed provider sync runtime route", () => {
     });
     expect(sync.status).toBe(200);
 
-    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.providers) ? body.providers : [];
@@ -290,7 +294,7 @@ describe("managed provider sync runtime route", () => {
     });
     expect(sync.status).toBe(200);
 
-    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody;
     const providers = !Array.isArray(body.providers) && body.providers ? body.providers : {};
@@ -348,7 +352,7 @@ describe("managed provider sync runtime route", () => {
     expect(config).not.toContain('"openai"');
     expect(config).not.toContain("gpt-5.4");
 
-    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: { "x-openwork-host-token": HOST_TOKEN } });
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
     const providers = Array.isArray(body.all) ? body.all : [];
