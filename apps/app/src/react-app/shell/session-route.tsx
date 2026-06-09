@@ -24,6 +24,7 @@ import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   readOpenworkServerSettings,
+  toOpenworkConnectionError,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
 } from "@/app/lib/openwork-server";
@@ -2732,13 +2733,15 @@ export function SessionRoute() {
       let list: WorkspaceList | null = null;
       let createdOnServer = false;
       if (client) {
-        list = await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .then((serverList) => {
-            createdOnServer = true;
-            return serverList;
-          })
-          .catch(() => null);
+        try {
+          list = await client.createLocalWorkspace({ folderPath: folder, name: workspaceName, preset });
+          createdOnServer = true;
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before creating a workspace.",
+          );
+        }
       }
       if (!list) {
         throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
@@ -2809,7 +2812,14 @@ export function SessionRoute() {
       };
       let list: WorkspaceList | null = null;
       if (client) {
-        list = await client.createRemoteWorkspace(payload).catch(() => null);
+        try {
+          list = await client.createRemoteWorkspace(payload);
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.",
+          );
+        }
       }
       if (!list) {
         throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");

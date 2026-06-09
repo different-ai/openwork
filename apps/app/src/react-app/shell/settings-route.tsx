@@ -10,6 +10,7 @@ import {
   createOpenworkServerClient,
   isLoopbackOpenworkServerUrl,
   readOpenworkServerSettings,
+  toOpenworkConnectionError,
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
@@ -1941,9 +1942,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       const workspaceName = folderNameFromPath(folder);
       let list: WorkspaceList | null = null;
       if (openworkClient) {
-        list = await openworkClient
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .catch(() => null);
+        try {
+          list = await openworkClient.createLocalWorkspace({ folderPath: folder, name: workspaceName, preset });
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before creating a workspace.",
+          );
+        }
       }
       if (!list) {
         throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
@@ -1984,7 +1990,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       };
       let list: WorkspaceList | null = null;
       if (openworkClient) {
-        list = await openworkClient.createRemoteWorkspace(payload).catch(() => null);
+        try {
+          list = await openworkClient.createRemoteWorkspace(payload);
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.",
+          );
+        }
       }
       if (!list) {
         throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");

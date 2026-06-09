@@ -794,6 +794,15 @@ export class OpenworkServerError extends Error {
   }
 }
 
+/**
+ * Preserve actionable server-side error messages (e.g. "no workspace matching
+ * <url>", invalid token) while mapping transport failures (network down,
+ * timeout) to a generic "server unavailable" message.
+ */
+export function toOpenworkConnectionError(error: unknown, unavailableMessage: string): Error {
+  return error instanceof OpenworkServerError ? error : new Error(unavailableMessage);
+}
+
 function buildHeaders(
   token?: string,
   hostToken?: string,

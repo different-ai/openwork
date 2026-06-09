@@ -23,7 +23,7 @@ import {
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
 import { resolveOpenworkConnection } from "./openwork-connection";
-import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient, toOpenworkConnectionError } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
@@ -149,8 +149,11 @@ export function WelcomeRoute() {
             serverBaseUrl = normalizedBaseUrl;
             serverToken = resolvedToken;
           }
-        } catch {
-          list = null;
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before creating a workspace.",
+          );
         }
         if (!list) {
           throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
@@ -239,8 +242,11 @@ export function WelcomeRoute() {
               hostToken: resolvedHostToken || undefined,
             }).createRemoteWorkspace(payload);
           }
-        } catch {
-          list = null;
+        } catch (error) {
+          throw toOpenworkConnectionError(
+            error,
+            "OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.",
+          );
         }
         if (!list) {
           throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
