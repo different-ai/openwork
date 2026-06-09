@@ -96,20 +96,21 @@ test("managed provider sync sanitizes worker failures", async () => {
   expect(body.reason).toBe("Worker provider sync failed.")
 })
 
-test("managed provider sync treats an empty provider set as applied without calling worker", async () => {
+test("managed provider sync pushes an empty provider set so workers remove revoked providers", async () => {
   let called = false
   const { app, workerId } = createApp({
     listProviders: async () => [],
-    pushRuntime: async () => {
+    pushRuntime: async (_workerId, payload) => {
       called = true
-      return { ok: false, status: 500, payload: { message: "should not be called" } }
+      expect(payload).toEqual({ providers: [], revision: "empty" })
+      return { ok: true, status: 200, payload: { status: "applied" } }
     },
   })
 
   const response = await app.request(`http://den.local/v1/workers/${workerId}/managed-providers/sync`, { method: "POST" })
   expect(response.status).toBe(200)
   await expect(response.json()).resolves.toEqual({ status: "applied", providerCount: 0, revision: "empty" })
-  expect(called).toBe(false)
+  expect(called).toBe(true)
 })
 
 test("managed provider sync reports missing worker as not found", async () => {

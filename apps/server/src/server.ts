@@ -1015,6 +1015,11 @@ function isProviderListProxyRequest(method: string, proxyPath: string) {
   return method === "GET" && normalizeOpencodeProxyPath(proxyPath) === "/config/providers";
 }
 
+type ManagedProviderAccessPolicy = {
+  allowedModelsByProvider: Map<string, Set<string>>;
+  revokedProviderIds: Set<string>;
+};
+
 async function filterManagedProviderListResponse(workspaceRoot: string, response: Response): Promise<Response> {
   if (!response.ok) return sanitizeProxyResponse(response);
 
@@ -1026,25 +1031,32 @@ async function filterManagedProviderListResponse(workspaceRoot: string, response
     return proxyTextResponse(response, text);
   }
 
-  let allowedModelsByProvider: Map<string, Set<string>>;
+  let policy: ManagedProviderAccessPolicy;
   try {
-    allowedModelsByProvider = await readManagedProviderModelAllowlist(workspaceRoot);
+    policy = await readManagedProviderAccessPolicy(workspaceRoot);
   } catch {
     return proxyJsonResponse(response, data);
   }
-  if (allowedModelsByProvider.size === 0) return proxyJsonResponse(response, data);
+  if (policy.allowedModelsByProvider.size === 0 && policy.revokedProviderIds.size === 0) return proxyJsonResponse(response, data);
 
-  return proxyJsonResponse(response, filterProviderListModels(data, allowedModelsByProvider));
+  return proxyJsonResponse(response, filterProviderListModels(data, policy));
 }
 
-async function readManagedProviderModelAllowlist(workspaceRoot: string): Promise<Map<string, Set<string>>> {
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+async function readManagedProviderAccessPolicy(workspaceRoot: string): Promise<ManagedProviderAccessPolicy> {
   const openwork = await readOpenworkConfig(workspaceRoot);
   const managedProviders = openwork.managedProviders;
-  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") return new Map();
+  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") {
+    return { allowedModelsByProvider: new Map(), revokedProviderIds: new Set() };
+  }
 
   const opencode = await readOpencodeConfig(workspaceRoot);
   const providers = opencode.provider;
-  if (!isRecordValue(providers)) return new Map();
+  const revokedProviderIds = new Set(readStringArray(managedProviders.revoked));
+  if (!isRecordValue(providers)) return { allowedModelsByProvider: new Map(), revokedProviderIds };
 
   const allowlist = new Map<string, Set<string>>();
   for (const [providerId, providerConfig] of Object.entries(providers)) {
@@ -1052,39 +1064,52 @@ async function readManagedProviderModelAllowlist(workspaceRoot: string): Promise
     const modelIds = Object.keys(providerConfig.models);
     if (modelIds.length > 0) allowlist.set(providerId, new Set(modelIds));
   }
-  return allowlist;
+  return { allowedModelsByProvider: allowlist, revokedProviderIds };
 }
 
-function filterProviderListModels(data: unknown, allowedModelsByProvider: Map<string, Set<string>>): unknown {
+function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPolicy): unknown {
   if (!isRecordValue(data)) return data;
-  const managedProviderIds = new Set(allowedModelsByProvider.keys());
+  const managedProviderIds = new Set(policy.allowedModelsByProvider.keys());
   if (Array.isArray(data.all)) {
+    const all = data.all
+      .filter((provider) => !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+      .map((provider) => filterProviderListItem(provider, policy.allowedModelsByProvider));
     return {
       ...data,
-      all: data.all.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
-      connected: mergeManagedConnectedProviderIds(data.connected, data.all, managedProviderIds),
+      all,
+      connected: mergeManagedConnectedProviderIds(data.connected, all, managedProviderIds, policy.revokedProviderIds),
     };
   }
   if (Array.isArray(data.providers)) {
+    const providers = data.providers
+      .filter((provider) => !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+      .map((provider) => filterProviderListItem(provider, policy.allowedModelsByProvider));
     return {
       ...data,
-      providers: data.providers.map((provider) => filterProviderListItem(provider, allowedModelsByProvider)),
-      connected: mergeManagedConnectedProviderIds(data.connected, data.providers, managedProviderIds),
+      providers,
+      connected: mergeManagedConnectedProviderIds(data.connected, providers, managedProviderIds, policy.revokedProviderIds),
     };
   }
   if (isRecordValue(data.providers)) {
+    const providers = Object.fromEntries(
+      Object.entries(data.providers)
+        .filter(([providerId, provider]) => !policy.revokedProviderIds.has(providerId) && !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+        .map(([providerId, provider]) => [providerId, filterProviderListItem(provider, policy.allowedModelsByProvider, providerId)]),
+    );
     return {
       ...data,
-      providers: Object.fromEntries(
-        Object.entries(data.providers).map(([providerId, provider]) => [providerId, filterProviderListItem(provider, allowedModelsByProvider, providerId)]),
-      ),
-      connected: mergeManagedConnectedProviderIds(data.connected, Object.keys(data.providers), managedProviderIds),
+      providers,
+      connected: mergeManagedConnectedProviderIds(data.connected, Object.keys(providers), managedProviderIds, policy.revokedProviderIds),
     };
   }
   return data;
 }
 
-function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>): string[] | undefined {
+function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<string>) {
+  return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
+}
+
+function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>, revokedProviderIds: Set<string>): string[] | undefined {
   if (!Array.isArray(connected)) return undefined;
   const providerIds = new Set(
     providers.map((provider) => {
@@ -1093,7 +1118,7 @@ function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown
       return "";
     }).filter(Boolean),
   );
-  const next = new Set(connected.filter((id): id is string => typeof id === "string"));
+  const next = new Set(connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)));
   for (const providerId of managedProviderIds) {
     if (providerIds.has(providerId)) next.add(providerId);
   }
@@ -2443,12 +2468,25 @@ function createRoutes(
     const opencodeConfigBefore = existsSync(opencodeConfigFile)
       ? await readFile(opencodeConfigFile, "utf8")
       : null;
+    const previousManagedProviderIds = await readAppliedManagedProviderRuntimeIds(workspace.path);
+    const previousRevokedProviderIds = await readRevokedManagedProviderRuntimeIds(workspace.path);
+    const currentManagedProviderIds = new Set(payload.providers.map((provider) => getManagedProviderRuntimeId(provider)));
+    const staleManagedProviderIds = [...previousManagedProviderIds].filter((providerId) => !currentManagedProviderIds.has(providerId));
+    const revokedManagedProviderIds = new Set([...previousRevokedProviderIds, ...staleManagedProviderIds]);
+    for (const providerId of currentManagedProviderIds) revokedManagedProviderIds.delete(providerId);
+
     const applied: string[] = [];
+    const authApplied: string[] = [];
     try {
+      await applyManagedProviderConfigSet(workspace.path, payload.providers, previousManagedProviderIds);
       for (const provider of payload.providers) {
-        await applyManagedProviderConfig(workspace.path, provider);
         await applyManagedProviderAuth(config, workspace, provider);
-        applied.push(provider.id);
+        const providerId = getManagedProviderRuntimeId(provider);
+        authApplied.push(providerId);
+        applied.push(providerId);
+      }
+      for (const providerId of staleManagedProviderIds) {
+        await deleteManagedProviderAuth(config, workspace, providerId);
       }
     } catch (error) {
       if (opencodeConfigBefore === null) {
@@ -2456,6 +2494,7 @@ function createRoutes(
       } else {
         await writeFile(opencodeConfigFile, opencodeConfigBefore, "utf8");
       }
+      await rollbackAppliedManagedProviderAuth(config, workspace, authApplied);
       return jsonResponse({
         status: "failed",
         providerCount: applied.length,
@@ -2465,12 +2504,13 @@ function createRoutes(
     }
 
     await writeOpenworkConfig(workspace.path, {
-      managedProviders: {
-        source: "den",
-        revision: payload.revision,
-        applied,
-        appliedAt: new Date().toISOString(),
-      },
+        managedProviders: {
+          source: "den",
+          revision: payload.revision,
+          applied,
+          revoked: [...revokedManagedProviderIds],
+          appliedAt: new Date().toISOString(),
+        },
     }, true);
 
     await recordAudit(workspace.path, {
@@ -5021,6 +5061,46 @@ export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncP
   return next;
 }
 
+async function readManagedProviderRuntimeIds(workspaceRoot: string, key: "applied" | "revoked"): Promise<Set<string>> {
+  const openwork = await readOpenworkConfig(workspaceRoot);
+  const managedProviders = openwork.managedProviders;
+  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") return new Set();
+  return new Set(readStringArray(managedProviders[key]));
+}
+
+async function readAppliedManagedProviderRuntimeIds(workspaceRoot: string): Promise<Set<string>> {
+  return readManagedProviderRuntimeIds(workspaceRoot, "applied");
+}
+
+async function readRevokedManagedProviderRuntimeIds(workspaceRoot: string): Promise<Set<string>> {
+  return readManagedProviderRuntimeIds(workspaceRoot, "revoked");
+}
+
+async function applyManagedProviderConfigSet(workspaceRoot: string, providers: ManagedProviderSyncProvider[], previousManagedProviderIds: Set<string>) {
+  const config = await readOpencodeConfig(workspaceRoot);
+  const providerConfig = isRecordValue(config.provider) ? { ...config.provider } : {};
+  const currentProviderIds = new Set(providers.map((provider) => getManagedProviderRuntimeId(provider)));
+
+  for (const providerId of previousManagedProviderIds) {
+    if (!currentProviderIds.has(providerId)) {
+      delete providerConfig[providerId];
+    }
+  }
+
+  for (const provider of providers) {
+    providerConfig[getManagedProviderRuntimeId(provider)] = buildManagedProviderRuntimeConfig(provider);
+  }
+
+  const nextConfig = { ...config };
+  if (Object.keys(providerConfig).length > 0) {
+    nextConfig.provider = providerConfig;
+  } else {
+    delete nextConfig.provider;
+  }
+
+  await writeJsoncFile(opencodeConfigPath(workspaceRoot), nextConfig);
+}
+
 function buildManagedProviderModelRuntimeConfig(model: ManagedProviderSyncProvider["models"][number]) {
   const raw = model.config;
   const next: Record<string, unknown> = { id: model.id, name: model.name };
@@ -5069,6 +5149,29 @@ async function applyManagedProviderAuth(config: ServerConfig, workspace: Workspa
     method: "PUT",
     body: parseManagedOpencodeAuth(provider),
   });
+}
+
+async function deleteManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string) {
+  try {
+    await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+      method: "DELETE",
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "opencode_request_failed" && isRecordValue(error.details) && error.details.status === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function rollbackAppliedManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerIds: string[]) {
+  await Promise.all(providerIds.map(async (providerId) => {
+    try {
+      await deleteManagedProviderAuth(config, workspace, providerId);
+    } catch {
+      // Best-effort cleanup. The sync response remains failed and sanitized.
+    }
+  }));
 }
 
 function sanitizeManagedProviderApplyError(error: unknown) {
