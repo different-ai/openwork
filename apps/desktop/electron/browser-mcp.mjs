@@ -274,6 +274,10 @@ export async function startBrowserMcpServers({
   function createBuiltinFactory() {
     const srv = createNativeBuiltinServer({
       getWebContents,
+      listTabs,
+      createTab,
+      closeTab,
+      selectTab,
       onToolCall: onBuiltinToolCall,
       onHideBrowser,
     });

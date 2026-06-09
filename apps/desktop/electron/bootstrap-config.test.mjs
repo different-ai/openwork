@@ -51,7 +51,7 @@ test("normalize desktop bootstrap honors forced sign-in env", () => {
   );
 });
 
-test("managed Den filtering rejects ambiguous legacy remote OpenWork workspaces", () => {
+test("managed Den filtering keeps legacy remote OpenWork workspaces non-destructively", () => {
   const workspaces = [
     { id: "local", workspaceType: "local" },
     { id: "legacy", workspaceType: "remote", remoteType: "openwork", openworkHostUrl: "http://old-worker:8787" },
@@ -62,6 +62,6 @@ test("managed Den filtering rejects ambiguous legacy remote OpenWork workspaces"
 
   assert.deepEqual(
     filterWorkspacesForManagedDen(workspaces, "http://den.company.local:3005").map((workspace) => workspace.id),
-    ["local", "current-den", "other-remote"],
+    ["local", "legacy", "current-den", "other-remote"],
   );
 });

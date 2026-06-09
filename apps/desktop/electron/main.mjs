@@ -2905,11 +2905,24 @@ async function handleDesktopInvoke(event, command, ...args) {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
-      const response = await fetch(url, {
-        method: typeof init.method === "string" ? init.method : undefined,
-        headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-        body: typeof init.body === "string" ? init.body : undefined,
-      });
+      const timeoutMs = Number(init.timeoutMs);
+      const signal = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)))
+        : undefined;
+      let response;
+      try {
+        response = await fetch(url, {
+          method: typeof init.method === "string" ? init.method : undefined,
+          headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
+          body: typeof init.body === "string" ? init.body : undefined,
+          signal,
+        });
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new Error(`Fetch timed out after ${Math.max(1, Math.floor(timeoutMs))}ms`);
+        }
+        throw error;
+      }
       return {
         status: response.status,
         statusText: response.statusText,

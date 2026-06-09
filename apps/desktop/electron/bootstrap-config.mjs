@@ -89,9 +89,10 @@ export function isWorkspaceCompatibleWithManagedDen(workspace, denBaseUrl) {
   const activeDenOrigin = normalizeUrlOrigin(denBaseUrl);
   if (!activeDenOrigin) return true;
   const workspaceDenOrigin = normalizeUrlOrigin(workspace?.openworkDenBaseUrl);
-  // A managed Den configuration must not silently reuse legacy remote OpenWork
-  // records that lack Den-origin metadata; those may point at stale labs/sites.
-  if (!workspaceDenOrigin) return false;
+  // Legacy remote OpenWork records predate Den-origin metadata. Keep them in
+  // persisted desktop state so startup/filtering is non-destructive; only hide
+  // records that explicitly belong to a different Den origin.
+  if (!workspaceDenOrigin) return true;
   return workspaceDenOrigin === activeDenOrigin;
 }
 
