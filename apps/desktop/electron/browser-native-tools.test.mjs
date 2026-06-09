@@ -42,13 +42,14 @@ test("page management tools use provided tab callbacks", async () => {
       return tabId;
     },
   });
+  const tools = /** @type {any} */ (server)._registeredTools;
 
-  const pages = await server._registeredTools.list_pages.handler({});
+  const pages = await tools.list_pages.handler({});
   assert.deepEqual(JSON.parse(pages.content[0].text).map((page) => page.pageId), ["tab-1", "tab-2"]);
 
-  await server._registeredTools.select_page.handler({ pageId: 2 });
-  await server._registeredTools.create_page.handler({ url: "https://example.test/three" });
-  await server._registeredTools.close_page.handler({ pageId: "tab-1" });
+  await tools.select_page.handler({ pageId: 2 });
+  await tools.create_page.handler({ url: "https://example.test/three" });
+  await tools.close_page.handler({ pageId: "tab-1" });
 
   assert.deepEqual(calls, [
     ["select", "tab-2"],
