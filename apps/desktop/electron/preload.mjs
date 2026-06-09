@@ -136,6 +136,22 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
     },
   },
+  terminal: {
+    create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },
+    write(terminalId, data) { return ipcRenderer.invoke("openwork:terminal:write", terminalId, data); },
+    resize(terminalId, cols, rows) { return ipcRenderer.invoke("openwork:terminal:resize", terminalId, cols, rows); },
+    kill(terminalId) { return ipcRenderer.invoke("openwork:terminal:kill", terminalId); },
+    onData(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openwork:terminal:data", handler);
+      return () => ipcRenderer.removeListener("openwork:terminal:data", handler);
+    },
+    onExit(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openwork:terminal:exit", handler);
+      return () => ipcRenderer.removeListener("openwork:terminal:exit", handler);
+    },
+  },
   meta: {
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),

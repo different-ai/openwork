@@ -50,8 +50,12 @@ For a UI flow, collect all of these when feasible:
 - App proof: `navigator.userAgent` contains `Electron/` for desktop flows, or does not for standalone Chrome flows.
 - State proof: URL, visible text, selected model/provider, status, or route matches the expected outcome.
 - Backend proof: relevant `daytona exec` process/log/health check for sidecars, Den, worker proxy, or mock servers.
-- Visual proof: `browser_screenshot` or `.devcontainer/capture-daytona-screenshot.sh` at important checkpoints.
-- Human proof: recording URL only when requested or useful for PR evidence.
+- Frame-by-frame HTML proof: the default deliverable. Named PNGs for each step served as a browseable HTML index on port 8090. See `daytona-recording-artifacts` for how to produce the index.
+- Video clips: only when a step involves motion (streaming text, loading spinners, animations). Embed clips in the same HTML index alongside the static frames.
+
+Frame proof is the default. Video is the exception for interactions that need
+motion. When the user says "test this on Daytona" and UI is involved, always
+produce frame-by-frame HTML proof unless the user explicitly asks for video.
 
 ## Validation Loop Template
 
@@ -221,6 +225,6 @@ For Den Web flows specifically:
 
 Use one of these verdicts:
 
-- `Passed`: every expected outcome has an observable assertion.
+- `Passed`: every expected outcome has an observable assertion and frame-by-frame proof is published.
 - `Failed`: at least one assertion disproves the expected outcome.
-- `Incomplete`: the sandbox/tooling failed, evidence is missing, or only a recording/screenshot was collected.
+- `Incomplete`: the sandbox/tooling failed, evidence is missing, or only a recording/screenshot was collected without frame proof.
