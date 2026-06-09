@@ -1,7 +1,7 @@
 {
   "name": "@openwork/desktop",
   "private": true,
-  "version": "0.15.1",
+  "version": "0.15.3",
   "description": "OpenWork desktop shell",
   "author": {
     "name": "OpenWork",
@@ -24,12 +24,13 @@
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.15.12",
+    "@opencode-ai/sdk": "^1.16.2",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.45.1",
     "electron-updater": "^6.3.9",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
+    "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
     "yaml": "^2.6.1",
     "zod": "^4.3.6"
   },
@@ -39,5 +40,5 @@
     "electron-devtools-installer": "^4.0.0"
   },
   "packageManager": "pnpm@10.27.0",
-  "opencodeRouterVersion": "0.15.1"
+  "opencodeRouterVersion": "0.15.3"
 }

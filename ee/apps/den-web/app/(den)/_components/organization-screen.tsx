@@ -122,12 +122,12 @@ export function OrganizationScreen() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa]">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 sm:px-6">
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-medium text-gray-900">OpenWork Cloud</span>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-500">{user?.email}</span>
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+          <span className="min-w-0 truncate text-sm text-gray-500">{user?.email}</span>
           <button
             onClick={() => void signOut()}
             className="text-gray-400 transition-colors hover:text-gray-900"
@@ -138,21 +138,21 @@ export function OrganizationScreen() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto p-6 md:p-12">
+      <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12">
         {showDirectCreateFlow ? (
           <div className="mx-auto max-w-2xl">
-            <section className="rounded-[2rem] border border-gray-200 bg-white p-8 shadow-sm md:p-10">
-              <div className="mb-8 flex items-start gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white">
+            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
+              <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
                   {userInitials}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-                  <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-gray-950">
-                    Create your first organization.
+                  <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 sm:text-3xl">
+                    Name your team.
                   </h1>
-                  <p className="mt-3 max-w-xl text-sm leading-6 text-gray-500">
-                    Name the workspace you want to set up. Billing only appears when you need team features or cloud hosting.
+                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 sm:text-sm">
+                    You can rename it later. No credit card required.
                   </p>
                 </div>
               </div>
@@ -179,27 +179,27 @@ export function OrganizationScreen() {
 
                 {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                   <button
                     type="submit"
                     disabled={createBusy || !createName.trim()}
-                    className="rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
+                    className="w-full rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 sm:w-auto"
                   >
                     {createBusy ? "Creating..." : "Continue"}
                   </button>
-                  <p className="text-sm text-gray-500">Signed in as {user?.email ?? "your account"}</p>
+
                 </div>
               </form>
             </section>
           </div>
         ) : (
           <div className="mx-auto max-w-5xl">
-            <div className="mb-8">
+            <div className="mb-6 sm:mb-8">
               <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Settings</h1>
               <p className="mt-1 text-sm text-gray-500">Manage your profile and organization memberships.</p>
             </div>
 
-            <div className="mb-8 flex gap-8 border-b border-gray-200">
+            <div className="mb-6 flex gap-6 overflow-x-auto border-b border-gray-200 sm:mb-8 sm:gap-8">
               <button
                 type="button"
                 onClick={() => setActiveTab("profile")}
@@ -292,14 +292,14 @@ export function OrganizationScreen() {
                   </p>
                   <button
                     onClick={() => setShowCreate(true)}
-                    className="shrink-0 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800"
+                    className="w-full shrink-0 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 sm:w-auto"
                   >
                     + Create New Organization
                   </button>
                 </div>
 
                 {showCreate ? (
-                  <div className="mb-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+                  <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:mb-8 sm:p-6">
                     <h2 className="mb-4 text-lg font-medium text-gray-900">Create an Organization</h2>
                     <form onSubmit={handleCreate} className="grid max-w-md gap-4">
                       <label className="grid gap-2">
@@ -315,7 +315,7 @@ export function OrganizationScreen() {
                         />
                       </label>
 
-                      <div className="flex gap-3 pt-2">
+                      <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
                         <button
                           type="button"
                           onClick={() => {
@@ -323,14 +323,14 @@ export function OrganizationScreen() {
                             setCreateName("");
                             setCreateError(null);
                           }}
-                          className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                          className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={createBusy || !createName.trim()}
-                          className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
+                          className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
                         >
                           {createBusy ? "Creating..." : "Create"}
                         </button>
@@ -341,7 +341,42 @@ export function OrganizationScreen() {
                   </div>
                 ) : null}
 
-                <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <div className="grid gap-3 md:hidden">
+                  {orgs.map((org) => (
+                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 className="truncate text-[15px] font-semibold text-gray-950">{org.name}</h2>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {org.role === "owner" ? "Creator plan" : "Free plan"} • {formatRoleLabel(org.role)}
+                          </p>
+                        </div>
+                        {org.isActive ? (
+                          <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                            Current
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-4 flex gap-2">
+                        <button
+                          onClick={() => handleSwitch(org.slug)}
+                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                        >
+                          {org.isActive ? "Open" : "Switch"}
+                        </button>
+                        <button
+                          onClick={() => handleSwitch(org.slug)}
+                          className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-3 py-2.5 text-gray-500 transition hover:bg-gray-50 hover:text-gray-800"
+                          aria-label="Organization settings"
+                        >
+                          <Settings className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:block">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="border-b border-gray-200 bg-gray-50/50">

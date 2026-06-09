@@ -209,7 +209,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     builtInItems,
     cloudPluginItems: [...cloudPluginItems, ...importedPluginItems],
     installedMcpEntries: [
-      ...builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : []),
+      ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
     ],
     installedSkills: standaloneSkillItems.flatMap((item) => item.skill ? [item.skill] : []),

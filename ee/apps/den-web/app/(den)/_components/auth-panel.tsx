@@ -290,7 +290,7 @@ export function AuthPanel({
   }
 
   return (
-    <div className="den-frame grid gap-5 p-6 md:p-7">
+    <div className="den-frame grid gap-4 p-5 sm:gap-5 sm:p-6 md:p-7">
       <div className="grid gap-3">
         <p className="den-eyebrow">{eyebrow}</p>
         <div className="grid gap-2">
@@ -465,7 +465,7 @@ export function AuthPanel({
       </form>
 
       {isPasswordResetRequest ? (
-        <div className="flex items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)]">
+        <div className="flex flex-col gap-2 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <p className="m-0">Remembered your password?</p>
           <button
             type="button"
@@ -481,7 +481,7 @@ export function AuthPanel({
           </button>
         </div>
       ) : !verificationRequired ? (
-        <div className="flex items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)]">
+        <div className="flex flex-col gap-2 border-t border-[var(--dls-border)] pt-4 text-sm text-[var(--dls-text-secondary)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <p className="m-0">
             {authMode === "sign-in"
               ? resolvedSignInContent.togglePrompt
