@@ -1,4 +1,4 @@
-FROM oven/bun:1.2.20
+FROM node:22-bookworm-slim
 
 WORKDIR /repo
 
@@ -7,11 +7,11 @@ RUN apt-get update \
     ca-certificates \
     curl \
     git \
-    nodejs \
-    npm \
     tar \
     unzip \
-  && npm install -g pnpm@10.27.0 \
+  && npm install -g pnpm@11.4.0 \
+  && curl -fsSL https://bun.sh/install | bash \
+  && ln -s /root/.bun/bin/bun /usr/local/bin/bun \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
