@@ -27,6 +27,7 @@ describe("Den managed provider worker sync client", () => {
         status: "applied",
         providerCount: 1,
         revision: "safe-revision",
+        providerIds: ["lpr_applied"],
       }), {
         headers: { "Content-Type": "application/json" },
         status: 200,
@@ -41,7 +42,7 @@ describe("Den managed provider worker sync client", () => {
     const client = createDenClient({ baseUrl: "http://den.local", token: "user-token" });
     const result = await client.syncWorkerManagedProviders("org_test", "wrk_test");
 
-    expect(result).toEqual({ status: "applied", providerCount: 1, revision: "safe-revision" });
+    expect(result).toEqual({ status: "applied", providerCount: 1, revision: "safe-revision", providerIds: ["lpr_applied"] });
     expect(calls).toEqual([{
       url: "http://den.local/v1/workers/wrk_test/managed-providers/sync",
       method: "POST",
@@ -77,5 +78,25 @@ describe("Den managed provider worker sync client", () => {
       expect(error).toBeInstanceOf(DenApiError);
       expect(error instanceof Error ? error.message.includes(secret) : true).toBe(false);
     }
+  });
+
+  test("rejects sync payloads whose applied provider IDs do not match the provider count", async () => {
+    const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
+      status: "applied",
+      providerCount: 2,
+      revision: "mismatch-revision",
+      providerIds: ["lpr_only_one"],
+    }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: fetchMock,
+    });
+
+    const client = createDenClient({ baseUrl: "http://den.local", token: "user-token" });
+    await expect(client.syncWorkerManagedProviders("org_test", "wrk_test")).rejects.toThrow("Managed provider sync response was invalid.");
   });
 });

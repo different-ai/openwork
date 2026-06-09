@@ -11,6 +11,7 @@ import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-sessio
 import { CloudProvidersSection, type CloudProviderRow } from "@/react-app/domains/settings/cloud/sections";
 import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { getCloudManagedProviderId } from "@/react-app/domains/connections/provider-auth/store";
 
 type CloudProvidersSession = Pick<
   ReturnType<typeof useDenSession>,
@@ -54,9 +55,10 @@ export function CloudProvidersView({
   const rows = React.useMemo<CloudProviderRow[]>(() => {
     const nextRows: CloudProviderRow[] = cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
+      const localProviderId = getCloudManagedProviderId(provider);
       const status = !imported
         ? "available"
-        : imported.providerId !== provider.id.trim() ||
+        : imported.providerId !== localProviderId ||
             imported.sourceProviderId !== provider.providerId ||
             (imported.source ?? null) !== (provider.source ?? null) ||
             (imported.updatedAt ?? null) !== (provider.updatedAt ?? null) ||

@@ -119,6 +119,36 @@ type MutableState = {
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
 
+export const getCloudManagedProviderId = (
+  provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "credentialKind">,
+) => {
+  if (provider.source === "openwork") return "openwork";
+  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
+  return provider.id.trim();
+};
+
+export function resolveAppliedManagedProvidersFromSyncResult(
+  result: { providerCount: number; providerIds?: string[] },
+  liveProviders: DenOrgLlmProvider[],
+) {
+  if (Array.isArray(result.providerIds)) {
+    const appliedIds = new Set(result.providerIds.map((id) => id.trim()).filter(Boolean));
+    return liveProviders.filter((provider) => appliedIds.has(provider.id));
+  }
+
+  if (result.providerCount === liveProviders.length) {
+    return liveProviders;
+  }
+
+  if (result.providerCount === 0) {
+    return [];
+  }
+
+  throw new Error(
+    "Remote worker synced only part of the organization provider set but did not identify which providers were applied. Imported provider state was left unchanged.",
+  );
+}
+
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
 
@@ -163,14 +193,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const sortStrings = (values: string[]) => values.toSorted();
   const sameStringList = (a: string[], b: string[]) =>
     a.length === b.length && a.every((value, index) => value === b[index]);
-
-  const getCloudManagedProviderId = (
-    provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "credentialKind">,
-  ) => {
-    if (provider.source === "openwork") return "openwork";
-    if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
-    return provider.id.trim();
-  };
 
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
@@ -1610,19 +1632,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       apiBaseUrl: target.settings.apiBaseUrl,
       token: target.settings.authToken,
     });
-    await den.syncWorkerManagedProviders(target.orgId, target.workerId);
-    await rememberRemoteManagedProviderSync(liveProviders);
+    const syncResult = await den.syncWorkerManagedProviders(target.orgId, target.workerId);
+    const appliedProviders = resolveAppliedManagedProvidersFromSyncResult(syncResult, liveProviders);
+    await rememberRemoteManagedProviderSync(appliedProviders);
     await refreshProviders({ dispose: true }).catch(() => null);
     await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
-    const newlyImported = liveProviders.filter((provider) => !importedProviders[provider.id]);
+    const newlyImported = appliedProviders.filter((provider) => !importedProviders[provider.id]);
     if (newlyImported.length > 0) {
       dispatchNewProviders({
         providers: newlyImported.map((provider) => {
           const firstModel = provider.models[0] ?? null;
+          const localProviderId = getCloudManagedProviderId(provider);
           return {
-            id: provider.id,
+            id: localProviderId,
             name: provider.name,
-            providerId: provider.providerId,
+            providerId: localProviderId,
             firstModelId: firstModel?.id,
             firstModelName: firstModel?.name ?? firstModel?.id,
           };

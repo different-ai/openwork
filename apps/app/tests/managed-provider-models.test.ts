@@ -132,4 +132,23 @@ describe("managed cloud provider model allowlists", () => {
 
     expect(visibleModelIds("openai", ["gpt-5.4", "gpt-5.5", "gpt-4o"], allowlist)).toEqual(["gpt-5.4", "gpt-5.5"]);
   });
+
+  test("model picker options for OAuth-managed providers keep runtime provider IDs for defaults", () => {
+    const allowlist = buildCloudManagedModelIdsByProvider({
+      lpr_den_openai: importedProvider({
+        cloudProviderId: "lpr_den_openai",
+        providerId: "openai",
+        sourceProviderId: "openai",
+        name: "OpenAI from Den",
+        modelIds: ["gpt-5.5"],
+      }),
+    });
+
+    expect(buildCloudManagedModelOptions({
+      providers: [provider("openai", "OpenAI", ["gpt-5.5"])],
+      cloudManagedModelIdsByProvider: allowlist,
+    }).map((option) => ({ providerID: option.providerID, modelID: option.modelID }))).toEqual([
+      { providerID: "openai", modelID: "gpt-5.5" },
+    ]);
+  });
 });

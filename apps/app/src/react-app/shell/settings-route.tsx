@@ -131,7 +131,7 @@ import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { getDenInferenceUrl } from "@/app/lib/den";
-import { buildCloudManagedModelIdsByProvider } from "@/app/cloud/managed-provider-models";
+import { buildCloudManagedModelIdsByProvider, buildCloudManagedModelOptions } from "@/app/cloud/managed-provider-models";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -1211,28 +1211,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         } catch {
           seenIds = new Set();
         }
-        const options: ModelOption[] = [];
-        for (const provider of getConnectedProviderItems(data)) {
-          const modelIds = Object.keys(provider.models);
-          const isNew = !seenIds.has(provider.id);
-          for (const id of modelIds) {
-            const model = provider.models[id];
-            options.push({
-              providerID: provider.id,
-              modelID: id,
-              title: model.name || id,
-              description: provider.name,
-              behaviorTitle: "Reasoning",
-              behaviorLabel: "Default",
-              behaviorDescription: "",
-              behaviorValue: null,
-              isFree: false,
-              isConnected: true,
-              isRecommended: isNew,
-              source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
-            });
-          }
-        }
+        const options = buildCloudManagedModelOptions({
+          providers: getConnectedProviderItems(data),
+          cloudManagedModelIdsByProvider,
+          isRecommendedProvider: (providerId) => !seenIds.has(providerId),
+        });
         setModelOptions(options);
       } catch (error) {
         toast.error(

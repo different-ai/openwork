@@ -142,6 +142,7 @@ export type DenManagedProviderSyncResult = {
   status: "applied" | "failed";
   providerCount: number;
   revision: string;
+  providerIds?: string[];
   reason?: string;
 };
 
@@ -1090,10 +1091,18 @@ function getDenManagedProviderSyncResult(payload: unknown): DenManagedProviderSy
   if (payload.status !== "applied" && payload.status !== "failed") return null;
   if (typeof payload.providerCount !== "number" || !Number.isInteger(payload.providerCount) || payload.providerCount < 0) return null;
   if (typeof payload.revision !== "string") return null;
+  const rawProviderIds = Array.isArray(payload.providerIds)
+    ? payload.providerIds
+    : Array.isArray(payload.appliedProviderIds)
+      ? payload.appliedProviderIds
+      : undefined;
+  const providerIds = rawProviderIds ? readStringArray(rawProviderIds) : undefined;
+  if (rawProviderIds && providerIds?.length !== payload.providerCount) return null;
   return {
     status: payload.status,
     providerCount: payload.providerCount,
     revision: payload.revision,
+    ...(providerIds ? { providerIds } : {}),
     ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
   };
 }
