@@ -1,0 +1,145 @@
+import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+
+function seedRequiredEnv() {
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
+  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
+  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
+  process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+}
+
+let queryRows: unknown[][] = []
+let operations: Array<{ type: "insert" | "update"; value: any }> = []
+
+function queryFor(rows: unknown[]) {
+  const chain: any = {
+    from: () => chain,
+    innerJoin: () => chain,
+    where: () => chain,
+    orderBy: () => rows,
+    limit: () => rows,
+    then: (resolve: (value: unknown[]) => unknown) => resolve(rows),
+  }
+  return chain
+}
+
+function writeResult() {
+  return {
+    onDuplicateKeyUpdate: () => Promise.resolve(),
+    then: (resolve: (value: undefined) => unknown) => Promise.resolve().then(() => resolve(undefined)),
+  }
+}
+
+mock.module("../src/db.js", () => ({
+  db: {
+    select: () => queryFor(queryRows.shift() ?? []),
+    insert: () => ({
+      values: (value: any) => {
+        operations.push({ type: "insert", value })
+        return writeResult()
+      },
+    }),
+    update: () => ({
+      set: (value: any) => ({
+        where: () => {
+          operations.push({ type: "update", value })
+          return Promise.resolve()
+        },
+      }),
+    }),
+  },
+}))
+
+let orgsModule: typeof import("../src/orgs.js")
+
+beforeAll(async () => {
+  seedRequiredEnv()
+  orgsModule = await import("../src/orgs.js")
+})
+
+beforeEach(() => {
+  queryRows = []
+  operations = []
+})
+
+test("invitation preview resolves an invite token", async () => {
+  const invitationId = createDenTypeId("invitation")
+  const organizationId = createDenTypeId("organization")
+  const expiresAt = new Date(Date.now() + 60_000)
+  const createdAt = new Date("2026-06-09T00:00:00.000Z")
+  queryRows = [[{
+    invitation: {
+      id: invitationId,
+      email: "teammate@example.com",
+      role: "member",
+      status: "pending",
+      expiresAt,
+      createdAt,
+    },
+    organization: {
+      id: organizationId,
+      name: "Demo Org",
+      slug: "demo-org",
+      allowedEmailDomains: null,
+    },
+  }]]
+
+  const preview = await orgsModule.getInvitationPreview("invite-token-123")
+
+  expect(preview?.invitation.id).toBe(invitationId)
+  expect(preview?.invitation.status).toBe("pending")
+  expect(preview?.organization.id).toBe(organizationId)
+})
+
+test("accept by invite token claims placeholder member without duplicates and retains team association", async () => {
+  const invitationId = createDenTypeId("invitation")
+  const organizationId = createDenTypeId("organization")
+  const userId = createDenTypeId("user")
+  const placeholderMemberId = createDenTypeId("member")
+  const teamId = createDenTypeId("team")
+  const teamMemberId = createDenTypeId("teamMember")
+  const invitation = {
+    id: invitationId,
+    email: "teammate@example.com",
+    role: "member",
+    organizationId,
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+    teamId,
+  }
+  const claimedMember = {
+    id: placeholderMemberId,
+    organizationId,
+    userId,
+    inviteId: invitationId,
+    invitedByOrgMember: null,
+    role: "member",
+    joinedAt: new Date("2026-06-09T00:00:00.000Z"),
+    removedAt: null,
+    removedByOrgMember: null,
+    createdAt: new Date("2026-06-08T00:00:00.000Z"),
+  }
+  queryRows = [
+    [invitation],
+    [{ allowedEmailDomains: null }],
+    [{ role: "member" }, { role: "admin" }],
+    [],
+    [{ id: placeholderMemberId }],
+    [claimedMember],
+    [{ id: teamId }],
+    [{ id: teamMemberId }],
+  ]
+
+  const accepted = await orgsModule.acceptInvitationForUser({
+    userId,
+    email: "teammate@example.com",
+    invitationId: "invite-token-123",
+  })
+
+  expect(accepted?.member.id).toBe(placeholderMemberId)
+  expect(accepted?.member.userId).toBe(userId)
+  expect(operations.some((operation) => operation.type === "insert" && operation.value?.userId === userId)).toBe(false)
+  expect(operations.some((operation) => operation.type === "insert" && operation.value?.orgMembershipId === placeholderMemberId)).toBe(false)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(true)
+})
