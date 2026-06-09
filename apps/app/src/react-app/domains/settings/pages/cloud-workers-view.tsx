@@ -43,6 +43,7 @@ export function CloudWorkersView({
       try {
         const nextWorkers = await client.listWorkers(activeOrgId, 20);
         setWorkers(nextWorkers);
+        setWorkersError(null);
         if (!quiet) {
           toast.info(
             nextWorkers.length > 0
@@ -66,8 +67,22 @@ export function CloudWorkersView({
 
   React.useEffect(() => {
     if (!user || !activeOrgId) return;
+    setWorkersError(null);
     void refreshWorkers(true);
   }, [activeOrgId, refreshWorkers, user]);
+
+  // Poll quietly while any worker is still provisioning so "Starting" flips
+  // to "Ready" without a manual refresh.
+  const hasProvisioningWorker = workers.some(
+    (worker) => worker.status.trim().toLowerCase() === "provisioning",
+  );
+  React.useEffect(() => {
+    if (!hasProvisioningWorker || !user || !activeOrgId) return;
+    const timer = window.setInterval(() => {
+      void refreshWorkers(true);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [activeOrgId, hasProvisioningWorker, refreshWorkers, user]);
 
   const openWorker = React.useCallback(
     async (workerId: string, workerName: string) => {
