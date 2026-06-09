@@ -84,10 +84,10 @@ export function AuthScreen() {
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 
   return (
-    <section className="den-page flex w-full items-center py-4 lg:min-h-[calc(100vh-2.5rem)]">
-      <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
-        <div className="order-2 flex flex-col gap-6 lg:order-1">
-          <div className="den-frame relative min-h-[300px] overflow-hidden px-7 py-8 md:px-10 md:py-10">
+    <section className="den-page flex w-full items-start py-3 sm:py-4 lg:min-h-[calc(100vh-2.5rem)] lg:items-center">
+      <div className="grid w-full gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
+        <div className="order-1 flex flex-col gap-4 sm:gap-6">
+          <div className="den-frame relative min-h-[210px] overflow-hidden px-5 py-6 sm:min-h-[260px] sm:px-7 sm:py-8 md:px-10 md:py-10 lg:min-h-[300px]">
             <div className="absolute inset-0 z-0">
               <Dithering
                 speed={0}
@@ -119,21 +119,21 @@ export function AuthScreen() {
                 <span className="text-[13px] font-medium text-white/80">OpenWork Cloud</span>
               </div>
 
-              <div className="grid gap-4">
+              <div className="grid gap-3 sm:gap-4">
                 <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
                   OpenWork Cloud
                 </span>
-                <h1 className="max-w-[12ch] text-[2.25rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white md:text-[3rem]">
+                <h1 className="max-w-[13ch] text-[2rem] font-semibold leading-[0.95] tracking-[-0.06em] text-white sm:text-[2.35rem] md:text-[3rem]">
                   One setup, every seat.
                 </h1>
-                <p className="max-w-[34rem] text-[15px] leading-7 text-white/80">
+                <p className="max-w-[34rem] text-[14px] leading-6 text-white/80 sm:text-[15px] sm:leading-7">
                   Configure once. Your whole team gets the same tools, agents, and providers.
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="hidden gap-4 md:grid md:grid-cols-3">
             <FeatureCard
               title="Shared config"
               body="Set it up once, then push it to the org."
@@ -149,7 +149,7 @@ export function AuthScreen() {
           </div>
         </div>
 
-        <div className="order-1 lg:order-2">
+        <div className="order-2">
           {!sessionHydrated ? (
             <SessionStatusPanel mode="checking" />
           ) : hasResolvedSession ? (

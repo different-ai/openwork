@@ -5,11 +5,57 @@ description: Daytona recording volume, screenshots, artifacts, and validation ev
 
 # Daytona Recording Artifacts
 
-Use this skill to collect proof that a Daytona UI flow works. Recordings are for
-humans. CDP assertions and screenshots are for AI validation and fast review.
+Use this skill to collect proof that a Daytona UI flow works.
 Use `daytona-flow-validator` before declaring the flow passed.
 
-## Recording Standard
+## Default: Frame-by-Frame HTML Proof
+
+The default proof format is a browseable HTML page with named PNG screenshots
+for each step of the flow. This is faster to produce, easier to review, and
+works on any device.
+
+Use video (MP4) only when the proof requires motion: streaming text, loading
+spinners, animations, drag-and-drop, or real-time interactions that a static
+frame cannot capture. When video is used, embed it inside the frame-by-frame
+HTML page alongside the static frames.
+
+### How to produce frame proof
+
+1. Serve a directory from the sandbox on port 8090:
+
+```bash
+daytona exec "$SANDBOX" -- 'bash -lc "mkdir -p /workspace/proof-frames; nohup python3 -m http.server 8090 --directory /workspace/proof-frames >/dev/null 2>&1 &"'
+```
+
+2. At each important state, capture a `browser_screenshot` locally and upload
+   it to the sandbox with a numbered name like `01-auth-landing.png`,
+   `02-org-filled.png`, etc.
+
+3. Generate a browseable `index.html` with all frames as labeled images in a
+   responsive grid. Include the branch, commit, and sandbox name.
+
+4. Get the public URL:
+
+```bash
+FRAMES_URL=$(daytona preview-url "$SANDBOX" -p 8090 2>/dev/null | grep -v "^time=")
+echo "${FRAMES_URL}/index.html"
+```
+
+5. Post the index URL in the PR body. Individual frame PNGs are also directly
+   linkable: `${FRAMES_URL}/01-auth-landing.png`.
+
+### When to include video clips
+
+Embed short MP4 clips in the same proof directory when the step involves:
+
+- Streaming text appearing in real-time (chat responses).
+- Loading/progress indicators that resolve.
+- Animations or transitions between states.
+- Drag-and-drop or multi-step interactions.
+
+Reference them from the HTML index alongside the static frames.
+
+## Recording Standard (video, when needed)
 
 A useful Daytona recording should look like a person using the product, even
 though CDP is driving the browser or Electron window.
@@ -137,23 +183,23 @@ daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
 
 ## Validation Standard
 
-Use all three layers when possible:
+Use these layers in order of priority:
 
-- CDP/browser assertions: prove URL, text, state, accessibility tree, and process state.
-- Screenshots: provide fast visual checkpoints for AI and reviewers.
-- Recording: prove the full flow to humans for PR review.
+1. **Frame-by-frame HTML proof** (default): named PNGs in a browseable index.
+   This is the primary evidence format for UI flows.
+2. **CDP/browser assertions**: prove URL, text, state, accessibility tree, and
+   process state alongside each frame capture.
+3. **Video clips** (when needed): short MP4s embedded in the frame index for
+   steps that require motion proof (streaming, animations, loading states).
 
 Do not report success from a recording alone. The AI should inspect state with
 browser tools and use screenshots to validate visible behavior before declaring
 the flow passed.
 
-When a recording is required, start it before the first user-visible action in
-the flow and stop it only after the final asserted state is visible.
-
-Do not use a recording as the primary demo if most of the flow happened through
+Do not use a video as the primary demo if most of the flow happened through
 hidden automation. In that case, mark the run as technical validation only and
-record a new click-by-click run for human review.
+produce a new frame-by-frame proof for human review.
 
-If you discover an invalid recording after the fact, do not reuse the same URL
-as if it were valid. Record a new run with a new recording name and explain in
-the PR/comment that the earlier artifact was superseded.
+If you discover invalid evidence after the fact, do not reuse the same URL as
+if it were valid. Produce new frames with new names and explain in the
+PR/comment that the earlier artifact was superseded.

@@ -18,7 +18,7 @@ import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionRuntime } from "./extension-registry";
 
-type BusyAction = "status" | "connect" | "disconnect" | "test" | "smoke-test" | "save-secret";
+type BusyAction = "status" | "connect" | "disconnect" | "set-active" | "test" | "smoke-test" | "save-secret";
 type GoogleWorkspaceCommand = () => Promise<unknown>;
 const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
 const CONNECT_POLL_INTERVAL_MS = 1_000;
@@ -310,9 +310,21 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
                   <div className="truncate text-sm font-medium text-card-foreground">{account.email ?? account.name ?? "Google account"}</div>
                   <div className="text-xs text-muted-foreground">{account.accountId === status?.activeAccountId ? "Default for extension actions" : "Connected"}</div>
                 </div>
-                <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
-                  Disconnect
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {account.accountId && account.accountId !== status?.activeAccountId ? (
+                    <Button variant="outline" size="sm" disabled={Boolean(busyAction)} onClick={() => {
+                      const accountId = account.accountId;
+                      if (!accountId) return;
+                      void runDesktopAction("set-active", () => openworkServerClient?.googleWorkspaceSetActiveAccount(accountId) ?? Promise.resolve(null));
+                    }}>
+                      {busyAction === "set-active" ? <Loader2 className="size-4 animate-spin" /> : null}
+                      Make default
+                    </Button>
+                  ) : null}
+                  <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
+                    Disconnect
+                  </Button>
+                </div>
               </div>
             ))}
           </CardContent>
