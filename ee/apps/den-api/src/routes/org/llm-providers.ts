@@ -5,6 +5,7 @@ import {
   LlmProviderModelTable,
   LlmProviderTable,
   MemberTable,
+  InvitationTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -341,6 +342,20 @@ export function redactLlmProviderCredentials<T extends { apiKey?: unknown; openc
   }
 }
 
+export function serializeLlmProviderAccessUser(input: {
+  user: { id: string | null; name: string | null; email: string | null; image: string | null } | null
+  invitation: { email: string | null } | null
+}) {
+  return input.user?.id
+    ? input.user
+    : {
+        id: null,
+        name: null,
+        email: input.invitation?.email ?? null,
+        image: null,
+      }
+}
+
 function buildLlmProviderCredentialPayload(provider: LlmProviderRow) {
   return {
     ...redactLlmProviderCredentials(provider),
@@ -612,6 +627,9 @@ async function loadLlmProviders(input: {
         id: MemberTable.id,
         role: MemberTable.role,
       },
+      invitation: {
+        email: InvitationTable.email,
+      },
       user: {
         id: AuthUserTable.id,
         name: AuthUserTable.name,
@@ -621,7 +639,8 @@ async function loadLlmProviders(input: {
     })
     .from(LlmProviderAccessTable)
     .innerJoin(MemberTable, eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id))
-    .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(and(inArray(LlmProviderAccessTable.llmProviderId, providerIds), isNotNull(LlmProviderAccessTable.orgMembershipId), isNull(MemberTable.removedAt)))
 
   const teamAccessRows = await db
@@ -691,7 +710,7 @@ async function loadLlmProviders(input: {
         id: row.access.id,
         orgMembershipId: row.member.id,
         role: row.member.role,
-        user: row.user,
+        user: serializeLlmProviderAccessUser(row),
         createdAt: row.access.createdAt,
       })),
       teams: (teamAccessByProviderId.get(provider.id) ?? []).map((row) => ({

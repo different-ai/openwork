@@ -38,6 +38,18 @@ test("credential flags expose presence only, never credential values", () => {
   })).toEqual({ hasApiKey: true, hasOpencodeAuth: true, hasCredential: true })
 })
 
+test("provider access serialization preserves pending invitation email", () => {
+  expect(llmProviderModule.serializeLlmProviderAccessUser({
+    user: { id: null, name: null, email: null, image: null },
+    invitation: { email: "pending@example.com" },
+  })).toEqual({
+    id: null,
+    name: null,
+    email: "pending@example.com",
+    image: null,
+  })
+})
+
 test("credential import permission gate requires organization admin role", () => {
   const owner = { currentMember: { isOwner: true, role: "member" } }
   const admin = { currentMember: { isOwner: false, role: "admin" } }
