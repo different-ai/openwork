@@ -510,9 +510,16 @@ interface ProviderCardProps {
   } | null) => void;
 }
 
+function getCloudManagedProviderId(
+  provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source" | "credentialKind">,
+) {
+  if (provider.source === "openwork") return "openwork";
+  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
+  return provider.id.trim();
+}
+
 function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCardProps) {
-  // The local provider ID matches the cloud provider's org-level ID
-  const localProviderId = provider.id.trim();
+  const localProviderId = getCloudManagedProviderId(provider);
   const firstModel = provider.models[0] ?? null;
   const isSelected = selectedDefault?.providerId === localProviderId;
 

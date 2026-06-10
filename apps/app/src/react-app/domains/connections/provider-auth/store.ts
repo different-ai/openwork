@@ -212,7 +212,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     for (const provider of state.cloudOrgProviders) {
-      const id = provider.providerId.trim();
+      const id = getCloudManagedProviderId(provider);
       if (!id || merged.has(id)) continue;
       if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
       merged.set(id, {
@@ -775,12 +775,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   ) => {
     const localProviderId = getCloudManagedProviderId(provider);
     const existingImported = state.importedCloudProviders[provider.id] ?? null;
+    const importedWithSameLocalId = Object.values(state.importedCloudProviders).find(
+      (entry) => entry.providerId === localProviderId && entry.cloudProviderId !== provider.id,
+    );
     if (
-      existingImported &&
-      existingImported.providerId !== localProviderId &&
-      Object.values(state.importedCloudProviders).some(
-        (entry) => entry.providerId === localProviderId && entry.cloudProviderId !== provider.id,
-      )
+      importedWithSameLocalId &&
+      (!existingImported || existingImported.providerId !== localProviderId)
     ) {
       throw new Error(
         `${localProviderId} is already imported from another cloud provider. Remove it before importing this one.`,
@@ -1743,7 +1743,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       });
     }
 
-    if (failures.length > 0) {
+    if (failures.length > 0 && !configChanged) {
       throw new Error(failures.join("\n"));
     }
   }

@@ -1917,7 +1917,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/llm-providers", {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/llm-providers?scope=usable", {
         method: "GET",
         token,
         organizationId: orgId,
