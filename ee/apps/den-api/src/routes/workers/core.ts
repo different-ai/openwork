@@ -958,14 +958,17 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         204: emptyResponse("Worker deleted successfully."),
         400: jsonResponse("The worker deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete workers.", unauthorizedSchema),
+        403: jsonResponse("Only the worker creator, organization owners, and admins can delete static workers.", forbiddenSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
     requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    resolveOrganizationContextMiddleware,
     paramValidator(workerIdParamSchema),
     async (c) => {
+    const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
+    const organizationContext = c.get("organizationContext")
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -982,6 +985,15 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     const worker = await getWorkerByIdForOrg(workerId, orgId)
     if (!worker) {
       return c.json({ error: "worker_not_found" }, 404)
+    }
+
+    const instance = await getLatestWorkerInstance(worker.id)
+    if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
+      worker,
+      userId: user.id,
+      currentMember: organizationContext?.currentMember,
+    })) {
+      return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can delete static workers." }, 403)
     }
 
     await deleteWorkerCascade(worker)
