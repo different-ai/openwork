@@ -1,10 +1,11 @@
-import { desc, eq } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { jsonValidator, paramValidator, queryValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
@@ -134,7 +135,12 @@ async function getExistingSignupAutoWorkerResponse(input: {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(eq(WorkerTable.org_id, input.orgId))
+    .where(and(
+      eq(WorkerTable.org_id, input.orgId),
+      eq(WorkerTable.created_by_user_id, input.userId),
+      eq(WorkerTable.destination, "cloud"),
+      inArray(WorkerTable.status, ["provisioning", "healthy"]),
+    ))
     .orderBy(desc(WorkerTable.created_at))
     .limit(1)
 
@@ -316,36 +322,57 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       },
     ])
 
+    const workerRow: WorkerRow = {
+      id: workerId,
+      org_id: orgId,
+      created_by_user_id: user.id,
+      name: input.name,
+      description: input.description ?? null,
+      destination: input.destination,
+      status: workerStatus,
+      image_version: input.imageVersion ?? null,
+      workspace_path: input.workspacePath ?? null,
+      sandbox_backend: input.sandboxBackend ?? null,
+      last_heartbeat_at: null,
+      last_active_at: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+
     if (input.destination === "cloud") {
-      void continueCloudProvisioning({
+      const provisioningInput = {
         workerId,
         name: input.name,
         hostToken,
         clientToken,
         activityToken,
-      })
+      }
+
+      if (env.provisionerMode === "static") {
+        await continueCloudProvisioning(provisioningInput)
+        const latestWorkerRows = await db
+          .select()
+          .from(WorkerTable)
+          .where(eq(WorkerTable.id, workerId))
+          .limit(1)
+        const latestWorker = latestWorkerRows[0] ?? workerRow
+        const tokensAndConnect = await getWorkerTokensAndConnect(latestWorker)
+        const responseTokens = "tokens" in tokensAndConnect
+          ? tokensAndConnect.tokens
+          : { owner: hostToken, host: hostToken, client: clientToken }
+        return c.json({
+          worker: toWorkerResponse(latestWorker, user.id),
+          tokens: responseTokens,
+          instance: toInstanceResponse(await getLatestWorkerInstance(workerId)),
+          launch: { mode: "instant", pollAfterMs: 0 },
+        }, 201)
+      }
+
+      void continueCloudProvisioning(provisioningInput)
     }
 
     return c.json({
-      worker: toWorkerResponse(
-        {
-          id: workerId,
-          org_id: orgId,
-          created_by_user_id: user.id,
-          name: input.name,
-          description: input.description ?? null,
-          destination: input.destination,
-          status: workerStatus,
-          image_version: input.imageVersion ?? null,
-          workspace_path: input.workspacePath ?? null,
-          sandbox_backend: input.sandboxBackend ?? null,
-          last_heartbeat_at: null,
-          last_active_at: null,
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-        user.id,
-      ),
+      worker: toWorkerResponse(workerRow, user.id),
       tokens: {
         owner: hostToken,
         host: hostToken,

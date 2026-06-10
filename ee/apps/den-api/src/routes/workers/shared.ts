@@ -333,6 +333,24 @@ function staticReservationStaleBefore() {
 }
 
 async function markStaleStaticReservationsFailed(tx: StaticAssignmentDb) {
+  const staleRows = await tx
+    .select({ workerId: WorkerInstanceTable.worker_id })
+    .from(WorkerInstanceTable)
+    .where(
+      and(
+        eq(WorkerInstanceTable.provider, "static"),
+        eq(WorkerInstanceTable.status, "provisioning"),
+        sql`${WorkerInstanceTable.updated_at} < ${staticReservationStaleBefore()}`,
+      ),
+    )
+  const staleWorkerIds = [...new Set(staleRows.map((row) => row.workerId))]
+  if (staleWorkerIds.length > 0) {
+    await tx
+      .update(WorkerTable)
+      .set({ status: "failed" })
+      .where(inArray(WorkerTable.id, staleWorkerIds))
+  }
+
   await tx
     .update(WorkerInstanceTable)
     .set({ status: "failed" })
