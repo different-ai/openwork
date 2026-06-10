@@ -2500,15 +2500,18 @@ function createRoutes(
       }, 502);
     }
 
-    await writeOpenworkConfig(workspace.path, {
+    const writeManagedProviderSyncMetadata = async (nextApplied: string[]) => writeOpenworkConfig(workspace.path, {
         managedProviders: {
           source: "den",
           revision: payload.revision,
-          applied,
+          applied: nextApplied,
           revoked: [...revokedManagedProviderIds],
           appliedAt: new Date().toISOString(),
         },
     }, true);
+
+    const pendingCleanupApplied = [...new Set([...applied, ...staleManagedProviderIds])];
+    await writeManagedProviderSyncMetadata(pendingCleanupApplied);
 
     try {
       for (const providerId of staleManagedProviderIds) {
@@ -2524,6 +2527,10 @@ function createRoutes(
         revision: payload.revision,
         reason: sanitizeManagedProviderApplyError(error),
       }, 502);
+    }
+
+    if (staleManagedProviderIds.length > 0) {
+      await writeManagedProviderSyncMetadata(applied);
     }
 
     await recordAudit(workspace.path, {
