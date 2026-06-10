@@ -5053,6 +5053,14 @@ function parseManagedProviderSyncPayload(input: unknown): ManagedProviderSyncPay
       revision: readRequiredString(entry, "revision"),
     };
   });
+  const runtimeProviderIds = new Set<string>();
+  for (const provider of providers) {
+    const runtimeProviderId = getManagedProviderRuntimeId(provider);
+    if (runtimeProviderIds.has(runtimeProviderId)) {
+      throw new ApiError(400, "duplicate_provider_runtime_id", "Managed provider runtime ids must be unique");
+    }
+    runtimeProviderIds.add(runtimeProviderId);
+  }
   return { providers, revision };
 }
 

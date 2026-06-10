@@ -435,6 +435,32 @@ describe("managed provider sync runtime route", () => {
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(false);
   });
 
+  test("rejects duplicate runtime provider ids before config or auth mutation", async () => {
+    const previousAuth = { type: "api", key: "previous-working-key" };
+    const { base, workspace, authCalls, authStore } = await boot({
+      initialAuth: { "/auth/lpr_den_nvidia": previousAuth },
+    });
+    const payload = providerPayload();
+    const duplicateProvider = { ...payload.providers[0] };
+    duplicateProvider.name = "Duplicate NVIDIA";
+    duplicateProvider.revision = "provider-rev-duplicate";
+    duplicateProvider.apiKey = "new-secret-that-must-not-be-written";
+    payload.providers = [payload.providers[0], duplicateProvider];
+
+    const response = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(payload),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "duplicate_provider_runtime_id" });
+    expect(authCalls).toHaveLength(0);
+    expect(authStore.get("/auth/lpr_den_nvidia")).toEqual(previousAuth);
+    const configPath = join(workspace, "opencode.jsonc");
+    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("new-secret-that-must-not-be-written");
+  });
+
   test("stale auth deletion failure does not restore config that references stale providers", async () => {
     const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/openai" });
     const fullPayload = providerPayload();
