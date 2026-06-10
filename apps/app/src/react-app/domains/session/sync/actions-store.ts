@@ -32,6 +32,7 @@ import type {
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
+import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -188,6 +189,10 @@ export function createSessionActionsStore(options: {
     for (const part of draft.parts) {
       if (part.type === "agent") {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
+        continue;
+      }
+      if (part.type === "app") {
+        parts.push({ type: "text", text: appMentionInstruction(part.name) } as TextPartInput);
         continue;
       }
       if (part.type === "file") {

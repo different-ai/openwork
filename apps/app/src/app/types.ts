@@ -98,6 +98,8 @@ export type ComposerPart =
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
   | { type: "file"; path: string; label?: string }
+  /** A macOS app targeted via Computer Use (composer "@App" mention). */
+  | { type: "app"; name: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {

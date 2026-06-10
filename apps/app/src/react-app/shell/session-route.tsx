@@ -94,6 +94,7 @@ import {
   todoKey as reactTodoKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { firstLineLocalFileParts } from "@/react-app/domains/session/sync/prompt-file-parts";
+import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
@@ -481,6 +482,10 @@ async function draftToParts(draft: ComposerDraft, workspaceRoot: string) {
     }
     if (part.type === "skill") {
       parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
+      continue;
+    }
+    if (part.type === "app") {
+      parts.push({ type: "text", text: appMentionInstruction(part.name) });
       continue;
     }
     if (part.type === "file") {

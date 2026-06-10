@@ -184,6 +184,30 @@ function spawnCheckPermissions(bin) {
   });
 }
 
+async function listRunningApps() {
+  // Spawn binary --list-apps → read JSON from stdout → exit. Needs no TCC
+  // permissions, so this works before Computer Use setup is complete.
+  if (process.platform !== "darwin") return { ok: false, apps: [] };
+  const bin = resolveComputerUseExecutable();
+  if (!bin) return { ok: false, apps: [] };
+  return new Promise((resolve) => {
+    let stdout = "";
+    const child = spawn(bin, ["--list-apps"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.on("error", () => resolve({ ok: false, apps: [] }));
+    child.on("close", () => {
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        const apps = Array.isArray(parsed?.apps) ? parsed.apps.filter((name) => typeof name === "string" && name.trim()) : [];
+        resolve({ ok: parsed?.ok === true, apps });
+      } catch {
+        resolve({ ok: false, apps: [] });
+      }
+    });
+  });
+}
+
 async function openComputerUseSetupApp() {
   // Open the GUI. Use the .app bundle if available so macOS shows it as
   // a real app with its own dock icon and permission identity.
@@ -2635,6 +2659,10 @@ async function handleDesktopInvoke(event, command, ...args) {
     case "checkComputerUsePermissions": {
       // Spawn --check → fresh TCC read → always accurate.
       return checkComputerUsePermissions();
+    }
+    case "listRunningApps": {
+      // Running regular macOS apps for composer @App mentions.
+      return listRunningApps();
     }
     case "openComputerUsePermissionSetup": {
       // Open the GUI app. Returns immediately — React shows "verify" CTA.

@@ -33,7 +33,8 @@ import {
 } from "@/react-app/shell/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { ReactSessionComposer } from "./composer/composer";
-import { decodeComposerMentionValue, encodeComposerMentionValue } from "./composer/mention-encoding";
+import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
+import { desktopBridge } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@openwork/ui/react";
@@ -673,6 +674,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         const kind = mentions[value];
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
+        if (kind === "app") return [{ type: "app", name: value } satisfies ComposerDraft["parts"][number]];
       }
       return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
     });
@@ -877,9 +879,29 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setComposerAttachments(props.sessionId, attachments.filter((item) => item.id !== id));
   };
 
-  const handleInsertMention = (kind: "agent" | "file", value: string) => {
+  const handleInsertMention = (kind: ComposerMentionKind, value: string) => {
     setComposerDraft(props.sessionId, draft.replace(/@([^\s@]*)$/, `@${encodeComposerMentionValue(value)} `));
     setComposerMentions(props.sessionId, { ...mentions, [value]: kind });
+    // Pre-flight Computer Use permissions when an app is mentioned so missing
+    // Accessibility / Screen Recording grants surface before send, not as a
+    // mid-task failure. Only ever runs on macOS desktop (apps aren't offered
+    // elsewhere); errors are silently ignored.
+    if (kind === "app") {
+      void (async () => {
+        try {
+          const status = (await desktopBridge.checkComputerUsePermissions()) as { ok?: boolean };
+          if (status.ok === true) return;
+          toast.warning(t("composer.computer_use_permissions_missing", { app: value }), {
+            action: {
+              label: t("composer.computer_use_permissions_setup"),
+              onClick: () => void desktopBridge.openComputerUsePermissionSetup(),
+            },
+          });
+        } catch {
+          // Desktop bridge unavailable — nothing to pre-flight.
+        }
+      })();
+    }
   };
 
   const handlePasteText = (text: string) => {

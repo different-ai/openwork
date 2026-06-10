@@ -1,9 +1,10 @@
 /// Computer Use: semantic AX and background-safe macOS computer use.
 ///
-/// Three modes:
-///   mcp       — run the MCP server over stdio
-///   --check   — print permission status as JSON to stdout and exit
-///   (default) — open the permission setup GUI
+/// Four modes:
+///   mcp          — run the MCP server over stdio
+///   --check      — print permission status as JSON to stdout and exit
+///   --list-apps  — print running regular apps as JSON to stdout and exit
+///   (default)    — open the permission setup GUI
 
 import AppKit
 import Foundation
@@ -26,6 +27,17 @@ case "--check":
     let status = ComputerUsePermissions.status()
     let json = "{\"ok\":\(status.ok),\"accessibility\":\(status.accessibility),\"screenRecording\":\(status.screenRecording)}"
     print(json)
+    exit(0)
+case "--list-apps":
+    // Running regular apps (Dock-visible). Needs no TCC permissions, so this
+    // is safe to call from the composer at any time.
+    let apps = NSWorkspace.shared.runningApplications
+        .filter { $0.activationPolicy == .regular }
+        .compactMap(\.localizedName)
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    let payload: [String: Any] = ["ok": true, "apps": apps]
+    let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{\"ok\":false,\"apps\":[]}".utf8)
+    print(String(decoding: data, as: UTF8.self))
     exit(0)
 default:
     await runPermissionSetupApp()

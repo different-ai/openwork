@@ -32,11 +32,11 @@ import {
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
-import { decodeComposerMentionValue, encodeComposerMentionValue } from "./mention-encoding";
+import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 
 type EditorProps = {
   value: string;
-  mentions: Record<string, "agent" | "file">;
+  mentions: Record<string, ComposerMentionKind>;
   pastedText?: Array<{ label: string; lines: number }>;
   disabled: boolean;
   placeholder: string;
@@ -53,7 +53,7 @@ type EditorProps = {
 type SerializedComposerMentionNode = Spread<
   {
     mentionValue: string;
-    mentionKind: "agent" | "file";
+    mentionKind: ComposerMentionKind;
     type: "composer-mention";
     version: 1;
   },
@@ -78,9 +78,19 @@ type SerializedComposerSkillNode = Spread<
   SerializedTextNode
 >;
 
+const MENTION_PILL_CLASS: Record<ComposerMentionKind, string> = {
+  file: "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11",
+  agent: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
+  app: "inline-flex items-center rounded-full border border-cyan-6/35 bg-cyan-3/20 px-2.5 py-1 text-xs font-medium text-cyan-11",
+};
+
+function mentionPillText(value: string, kind: ComposerMentionKind) {
+  return `@${kind === "file" ? value.split(/[\\/]/).pop() || value : value}`;
+}
+
 class ComposerMentionNode extends TextNode {
   __value: string;
-  __kind: "agent" | "file";
+  __kind: ComposerMentionKind;
 
   static override getType() {
     return "composer-mention";
@@ -94,7 +104,7 @@ class ComposerMentionNode extends TextNode {
     return $createComposerMentionNode(serializedNode.mentionValue, serializedNode.mentionKind);
   }
 
-  constructor(value = "", kind: "agent" | "file" = "file", key?: NodeKey) {
+  constructor(value = "", kind: ComposerMentionKind = "file", key?: NodeKey) {
     super(`@${encodeComposerMentionValue(value)}`, key);
     this.__value = value;
     this.__kind = kind;
@@ -112,11 +122,8 @@ class ComposerMentionNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    const isFile = this.__kind === "file";
-    dom.className = isFile
-      ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
-      : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-    dom.textContent = `@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
+    dom.className = MENTION_PILL_CLASS[this.__kind];
+    dom.textContent = mentionPillText(this.__value, this.__kind);
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.title = `@${this.__value}`;
@@ -125,11 +132,8 @@ class ComposerMentionNode extends TextNode {
 
   override updateDOM(prevNode: ComposerMentionNode, dom: HTMLElement) {
     if (prevNode.__value !== this.__value || prevNode.__kind !== this.__kind) {
-      const isFile = this.__kind === "file";
-      dom.className = isFile
-        ? "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11"
-        : "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11";
-      dom.textContent = `@${isFile ? this.__value.split(/[\\/]/).pop() || this.__value : this.__value}`;
+      dom.className = MENTION_PILL_CLASS[this.__kind];
+      dom.textContent = mentionPillText(this.__value, this.__kind);
       dom.title = `@${this.__value}`;
     }
     return false;
@@ -152,7 +156,7 @@ class ComposerMentionNode extends TextNode {
   }
 }
 
-function $createComposerMentionNode(value: string, kind: "agent" | "file") {
+function $createComposerMentionNode(value: string, kind: ComposerMentionKind) {
   return $applyNodeReplacement(new ComposerMentionNode(value, kind));
 }
 
@@ -459,7 +463,7 @@ function appendSegmentWithNewlines(
   return current;
 }
 
-function setPrompt(value: string, mentions: Record<string, "agent" | "file">, pastedText?: Array<{ label: string; lines: number }>) {
+function setPrompt(value: string, mentions: Record<string, ComposerMentionKind>, pastedText?: Array<{ label: string; lines: number }>) {
   const root = $getRoot();
   root.clear();
   let paragraph = $createParagraphNode();
@@ -515,7 +519,7 @@ function serializePromptFromRoot(): string {
     .join("\n");
 }
 
-function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "file">; pastedText?: Array<{ label: string; lines: number }>; disabled: boolean }) {
+function SyncPlugin(props: { value: string; mentions: Record<string, ComposerMentionKind>; pastedText?: Array<{ label: string; lines: number }>; disabled: boolean }) {
   const [editor] = useLexicalComposerContext();
   const valueRef = useRef(props.value);
 

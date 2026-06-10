@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { ComposerAttachment } from "../../../../app/types";
+import type { ComposerMentionKind } from "./composer/mention-encoding";
 
 export type ComposerPastePart = {
   id: string;
@@ -12,7 +13,7 @@ export type ComposerPastePart = {
 export type ComposerSessionState = {
   draft: string;
   attachments: ComposerAttachment[];
-  mentions: Record<string, "agent" | "file">;
+  mentions: Record<string, ComposerMentionKind>;
   pasteParts: ComposerPastePart[];
 };
 
@@ -20,13 +21,13 @@ export type ComposerStateStore = {
   sessions: Record<string, ComposerSessionState>;
   setDraft: (sessionId: string, draft: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
-  setMentions: (sessionId: string, mentions: Record<string, "agent" | "file">) => void;
+  setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
   clearSession: (sessionId: string) => void;
 };
 
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
-const EMPTY_MENTIONS: Record<string, "agent" | "file"> = {};
+const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 
 function createEmptyComposerSession(): ComposerSessionState {
@@ -80,7 +81,7 @@ export function getComposerAttachments(state: ComposerStateStore, sessionId: str
   return state.sessions[sessionId]?.attachments ?? EMPTY_ATTACHMENTS;
 }
 
-export function getComposerMentions(state: ComposerStateStore, sessionId: string): Record<string, "agent" | "file"> {
+export function getComposerMentions(state: ComposerStateStore, sessionId: string): Record<string, ComposerMentionKind> {
   return state.sessions[sessionId]?.mentions ?? EMPTY_MENTIONS;
 }
 
