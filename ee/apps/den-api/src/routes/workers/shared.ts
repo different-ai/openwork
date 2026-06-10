@@ -684,8 +684,11 @@ async function markStaleStaticReservationsFailed(tx: StaticAssignmentDb) {
       .where(inArray(WorkerTokenTable.worker_id, staleWorkerIds))
 
     await tx
-      .update(WorkerTable)
-      .set({ status: "failed" })
+      .delete(WorkerInstanceTable)
+      .where(inArray(WorkerInstanceTable.worker_id, staleWorkerIds))
+
+    await tx
+      .delete(WorkerTable)
       .where(inArray(WorkerTable.id, staleWorkerIds))
   }
 
@@ -788,12 +791,12 @@ async function reserveStaticWorkerInstance(input: {
   staticLockHeld?: boolean
 }) {
   const reserve = async (tx: StaticAssignmentDb) => {
+    await markStaleStaticReservationsFailed(tx)
+
     const workerLimit = await getOrganizationLimitStatus(input.orgId, "workers")
     if (workerLimit.currentCount > workerLimit.limit) {
       throw new Error("Organization worker limit exceeded")
     }
-
-    await markStaleStaticReservationsFailed(tx)
 
     const rows = await tx
       .select({ url: WorkerInstanceTable.url })
