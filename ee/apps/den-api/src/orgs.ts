@@ -14,7 +14,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { ensureEntraSsoMembership } from "./entra-sso.js"
-import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { runPostOrganizationMemberChangeHooks, syncOrganizationMemberBillingQuantities } from "./organization-member-hooks.js"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
@@ -404,6 +404,7 @@ async function removeInvitationPlaceholderMember(input: {
       .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId, userId: null })
       .where(and(eq(MemberTable.id, placeholder.id), isNull(MemberTable.removedAt)))
   })
+  await syncOrganizationMemberBillingQuantities({ organizationId: input.invitation.organizationId })
 }
 
 async function reconcilePendingInvitationsForMember(input: {
