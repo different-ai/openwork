@@ -371,6 +371,37 @@ async function claimInvitationPlaceholderMember(input: {
   return claimedRows[0] ?? null
 }
 
+async function removeInvitationPlaceholderMember(input: {
+  invitation: InvitationRow
+  removedByOrgMemberId: MemberId
+}) {
+  const placeholderRows = await db
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.organizationId, input.invitation.organizationId),
+      eq(MemberTable.inviteId, input.invitation.id),
+      isNull(MemberTable.userId),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+
+  const placeholder = placeholderRows[0]
+  if (!placeholder) {
+    return
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(TeamMemberTable)
+      .where(eq(TeamMemberTable.orgMembershipId, placeholder.id))
+    await tx
+      .update(MemberTable)
+      .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId, userId: null })
+      .where(and(eq(MemberTable.id, placeholder.id), isNull(MemberTable.removedAt)))
+  })
+}
+
 async function ensureInvitationTeamMembership(input: {
   invitation: InvitationRow
   memberId: MemberId
@@ -588,6 +619,10 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
 
   let createdMember = false
   let member = await findActiveMemberForUser({ organizationId: invitation.organizationId, userId })
+
+  if (member) {
+    await removeInvitationPlaceholderMember({ invitation, removedByOrgMemberId: member.id })
+  }
 
   if (!member) {
     member = await claimInvitationPlaceholderMember({ invitation, userId, role })

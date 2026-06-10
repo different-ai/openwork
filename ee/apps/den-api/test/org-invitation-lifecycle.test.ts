@@ -197,6 +197,7 @@ test("accept by invite token does not emit duplicate member hooks for existing a
   const organizationId = createDenTypeId("organization")
   const userId = createDenTypeId("user")
   const existingMemberId = createDenTypeId("member")
+  const placeholderMemberId = createDenTypeId("member")
   const invitation = {
     id: invitationId,
     email: "teammate@example.com",
@@ -223,6 +224,7 @@ test("accept by invite token does not emit duplicate member hooks for existing a
     [{ allowedEmailDomains: null }],
     [{ role: "member" }, { role: "admin" }],
     [existingMember],
+    [{ id: placeholderMemberId }],
   ]
 
   const accepted = await orgsModule.acceptInvitationForUser({
@@ -232,6 +234,7 @@ test("accept by invite token does not emit duplicate member hooks for existing a
   })
 
   expect(accepted?.member.id).toBe(existingMemberId)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(true)
   expect(hookCalls).toEqual([])
 })
 
