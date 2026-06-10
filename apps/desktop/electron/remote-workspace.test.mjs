@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isDesktopFetchAllowedForWorkspaces,
   openworkWorkspaceDisplayName,
   selectOpenworkWorkspaceForConnection,
 } from "./remote-workspace.mjs";
@@ -84,6 +85,26 @@ describe("selectOpenworkWorkspaceForConnection", () => {
     );
 
     assert.equal(selected?.id, "ws_legacy");
+  });
+});
+
+describe("isDesktopFetchAllowedForWorkspaces", () => {
+  const workspaces = [
+    {
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.com/w/rem_ws_123",
+      openworkHostUrl: "https://worker.example.com",
+    },
+    { workspaceType: "local", baseUrl: "https://ignored.example.com" },
+  ];
+
+  it("allows configured remote workspace origins", () => {
+    assert.equal(isDesktopFetchAllowedForWorkspaces("https://worker.example.com/workspaces", workspaces), true);
+  });
+
+  it("rejects unconfigured origins and non-HTTP protocols", () => {
+    assert.equal(isDesktopFetchAllowedForWorkspaces("https://attacker.example.com/workspaces", workspaces), false);
+    assert.equal(isDesktopFetchAllowedForWorkspaces("file:///etc/passwd", workspaces), false);
   });
 });
 

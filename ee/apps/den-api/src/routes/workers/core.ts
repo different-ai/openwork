@@ -155,7 +155,7 @@ function formatIpForUrl(address: string) {
 
 export async function fetchPinnedStaticWorker(target: ValidatedStaticWorkerAttachUrl, path: string, headers: Record<string, string>) {
   const original = new URL(target.url)
-  const resolvedAddress = target.resolvedAddresses[0]?.address
+  const resolvedAddress = original.protocol === "http:" ? target.resolvedAddresses[0]?.address : undefined
   const pinned = resolvedAddress ? new URL(target.url) : original
   if (resolvedAddress) {
     pinned.hostname = formatIpForUrl(resolvedAddress)

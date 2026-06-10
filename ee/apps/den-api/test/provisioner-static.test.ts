@@ -550,6 +550,28 @@ test("static attach verification fetch uses the validated IP address instead of 
   }
 })
 
+test("static attach verification keeps HTTPS hostname for certificate validation", async () => {
+  const originalFetch = globalThis.fetch
+  const requestedUrls: string[] = []
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    requestedUrls.push(String(input))
+    return Promise.resolve(Response.json({ ok: true }))
+  }) as typeof fetch
+  try {
+    await workersCoreModule.assertStaticWorkerReachable({
+      ok: true,
+      url: "https://worker.example.com:8787",
+      resolvedAddresses: [{ address: "203.0.113.10", family: 4 }],
+    }, "valid-client-token", "valid-host-token")
+    expect(requestedUrls).toEqual([
+      "https://worker.example.com:8787/workspaces",
+      "https://worker.example.com:8787/env/keys",
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test("static attach worker token verification succeeds without following redirects", async () => {
   await expect(workersCoreModule.assertStaticWorkerReachable(staticWorkerUrl, "valid-client-token", "valid-host-token")).resolves.toBeUndefined()
 
