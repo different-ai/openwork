@@ -80,12 +80,14 @@ export type OrganizationContext = {
   }
   members: Array<{
     id: MemberId
-    userId: UserId
+    userId: UserId | null
+    inviteId: InvitationRow["id"] | null
     role: string
+    joinedAt: Date | null
     createdAt: Date
     isOwner: boolean
     user: {
-      id: UserId
+      id: UserId | MemberId | InvitationRow["id"]
       email: string
       name: string
       image: string | null
@@ -96,6 +98,7 @@ export type OrganizationContext = {
     email: string
     role: string
     status: string
+    inviteToken: string | null
     expiresAt: Date
     createdAt: Date
   }>
@@ -1082,6 +1085,7 @@ export async function getOrganizationContextForUser(input: {
       role: MemberTable.role,
       joinedAt: MemberTable.joinedAt,
       createdAt: MemberTable.createdAt,
+      invitationEmail: InvitationTable.email,
       user: {
         id: AuthUserTable.id,
         email: AuthUserTable.email,
@@ -1090,7 +1094,8 @@ export async function getOrganizationContextForUser(input: {
       },
     })
     .from(MemberTable)
-    .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(and(eq(MemberTable.organizationId, organization.id), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
@@ -1136,16 +1141,27 @@ export async function getOrganizationContextForUser(input: {
       createdAt: currentMember.createdAt,
       isOwner: roleIncludesOwner(currentMember.role),
     },
-    members: members.map((member) => ({
-      id: member.id,
-      userId: member.user.id,
-      inviteId: member.inviteId,
-      role: member.role,
-      joinedAt: member.joinedAt,
-      createdAt: member.createdAt,
-      user: member.user,
-      isOwner: roleIncludesOwner(member.role),
-    })),
+    members: members.map((member) => {
+      const invitationEmail = member.invitationEmail ?? ""
+      const user = member.user?.id
+        ? member.user
+        : {
+            id: member.inviteId ?? member.id,
+            email: invitationEmail,
+            name: invitationEmail,
+            image: null,
+          }
+      return {
+        id: member.id,
+        userId: member.user?.id ?? null,
+        inviteId: member.inviteId,
+        role: member.role,
+        joinedAt: member.joinedAt,
+        createdAt: member.createdAt,
+        user,
+        isOwner: roleIncludesOwner(member.role),
+      }
+    }),
     invitations,
     roles: [
       {
