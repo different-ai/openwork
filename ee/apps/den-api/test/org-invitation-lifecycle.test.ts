@@ -11,17 +11,41 @@ function seedRequiredEnv() {
 
 let queryRows: unknown[][] = []
 let operations: Array<{ type: "insert" | "update"; value: any }> = []
+let hookCalls: Array<{ organizationId: string; memberId: string; change: "added" | "removed" }> = []
+let whereInputs: unknown[] = []
 
 function queryFor(rows: unknown[]) {
   const chain: any = {
     from: () => chain,
     innerJoin: () => chain,
-    where: () => chain,
+    where: (input: unknown) => {
+      whereInputs.push(input)
+      return chain
+    },
     orderBy: () => rows,
     limit: () => rows,
     then: (resolve: (value: unknown[]) => unknown) => resolve(rows),
   }
   return chain
+}
+
+function conditionReferencesRemovedAt(input: unknown, seen = new Set<unknown>()): boolean {
+  if (input === null || input === undefined) return false
+  if (typeof input === "string") return input.includes("removedAt") || input.includes("removed_at")
+  if (typeof input !== "object" && typeof input !== "function") return false
+  if (seen.has(input)) return false
+  seen.add(input)
+
+  const record = input as Record<PropertyKey, unknown>
+  for (const key of Reflect.ownKeys(input)) {
+    const keyText = String(key)
+    if (keyText.includes("removedAt") || keyText.includes("removed_at")) return true
+    try {
+      if (conditionReferencesRemovedAt(record[key], seen)) return true
+    } catch {}
+  }
+
+  return false
 }
 
 function writeResult() {
@@ -48,6 +72,26 @@ mock.module("../src/db.js", () => ({
         },
       }),
     }),
+    transaction: async (callback: (tx: unknown) => Promise<void>) => callback({
+      delete: () => ({
+        where: () => Promise.resolve(),
+      }),
+      update: () => ({
+        set: (value: any) => ({
+          where: () => {
+            operations.push({ type: "update", value })
+            return Promise.resolve()
+          },
+        }),
+      }),
+    }),
+  },
+}))
+
+mock.module("../src/organization-member-hooks.js", () => ({
+  runPostOrganizationMemberChangeHooks: (input: { organizationId: string; memberId: string; change: "added" | "removed" }) => {
+    hookCalls.push(input)
+    return Promise.resolve()
   },
 }))
 
@@ -61,6 +105,8 @@ beforeAll(async () => {
 beforeEach(() => {
   queryRows = []
   operations = []
+  hookCalls = []
+  whereInputs = []
 })
 
 test("invitation preview resolves an invite token", async () => {
@@ -142,4 +188,61 @@ test("accept by invite token claims placeholder member without duplicates and re
   expect(operations.some((operation) => operation.type === "insert" && operation.value?.userId === userId)).toBe(false)
   expect(operations.some((operation) => operation.type === "insert" && operation.value?.orgMembershipId === placeholderMemberId)).toBe(false)
   expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(true)
+  expect(hookCalls).toEqual([{ organizationId, memberId: placeholderMemberId, change: "added" }])
+})
+
+test("accept by invite token does not emit duplicate member hooks for existing active members", async () => {
+  const invitationId = createDenTypeId("invitation")
+  const organizationId = createDenTypeId("organization")
+  const userId = createDenTypeId("user")
+  const existingMemberId = createDenTypeId("member")
+  const invitation = {
+    id: invitationId,
+    email: "teammate@example.com",
+    role: "member",
+    organizationId,
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+    teamId: null,
+  }
+  const existingMember = {
+    id: existingMemberId,
+    organizationId,
+    userId,
+    inviteId: null,
+    invitedByOrgMember: null,
+    role: "member",
+    joinedAt: new Date("2026-06-09T00:00:00.000Z"),
+    removedAt: null,
+    removedByOrgMember: null,
+    createdAt: new Date("2026-06-08T00:00:00.000Z"),
+  }
+  queryRows = [
+    [invitation],
+    [{ allowedEmailDomains: null }],
+    [{ role: "member" }, { role: "admin" }],
+    [existingMember],
+  ]
+
+  const accepted = await orgsModule.acceptInvitationForUser({
+    userId,
+    email: "teammate@example.com",
+    invitationId: "invite-token-123",
+  })
+
+  expect(accepted?.member.id).toBe(existingMemberId)
+  expect(hookCalls).toEqual([])
+})
+
+test("member removal targets active members only and repeated removals emit no hook", async () => {
+  const organizationId = createDenTypeId("organization")
+  const memberId = createDenTypeId("member")
+  queryRows = [[]]
+
+  const removed = await orgsModule.removeOrganizationMember({ organizationId, memberId })
+
+  expect(removed).toBeNull()
+  expect(operations).toEqual([])
+  expect(hookCalls).toEqual([])
+  expect(whereInputs.some((input) => conditionReferencesRemovedAt(input))).toBe(true)
 })

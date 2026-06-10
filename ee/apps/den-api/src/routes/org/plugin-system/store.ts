@@ -2945,7 +2945,6 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         createdAt: member.createdAt,
         id: member.id,
         isOwner: roleIncludesOwner(member.role),
-        joinedAt: member.joinedAt,
         role: member.role,
         userId: member.userId,
       },

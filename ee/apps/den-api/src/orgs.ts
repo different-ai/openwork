@@ -591,6 +591,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
 
   if (!member) {
     member = await claimInvitationPlaceholderMember({ invitation, userId, role })
+    createdMember = Boolean(member)
   }
 
   if (!member) {
@@ -1044,13 +1045,17 @@ export async function getOrganizationContextForUser(input: {
     },
     currentMember: {
       id: currentMember.id,
-      userId: currentMember.userId,
+      userId: input.userId,
       role: currentMember.role,
       createdAt: currentMember.createdAt,
       isOwner: roleIncludesOwner(currentMember.role),
     },
     members: members.map((member) => ({
-      ...member,
+      id: member.id,
+      userId: member.user.id,
+      role: member.role,
+      createdAt: member.createdAt,
+      user: member.user,
       isOwner: roleIncludesOwner(member.role),
     })),
     invitations,
@@ -1141,7 +1146,7 @@ export async function removeOrganizationMember(input: {
   const memberRows = await db
     .select()
     .from(MemberTable)
-    .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId)))
+    .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
     .limit(1)
 
   const member = memberRows[0] ?? null
@@ -1157,7 +1162,7 @@ export async function removeOrganizationMember(input: {
     await tx
       .update(MemberTable)
       .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId ?? null, userId: null })
-      .where(eq(MemberTable.id, member.id))
+      .where(and(eq(MemberTable.id, member.id), isNull(MemberTable.removedAt)))
   })
 
   await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: member.id, change: "removed" })
