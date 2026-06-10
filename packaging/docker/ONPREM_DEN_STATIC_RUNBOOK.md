@@ -70,6 +70,7 @@ export OPENWORK_WORKSPACE_DIR=/srv/openwork/worker-01/workspace
 export OPENWORK_DATA_DIR_HOST=/srv/openwork/worker-01/data
 export OPENWORK_TOKEN='<worker-01-client-token>'
 export OPENWORK_HOST_TOKEN='<worker-01-host-token>'
+export OPENWORK_CORS_ORIGINS=https://den.company.local
 docker compose -p openwork-worker-1 up --build -d
 docker compose -p openwork-worker-1 ps
 curl http://worker-01.company.local:8787/health

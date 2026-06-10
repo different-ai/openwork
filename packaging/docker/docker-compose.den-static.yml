@@ -19,7 +19,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${DEN_MYSQL_ROOT_PASSWORD:?DEN_MYSQL_ROOT_PASSWORD is required}
       MYSQL_DATABASE: openwork_den
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$DEN_MYSQL_ROOT_PASSWORD --silent"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysqladmin ping -h 127.0.0.1 --silent"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -114,7 +114,7 @@ services:
       start_period: 90s
     environment:
       CI: "true"
-      DATABASE_URL: mysql://root:${DEN_MYSQL_ROOT_PASSWORD}@mysql:3306/openwork_den
+      DATABASE_URL: ${DEN_DATABASE_URL:?DEN_DATABASE_URL is required; percent-encode URL-special password characters}
       PORT: "8789"
       OPENWORK_DAYTONA_ENV_PATH: ${OPENWORK_DAYTONA_ENV_PATH:-}
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
