@@ -49,6 +49,17 @@ function GoogleLogo() {
   );
 }
 
+function MicrosoftLogo() {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true" className="h-4 w-4 shrink-0">
+      <path fill="#F25022" d="M1 1h7.3v7.3H1Z" />
+      <path fill="#7FBA00" d="M9.7 1H17v7.3H9.7Z" />
+      <path fill="#00A4EF" d="M1 9.7h7.3V17H1Z" />
+      <path fill="#FFB900" d="M9.7 9.7H17V17H9.7Z" />
+    </svg>
+  );
+}
+
 function SocialButton({
   children,
   onClick,
@@ -355,6 +366,14 @@ export function AuthPanel({
             >
               <GoogleLogo />
               <span>Continue with Google</span>
+            </SocialButton>
+
+            <SocialButton
+              onClick={() => void beginSocialAuth("microsoft")}
+              disabled={authBusy || desktopRedirectBusy}
+            >
+              <MicrosoftLogo />
+              <span>Continue with Microsoft</span>
             </SocialButton>
 
             <div className="den-divider" aria-hidden="true">

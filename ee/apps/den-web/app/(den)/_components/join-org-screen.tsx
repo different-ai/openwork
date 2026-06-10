@@ -264,7 +264,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           prefillKey={preview.invitation.id}
           initialMode="sign-up"
           lockEmail
-          hideSocialAuth
           hideEmailField
           signUpContent={{
             title: `Join ${preview.organization.name}.`,

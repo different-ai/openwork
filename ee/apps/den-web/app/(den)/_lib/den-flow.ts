@@ -1,7 +1,7 @@
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
 
 export type AuthMode = "sign-in" | "sign-up";
-export type SocialAuthProvider = "github" | "google";
+export type SocialAuthProvider = "github" | "google" | "microsoft";
 export type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
 export type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
 export type EventLevel = "info" | "success" | "warning" | "error";
@@ -232,7 +232,9 @@ export function normalizeAuthModeParam(value: string | null | undefined): AuthMo
 }
 
 export function getSocialProviderLabel(provider: SocialAuthProvider): string {
-  return provider === "github" ? "GitHub" : "Google";
+  if (provider === "github") return "GitHub";
+  if (provider === "google") return "Google";
+  return "Microsoft";
 }
 
 export function normalizeWorkerName(input: string): string {
