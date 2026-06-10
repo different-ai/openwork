@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import path from "node:path";
 
 import {
+  commandMatchesPackagedSidecar,
   prioritizeWorkspacePaths,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
+  selectStickyOpenworkPortWorkspace,
 } from "./runtime.mjs";
 
 describe("prioritizeWorkspacePaths", () => {
@@ -36,6 +38,44 @@ describe("seedWorkspacePathsForEmbeddedServer", () => {
     assert.deepEqual(
       seedWorkspacePathsForEmbeddedServer(["/workspace/first"], false),
       ["/workspace/first"],
+    );
+  });
+});
+
+describe("selectStickyOpenworkPortWorkspace", () => {
+  it("uses the requested workspace even when server config owns workspace loading", () => {
+    assert.equal(
+      selectStickyOpenworkPortWorkspace(["/workspace/current"], []),
+      "/workspace/current",
+    );
+  });
+
+  it("falls back to server workspace paths when no requested path is available", () => {
+    assert.equal(
+      selectStickyOpenworkPortWorkspace([], ["/workspace/from-server"]),
+      "/workspace/from-server",
+    );
+  });
+});
+
+describe("commandMatchesPackagedSidecar", () => {
+  it("matches packaged opencode sidecars with platform suffixes", () => {
+    assert.equal(
+      commandMatchesPackagedSidecar(
+        "/Applications/OpenWork.app/Contents/Resources/sidecars/opencode-aarch64-apple-darwin serve --hostname 127.0.0.1 --port 49174 --cors *",
+        ["/Applications/OpenWork.app/Contents/Resources/sidecars"],
+      ),
+      true,
+    );
+  });
+
+  it("does not match unrelated opencode processes outside sidecar directories", () => {
+    assert.equal(
+      commandMatchesPackagedSidecar(
+        "/usr/local/bin/opencode serve --hostname 127.0.0.1 --port 49174",
+        ["/Applications/OpenWork.app/Contents/Resources/sidecars"],
+      ),
+      false,
     );
   });
 });

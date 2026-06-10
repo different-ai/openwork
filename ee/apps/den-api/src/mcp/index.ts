@@ -2,8 +2,27 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { getMcpResourceUrl, verifyMcpRequest } from "./auth.js"
-import { buildMcpCatalog, getToolDescription, loadOpenApiDocument } from "./catalog.js"
+import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
+
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
+
+let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = null
+
+/**
+ * The tool catalog is derived from the OpenAPI document, which only changes
+ * on deploy. Cache it briefly instead of self-fetching openapi.json and
+ * rebuilding the catalog on every /mcp request.
+ */
+async function getCatalog(app: Hono, env: unknown) {
+  if (catalogCache && catalogCache.expiresAt > Date.now()) {
+    return catalogCache.catalog
+  }
+  const document = await loadOpenApiDocument(app, env)
+  const catalog = buildMcpCatalog(document)
+  catalogCache = { catalog, expiresAt: Date.now() + CATALOG_CACHE_TTL_MS }
+  return catalog
+}
 
 function protectedResourceMetadata(request: Request) {
   const resource = getMcpResourceUrl(request)
@@ -26,8 +45,7 @@ export function registerMcpRoutes<T extends { Variables: Record<string, unknown>
       return principal
     }
 
-    const document = await loadOpenApiDocument(app as unknown as Hono, c.env)
-    const catalog = buildMcpCatalog(document)
+    const catalog = await getCatalog(app as unknown as Hono, c.env)
     const server = new McpServer({
       name: "openwork-den-api",
       version: "1.0.0",

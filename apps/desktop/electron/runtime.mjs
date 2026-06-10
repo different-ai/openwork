@@ -64,6 +64,24 @@ export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfig
   return serverConfigExists ? [] : workspacePaths;
 }
 
+export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], serverWorkspacePaths = []) {
+  for (const value of [...requestedWorkspacePaths, ...serverWorkspacePaths]) {
+    const workspacePath = String(value ?? "").trim();
+    if (workspacePath) return workspacePath;
+  }
+  return "";
+}
+
+export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
+  const value = String(command ?? "");
+  if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
+    return false;
+  }
+  return value.includes("openwork-orchestrator") ||
+    value.includes("openwork-server") ||
+    /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -622,12 +640,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     await savePortState(state);
   }
 
-  async function resolveOpenworkPort(host, workspaceKey) {
-    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
-    if (preferredPort && (await portAvailable(host, preferredPort))) {
-      return preferredPort;
+  async function waitForPortAvailable(host, port, timeoutMs = 2000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await portAvailable(host, port)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return findFreePort(host);
+    return portAvailable(host, port);
+  }
+
+  async function resolveOpenworkPort(host, workspaceKey, currentPort = null) {
+    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
+    if (currentPort && (await waitForPortAvailable(host, currentPort))) {
+      return { port: currentPort, preferredPort };
+    }
+    if (preferredPort && (await waitForPortAvailable(host, preferredPort))) {
+      return { port: preferredPort, preferredPort };
+    }
+    return { port: await findFreePort(host), preferredPort };
   }
 
   async function ensureDevModePaths() {
@@ -924,13 +954,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   function processMatchesSidecar(command) {
-    const value = String(command ?? "");
-    return sidecarDirs.some((dir) => value.includes(dir)) &&
-      (
-        value.includes("openwork-orchestrator") ||
-        value.includes("openwork-server") ||
-        value.includes("opencode serve")
-      );
+    return commandMatchesPackagedSidecar(command, sidecarDirs);
   }
 
   function killProcessId(pid, signal = "SIGTERM") {
@@ -1034,6 +1058,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startOpenworkServer(options) {
+    const currentPort = openworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
       try { await inProcessServer.stop(); } catch { /* ignore */ }
@@ -1060,12 +1085,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // the server config loader will ignore server.json and lose server-created
     // workspaces after restart.
     const serverConfigPath = resolveOpenworkServerConfigPath(process.env);
+    const requestedWorkspacePaths = (options.workspacePaths ?? []).filter((value) => value.trim().length > 0);
     const workspacePaths = seedWorkspacePathsForEmbeddedServer(
-      options.workspacePaths.filter((value) => value.trim().length > 0),
+      requestedWorkspacePaths,
       existsSync(serverConfigPath),
     );
-    const activeWorkspace = workspacePaths[0] ?? "";
-    const port = await resolveOpenworkPort(host, activeWorkspace);
+    const activeWorkspace = selectStickyOpenworkPortWorkspace(requestedWorkspacePaths, workspacePaths);
+    const portSelection = await resolveOpenworkPort(host, activeWorkspace, currentPort);
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
@@ -1089,7 +1115,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // below is authoritative.
     const handle = await startEmbeddedServer({
       host,
-      port,
+      port: portSelection.port,
       corsOrigins: ["*"],
       approvalMode: "auto",
       configPath: serverConfigPath,
@@ -1161,7 +1187,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         appendOutput(openworkServerState, "lastStderr", `OpenWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
-    await persistPreferredOpenworkPort(activeWorkspace, boundPort);
+    if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
+      await persistPreferredOpenworkPort(activeWorkspace, boundPort);
+    }
     return snapshotOpenworkServerState(openworkServerState);
   }
 
@@ -1858,7 +1886,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineDoctor,
     engineInstall,
     openworkServerInfo,
-    openworkServerRestart,
+    openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
     orchestratorStatus,
     orchestratorWorkspaceActivate,
     orchestratorInstanceDispose,

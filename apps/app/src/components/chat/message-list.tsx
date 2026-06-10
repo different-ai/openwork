@@ -41,6 +41,7 @@ import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
 import { ArtifactList } from "@/components/chat/artifact"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
+import { selectStepGroupOpen, useSessionStepDisclosureStore } from "@/react-app/domains/session/surface/step-disclosure-store"
 import {
   DescriptiveButtonContent,
   DescriptiveButtonDescription,
@@ -78,13 +79,58 @@ import {
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
 import { cn } from "@/lib/utils"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, type UIMessageWithIndex, getMessagesText } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText } from "./utils"
+
+function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
+  const created = getMessageCreated(message)
+  if (created === null) return null
+
+  return (
+    <span
+      className={cn(
+        "select-none whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/70",
+        className
+      )}
+      title={new Date(created).toLocaleString()}
+    >
+      {formatMessageTimestamp(created)}
+    </span>
+  )
+}
 
 interface ToolMessageProps {
   part: ToolUIPart | DynamicToolUIPart
 }
 
-const ToolMessage = ({ part }: ToolMessageProps) => {
+/**
+ * Error boundary around tool-part rendering. Tool inputs from streamed or
+ * interrupted runs can violate their type contracts (partial/undefined
+ * input); without this boundary a single bad part unmounts the entire app
+ * (white screen). Seen in production on v0.15.3 via a todowrite part with
+ * missing input.todos.
+ */
+class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("[tool-part] render failed", error)
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="text-xs text-muted-foreground">Tool step unavailable</div>
+      )
+    }
+    return <ToolMessageInner part={this.props.part} />
+  }
+}
+
+const ToolMessageInner = ({ part }: ToolMessageProps) => {
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
   }
@@ -170,7 +216,6 @@ function FileMessage({ part }: FileMessageProps) {
         alt={title}
         loading="lazy"
         decoding="async"
-        className="size-full object-cover"
       />
     )
   }
@@ -370,9 +415,10 @@ const UserMessage = React.memo(
           {!isStreaming && (
             <MessageActions
               className={cn(
-                "flex gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
               )}
             >
+              <MessageTimestamp message={message} className="mr-1.5" />
               <CopyMessageButton messages={[message]} />
               <MessageAction tooltip="Branch in new chat">
                 <Button
@@ -552,10 +598,20 @@ const isMessageEmptyGroup = (messages: UIMessageWithIndex[]) =>
 
 const getRenderableMessages = (messages: UIMessageWithIndex[]) =>
   messages.flatMap((item) => {
-    const parts = item.message.parts.filter((part) => part.type === "text" || part.type === "file");
+    const renderableMessage = getRenderableMessage(item.message);
 
-    return parts.length > 0 ? [{ ...item, message: { ...item.message, parts } }] : []
+    return renderableMessage ? [{ ...item, message: renderableMessage }] : []
   })
+
+function getRenderableMessage(message: UIMessage) {
+  const parts = message.parts.filter((part) => part.type === "text" || part.type === "file");
+
+  return parts.length > 0 ? { ...message, parts } : null;
+}
+
+function MessageArtifacts(props: { message: UIMessage }) {
+  return <ArtifactList messages={[props.message]} includeTargetFallbacks={false} />;
+}
 
 interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
@@ -568,8 +624,11 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
-  const [open, setOpen] = React.useState(false)
+  const { workspaceId, sessionId, onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const firstItem = items[0]
+  const stepGroupId = firstItem?.message.id ?? "empty-assistant-group"
+  const open = useSessionStepDisclosureStore((state) => selectStepGroupOpen(state.stepGroupsByWorkspace, workspaceId, sessionId, stepGroupId))
+  const setStepGroupOpen = useSessionStepDisclosureStore((state) => state.setStepGroupOpen)
   // Only run layout animations while the collapsible is expanding/collapsing.
   // Otherwise (e.g. while streaming) layout changes apply instantly.
   const [isAnimating, setIsAnimating] = React.useState(false)
@@ -598,7 +657,7 @@ function MessageGroup({
         open={open}
         onOpenChange={(next) => {
           setIsAnimating(true)
-          setOpen(next)
+          setStepGroupOpen(workspaceId, sessionId, stepGroupId, next)
         }}
       >
         <StepsTrigger className="px-2 md:px-10">
@@ -623,30 +682,38 @@ function MessageGroup({
                   isStreaming={isLastMessage && isStreaming}
                   isLastStep={isLastStep}
                 />
+                <MessageArtifacts message={item.message} />
               </motion.div>
             )
           })}
         </StepsContent>
       </Steps>
       <AnimatePresence initial={false}>
-        {!open ? renderableItems.map(({ index, message }) => (
-          <motion.div
-            key={message.id}
-            layoutId={`msg-${message.id}`}
-            layout
-            transition={layoutTransition}
-            onLayoutAnimationComplete={() => setIsAnimating(false)}
-          >
-            <MessageComponent
-              message={message}
-              isStreaming={index === messages.length - 1 && isStreaming}
-              isLastMessage={index === messages.length - 1}
-              isLastStep={index === items.length}
-            />
-          </motion.div>
-        )) : null}
+        {!open ? items.map(({ index, message }) => {
+          const renderableMessage = getRenderableMessage(message)
+          const isLastMessage = index === messages.length - 1
+
+          return (
+            <motion.div
+              key={message.id}
+              layoutId={`msg-${message.id}`}
+              layout
+              transition={layoutTransition}
+              onLayoutAnimationComplete={() => setIsAnimating(false)}
+            >
+              {renderableMessage ? (
+                <MessageComponent
+                  message={renderableMessage}
+                  isStreaming={isLastMessage && isStreaming}
+                  isLastMessage={isLastMessage}
+                  isLastStep={index === items.length}
+                />
+              ) : null}
+              <MessageArtifacts message={message} />
+            </motion.div>
+          )
+        }) : null}
       </AnimatePresence>
-      <ArtifactList messages={items.map((item) => item.message)} />
       {lastTextMessage && !isStreaming && (
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
@@ -670,6 +737,7 @@ function MessageGroup({
               </Button>
             </MessageAction>
           </MessageActions>
+          <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
@@ -719,6 +787,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
               isStreaming={isLastMessage && isStreaming}
               isLastStep={isLastStep}
             />
+            <MessageArtifacts message={item.message} />
           </div>
         )
       })}

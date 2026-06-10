@@ -17,7 +17,17 @@ export type ArtifactItem = {
   path: string
   type: ArtifactType
   messageId: string
+  messageIndex: number
+  updatedAt?: number
   legacy_target: OpenTarget
+}
+
+type ArtifactEntry = ArtifactItem & {
+  sequence: number
+}
+
+type GetArtifactsOptions = {
+  includeTargetFallbacks?: boolean
 }
 
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
@@ -124,6 +134,10 @@ export function getArtifactTypeLabel(type: ArtifactType) {
   return ARTIFACT_TYPE_LABELS[type];
 }
 
+export function canPreviewArtifact(artifact: ArtifactItem) {
+  return isCollectibleArtifactTarget(artifact.legacy_target);
+}
+
 function getArtifactName(path: string) {
   const segments = path.split(/[/\\]/);
   
@@ -202,10 +216,32 @@ function parseApplyPatchPaths(patchText: string) {
   return paths;
 }
 
+const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
+const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
+
+function getArtifactPathsFromText(text: string) {
+  if (!ASSISTANT_ARTIFACT_MENTION_PATTERN.test(text)) return [];
+  const paths: string[] = [];
+
+  FILE_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(FILE_PATTERN)) {
+    if (match[1] && getArtifactType(match[1]) !== "unknown") {
+      paths.push(match[1]);
+    }
+  }
+
+  return paths;
+}
+
 function getArtifactPathsFromMessage(message: UIMessage) {
   const paths: (string | undefined)[] = [];
 
   for (const part of message.parts) {
+    if (part.type === "text" && message.role === "assistant") {
+      paths.push(...getArtifactPathsFromText(part.text));
+      continue;
+    }
+
     if (part.type === "source-document") {
       if (part.filename) {
         paths.push(part.filename);
@@ -233,20 +269,26 @@ function getArtifactPathsFromMessage(message: UIMessage) {
     }
   }
 
-  return paths.map((path) => path?.trim().toLowerCase()).filter((path) => path) as string[];
+  return paths.flatMap((path) => {
+    const normalized = path?.trim().toLowerCase();
+    return normalized ? [normalized] : [];
+  });
 }
 
 function addArtifact(
-  artifacts: Map<string, ArtifactItem>,
+  artifacts: Map<string, ArtifactEntry>,
   path: string,
   messageId: string,
+  messageIndex: number,
+  sequence: number,
   verifiedTargets: OpenTarget[],
   verifiedTarget?: OpenTarget,
 ) {
   const normalized = normalizeArtifactPath(path);
   const key = normalized.toLowerCase();
-  const name = verifiedTarget?.name ?? getArtifactName(normalized);
   const type = getArtifactType(normalized);
+  const legacyTarget = verifiedTarget ?? openTargetFromArtifactPath(normalized, getArtifactName(normalized), type, verifiedTargets);
+  const name = legacyTarget.name;
 
   artifacts.set(key, {
     id: key,
@@ -254,35 +296,52 @@ function addArtifact(
     path: normalized,
     type,
     messageId,
-    legacy_target: verifiedTarget ?? openTargetFromArtifactPath(normalized, name, type, verifiedTargets),
+    messageIndex,
+    sequence,
+    updatedAt: legacyTarget.updatedAt,
+    legacy_target: legacyTarget,
   });
 }
 
-export function getArtifactsFromMessages(messages: UIMessage[], openTargets: OpenTarget[] = []) {
-  const artifacts = new Map<string, ArtifactItem>();
+export function getArtifactsFromMessages(messages: UIMessage[], openTargets: OpenTarget[] = [], options: GetArtifactsOptions = {}) {
+  const artifacts = new Map<string, ArtifactEntry>();
+  let sequence = 0;
 
-  for (const message of messages) {
+  messages.forEach((message, messageIndex) => {
     for (const path of getArtifactPathsFromMessage(message)) {
-      addArtifact(artifacts, path, message.id, openTargets);
+      addArtifact(artifacts, path, message.id, messageIndex, sequence, openTargets);
+      sequence += 1;
+    }
+  });
+
+  if (options.includeTargetFallbacks ?? true) {
+    const fallbackMessageId = messages[messages.length - 1]?.id ?? "open-target";
+    for (const target of openTargets) {
+      if (isCollectibleArtifactTarget(target)) {
+        addArtifact(artifacts, target.value, fallbackMessageId, messages.length, sequence, openTargets, target);
+        sequence += 1;
+      }
     }
   }
 
-  const fallbackMessageId = messages[messages.length - 1]?.id ?? "open-target";
-  for (const target of openTargets) {
-    if (isCollectibleArtifactTarget(target)) {
-      addArtifact(artifacts, target.value, fallbackMessageId, openTargets, target);
-    }
-  }
+  return [...artifacts.values()].sort((left, right) => {
+    const updatedAtDelta = (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
+    if (updatedAtDelta !== 0) return updatedAtDelta;
 
-  return [...artifacts.values()];
+    const messageDelta = right.messageIndex - left.messageIndex;
+    if (messageDelta !== 0) return messageDelta;
+
+    return right.sequence - left.sequence;
+  });
 }
 
-export function useArtifacts(messages: UIMessage[]) {
+export function useArtifacts(messages: UIMessage[], options: GetArtifactsOptions = {}) {
   const { openTargets } = useOpenTargets();
+  const includeTargetFallbacks = options.includeTargetFallbacks ?? false;
 
   return React.useMemo(
-    () => getArtifactsFromMessages(messages, openTargets),
-    [messages, openTargets],
+    () => getArtifactsFromMessages(messages, openTargets, { includeTargetFallbacks }),
+    [includeTargetFallbacks, messages, openTargets],
   );
 }
 

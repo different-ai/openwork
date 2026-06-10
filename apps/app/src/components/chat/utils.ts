@@ -49,6 +49,36 @@ export function getMediaBadge(part: FileUIPart) {
   return part.filename?.split(".").pop()?.toUpperCase() ?? null
 }
 
+export function getMessageCreated(message: UIMessage): number | null {
+  const metadata: unknown = message.metadata
+  if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null
+
+  const opencode: unknown = metadata.opencode
+  if (!opencode || typeof opencode !== "object" || !("created" in opencode)) return null
+
+  const created: unknown = opencode.created
+  return typeof created === "number" ? created : null
+}
+
+export function formatMessageTimestamp(timestampMs: number): string {
+  const date = new Date(timestampMs)
+  const now = new Date()
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+
+  if (date.toDateString() === now.toDateString()) {
+    return time
+  }
+
+  const sameYear = date.getFullYear() === now.getFullYear()
+  const day = date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  })
+
+  return `${day}, ${time}`
+}
+
 export function isMessageGroup(item: MessageListItem): item is MessageGroup {
   return "messages" in item
 }

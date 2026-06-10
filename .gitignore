@@ -61,3 +61,5 @@ opencode.jsonc
 .claude/*
 .security
 transcript-analysis
+# Eval runner output
+evals/results/

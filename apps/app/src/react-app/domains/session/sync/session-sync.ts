@@ -2,6 +2,7 @@ import type { UIMessage } from "ai";
 import type { FilePart, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
+import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { createClient } from "@/app/lib/opencode";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
@@ -563,6 +564,12 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const sessionId = sessionIdFromProperties(event.properties);
     if (sessionId) {
       const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
+      const runStartedAt = takeTaskRunStart(sessionId);
+      if (runStartedAt !== null) {
+        captureAnalyticsEvent("task_run_errored", {
+          duration_ms: Date.now() - runStartedAt,
+        });
+      }
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
       if (isTrackedSession(entry, sessionId)) {
         queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
@@ -783,6 +790,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.idle") {
     const props = (event.properties ?? {}) as { sessionID?: string };
     if (!props.sessionID) return;
+    // Only emits for runs this client instrumented (markTaskRunStart in the
+    // send path); also dedupes idle events from multiple workspace syncs.
+    const runStartedAt = takeTaskRunStart(props.sessionID);
+    if (runStartedAt !== null) {
+      captureAnalyticsEvent("task_run_completed", {
+        duration_ms: Date.now() - runStartedAt,
+      });
+    }
     useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
     const tracked = isTrackedSession(entry, props.sessionID);
     if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, CheckCircle2, FileText, Loader2, MailPlus, ShieldCheck, XCircle } from "lucide-react";
 
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { usePlatform } from "../../kernel/platform";
@@ -65,6 +67,7 @@ function normalizeGoogleWorkspaceAuthStatus(value: unknown): GoogleWorkspaceAuth
   return {
     configured: record.configured === true,
     missing: normalizeStringList(record.missing),
+    customClient: record.customClient === true,
     vault,
     connected: record.connected === true,
     account: normalizeGoogleWorkspaceAccount(record.account),
@@ -100,6 +103,9 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState("");
+  const [customClientId, setCustomClientId] = useState("");
+  const [customClientSecret, setCustomClientSecret] = useState("");
+  const [gmailRead, setGmailRead] = useState(false);
   const serverAvailable = Boolean(openworkServerClient);
   const hostServerAvailable = Boolean(hostOpenworkServerClient);
   const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
@@ -148,27 +154,22 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
   const connectGoogleWorkspace = async () => {
     if (!openworkServerClient) return null;
-    const flow = await openworkServerClient.googleWorkspaceConnectStart();
+    const flow = await openworkServerClient.googleWorkspaceConnectStart({ gmailRead: status?.customClient === true && gmailRead });
     platform.openLink(flow.authUrl);
     return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
   };
 
-  const saveGoogleClientSecret = async () => {
+  const saveOauthEnv = async (entries: { key: string; value: string }[], onSaved: () => void) => {
     if (!hostOpenworkServerClient) {
       setError("Google OAuth settings can only be saved from the local desktop app.");
-      return;
-    }
-    const value = clientSecret.trim();
-    if (!value) {
-      setError("Enter the client secret from your Google OAuth desktop client.");
       return;
     }
     setBusyAction("save-secret");
     setError(null);
     try {
-      await hostOpenworkServerClient.upsertUserEnv([{ key: "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value }]);
+      await hostOpenworkServerClient.upsertUserEnv(entries);
       await hostOpenworkServerClient.setUserEnvPendingChanges(true);
-      setClientSecret("");
+      onSaved();
       if (restartLocalServer) {
         const restarted = await restartLocalServer();
         if (!restarted) setError("Saved Google OAuth settings. Restart OpenWork to apply them.");
@@ -181,6 +182,34 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
     } finally {
       setBusyAction(null);
     }
+  };
+
+  const saveGoogleClientSecret = async () => {
+    const value = clientSecret.trim();
+    if (!value) {
+      setError("Enter the client secret from your Google OAuth desktop client.");
+      return;
+    }
+    await saveOauthEnv([{ key: "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value }], () => setClientSecret(""));
+  };
+
+  const saveCustomOauthClient = async () => {
+    const id = customClientId.trim();
+    const secret = customClientSecret.trim();
+    if (!id || !secret) {
+      setError("Enter both the client ID and client secret from your own Google OAuth desktop client.");
+      return;
+    }
+    await saveOauthEnv(
+      [
+        { key: "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID", value: id },
+        { key: "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", value: secret },
+      ],
+      () => {
+        setCustomClientId("");
+        setCustomClientSecret("");
+      },
+    );
   };
 
   const connectedAccounts = status?.accounts.length ? status.accounts : status?.account ? [status.account] : [];
@@ -352,6 +381,63 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
           </div>
         </CardFooter>
       </Card>
+
+      <Accordion>
+        <AccordionItem value="advanced">
+          <AccordionTrigger>Advanced</AccordionTrigger>
+          <AccordionContent className="space-y-4">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Use your own Google OAuth client to unlock extra permissions, like reading Gmail.
+            </p>
+            {status?.customClient ? (
+              <Alert>
+                <CheckCircle2 />
+                <AlertTitle>Using your own Google OAuth client</AlertTitle>
+                <AlertDescription>Extra permissions below are available.</AlertDescription>
+              </Alert>
+            ) : (
+              <div className="space-y-3">
+                <Input
+                  value={customClientId}
+                  onChange={(event) => setCustomClientId(event.target.value)}
+                  placeholder="Your Google OAuth desktop client ID"
+                  autoComplete="off"
+                />
+                <Input
+                  type="password"
+                  value={customClientSecret}
+                  onChange={(event) => setCustomClientSecret(event.target.value)}
+                  placeholder="Your Google OAuth desktop client secret"
+                  autoComplete="off"
+                />
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Create a desktop OAuth client in Google Cloud Console, then paste its client ID and secret. They are saved locally in OpenWork environment settings and applied after the local server restarts.
+                </p>
+                <Button disabled={busyAction === "save-secret" || !customClientId.trim() || !customClientSecret.trim() || !hostServerAvailable} onClick={() => void saveCustomOauthClient()}>
+                  {busyAction === "save-secret" ? <Loader2 className="size-4 animate-spin" /> : null}
+                  Save and apply
+                </Button>
+              </div>
+            )}
+            <label className="flex items-start gap-2.5">
+              <Checkbox
+                checked={gmailRead}
+                onCheckedChange={(checked) => setGmailRead(checked === true)}
+                disabled={Boolean(busyAction) || status?.customClient !== true}
+                className="mt-0.5"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-card-foreground">Grant read on Gmail</span>
+                <span className="block text-xs leading-relaxed text-muted-foreground">
+                  {status?.customClient
+                    ? "Requests read access to your Gmail messages the next time you connect a Google account. Already connected? Disconnect and connect again to grant it."
+                    : "Add your own Google OAuth client above to enable this option."}
+                </span>
+              </span>
+            </label>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 }

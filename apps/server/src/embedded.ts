@@ -64,6 +64,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       managedOpencode = await createManagedOpencodeServer({
         bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
         cwd,
+        excludedPorts: [config.port],
         env: {
           ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
           ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
@@ -101,7 +102,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
     async stop() {
-      managedOpencode?.close();
+      await managedOpencode?.close();
       await server.stop();
     },
   };

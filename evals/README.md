@@ -12,6 +12,30 @@ They are not unit tests. They intentionally exercise the running stack
 (OpenCode + OpenWork server + React UI) so regressions in wiring — not just
 types — get caught.
 
+## Coded flows (programmatic runner)
+
+A growing subset of flows is codified under [`flows/`](./flows) and executed by
+the zero-dependency runner in [`runner/`](./runner) with machine-checkable
+assertions, poll-until-condition waits (no fixed sleeps), and JSON + markdown
+reports with screenshots.
+
+```bash
+pnpm evals --list                 # show available coded flows
+pnpm evals --all                  # run everything runnable
+pnpm evals --flow app-smoke       # run one flow
+pnpm evals --all --cdp-url http://127.0.0.1:9825   # explicit CDP endpoint
+```
+
+The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
+`pnpm dev`) by default. Flows that need cloud credentials declare
+`requiredEnv` and are skipped (not failed) when the env is missing — e.g.
+`cloud-signin-handoff` needs `OPENWORK_EVAL_DEN_API_URL` and
+`OPENWORK_EVAL_DEN_TOKEN`. Reports land in `evals/results/<run-id>/`
+(gitignored). A non-zero exit code means at least one flow failed.
+
+The markdown specs below remain the source narrative; when codifying a flow,
+link the spec via the flow's `spec` field.
+
 ## How to run
 
 ### Option A: On Daytona (recommended)
@@ -43,8 +67,9 @@ Open the app and follow the step lists by hand.
 
 ## Tool reference
 
-Evals use the OpenCode browser tools (`.opencode/tools/browser.ts`). Every tool
-takes `browser_url` as the first argument.
+Evals use the CDP browser tools provided by the `opencode-chrome-devtools`
+plugin (configured in `.opencode/opencode.json`). Every tool takes
+`browser_url` as the first argument.
 
 | Tool | Description |
 |------|-------------|
@@ -102,3 +127,24 @@ takes `browser_url` as the first argument.
 - [`environment-variable-flows.md`](./environment-variable-flows.md) — local
   environment variable CRUD, masking, validation, apply/restart behavior, and
   remote-workspace secret boundaries.
+- [`cloud-auth-flows.md`](./cloud-auth-flows.md) — desktop cloud sign-in
+  (browser handoff + paste-code), expired grants, sign-out cleanup, and org
+  switching.
+- [`cloud-mcp-agent-flows.md`](./cloud-mcp-agent-flows.md) — agent-driven org
+  management through the openwork-cloud MCP: org identity, invitations, team
+  assignment, and skill sharing via plugins + marketplaces, with server-side
+  ground-truth assertions.
+- [`cloud-provider-sync-flows.md`](./cloud-provider-sync-flows.md) — org LLM
+  provider import, update, delete, refresh timing, and permission boundaries.
+- [`cloud-marketplace-sync-flows.md`](./cloud-marketplace-sync-flows.md) —
+  marketplace plugin import/update/removal sync between Den and the desktop.
+- [`cloud-org-membership-flows.md`](./cloud-org-membership-flows.md) — org
+  invitations, role updates, member removal, and domain restrictions.
+- [`cloud-worker-flows.md`](./cloud-worker-flows.md) — legacy cloud worker
+  launch/connect flows (feature being sunset; kept for regression context).
+- [`daytona-server-failure-recovery-flows.md`](./daytona-server-failure-recovery-flows.md)
+  — Den API/Web/proxy/MySQL outage and recovery behavior.
+- [`default-openwork-marketplace-onboarding-flow.md`](./default-openwork-marketplace-onboarding-flow.md)
+  — default Marketplace provisioning funnel from sign-in to chat handoff.
+- [`den-marketplace-guided-onboarding-flow.md`](./den-marketplace-guided-onboarding-flow.md)
+  — guided browser + desktop marketplace onboarding with pass criteria.

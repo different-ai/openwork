@@ -41,6 +41,7 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     managedOpencode = await createManagedOpencodeServer({
       bin: process.env.OPENWORK_OPENCODE_BIN,
       cwd: managedOpencodeCwd,
+      excludedPorts: [config.port],
       env: {
         ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
         ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
@@ -92,7 +93,7 @@ if (args.verbose) {
 }
 
 const shutdown = () => {
-  managedOpencode?.close();
+  void managedOpencode?.close();
   (server as { stop?: (closeActiveConnections?: boolean) => void }).stop?.(true);
 };
 

@@ -7,7 +7,42 @@ OpenWork Cloud exposes a hosted MCP server at `https://api.openworklabs.com/mcp`
 
 The server uses OAuth. Your MCP client opens a browser, you sign in to OpenWork Cloud, choose the organization to authorize, and the client stores the returned token.
 
+## In the OpenWork desktop app
+
+If you use the OpenWork desktop app, there is nothing to configure. When you
+sign in to OpenWork Cloud, the app connects the `openwork-cloud` MCP for you
+with a token scoped to your active organization — no browser OAuth round-trip.
+You can see it under **Settings → Extensions** as **OpenWork Cloud Control**
+with a Ready status. Switching organizations refreshes the token
+automatically.
+
+## What you can ask the agent
+
+Once connected, your agent manages the organization from plain English in the
+composer. These flows are exercised end to end against a live OpenWork Cloud
+deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
+
+- **Check your cloud identity** — "Which OpenWork Cloud organization am I
+  connected to?" The agent reports the organization, your account, and your
+  role.
+- **Invite teammates** — "Add omar@example.com to my organization." The agent
+  sends the invitation, updates the allowed email domains when needed, and
+  surfaces seat-limit billing rules instead of failing silently.
+- **Manage teams** — "Assign Priya to the Sales team." Works for active
+  members; the agent explains when someone still has a pending invitation.
+- **Share skills with your org** — "Create a skill that writes weekly status
+  reports and share it with my whole organization." The agent writes the
+  `SKILL.md` locally, then creates a plugin, attaches the skill, publishes it
+  to your marketplace, and grants org-wide access — teammates see it in their
+  marketplace and install it with one click.
+
+Org policy still applies: invitations respect seat limits and domain rules,
+and resource creation follows your organization's roles.
+
 ## MCP config
+
+The manual configuration below is for **other MCP clients** (or the desktop
+app when signed out).
 
 Add this server to your MCP config:
 

@@ -120,6 +120,14 @@ export type DenStaticWorkerAttachInput = {
   activityToken?: string | null;
 };
 
+export type DenMcpToken = {
+  token: string;
+  expiresAt: string;
+  organizationId: string;
+  scopes: string[];
+  resource: string;
+};
+
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -453,6 +461,26 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   }
 }
 
+/**
+ * Origin-level comparison key for Den URLs. Ignores paths (deep links may
+ * carry an `/api/den` proxy path) and treats loopback aliases (127.0.0.1,
+ * [::1]) as `localhost`, matching den-api's own dev-mode resource aliasing.
+ */
+export function denOriginComparisonKey(input: string | null | undefined): string | null {
+  const normalized = normalizeDenBaseUrl(input);
+  if (!normalized) return null;
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    if (host === "127.0.0.1" || host === "::1" || host === "[::1]" || host === "0.0.0.0") {
+      url.hostname = "localhost";
+    }
+    return url.origin;
+  } catch {
+    return normalized;
+  }
+}
+
 export function getDenInferenceUrl(baseUrl?: string | null): string {
   const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
   return `${normalized}${DEN_INFERENCE_PATH}`;
@@ -623,17 +651,50 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
     return desktopBootstrapConfig;
   }
 
-  try {
-    const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
-    applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
-  } catch {
-    desktopBootstrapConfig = resolveDenBootstrapConfig({
-      baseUrl: BUILD_DEN_BASE_URL,
-      apiBaseUrl: BUILD_DEN_API_BASE_URL,
-      requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
-    });
-    syncBootstrapSettingsToLocalStorage(desktopBootstrapConfig);
+  // The shell IPC bridge can be momentarily unavailable at first paint;
+  // retry briefly before giving up so a boot race does not poison the
+  // session with build defaults.
+  const SHELL_BOOTSTRAP_ATTEMPTS = 3;
+  const SHELL_BOOTSTRAP_RETRY_DELAY_MS = 350;
+  for (let attempt = 1; attempt <= SHELL_BOOTSTRAP_ATTEMPTS; attempt += 1) {
+    try {
+      const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+      applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
+      return desktopBootstrapConfig;
+    } catch (error) {
+      console.error("[den-bootstrap] shell read failed", attempt, error);
+      if (attempt < SHELL_BOOTSTRAP_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, SHELL_BOOTSTRAP_RETRY_DELAY_MS));
+      }
+    }
   }
+
+  // All quick attempts failed. Keep build defaults in memory only — do NOT
+  // sync them to localStorage: previously synced values from a successful
+  // boot are more trustworthy than build defaults, and clobbering them
+  // silently reverted custom/self-hosted control planes to the production
+  // URL until a manual reload.
+  desktopBootstrapConfig = resolveDenBootstrapConfig({
+    baseUrl: BUILD_DEN_BASE_URL,
+    apiBaseUrl: BUILD_DEN_API_BASE_URL,
+    requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
+  });
+
+  // Heal in the background without blocking boot: once the bridge comes up,
+  // apply the real shell config and notify listeners.
+  void (async () => {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      try {
+        const bootstrap = await getDesktopBootstrapConfigFromShell() as ShellDesktopBootstrapConfig;
+        applyDesktopBootstrapConfig(resolveDenBootstrapConfig(bootstrap));
+        dispatchDenSettingsChanged({ settings: readDenSettings() });
+        return;
+      } catch {
+        // Bridge still unavailable — keep trying.
+      }
+    }
+  })();
 
   return desktopBootstrapConfig;
 }
@@ -957,6 +1018,27 @@ function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
     hostToken: typeof tokens.host === "string" ? tokens.host : null,
     openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
     workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
+  };
+}
+
+function getMcpToken(payload: unknown): DenMcpToken | null {
+  if (
+    !isRecord(payload) ||
+    typeof payload.token !== "string" ||
+    typeof payload.expiresAt !== "string" ||
+    typeof payload.organizationId !== "string" ||
+    typeof payload.resource !== "string"
+  ) {
+    return null;
+  }
+  return {
+    token: payload.token,
+    expiresAt: payload.expiresAt,
+    organizationId: payload.organizationId,
+    scopes: Array.isArray(payload.scopes)
+      ? payload.scopes.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    resource: payload.resource,
   };
 }
 
@@ -1833,6 +1915,20 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getWorkers(payload);
     },
 
+    async mintMcpToken(orgId: string): Promise<DenMcpToken> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {},
+      });
+      const minted = getMcpToken(payload);
+      if (!minted) {
+        throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
+      }
+      return minted;
+    },
+
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
       const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
         method: "POST",
@@ -2054,4 +2150,24 @@ export async function fetchDenOrgSkillsCatalog(
     });
   }
   return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
+}
+
+/**
+ * Mint an org-scoped MCP access token for the Den cloud MCP using the
+ * current desktop Den session. Returns null when signed out or no active
+ * organization is selected.
+ */
+export async function mintCloudControlMcpToken(): Promise<DenMcpToken | null> {
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  const orgId = settings.activeOrgId?.trim() ?? "";
+  if (!token || !orgId) {
+    return null;
+  }
+  const client = createDenClient({
+    baseUrl: settings.baseUrl,
+    apiBaseUrl: settings.apiBaseUrl ?? null,
+    token,
+  });
+  return client.mintMcpToken(orgId);
 }

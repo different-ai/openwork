@@ -212,6 +212,21 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
     ],
+    // The MCP quick-connect surface ("Available apps · One-click connect")
+    // needs unconfigured directory entries too — otherwise Notion, Linear,
+    // OpenWork Cloud Control, etc. are undiscoverable for anyone who is not
+    // signed in to cloud (regression from #2008, which narrowed the section
+    // to installed entries only).
+    quickConnectEntries: [
+      ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
+      ...standaloneMcpEntries,
+      ...input.quickConnect.filter((entry) => {
+        if (isBuiltInOpenWorkExtension(entry)) return false;
+        const serverName = getMcpServerName(entry);
+        if (groupedMcpServerNames.has(serverName)) return false;
+        return !input.mcpServers.some((server) => server.name === serverName);
+      }),
+    ],
     installedSkills: standaloneSkillItems.flatMap((item) => item.skill ? [item.skill] : []),
     installedCloudPlugins: Object.values(input.importedCloudPlugins),
   };

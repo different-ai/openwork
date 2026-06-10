@@ -83,6 +83,7 @@ function createEmojiAliases() {
 }
 
 const emojiAliases = createEmojiAliases();
+const MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT = 100;
 
 function parseShikiLanguage(lang: string) {
   const normalized = lang.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
@@ -93,14 +94,53 @@ function hasFencedCodeBlock(text: string) {
   return /(^|\n)```/.test(text);
 }
 
+function estimatedRenderedImageHeight(image: HTMLImageElement) {
+  if (!image.naturalWidth || !image.naturalHeight) return 0;
+
+  const renderedWidth = image.clientWidth || image.getBoundingClientRect().width;
+  return renderedWidth > 0
+    ? (image.naturalHeight / image.naturalWidth) * renderedWidth
+    : image.naturalHeight;
+}
+
+function syncMarkdownImagePreviews(root: HTMLElement) {
+  const previews = root.querySelectorAll("[data-openwork-image-preview]");
+
+  for (const preview of previews) {
+    if (!(preview instanceof HTMLElement)) continue;
+
+    const image = preview.querySelector("img");
+    const button = preview.querySelector("[data-openwork-image-toggle]");
+    if (!(image instanceof HTMLImageElement) || !(button instanceof HTMLButtonElement)) continue;
+
+    const previewable = estimatedRenderedImageHeight(image) > MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT;
+    button.hidden = !previewable;
+
+    if (!previewable) {
+      preview.style.maxHeight = "";
+      continue;
+    }
+
+    const expanded = preview.dataset.openworkImagePreview === "expanded";
+    preview.style.maxHeight = expanded ? "" : `${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px`;
+
+    const label = button.querySelector("[data-openwork-image-toggle-label]");
+    if (label) label.textContent = expanded ? "Show less" : "Show full image";
+  }
+}
+
 function sanitizeMarkdownHtml(value: string) {
   return DOMPurify.sanitize(value, {
     ADD_ATTR: [
       "checked",
       "class",
+      "data-openwork-image-preview",
+      "data-openwork-image-toggle",
+      "data-openwork-image-toggle-label",
       "data-openwork-shiki",
       "decoding",
       "disabled",
+      "hidden",
       "loading",
       "rel",
       "start",
@@ -177,7 +217,7 @@ const baseMarkedOptions = {
       const safe = escapeAttribute(safeHref(href));
       const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
-      return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-lg border border-border/70">`;
+      return `<span data-openwork-image-preview="collapsed" class="relative my-4 inline-block max-w-full overflow-hidden rounded-lg border border-border/70 align-top" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto max-w-full"><button type="button" data-openwork-image-toggle="" hidden class="absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-background via-background/90 to-transparent pb-2 pt-8"><span data-openwork-image-toggle-label="" class="rounded-full border border-border bg-background/95 px-3 py-1 text-xs font-medium text-foreground shadow-sm">Show full image</span></button></span>`;
     },
     table(token) {
       const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
@@ -310,6 +350,53 @@ function MarkdownBlockInner({
       applyTextHighlights(root, highlightQuery ?? "");
     });
   }, [html, highlightQuery]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const sync = () => syncMarkdownImagePreviews(root);
+
+    sync();
+
+    const handleLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) sync();
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+
+      const button = event.target.closest("[data-openwork-image-toggle]");
+      if (!(button instanceof HTMLButtonElement)) return;
+
+      const preview = button.closest("[data-openwork-image-preview]");
+      if (!(preview instanceof HTMLElement)) return;
+
+      preview.dataset.openworkImagePreview = preview.dataset.openworkImagePreview === "expanded"
+        ? "collapsed"
+        : "expanded";
+      sync();
+    };
+
+    root.addEventListener("load", handleLoad, true);
+    root.addEventListener("click", handleClick);
+
+    if (globalThis.ResizeObserver === undefined) {
+      return () => {
+        root.removeEventListener("load", handleLoad, true);
+        root.removeEventListener("click", handleClick);
+      };
+    }
+
+    const observer = new ResizeObserver(sync);
+    observer.observe(root);
+
+    return () => {
+      observer.disconnect();
+      root.removeEventListener("load", handleLoad, true);
+      root.removeEventListener("click", handleClick);
+    };
+  }, [html]);
 
   if (!html) {
     return null;

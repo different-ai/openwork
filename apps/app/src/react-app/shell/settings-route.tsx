@@ -97,6 +97,7 @@ import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domain
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
+  hasOpenWorkModelsProvider,
   hideOpenWorkModelsPromo,
   isOpenWorkModelsPromoHidden,
   openWorkModelsPromoChangedEvent,
@@ -833,7 +834,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return next;
   }, [providerAuthSnapshot.importedCloudProviders]);
   const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-  const showOpenWorkModelsSubscribe = (!cloudSession.isSignedIn || !hasOpenWorkCloudProvider) && !openWorkModelsPromoHidden;
+  const openWorkModelsConnected =
+    (cloudSession.isSignedIn && hasOpenWorkCloudProvider) ||
+    hasOpenWorkModelsProvider(providerConnectedIds);
+  const showOpenWorkModelsSubscribe = !openWorkModelsConnected && !openWorkModelsPromoHidden;
+  const showOpenWorkModelsConnect = !openWorkModelsConnected && openWorkModelsPromoHidden;
 
   useEffect(() => {
     const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
@@ -1616,6 +1621,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // the settings route owns the provider-auth store.
   useCloudProviderAutoSync(providerAuthStore.runCloudProviderSync);
 
+  // Keep the Den cloud MCP configured with a fresh first-party token while
+  // signed in: connects on sign-in, re-mints on org switch and before expiry.
+  useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
+
   useEffect(() => {
     if (route.tab !== "cloud-providers") return;
     void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
@@ -2141,6 +2150,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId)
             )}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
+            showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
             onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
             cloudProvidersView={
@@ -2168,6 +2178,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             autoCompactContext={autoCompactContext}
             autoCompactContextBusy={autoCompactContextBusy}
             onToggleAutoCompactContext={toggleAutoCompactContext}
+            analyticsEnabled={local.prefs.analyticsEnabled}
+            onToggleAnalytics={() => {
+              local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
+            }}
           />
         );
       case "shell":
@@ -2223,7 +2237,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 mcpConnectingName={connectionsSnapshot.mcpConnectingName}
                 selectedMcp={connectionsSnapshot.selectedMcp}
                 setSelectedMcp={(name) => connectionsStore.setSelectedMcp(name)}
-                quickConnect={extensionItems.installedMcpEntries}
+                quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
                 connectMcp={(entry) => {

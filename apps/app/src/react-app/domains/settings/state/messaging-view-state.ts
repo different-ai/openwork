@@ -201,6 +201,19 @@ export function useMessagingViewProps(
     setAgentLoading(true);
     setAgentError(null);
     try {
+      // Stat first: avoids a console-visible 404 when the agent file does
+      // not exist yet (e.g. a fresh worktree); stat returns 200 + exists:false.
+      const stat = await client.statWorkspaceFile(
+        id,
+        OPENCODE_ROUTER_AGENT_FILE_PATH,
+      );
+      if (!stat.exists) {
+        setAgentExists(false);
+        setAgentContent("");
+        setAgentDraft("");
+        setAgentBaseUpdatedAt(null);
+        return;
+      }
       const result = (await client.readWorkspaceFile(
         id,
         OPENCODE_ROUTER_AGENT_FILE_PATH,

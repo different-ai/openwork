@@ -25,6 +25,7 @@ const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/drive.file",
 ];
+const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 
 export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
   {
@@ -133,7 +134,8 @@ function googleWorkspaceCredentials() {
   const missing: string[] = [];
   if (!clientId) missing.push(GOOGLE_WORKSPACE_CLIENT_ID_ENV);
   if (!clientSecret && !tokenBrokerUrl) missing.push(GOOGLE_WORKSPACE_CLIENT_SECRET_ENV);
-  return { clientId, clientSecret, tokenBrokerUrl, missing };
+  const customClient = clientId !== GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID;
+  return { clientId, clientSecret, tokenBrokerUrl, missing, customClient };
 }
 
 function googleWorkspaceDir(config: ServerConfig): string {
@@ -312,6 +314,7 @@ function googleWorkspaceStatusPayload(record: Record<string, unknown> | null = n
   return {
     configured: credentials.missing.length === 0,
     missing: credentials.missing,
+    customClient: credentials.customClient,
     vault: googleWorkspaceVaultMode(),
     connected: googleWorkspaceAccountRecords(record).length > 0,
     account: googleWorkspaceSafeAccount(primary?.account),
@@ -657,11 +660,15 @@ export function createGoogleWorkspaceConnectFlowManager(config: ServerConfig) {
     flows.delete(flowId);
   };
 
-  const start = async () => {
+  const start = async (options: { gmailRead?: boolean } = {}) => {
     const credentials = googleWorkspaceCredentials();
     if (credentials.missing.length > 0) {
       throw new ApiError(400, "google_oauth_not_configured", `Missing Google OAuth configuration: ${credentials.missing.join(", ")}`);
     }
+    if (options.gmailRead && !credentials.customClient) {
+      throw new ApiError(400, "google_gmail_read_requires_custom_client", "Gmail read access is only available when using your own Google OAuth client.");
+    }
+    const scopes = options.gmailRead ? [...GOOGLE_WORKSPACE_SCOPES, GMAIL_READONLY_SCOPE] : GOOGLE_WORKSPACE_SCOPES;
     const flowId = base64Url(randomBytes(18));
     const state = base64Url(randomBytes(24));
     const pkce = createGoogleWorkspacePkce();
@@ -709,7 +716,7 @@ export function createGoogleWorkspaceConnectFlowManager(config: ServerConfig) {
             const record = {
               version: 1,
               account,
-              scopes: typeof token.scope === "string" ? token.scope.split(/\s+/).filter(Boolean) : GOOGLE_WORKSPACE_SCOPES,
+              scopes: typeof token.scope === "string" ? token.scope.split(/\s+/).filter(Boolean) : scopes,
               token: {
                 accessToken: token.access_token,
                 refreshToken: typeof token.refresh_token === "string" ? token.refresh_token : null,
@@ -750,7 +757,7 @@ export function createGoogleWorkspaceConnectFlowManager(config: ServerConfig) {
     authorizationUrl.searchParams.set("client_id", credentials.clientId);
     authorizationUrl.searchParams.set("redirect_uri", redirectUri);
     authorizationUrl.searchParams.set("response_type", "code");
-    authorizationUrl.searchParams.set("scope", GOOGLE_WORKSPACE_SCOPES.join(" "));
+    authorizationUrl.searchParams.set("scope", scopes.join(" "));
     authorizationUrl.searchParams.set("access_type", "offline");
     authorizationUrl.searchParams.set("prompt", "consent");
     authorizationUrl.searchParams.set("state", state);

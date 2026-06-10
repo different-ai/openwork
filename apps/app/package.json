@@ -1,7 +1,7 @@
 {
   "name": "@openwork/app",
   "private": true,
-  "version": "0.15.3",
+  "version": "0.15.4",
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 vite",

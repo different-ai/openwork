@@ -6,6 +6,7 @@ import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
+import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
@@ -41,6 +42,7 @@ import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog"
 import { SessionDebugPanel } from "./debug-panel";
 import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import { isModelReadableAttachment } from "@/react-app/domains/session/sync/attachment-support";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
@@ -721,6 +723,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSending(false);
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
+      captureAnalyticsEvent("task_send_failed", {});
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       setComposerDraft(props.sessionId, "");
@@ -783,6 +786,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       await abortSessionSafe(opencodeClient, props.sessionId);
+      captureAnalyticsEvent("task_run_stopped", {});
       await snapshotQuery.refetch();
     } catch (nextError) {
       setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
@@ -835,11 +839,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return;
     }
     const oversized = files.filter((file) => file.size > 25 * 1024 * 1024);
-    const accepted = files.filter((file) => file.size <= 25 * 1024 * 1024);
+    const sized = files.filter((file) => file.size <= 25 * 1024 * 1024);
     if (oversized.length) {
       toast.warning(
         oversized.length === 1 ? `${oversized[0]?.name ?? "File"} is too large` : `${oversized.length} files are too large`,
         { description: "Files over 25 MB were skipped." },
+      );
+    }
+    const unreadable = sized.filter((file) => !isModelReadableAttachment(file.type));
+    const accepted = sized.filter((file) => isModelReadableAttachment(file.type));
+    if (unreadable.length) {
+      toast.warning(
+        unreadable.length === 1
+          ? `${unreadable[0]?.name ?? "File"} has a format the model can't read`
+          : `${unreadable.length} files have formats the model can't read`,
+        { description: "Convert to PDF, image, or plain text and attach again." },
       );
     }
     if (!accepted.length) return;
@@ -1222,7 +1236,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         />
       </div>
 
-      <div ref={composerShellRef} className="shrink-0 border-t border-dls-border/70 px-0 pb-3 pt-3">
+      <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2">
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"

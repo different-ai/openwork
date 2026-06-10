@@ -14,6 +14,7 @@ import type { MemberTeamsContext, OrganizationContextVariables, UserOrganization
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
+import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
@@ -122,6 +123,7 @@ registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
+registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerTelemetryRoutes(app)
 

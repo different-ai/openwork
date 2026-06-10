@@ -18,7 +18,6 @@ import {
   shellInSession,
   unrevertSession,
 } from "../../../../app/lib/opencode-session";
-import { trackSessionActive } from "../../../../app/lib/den-telemetry";
 import { finishPerf, perfNow, recordPerfLog } from "../../../../app/lib/perf-log";
 import { toSessionTransportDirectory } from "../../../../app/lib/session-scope";
 import { workspaceSessionRoute } from "../../../shell/workspace-routes";
@@ -65,9 +64,10 @@ const fileToDataUrl = (file: File, mimeType: string) =>
 function attachmentMime(attachment: ComposerAttachment) {
   if (attachment.kind === "image") return attachment.mimeType;
   if (attachment.mimeType === "application/pdf") return attachment.mimeType;
-  if (attachment.mimeType === "application/json") return "text/plain";
-  if (attachment.mimeType.startsWith("text/")) return "text/plain";
-  return attachment.mimeType;
+  // Everything else is sent as text. Unsupported binary mimes (e.g. Keynote)
+  // poison the server-side session history: every later prompt replays the
+  // provider's UnsupportedFunctionalityError and the session cannot recover.
+  return "text/plain";
 }
 
 export function createSessionActionsStore(options: {
@@ -407,7 +407,6 @@ export function createSessionActionsStore(options: {
         mark("session:create:start");
         rawResult = await c.session.create({ directory });
         mark("session:create:ok");
-        trackSessionActive();
       } catch (createErr) {
         mark("session:create:error", {
           error: createErr instanceof Error ? createErr.message : safeStringify(createErr),

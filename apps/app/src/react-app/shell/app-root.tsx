@@ -3,6 +3,7 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
+import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import { readDenBootstrapConfig, readDenSettings } from "../../app/lib/den";
 import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/den-session-events";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -122,8 +123,18 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   return <>{children}</>;
 }
 
+let appOpenedCaptured = false;
+
 export function AppRoot() {
   useDesktopFontZoomBehavior();
+
+  // Module-level dedupe keeps StrictMode double-mounts from double-counting.
+  useEffect(() => {
+    if (appOpenedCaptured) return;
+    appOpenedCaptured = true;
+    initAnalytics();
+    captureAnalyticsEvent("app_opened", {});
+  }, []);
 
   return (
     <>

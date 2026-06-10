@@ -9,20 +9,20 @@ interface QuestionToolProps {
 }
 
 function getFirstQuestionLabel(part: QuestionToolPart) {
-  const first = part.input.questions[0]
+  const first = part.input?.questions?.[0]
   if (!first) {
     return undefined
   }
 
-  const header = first.header.trim()
-  const question = first.question.trim()
+  const header = first.header?.trim() ?? ""
+  const question = first.question?.trim() ?? ""
   const label = header || question
   return label ? truncateText(label, 56) : undefined
 }
 
 function getQuestionToolTitle(part: QuestionToolPart): string | null {
   const label = getFirstQuestionLabel(part)
-  const count = part.input.questions.length
+  const count = part.input?.questions?.length ?? 0
 
   if (part.state === "output-error") {
     return label ?? "Asked a question"
@@ -40,7 +40,7 @@ function getQuestionToolTitle(part: QuestionToolPart): string | null {
 }
 
 function getQuestionToolDetail(part: QuestionToolPart): string | undefined {
-  const count = part.input.questions.length
+  const count = part.input?.questions?.length ?? 0
 
   if (part.state === "output-available") {
     return "Answered"

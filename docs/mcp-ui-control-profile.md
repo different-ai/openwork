@@ -225,7 +225,6 @@ The exact list depends on the current OpenWork route and state. Common actions i
 | `command_palette.open` | Open the command palette |
 | `session.model_picker.open` | Open the model picker |
 | `status.docs.open` | Open documentation |
-| `status.settings.open` | Open settings from the status bar |
 
 ## Requirements
 

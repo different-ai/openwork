@@ -41,7 +41,7 @@ type EditorProps = {
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
-  onSubmit: () => void | Promise<void>;
+  onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
@@ -566,7 +566,7 @@ function SyncPlugin(props: { value: string; mentions: Record<string, "agent" | "
   return null;
 }
 
-function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: boolean }) {
+function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean }) {
   const [editor] = useLexicalComposerContext();
   const onSubmitRef = useRef(props.onSubmit);
 
@@ -588,10 +588,11 @@ function SubmitPlugin(props: { onSubmit: () => void | Promise<void>; disabled: b
         if (event?.shiftKey) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
-        // Plain Enter submits. Cmd/Ctrl+Enter also submits for muscle
-        // memory compatibility.
+        // Plain Enter submits. Cmd/Ctrl+Enter submits with the queue
+        // modifier — while the agent is busy this queues the message to
+        // send once the current task finishes.
         event?.preventDefault();
-        void onSubmitRef.current();
+        void onSubmitRef.current({ queue: event?.metaKey === true || event?.ctrlKey === true });
         return true;
       },
       COMMAND_PRIORITY_HIGH,

@@ -419,6 +419,10 @@ export function getPluginRoute(orgSlug: string | null | undefined, pluginId: str
   return `${getPluginsRoute(orgSlug)}/${encodeURIComponent(pluginId)}`;
 }
 
+export function getNewPluginRoute(orgSlug?: string | null): string {
+  return `${getPluginsRoute(orgSlug)}/new`;
+}
+
 export function getMarketplacesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/marketplaces`;
 }

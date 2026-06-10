@@ -45,6 +45,7 @@ const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
+const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
@@ -556,6 +557,14 @@ async function openSettingsFromNativeMenu() {
   win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
 }
 
+async function checkForUpdatesFromNativeMenu() {
+  const win = await createMainWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send(NATIVE_MENU_CHECK_UPDATES_EVENT);
+}
+
 async function toggleSidebarFromNativeMenu() {
   const win = await createMainWindow();
   win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
@@ -570,6 +579,12 @@ function installApplicationMenu() {
             label: APP_NAME,
             submenu: [
               { role: "about" },
+              {
+                label: "Check for Updates...",
+                click: () => {
+                  void checkForUpdatesFromNativeMenu();
+                },
+              },
               { type: "separator" },
               {
                 label: "Settings...",
@@ -593,6 +608,18 @@ function installApplicationMenu() {
     {
       label: "File",
       submenu: [
+        ...(isMac
+          ? []
+          : [
+              {
+                label: "Settings",
+                accelerator: "Control+,",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+            ]),
         { role: "close" },
       ],
     },
@@ -617,6 +644,13 @@ function installApplicationMenu() {
                   { role: "startSpeaking" },
                   { role: "stopSpeaking" },
                 ],
+              },
+              { type: "separator" },
+              {
+                label: "Settings...",
+                click: () => {
+                  void openSettingsFromNativeMenu();
+                },
               },
             ]
           : [
@@ -668,6 +702,17 @@ function installApplicationMenu() {
     {
       role: "help",
       submenu: [
+        ...(isMac
+          ? []
+          : [
+              {
+                label: "Check for Updates...",
+                click: () => {
+                  void checkForUpdatesFromNativeMenu();
+                },
+              },
+              { type: "separator" },
+            ]),
         {
           label: "Docs",
           click: async () => {
@@ -1388,8 +1433,47 @@ function flushPendingDeepLinks() {
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
+function deterministicDevDesktopBootstrapPath() {
+  return path.join(
+    app.getPath("userData"),
+    "openwork-dev-data",
+    "home",
+    ".config",
+    "openwork",
+    "desktop-bootstrap.json",
+  );
+}
+
+function desktopBootstrapCandidatesForRuntime() {
+  const candidates = desktopBootstrapCandidates();
+  if (process.env.OPENWORK_DEV_MODE !== "1") return candidates;
+
+  // Dev mode swaps process.env.HOME/XDG paths to the sandboxed dev-data home
+  // midway through startup (runtime.mjs buildChildEnv → Object.assign(process.env)).
+  // Keep the branch's env/managed/user candidate model, but collapse user-level
+  // dev config reads/writes to the same deterministic path before and after the
+  // environment mutation so the renderer never bootstraps from a stale file.
+  const devPath = deterministicDevDesktopBootstrapPath();
+  const resolved = [];
+  let addedDevUser = false;
+  for (const candidate of candidates) {
+    if (candidate.source === "user" || candidate.source === "user-dev") {
+      if (!addedDevUser) {
+        resolved.push({ source: "user-dev", path: devPath });
+        addedDevUser = true;
+      }
+      continue;
+    }
+    resolved.push(candidate);
+  }
+  if (!addedDevUser) {
+    resolved.push({ source: "user-dev", path: devPath });
+  }
+  return resolved;
+}
+
 function desktopBootstrapPath() {
-  return desktopBootstrapCandidates()[0]?.path ?? path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+  return desktopBootstrapCandidatesForRuntime()[0]?.path ?? path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
 }
 
 function workspaceStatePath() {
@@ -1531,7 +1615,7 @@ async function writeJsonFileAtomic(outputPath, value) {
 
 async function getDesktopBootstrapConfig() {
   const errors = [];
-  for (const candidate of desktopBootstrapCandidates()) {
+  for (const candidate of desktopBootstrapCandidatesForRuntime()) {
     if (!existsSync(candidate.path)) continue;
     try {
       const raw = await readFile(candidate.path, "utf8");
@@ -1555,7 +1639,7 @@ async function getDesktopBootstrapConfig() {
 }
 
 async function debugDesktopBootstrapConfig() {
-  const candidates = desktopBootstrapCandidates();
+  const candidates = desktopBootstrapCandidatesForRuntime();
   const config = await getDesktopBootstrapConfig();
   const result = {
     path: config.path ?? candidates[0]?.path ?? null,
@@ -1593,7 +1677,8 @@ async function debugDesktopBootstrapConfig() {
 
 async function setDesktopBootstrapConfig(config) {
   const normalized = normalizeDesktopBootstrapConfig(config);
-  const outputPath = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim() || desktopBootstrapCandidates().find((candidate) => candidate.source === "user")?.path || desktopBootstrapPath();
+  const writableSource = process.env.OPENWORK_DEV_MODE === "1" ? "user-dev" : "user";
+  const outputPath = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim() || desktopBootstrapCandidatesForRuntime().find((candidate) => candidate.source === writableSource)?.path || desktopBootstrapPath();
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   return normalized;

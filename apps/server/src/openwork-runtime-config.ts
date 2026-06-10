@@ -5,7 +5,11 @@
  * plugins, and any other config that should be injected at runtime rather
  * than written to disk. Both cli.ts and embedded.ts use this.
  */
-import { openworkExtensionsPreviewPluginPath, openworkCapabilitiesKnowledgePluginPath } from "./openwork-extensions-plugin-path.js";
+import {
+  openworkExtensionsPreviewPluginPath,
+  openworkCapabilitiesKnowledgePluginPath,
+  openworkAnthropicAdaptiveThinkingPluginPath,
+} from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { readRuntimeOpencodeConfig, runtimeDisabledProviderList, runtimeMcpMap, runtimePluginList } from "./runtime-opencode-config-store.js";
 
@@ -64,6 +68,7 @@ export async function buildOpenworkRuntimeConfigObject(
       "opencode-chrome-devtools",
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
+      openworkAnthropicAdaptiveThinkingPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

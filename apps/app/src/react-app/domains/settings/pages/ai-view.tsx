@@ -42,6 +42,8 @@ export type AiSettingsViewProps = {
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
   showOpenWorkModelsSubscribe?: boolean;
+  /** Subtle fallback row when OpenWork Models is not connected and the banner was dismissed. */
+  showOpenWorkModelsConnect?: boolean;
   onSubscribeOpenWorkModels?: () => void | Promise<void>;
   onDismissOpenWorkModels?: () => void | Promise<void>;
   cloudProvidersView?: ReactNode;
@@ -185,6 +187,33 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               </LayoutSectionItem>
             ))}
           </div>
+        ) : null}
+
+        {props.showOpenWorkModelsConnect ? (
+          <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <ProviderIcon providerId="openwork" size={20} className="text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-dls-text">OpenWork Models</span>
+                  <span className="shrink-0 rounded-full border border-dls-border bg-dls-sidebar/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    Not connected
+                  </span>
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Hosted frontier models without managing API keys.
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void props.onSubscribeOpenWorkModels?.()}
+              disabled={props.busy || props.providerAuthBusy}
+            >
+              Connect
+              <ArrowRight className="ml-1.5 size-3.5" />
+            </Button>
+          </LayoutSectionItem>
         ) : null}
 
         {props.providerConnectError ? (
