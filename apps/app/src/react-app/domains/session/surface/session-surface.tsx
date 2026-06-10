@@ -786,14 +786,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
-    try {
-      await abortSessionSafe(opencodeClient, props.sessionId);
-      captureAnalyticsEvent("task_run_stopped", {});
-      await snapshotQuery.refetch();
-    } catch (nextError) {
-      setError({ message: nextError instanceof Error ? nextError.message : "Failed to stop run." });
+    // Stop means stop: drop queued follow-ups before aborting, otherwise the
+    // queue-drain effect below re-prompts the agent the moment the abort
+    // lands and the session reports idle (#2014).
+    setQueuedDrafts([]);
+    // The prompt was sent through a directory-scoped client (session-route
+    // passes the workspace root), so the abort must target the same scope —
+    // without it the server resolves the default project, finds no live run,
+    // and answers `200: false` while the stream keeps going (#2014).
+    const aborted = await abortSessionSafe(
+      opencodeClient,
+      props.sessionId,
+      props.workspaceRoot.trim() || undefined,
+    );
+    if (!aborted) {
+      setError({ message: t("session.stop_failed") });
+      return;
     }
-  }, [chatStreaming, opencodeClient, props.sessionId, snapshotQuery.refetch]);
+    captureAnalyticsEvent("task_run_stopped", {});
+    await snapshotQuery.refetch();
+  }, [chatStreaming, opencodeClient, props.sessionId, props.workspaceRoot, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);

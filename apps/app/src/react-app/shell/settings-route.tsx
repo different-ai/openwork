@@ -2528,9 +2528,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         reloadBlocked={activeReloadBlockingSessions.length > 0}
         activeSessions={activeReloadBlockingSessions}
         isRemoteWorkspace={selectedWorkspace?.workspaceType === "remote"}
-        onForceStopSession={(sessionId) => {
-          if (!activeClient) return undefined;
-          return abortSessionSafe(activeClient, sessionId);
+        onForceStopSession={async (sessionId) => {
+          if (!activeClient) return;
+          await abortSessionSafe(activeClient, sessionId);
         }}
         onReloadEngine={reloadCoordinator.reloadWorkspaceEngine}
         modalState={{

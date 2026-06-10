@@ -16,20 +16,40 @@ import { unwrap } from "./opencode";
 // ---------------------------------------------------------------------------
 
 /**
- * Abort an active session. Silently succeeds if the session is already idle.
+ * Abort an active session. Resolves to the server's answer: `true` when a
+ * live run was aborted, `false` when nothing matched (already idle, or the
+ * session lives in a different project/directory scope). Callers that show
+ * "stopped" feedback must check the result — a `200: false` response is NOT
+ * a successful stop (#2014).
+ *
+ * Pass the workspace `directory` whenever the prompt was sent through a
+ * directory-scoped client; omitting it can resolve the abort against the
+ * server's default project where no matching run exists.
  */
-export async function abortSession(client: Client, sessionID: string): Promise<void> {
-  unwrap(await client.session.abort({ sessionID }));
+export async function abortSession(
+  client: Client,
+  sessionID: string,
+  directory?: string,
+): Promise<boolean> {
+  return unwrap(await client.session.abort({ sessionID, directory })) === true;
 }
 
 /**
- * Abort an active session, swallowing errors (useful before revert/undo).
+ * Abort an active session, swallowing transport errors (useful before
+ * revert/undo). Returns `false` when the abort failed or nothing was
+ * aborted, so callers can avoid declaring success on a no-op.
  */
-export async function abortSessionSafe(client: Client, sessionID: string): Promise<void> {
+export async function abortSessionSafe(
+  client: Client,
+  sessionID: string,
+  directory?: string,
+): Promise<boolean> {
   try {
-    await client.session.abort({ sessionID });
+    return await abortSession(client, sessionID, directory);
   } catch {
-    // intentional: abort may fail if session is already idle
+    // The session may already be idle or the server unreachable; callers
+    // treat `false` as "nothing was aborted".
+    return false;
   }
 }
 
