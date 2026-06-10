@@ -242,6 +242,7 @@ Required secret inputs for production secret management:
 
 - `OPENWORK_TOKEN` (client token)
 - `OPENWORK_HOST_TOKEN` (host/owner token)
+- `OPENWORK_CORS_ORIGINS` set to the exact Den/app browser origins that may call this worker. Do not use `*` with bearer or `X-OpenWork-Host-Token` traffic in production.
 
 Optional:
 
@@ -251,6 +252,7 @@ Optional:
 - `OPENWORK_DATA_DIR_HOST=./data-worker-1` (host data mount)
 - `OPENWORK_APPROVAL_MODE=auto|manual`
 - `OPENWORK_APPROVAL_TIMEOUT_MS=30000`
+- `OPENWORK_CORS_ORIGINS=http://localhost:8787,http://127.0.0.1:8787` (local-safe default; override for production origins)
 
 Persistence:
 

@@ -48,7 +48,9 @@ services:
     environment:
       CI: "true"
       OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-0}
-      DATABASE_URL: mysql://root:${DEN_MYSQL_ROOT_PASSWORD}@mysql:3306/openwork_den
+      # Provide a complete URL so passwords with URL-special characters can be percent-encoded.
+      # Example: mysql://root:p%40ss%3Aword@mysql:3306/openwork_den
+      DATABASE_URL: ${DEN_DATABASE_URL:?DEN_DATABASE_URL is required; percent-encode URL-special password characters}
       BETTER_AUTH_SECRET: ${DEN_BETTER_AUTH_SECRET:?DEN_BETTER_AUTH_SECRET is required}
       DEN_DB_ENCRYPTION_KEY: ${DEN_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY is required}
       BETTER_AUTH_URL: ${DEN_BETTER_AUTH_URL:?DEN_BETTER_AUTH_URL is required}

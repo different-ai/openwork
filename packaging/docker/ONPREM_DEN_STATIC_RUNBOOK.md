@@ -131,6 +131,9 @@ export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=
 export DEN_BETTER_AUTH_SECRET='<better-auth-secret>'
 export DEN_DB_ENCRYPTION_KEY='<db-encryption-key>'
 export DEN_MYSQL_ROOT_PASSWORD='<mysql-root-password>'
+# DATABASE_URL is separate from DEN_MYSQL_ROOT_PASSWORD so URL-special password characters can be percent-encoded.
+# Example for password p@ss:word: mysql://root:p%40ss%3Aword@mysql:3306/openwork_den
+export DEN_DATABASE_URL='mysql://root:<url-encoded-mysql-root-password>@mysql:3306/openwork_den'
 export DEN_EMAIL_FROM='OpenWork Den <den@example.com>'
 export DEN_STATIC_WORKER_TOKEN_MAP_JSON='{"http://worker-01.company.local:8787":{"clientToken":"<worker-01-client-token>","hostToken":"<worker-01-host-token>"},"http://worker-02.company.local:8787":{"clientToken":"<worker-02-client-token>","hostToken":"<worker-02-host-token>"}}'
 docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-static.yml up --build -d
