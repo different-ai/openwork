@@ -1078,7 +1078,9 @@ export async function getOrganizationContextForUser(input: {
     .select({
       id: MemberTable.id,
       userId: AuthUserTable.id,
+      inviteId: MemberTable.inviteId,
       role: MemberTable.role,
+      joinedAt: MemberTable.joinedAt,
       createdAt: MemberTable.createdAt,
       user: {
         id: AuthUserTable.id,
@@ -1098,6 +1100,7 @@ export async function getOrganizationContextForUser(input: {
       email: InvitationTable.email,
       role: InvitationTable.role,
       status: InvitationTable.status,
+      inviteToken: InvitationTable.inviteToken,
       expiresAt: InvitationTable.expiresAt,
       createdAt: InvitationTable.createdAt,
     })
@@ -1136,7 +1139,9 @@ export async function getOrganizationContextForUser(input: {
     members: members.map((member) => ({
       id: member.id,
       userId: member.user.id,
+      inviteId: member.inviteId,
       role: member.role,
+      joinedAt: member.joinedAt,
       createdAt: member.createdAt,
       user: member.user,
       isOwner: roleIncludesOwner(member.role),
