@@ -56,7 +56,6 @@ type WorkspaceEndpointInput = Pick<
   | "openworkHostUrl"
   | "openworkToken"
   | "openworkClientToken"
-  | "openworkHostToken"
   | "openworkWorkspaceId"
 > | null | undefined;
 
@@ -95,7 +94,6 @@ function pickRemoteToken(workspace: WorkspaceEndpointInput): string {
   return (
     workspace.openworkToken ??
     workspace.openworkClientToken ??
-    workspace.openworkHostToken ??
     ""
   ).trim();
 }
