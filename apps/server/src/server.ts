@@ -2485,9 +2485,6 @@ function createRoutes(
         authApplied.push(providerId);
         applied.push(providerId);
       }
-      for (const providerId of staleManagedProviderIds) {
-        await deleteManagedProviderAuth(config, workspace, providerId);
-      }
     } catch (error) {
       if (opencodeConfigBefore === null) {
         await rm(opencodeConfigFile, { force: true });
@@ -2512,6 +2509,22 @@ function createRoutes(
           appliedAt: new Date().toISOString(),
         },
     }, true);
+
+    try {
+      for (const providerId of staleManagedProviderIds) {
+        await deleteManagedProviderAuth(config, workspace, providerId);
+      }
+    } catch (error) {
+      if (configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+      }
+      return jsonResponse({
+        status: "failed",
+        providerCount: applied.length,
+        revision: payload.revision,
+        reason: sanitizeManagedProviderApplyError(error),
+      }, 502);
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),

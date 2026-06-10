@@ -70,7 +70,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; failAuthPath?: string; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[] } = {}) {
+async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[] } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -84,7 +84,9 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; provid
       if (url.pathname.startsWith("/auth/")) {
         const body = request.method === "DELETE" ? null : await request.json();
         authCalls.push({ method: request.method, path: url.pathname, body });
-        if (options.failAuth || url.pathname === options.failAuthPath) return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
+        if (options.failAuth || url.pathname === options.failAuthPath || (request.method === "DELETE" && url.pathname === options.failAuthDeletePath)) {
+          return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
+        }
         return Response.json({ ok: true });
       }
       if (url.pathname === "/config/providers") {
@@ -396,5 +398,32 @@ describe("managed provider sync runtime route", () => {
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
     expect(authCalls.some((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
+  });
+
+  test("stale auth deletion failure does not restore config that references stale providers", async () => {
+    const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/openai" });
+    const fullPayload = providerPayload();
+    const initial = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(fullPayload),
+    });
+    expect(initial.status).toBe(200);
+
+    const nvidiaOnlyPayload = { revision: "sync-rev-2", providers: [fullPayload.providers[0]] };
+    const update = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(nvidiaOnlyPayload),
+    });
+
+    expect(update.status).toBe(502);
+    const body = await update.json();
+    expect(body).toMatchObject({ status: "failed", providerCount: 1, revision: "sync-rev-2" });
+    const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
+    expect(config).toContain("lpr_den_nvidia");
+    expect(config).not.toContain('"openai"');
+    expect(config).not.toContain("gpt-5.4");
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/openai")).toBe(true);
   });
 });
