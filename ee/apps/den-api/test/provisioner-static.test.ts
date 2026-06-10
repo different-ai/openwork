@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { jsonValidator } from "../src/middleware/validation.js"
 import { WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
@@ -23,6 +23,28 @@ let workersSharedModule: typeof import("../src/routes/workers/shared.js")
 let workersCoreModule: typeof import("../src/routes/workers/core.js")
 let server: ReturnType<typeof Bun.serve>
 let staticWorkerUrl: string
+let tokenQueryRows: Array<Record<string, unknown>> = []
+let instanceQueryRows: Array<Record<string, unknown>> = []
+
+function dbQueryFor(table: unknown) {
+  const rows = table === WorkerTokenTable ? tokenQueryRows : table === WorkerInstanceTable ? instanceQueryRows : []
+  const chain = {
+    from: () => chain,
+    where: () => chain,
+    orderBy: () => chain,
+    limit: () => rows,
+    then: (resolve: (value: Array<Record<string, unknown>>) => unknown) => resolve(rows),
+  }
+  return chain
+}
+
+mock.module("../src/db.js", () => ({
+  dbClient: { end: () => Promise.resolve() },
+  denDb: {},
+  db: {
+    select: () => ({ from: (table: unknown) => dbQueryFor(table) }),
+  },
+}))
 
 function staticWorkerConfig(overrides: Partial<StaticWorkerConfig> = {}): StaticWorkerConfig {
   return {
@@ -587,6 +609,40 @@ test("static attach verification fetch uses the validated IP address instead of 
     }
     expect(seenHosts).toEqual([`rebinding-worker.test:${pinServer.port}`, `rebinding-worker.test:${pinServer.port}`])
   } finally {
+    pinServer.stop(true)
+  }
+})
+
+test("static worker token discovery pins the validated address before sending client token", async () => {
+  const seenHosts: string[] = []
+  const pinServer = Bun.serve({
+    port: 0,
+    fetch(request) {
+      seenHosts.push(request.headers.get("host") ?? "")
+      const authorization = request.headers.get("authorization")
+      const url = new URL(request.url)
+      if (url.pathname === "/workspaces" && authorization === "Bearer valid-client-token") {
+        return Response.json({ items: [{ id: "workspace_static_pin", active: true }] })
+      }
+      return new Response("not found", { status: 404 })
+    },
+  })
+  try {
+    tokenQueryRows = [
+      { scope: "host", token: "valid-host-token" },
+      { scope: "client", token: "valid-client-token" },
+    ]
+    instanceQueryRows = [{ provider: "static", url: `http://localhost:${pinServer.port}` }]
+
+    const resolved = await workersSharedModule.getWorkerTokensAndConnect({ id: "worker_static_token_pin_123" } as never)
+
+    expect("tokens" in resolved).toBe(true)
+    expect("connect" in resolved ? resolved.connect?.workspaceId : null).toBe("workspace_static_pin")
+    expect("connect" in resolved ? resolved.connect?.openworkUrl : null).toBe(`http://localhost:${pinServer.port}/w/workspace_static_pin`)
+    expect(seenHosts).toEqual([`localhost:${pinServer.port}`])
+  } finally {
+    tokenQueryRows = []
+    instanceQueryRows = []
     pinServer.stop(true)
   }
 })

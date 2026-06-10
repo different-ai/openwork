@@ -395,17 +395,22 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
   }
 }
 
-async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
+async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string, staticWorker: boolean) {
   const baseUrl = normalizeUrl(instanceUrl)
   if (!baseUrl || !clientToken.trim()) {
     return null
   }
 
   try {
-    const response = await fetch(`${baseUrl}/workspaces`, {
+    const staticTarget = staticWorker ? await resolveStaticRuntimeFetchTarget(baseUrl) : null
+    if (staticWorker && !staticTarget) {
+      return null
+    }
+    const response = await fetch(`${staticTarget?.url ?? baseUrl}/workspaces`, {
       method: "GET",
       headers: {
         Accept: "application/json",
+        ...(staticTarget?.headers ?? {}),
         Authorization: `Bearer ${clientToken.trim()}`,
       },
     })
@@ -472,10 +477,10 @@ export function newerDate(current: Date | null | undefined, candidate: Date | nu
   return candidate.getTime() > current.getTime() ? candidate : current
 }
 
-async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string) {
+async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string, staticWorker: boolean) {
   const candidates = getConnectUrlCandidates(workerId, instanceUrl)
   for (const candidate of candidates) {
-    const resolved = await resolveConnectUrlFromWorker(candidate, clientToken)
+    const resolved = await resolveConnectUrlFromWorker(candidate, clientToken, staticWorker)
     if (resolved) {
       return resolved
     }
@@ -918,7 +923,7 @@ export async function getWorkerTokensAndConnect(worker: WorkerRow) {
   }
 
   const instance = await getLatestWorkerInstance(worker.id)
-  const connect = await resolveConnectUrlFromCandidates(worker.id, instance?.url ?? null, clientToken)
+  const connect = await resolveConnectUrlFromCandidates(worker.id, instance?.url ?? null, clientToken, instance?.provider === "static")
 
   return {
     tokens: {
