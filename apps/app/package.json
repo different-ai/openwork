@@ -24,6 +24,7 @@
     "test:voice-cdp": "node scripts/voice-cdp.mjs",
     "test:remote-diagnostics": "bun test scripts/remote-workspace-diagnostics.test.ts",
     "test:open-target": "bun test scripts/open-target.test.ts",
+    "test:desktop-cloud-sync": "bun test scripts/desktop-cloud-sync.test.ts",
     "test:artifact-spreadsheet": "bun test scripts/artifact-spreadsheet.test.ts",
     "test:dev-log": "bun scripts/dev-log.ts",
     "test:session-error-recovery": "bun scripts/session-error-recovery.ts",

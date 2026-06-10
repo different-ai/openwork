@@ -62,7 +62,12 @@ import {
   type CloudImportedSkill,
   type CloudImportedSkillHub,
 } from "../../../../app/cloud/import-state";
-import { refreshDesktopCloudSync } from "../../../../app/cloud/desktop-cloud-sync";
+import {
+  derivePendingCloudPluginChanges,
+  readPendingCloudSyncChanges,
+  refreshDesktopCloudSync,
+  type PendingCloudPluginChange,
+} from "../../../../app/cloud/desktop-cloud-sync";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -99,6 +104,7 @@ export type ExtensionsStoreSnapshot = {
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
+  pendingCloudPluginChanges: Record<string, PendingCloudPluginChange>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
@@ -135,6 +141,7 @@ type MutableState = {
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
+  pendingCloudPluginChanges: Record<string, PendingCloudPluginChange>;
   hubRepo: HubSkillRepo | null;
   hubRepos: HubSkillRepo[];
   pluginScope: PluginScope;
@@ -337,6 +344,7 @@ export function createExtensionsStore(options: {
     cloudOrgMarketplacesStatus: null,
     importedCloudMarketplaces: {},
     importedCloudPlugins: {},
+    pendingCloudPluginChanges: {},
     hubRepo: DEFAULT_HUB_REPO,
     hubRepos: [DEFAULT_HUB_REPO],
     pluginScope: "project",
@@ -411,6 +419,7 @@ export function createExtensionsStore(options: {
       cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
       importedCloudMarketplaces: state.importedCloudMarketplaces,
       importedCloudPlugins: state.importedCloudPlugins,
+      pendingCloudPluginChanges: state.pendingCloudPluginChanges,
       hubRepo: state.hubRepo,
       hubRepos: state.hubRepos,
       pluginScope: state.pluginScope,
@@ -556,6 +565,32 @@ export function createExtensionsStore(options: {
     }
   };
 
+  const refreshPendingCloudPluginChanges = async (installedPlugins?: Record<string, CloudImportedPlugin>) => {
+    try {
+      const target = await resolveWorkspaceServerTarget();
+      if (!target.openworkClient || !target.openworkWorkspaceId) {
+        setStateField("pendingCloudPluginChanges", {});
+        return;
+      }
+      const syncResult = await refreshDesktopCloudSync({
+        openworkClient: target.openworkClient,
+        workspaceId: target.openworkWorkspaceId,
+      }).catch(() => null);
+      const changes = syncResult
+        ? syncResult.changes
+        : readPendingCloudSyncChanges(await target.openworkClient.getDesktopCloudSync(target.openworkWorkspaceId));
+      setStateField(
+        "pendingCloudPluginChanges",
+        derivePendingCloudPluginChanges({
+          changes,
+          installedPlugins: installedPlugins ?? snapshot.importedCloudPlugins,
+        }),
+      );
+    } catch {
+      // keep previous pending state on failure
+    }
+  };
+
   const refreshImportedCloudPlugins = async () => {
     try {
       const target = await resolveWorkspaceServerTarget();
@@ -563,6 +598,7 @@ export function createExtensionsStore(options: {
         const result = await target.openworkClient.listCloudPlugins(target.openworkWorkspaceId);
         setStateField("importedCloudMarketplaces", result.marketplaces);
         setStateField("importedCloudPlugins", result.plugins);
+        void refreshPendingCloudPluginChanges(result.plugins);
         return result.plugins;
       }
       const config = await readWorkspaceOpenworkConfigRecord();
@@ -573,6 +609,7 @@ export function createExtensionsStore(options: {
     } catch {
       setStateField("importedCloudMarketplaces", {});
       setStateField("importedCloudPlugins", {});
+      setStateField("pendingCloudPluginChanges", {});
       return {};
     }
   };
@@ -590,11 +627,7 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server unavailable. Connect to manage imported cloud marketplaces.");
     }
     setStateField("importedCloudMarketplaces", nextMarketplaces);
-    const target = await resolveWorkspaceServerTarget();
-    void refreshDesktopCloudSync({
-      openworkClient: target.openworkClient,
-      workspaceId: target.openworkWorkspaceId,
-    }).catch(() => null);
+    void refreshPendingCloudPluginChanges();
   };
 
   const persistImportedCloudSkillHubs = async (nextSkillHubs: Record<string, CloudImportedSkillHub>) => {
@@ -638,11 +671,7 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server unavailable. Connect to manage imported cloud plugins.");
     }
     setStateField("importedCloudPlugins", nextPlugins);
-    const target = await resolveWorkspaceServerTarget();
-    void refreshDesktopCloudSync({
-      openworkClient: target.openworkClient,
-      workspaceId: target.openworkWorkspaceId,
-    }).catch(() => null);
+    void refreshPendingCloudPluginChanges(nextPlugins);
   };
 
   const findCloudMarketplace = (marketplaceId: string) =>
@@ -1511,10 +1540,7 @@ export function createExtensionsStore(options: {
         });
         await refreshSkills({ force: true });
         await refreshCloudOrgMarketplaces({ force: true });
-        void refreshDesktopCloudSync({
-          openworkClient: target.openworkClient,
-          workspaceId: target.openworkWorkspaceId,
-        }).catch(() => null);
+        void refreshPendingCloudPluginChanges();
         return {
           ok: true,
           message: `Imported ${plugin.name} with ${result.item.files.length} file${result.item.files.length === 1 ? "" : "s"}.`,
@@ -1549,10 +1575,7 @@ export function createExtensionsStore(options: {
         const result = await target.openworkClient.removeCloudPlugin(target.openworkWorkspaceId, pluginId);
         await refreshSkills({ force: true });
         await refreshCloudOrgMarketplaces({ force: true });
-        void refreshDesktopCloudSync({
-          openworkClient: target.openworkClient,
-          workspaceId: target.openworkWorkspaceId,
-        }).catch(() => null);
+        void refreshPendingCloudPluginChanges();
         return {
           ok: true,
           message: `Removed ${result.item.name}.`,
@@ -2873,6 +2896,7 @@ export function createExtensionsStore(options: {
     cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
     importedCloudMarketplaces: () => snapshot.importedCloudMarketplaces,
     importedCloudPlugins: () => snapshot.importedCloudPlugins,
+    pendingCloudPluginChanges: () => snapshot.pendingCloudPluginChanges,
     hubRepo: () => snapshot.hubRepo,
     hubRepos: () => snapshot.hubRepos,
     get pluginScope() {

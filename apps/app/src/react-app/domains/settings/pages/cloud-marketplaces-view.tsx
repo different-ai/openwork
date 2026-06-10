@@ -4,6 +4,7 @@ import { toast } from "@/components/ui/sonner";
 
 import type { McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
+import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type { DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ type DenSettingsExtensionsStore = {
   cloudOrgMarketplaces: () => DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: () => string | null;
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
+  pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
   refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
   importCloudOrgPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => Promise<AsyncResult>;
   removeCloudOrgPlugin: (pluginId: string) => Promise<AsyncResult>;
@@ -182,6 +184,7 @@ export function CloudMarketplacesView({
   const [statusFilter, setStatusFilter] = React.useState<MarketplaceStatusFilter>("all");
   const [marketplaceFilter, setMarketplaceFilter] = React.useState("all");
   const [detailRow, setDetailRow] = React.useState<MarketplaceRow | null>(null);
+  const [updateAllProgress, setUpdateAllProgress] = React.useState<{ current: number; total: number } | null>(null);
   const [resolvedPlugins, setResolvedPlugins] = React.useState<Record<string, DenOrgPluginResolved>>({});
   const [detailLoadingId, setDetailLoadingId] = React.useState<string | null>(null);
   const [detailError, setDetailError] = React.useState<string | null>(null);
@@ -190,6 +193,7 @@ export function CloudMarketplacesView({
 
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
+  const pendingChanges = extensions.pendingCloudPluginChanges();
   const extensionItemsByBuiltInId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.builtInEntry ? [[item.builtInEntry.id ?? item.builtInEntry.serverName ?? item.builtInEntry.name, item] as const] : []),
   ), [extensionItems]);
@@ -203,7 +207,9 @@ export function CloudMarketplacesView({
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
       const item = extensionItemsByPluginId.get(plugin.id);
-      const status = item?.installState ?? (isCloudBuiltInPlugin(plugin) ? "installed" : pluginStatus(imported, plugin));
+      const status: MarketplacePackageStatus = imported && pendingChanges[plugin.id] === "modified" && !isCloudBuiltInPlugin(plugin)
+        ? "update_available"
+        : item?.installState ?? (isCloudBuiltInPlugin(plugin) ? "installed" : pluginStatus(imported, plugin));
       return {
         source: "cloud",
         marketplaceId: marketplace.marketplace.id,
@@ -223,7 +229,7 @@ export function CloudMarketplacesView({
         ].join(" ").toLowerCase(),
       };
     }));
-  }, [extensionItemsByPluginId, importedPlugins, marketplaces]);
+  }, [extensionItemsByPluginId, importedPlugins, marketplaces, pendingChanges]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -381,6 +387,37 @@ export function CloudMarketplacesView({
     [actionId, extensions],
   );
 
+  const updatableRows = React.useMemo(
+    () => cloudRows.filter((row) => row.status === "update_available" && !isCloudBuiltInPlugin(row.plugin)),
+    [cloudRows],
+  );
+
+  const removedUpstreamPlugins = React.useMemo(
+    () => Object.values(importedPlugins).filter((plugin) => pendingChanges[plugin.pluginId] === "removed"),
+    [importedPlugins, pendingChanges],
+  );
+
+  const updateAll = React.useCallback(async () => {
+    if (actionId || updateAllProgress) return;
+
+    setActionError(null);
+    const targets = [...updatableRows];
+    let failed = 0;
+    // Sequential on purpose: avoid hammering the install routes.
+    for (let index = 0; index < targets.length; index += 1) {
+      const target = targets[index];
+      setUpdateAllProgress({ current: index + 1, total: targets.length });
+      const result = await extensions.importCloudOrgPlugin(target.marketplaceId, target.plugin);
+      if (!result.ok) failed += 1;
+    }
+    setUpdateAllProgress(null);
+    if (failed > 0) {
+      setActionError(`Failed to update ${failed} extension${failed === 1 ? "" : "s"}.`);
+    } else if (targets.length > 0) {
+      toast.success(`Updated ${targets.length} extension${targets.length === 1 ? "" : "s"}.`);
+    }
+  }, [actionId, extensions, updatableRows, updateAllProgress]);
+
   const content = (
     <SettingsSection>
       <SettingsSectionHeader>
@@ -391,6 +428,18 @@ export function CloudMarketplacesView({
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
+          {updatableRows.length >= 2 ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy || Boolean(actionId) || Boolean(updateAllProgress)}
+              onClick={() => void updateAll()}
+            >
+              {updateAllProgress
+                ? t("extensions.update_all_progress", { current: updateAllProgress.current, total: updateAllProgress.total })
+                : t("extensions.update_all_button")}
+            </Button>
+          ) : null}
           <RefreshButton
             busy={busy}
             disabled={busy || !canShowRows}
@@ -419,6 +468,22 @@ export function CloudMarketplacesView({
       {busy ? (
         <SettingsNotice>Loading marketplace extensions...</SettingsNotice>
       ) : null}
+
+      {removedUpstreamPlugins.map((plugin) => (
+        <SettingsNotice key={plugin.pluginId}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>{t("extensions.removed_upstream_notice", { name: plugin.name })}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={Boolean(actionId)}
+              onClick={() => void removePlugin(plugin.pluginId, plugin.name)}
+            >
+              {actionId === plugin.pluginId ? "Working..." : t("extensions.remove_from_workspace_button")}
+            </Button>
+          </div>
+        </SettingsNotice>
+      ))}
 
       <div className="space-y-3">
         <SettingsListSearchInput
@@ -478,6 +543,7 @@ export function CloudMarketplacesView({
               actionId={actionId}
               row={row}
               onOpenDetail={setDetailRow}
+              onUpdatePlugin={importPlugin}
               builtInDisabled={builtInExtensionsDisabled}
               builtInConnectingName={builtInConnectingName}
             />
@@ -532,10 +598,11 @@ function MarketplaceCard(props: {
   actionId: string | null;
   row: MarketplaceRow;
   onOpenDetail: (row: MarketplaceRow) => void;
+  onUpdatePlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
   builtInDisabled: boolean;
   builtInConnectingName: string | null;
 }) {
-  const { actionId, row, onOpenDetail } = props;
+  const { actionId, row, onOpenDetail, onUpdatePlugin } = props;
 
   if (row.source === "built-in") {
     const actionBusy = props.builtInConnectingName === row.entry.name;
@@ -561,20 +628,33 @@ function MarketplaceCard(props: {
   const actionBusy = actionId === row.plugin.id;
   const manifest = row.plugin.extension?.manifest;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
+  const updateAvailable = !cloudBuiltIn && row.status === "update_available";
 
   return (
-    <ExtensionCard
-      name={row.plugin.name}
-      description={row.plugin.description || `Marketplace extension from ${row.marketplaceName}.`}
-      iconSlug={manifest?.icon?.simpleIconSlug}
-      iconSrc={manifest?.icon?.src}
-      kind="extension"
-      connected={cloudBuiltIn || Boolean(row.imported)}
-      connectedLabel={cloudBuiltIn ? "Built-in" : "Installed"}
-      connecting={actionBusy}
-      actionLabel={cloudBuiltIn ? "View details" : actionBusy ? "Working..." : actionLabelForStatus(row.status)}
-      onClick={() => onOpenDetail(row)}
-    />
+    <div className="flex flex-col gap-2">
+      <ExtensionCard
+        name={row.plugin.name}
+        description={row.plugin.description || `Marketplace extension from ${row.marketplaceName}.`}
+        iconSlug={manifest?.icon?.simpleIconSlug}
+        iconSrc={manifest?.icon?.src}
+        kind="extension"
+        connected={cloudBuiltIn || Boolean(row.imported)}
+        connectedLabel={cloudBuiltIn ? "Built-in" : updateAvailable ? t("extensions.update_available") : "Installed"}
+        connecting={actionBusy}
+        actionLabel={cloudBuiltIn ? "View details" : actionBusy ? "Working..." : actionLabelForStatus(row.status)}
+        onClick={() => onOpenDetail(row)}
+      />
+      {updateAvailable ? (
+        <Button
+          size="xs"
+          variant="secondary"
+          disabled={Boolean(actionId)}
+          onClick={() => void onUpdatePlugin(row.marketplaceId, row.plugin)}
+        >
+          {actionBusy ? t("extensions.updating") : t("extensions.update_button")}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
