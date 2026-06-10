@@ -7,6 +7,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
+import { syncOrganizationMemberBillingQuantities } from "../../organization-member-hooks.js"
 import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
@@ -89,6 +90,7 @@ async function cleanupExpiredInvitationPlaceholders(input: {
           .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId, userId: null })
           .where(and(eq(MemberTable.id, invitedMemberRows[0].id), isNull(MemberTable.removedAt)))
       })
+      await syncOrganizationMemberBillingQuantities({ organizationId: input.organizationId })
     }
   }
 }
@@ -223,6 +225,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           role,
           joinedAt: null,
         })
+        await syncOrganizationMemberBillingQuantities({ organizationId: payload.organization.id })
       }
     } else {
       await db.insert(InvitationTable).values({
@@ -247,6 +250,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role,
         joinedAt: null,
       })
+      await syncOrganizationMemberBillingQuantities({ organizationId: payload.organization.id })
     }
 
     try {
@@ -351,6 +355,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           .set({ removedAt: new Date(), removedByOrgMember: payload.currentMember.id, userId: null })
           .where(and(eq(MemberTable.id, invitedMemberRows[0].id), isNull(MemberTable.removedAt)))
       })
+      await syncOrganizationMemberBillingQuantities({ organizationId: payload.organization.id })
     }
 
     return c.json({ success: true })

@@ -26,6 +26,7 @@ let operations: Array<{ type: "insert" | "update"; value: any }> = []
 let hookCalls: Array<{ organizationId: string; memberId: string; change: "added" | "removed" }> = []
 let whereInputs: unknown[] = []
 let seatEligibility = { allowed: true, currentCount: 1, freeSeatCount: 1 }
+let billingSyncCalls: Array<{ organizationId: string }> = []
 
 function queryFor(rows: unknown[]) {
   const chain: any = {
@@ -106,6 +107,10 @@ mock.module("../src/organization-member-hooks.js", () => ({
     hookCalls.push(input)
     return Promise.resolve()
   },
+  syncOrganizationMemberBillingQuantities: (input: { organizationId: string }) => {
+    billingSyncCalls.push(input)
+    return Promise.resolve()
+  },
 }))
 
 mock.module("../src/stripe-billing.js", () => ({
@@ -143,6 +148,7 @@ beforeEach(() => {
   hookCalls = []
   whereInputs = []
   seatEligibility = { allowed: true, currentCount: 1, freeSeatCount: 1 }
+  billingSyncCalls = []
 })
 
 test("invitation preview resolves an invite token", async () => {
@@ -377,6 +383,8 @@ test("Entra auto-join does not bypass seat billing gate", async () => {
   queryRows = [
     [{ id: entraOrganizationId }],
     [],
+    [{ email: "teammate@example.com" }],
+    [],
   ]
 
   await expect(orgsModule.ensureEntraSsoMembershipForAccount({
@@ -387,6 +395,57 @@ test("Entra auto-join does not bypass seat billing gate", async () => {
 
   expect(operations).toEqual([])
   expect(hookCalls).toEqual([])
+})
+
+test("Entra auto-join accepts an already reserved invite seat", async () => {
+  const userId = createDenTypeId("user")
+  const memberId = createDenTypeId("member")
+  const invitationId = createDenTypeId("invitation")
+  const placeholderMemberId = createDenTypeId("member")
+  const member = {
+    id: memberId,
+    organizationId: entraOrganizationId,
+    userId,
+    inviteId: null,
+    invitedByOrgMember: null,
+    role: "member",
+    joinedAt: new Date("2026-06-09T00:00:00.000Z"),
+    removedAt: null,
+    removedByOrgMember: null,
+    createdAt: new Date("2026-06-09T00:00:00.000Z"),
+  }
+  const invitation = {
+    id: invitationId,
+    email: "teammate@example.com",
+    role: "member",
+    organizationId: entraOrganizationId,
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+    teamId: null,
+  }
+  seatEligibility = { allowed: false, currentCount: 5, freeSeatCount: 5 }
+  queryRows = [
+    [{ id: entraOrganizationId }],
+    [],
+    [{ email: "teammate@example.com" }],
+    [{ id: placeholderMemberId }],
+    [],
+    [member],
+    [{ email: "teammate@example.com" }],
+    [invitation],
+    [{ id: placeholderMemberId }],
+  ]
+
+  const result = await orgsModule.ensureEntraSsoMembershipForAccount({
+    userId,
+    providerId: "microsoft",
+    idToken: unsignedJwt({ groups: [] }),
+  })
+
+  expect(result.status).toBe("created")
+  expect(operations.some((operation) => operation.type === "insert" && operation.value?.userId === userId)).toBe(true)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(true)
+  expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
 })
 
 test("member removal targets active members only and repeated removals emit no hook", async () => {

@@ -42,3 +42,9 @@ export async function runPostOrganizationMemberChangeHooks(input: {
     await hook({ ...input, memberCount })
   }
 }
+
+export async function syncOrganizationMemberBillingQuantities(input: { organizationId: OrgId }) {
+  const memberCount = await countOrganizationMembers(input.organizationId)
+  await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId: input.organizationId, memberCount })
+  await syncInferenceSubscriptionQuantityAfterMemberChange({ organizationId: input.organizationId, memberCount })
+}

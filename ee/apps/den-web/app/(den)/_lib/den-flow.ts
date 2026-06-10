@@ -7,6 +7,8 @@ export type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-rout
 export type EventLevel = "info" | "success" | "warning" | "error";
 export type AuthMethod = "email" | SocialAuthProvider;
 
+export const DEFAULT_SOCIAL_AUTH_PROVIDERS: SocialAuthProvider[] = ["github", "google"];
+
 export type BillingPrice = {
   amount: number | null;
   currency: string | null;
@@ -235,6 +237,18 @@ export function getSocialProviderLabel(provider: SocialAuthProvider): string {
   if (provider === "github") return "GitHub";
   if (provider === "google") return "Google";
   return "Microsoft";
+}
+
+export function isSocialAuthProvider(value: string | null): value is SocialAuthProvider {
+  return value === "github" || value === "google" || value === "microsoft";
+}
+
+export function getSocialAuthProviders(payload: unknown): SocialAuthProvider[] {
+  if (!payload || typeof payload !== "object" || !("socialProviders" in payload) || !Array.isArray(payload.socialProviders)) {
+    return DEFAULT_SOCIAL_AUTH_PROVIDERS;
+  }
+
+  return payload.socialProviders.filter((provider): provider is SocialAuthProvider => isSocialAuthProvider(provider));
 }
 
 export function normalizeWorkerName(input: string): string {

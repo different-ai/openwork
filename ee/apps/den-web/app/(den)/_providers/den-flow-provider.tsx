@@ -3,6 +3,7 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   AUTH_TOKEN_STORAGE_KEY,
+  DEFAULT_SOCIAL_AUTH_PROVIDERS,
   DEFAULT_AUTH_NAME,
   DEFAULT_WORKER_NAME,
   LAST_WORKER_STORAGE_KEY,
@@ -34,6 +35,7 @@ import {
   getOrgLimitError,
   getRuntimeServiceLabel,
   getSocialCallbackUrl,
+  getSocialAuthProviders,
   getSocialProviderLabel,
   getToken,
   getUser,
@@ -45,6 +47,7 @@ import {
   getWorkerTokens,
   getWorkersList,
   identifyPosthogUser,
+  isSocialAuthProvider,
   isWorkerLaunch,
   listItemToWorker,
   normalizeAuthModeParam,
@@ -89,6 +92,7 @@ type DenFlowContextValue = {
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
+  socialAuthProviders: SocialAuthProvider[];
   signOut: () => Promise<void>;
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
@@ -166,6 +170,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
+  const [socialAuthProviders, setSocialAuthProviders] = useState<SocialAuthProvider[]>(DEFAULT_SOCIAL_AUTH_PROVIDERS);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     if (typeof window === "undefined") {
@@ -1705,6 +1710,25 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
+    const loadAuthProviders = async () => {
+      try {
+        const { response, payload } = await requestJson("/v1/auth/providers");
+        if (!cancelled && response.ok) {
+          setSocialAuthProviders(getSocialAuthProviders(payload));
+        }
+      } catch {}
+    };
+
+    void loadAuthProviders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     const hydrateSession = async () => {
       try {
         await refreshSession(true);
@@ -1758,7 +1782,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     const pendingSocialSignup = window.sessionStorage.getItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
-    if (pendingSocialSignup !== "github" && pendingSocialSignup !== "google") {
+    if (!isSocialAuthProvider(pendingSocialSignup)) {
       return;
     }
     if (socialSignupHandledRef.current === user.id) {
@@ -1991,6 +2015,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     resendVerificationCode,
     cancelVerification,
     beginSocialAuth,
+    socialAuthProviders,
     signOut,
     resolveUserLandingRoute,
     billingSummary,

@@ -134,6 +134,7 @@ export function AuthPanel({
     resendVerificationCode,
     cancelVerification,
     beginSocialAuth,
+    socialAuthProviders,
     resolveUserLandingRoute,
   } = useDenFlow();
 
@@ -179,6 +180,7 @@ export function AuthPanel({
       ? resolvedSignInContent
       : resolvedSignUpContent;
   const showLockedEmailSummary = Boolean(prefilledEmail && lockEmail && hideEmailField);
+  const showSocialAuth = !verificationRequired && !isPasswordResetRequest && !hideSocialAuth && socialAuthProviders.length > 0;
 
   useEffect(() => {
     const key = prefillKey ?? prefilledEmail?.trim() ?? null;
@@ -350,31 +352,37 @@ export function AuthPanel({
           }
         }}
       >
-        {!verificationRequired && !isPasswordResetRequest && !hideSocialAuth ? (
+        {showSocialAuth ? (
           <>
-            <SocialButton
-              onClick={() => void beginSocialAuth("github")}
-              disabled={authBusy || desktopRedirectBusy}
-            >
-              <GitHubLogo />
-              <span>Continue with GitHub</span>
-            </SocialButton>
+            {socialAuthProviders.includes("github") ? (
+              <SocialButton
+                onClick={() => void beginSocialAuth("github")}
+                disabled={authBusy || desktopRedirectBusy}
+              >
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </SocialButton>
+            ) : null}
 
-            <SocialButton
-              onClick={() => void beginSocialAuth("google")}
-              disabled={authBusy || desktopRedirectBusy}
-            >
-              <GoogleLogo />
-              <span>Continue with Google</span>
-            </SocialButton>
+            {socialAuthProviders.includes("google") ? (
+              <SocialButton
+                onClick={() => void beginSocialAuth("google")}
+                disabled={authBusy || desktopRedirectBusy}
+              >
+                <GoogleLogo />
+                <span>Continue with Google</span>
+              </SocialButton>
+            ) : null}
 
-            <SocialButton
-              onClick={() => void beginSocialAuth("microsoft")}
-              disabled={authBusy || desktopRedirectBusy}
-            >
-              <MicrosoftLogo />
-              <span>Continue with Microsoft</span>
-            </SocialButton>
+            {socialAuthProviders.includes("microsoft") ? (
+              <SocialButton
+                onClick={() => void beginSocialAuth("microsoft")}
+                disabled={authBusy || desktopRedirectBusy}
+              >
+                <MicrosoftLogo />
+                <span>Continue with Microsoft</span>
+              </SocialButton>
+            ) : null}
 
             <div className="den-divider" aria-hidden="true">
               <span>or</span>

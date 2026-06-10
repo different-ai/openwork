@@ -3,10 +3,12 @@ import { OAuthClientTable } from "@openwork-ee/den-db/schema"
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { z } from "zod"
 import { auth } from "../../auth.js"
 import { db } from "../../db.js"
+import { isEntraSsoEnabled } from "../../entra-sso.js"
 import { env } from "../../env.js"
-import { emptyResponse } from "../../openapi.js"
+import { emptyResponse, jsonResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -81,6 +83,18 @@ function readStoredClientScopes(scopes: string | null) {
   return scopes.split(/\s+/).filter(Boolean)
 }
 
+const authProvidersSchema = z.object({
+  socialProviders: z.array(z.enum(["github", "google", "microsoft"])),
+}).meta({ ref: "AuthProviders" })
+
+function getConfiguredSocialProviders() {
+  return [
+    env.github.clientId && env.github.clientSecret ? "github" : null,
+    env.google.clientId && env.google.clientSecret ? "google" : null,
+    isEntraSsoEnabled(env.entra) ? "microsoft" : null,
+  ].filter((provider): provider is "github" | "google" | "microsoft" => provider !== null)
+}
+
 async function ensureMcpClientScopes(request: Request) {
   const url = new URL(request.url)
   const requestedScopes = new Set((url.searchParams.get("scope") ?? "").split(/\s+/).filter(Boolean))
@@ -122,6 +136,18 @@ async function ensureMcpClientScopes(request: Request) {
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
+  app.get(
+    "/v1/auth/providers",
+    describeRoute({
+      tags: ["Authentication"],
+      summary: "List configured authentication providers",
+      description: "Returns the social authentication providers currently configured for this Den deployment.",
+      responses: {
+        200: jsonResponse("Configured authentication providers.", authProvidersSchema),
+      },
+    }),
+    (c) => c.json({ socialProviders: getConfiguredSocialProviders() }),
+  )
   app.get("/api/auth/.well-known/oauth-authorization-server", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
   app.get("/api/auth/.well-known/openid-configuration", async (c) => rewriteMetadataOrigin(await oauthProviderOpenIdConfigMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))
   app.get("/.well-known/oauth-authorization-server/api/auth", async (c) => rewriteMetadataOrigin(await oauthProviderAuthServerMetadata(auth)(c.req.raw), requestOrigin(c.req.raw)))

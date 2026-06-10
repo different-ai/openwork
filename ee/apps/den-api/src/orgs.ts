@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthAccountTable,
@@ -446,6 +446,40 @@ async function reconcilePendingInvitationsForMember(input: {
   }
 }
 
+async function hasPendingInvitationSeatReservation(input: {
+  organizationId: OrgId
+  userId: UserId
+}) {
+  const userRows = await db
+    .select({ email: AuthUserTable.email })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, input.userId))
+    .limit(1)
+
+  const email = userRows[0]?.email?.trim()
+  if (!email) {
+    return false
+  }
+
+  const rows = await db
+    .select({ id: MemberTable.id })
+    .from(InvitationTable)
+    .innerJoin(MemberTable, eq(MemberTable.inviteId, InvitationTable.id))
+    .where(and(
+      eq(InvitationTable.organizationId, input.organizationId),
+      eq(InvitationTable.email, email),
+      eq(InvitationTable.status, "pending"),
+      gt(InvitationTable.expiresAt, new Date()),
+      eq(MemberTable.organizationId, input.organizationId),
+      isNull(MemberTable.userId),
+      isNull(MemberTable.joinedAt),
+      isNull(MemberTable.removedAt),
+    ))
+    .limit(1)
+
+  return Boolean(rows[0])
+}
+
 async function ensureInvitationTeamMembership(input: {
   invitation: InvitationRow
   memberId: MemberId
@@ -622,14 +656,18 @@ export async function ensureEntraSsoMembershipForAccount(input: {
       },
       createMember: async ({ organizationId, userId, role }) => {
         const normalizedOrganizationId = organizationId as OrgId
+        const normalizedUserId = userId as UserId
         const seatEligibility = await getOrganizationSeatAddEligibility(normalizedOrganizationId)
-        if (!seatEligibility.allowed) {
+        if (!seatEligibility.allowed && !await hasPendingInvitationSeatReservation({
+          organizationId: normalizedOrganizationId,
+          userId: normalizedUserId,
+        })) {
           throw new Error("entra_sso_seat_subscription_required")
         }
 
         return insertMemberIfMissing({
           organizationId: normalizedOrganizationId,
-          userId: userId as UserId,
+          userId: normalizedUserId,
           role,
         })
       },
