@@ -7,7 +7,6 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
@@ -150,8 +149,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
     const invitationId = existingInvitation[0]?.id ?? createInvitationId()
     const inviteToken = createInvitationToken()
-    let createdOrgMemberId: typeof MemberTable.$inferSelect.id | null = null
-
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
@@ -180,7 +177,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           role,
           joinedAt: null,
         })
-        createdOrgMemberId = memberId
       }
     } else {
       await db.insert(InvitationTable).values({
@@ -205,11 +201,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role,
         joinedAt: null,
       })
-      createdOrgMemberId = memberId
-    }
-
-    if (createdOrgMemberId) {
-      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
     }
 
     try {

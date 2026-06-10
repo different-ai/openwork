@@ -138,7 +138,7 @@ test("invitation preview resolves an invite token", async () => {
   expect(preview?.organization.id).toBe(organizationId)
 })
 
-test("accept by invite token claims placeholder member without duplicates and retains team association", async () => {
+test("accept by invite token claims placeholder member and emits the acceptance lifecycle hook", async () => {
   const invitationId = createDenTypeId("invitation")
   const organizationId = createDenTypeId("organization")
   const userId = createDenTypeId("user")
@@ -188,6 +188,7 @@ test("accept by invite token claims placeholder member without duplicates and re
   expect(operations.some((operation) => operation.type === "insert" && operation.value?.userId === userId)).toBe(false)
   expect(operations.some((operation) => operation.type === "insert" && operation.value?.orgMembershipId === placeholderMemberId)).toBe(false)
   expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(true)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.userId === userId)).toBe(true)
   expect(hookCalls).toEqual([{ organizationId, memberId: placeholderMemberId, change: "added" }])
 })
 
