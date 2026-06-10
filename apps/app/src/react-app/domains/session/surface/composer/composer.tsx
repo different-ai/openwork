@@ -87,6 +87,8 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: ComposerMentionKind, value: string) => void;
+  /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
+  inputHistory?: string[];
   onPasteText: (text: string) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
@@ -340,6 +342,22 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     if (!props.busy) disarmEscape();
   }, [props.busy, disarmEscape]);
+
+  // Input history recall (#2012): ArrowUp on an empty composer recalls the
+  // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
+  // Editing the recalled text exits recall mode, and ArrowDown past the
+  // newest entry restores whatever was typed before recall started.
+  const historyPosRef = useRef<number | null>(null);
+  const historyExpectedRef = useRef<string | null>(null);
+  const historyStashRef = useRef("");
+
+  useEffect(() => {
+    if (historyPosRef.current === null) return;
+    if (props.draft !== historyExpectedRef.current) {
+      historyPosRef.current = null;
+      historyExpectedRef.current = null;
+    }
+  }, [props.draft]);
 
   useEffect(() => () => {
     if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
@@ -857,6 +875,45 @@ export function ReactSessionComposer(props: ComposerProps) {
       event.preventDefault();
       setToolMenuOpen(false);
       return;
+    }
+
+    // Input history recall (#2012). Only when no menu is consuming the
+    // arrow keys and IME composition is not active.
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !imeActive &&
+      !agentMenuOpen &&
+      !toolMenuOpen &&
+      (!activeMenu || !activeItems.length)
+    ) {
+      const history = props.inputHistory ?? [];
+      const position = historyPosRef.current;
+      if (event.key === "ArrowUp") {
+        const startRecall = position === null && props.draft.trim() === "" && history.length > 0;
+        const continueRecall = position !== null && position > 0;
+        if (startRecall || continueRecall) {
+          const nextPos = position === null ? history.length - 1 : position - 1;
+          if (position === null) historyStashRef.current = props.draft;
+          historyPosRef.current = nextPos;
+          historyExpectedRef.current = history[nextPos];
+          event.preventDefault();
+          props.onDraftChange(history[nextPos]);
+          return;
+        }
+      } else if (position !== null) {
+        event.preventDefault();
+        const nextPos = position + 1;
+        if (nextPos >= history.length) {
+          historyPosRef.current = null;
+          historyExpectedRef.current = null;
+          props.onDraftChange(historyStashRef.current);
+        } else {
+          historyPosRef.current = nextPos;
+          historyExpectedRef.current = history[nextPos];
+          props.onDraftChange(history[nextPos]);
+        }
+        return;
+      }
     }
 
     if (!activeMenu || !activeItems.length) return;

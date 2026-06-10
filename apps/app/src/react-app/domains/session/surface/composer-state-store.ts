@@ -19,16 +19,25 @@ export type ComposerSessionState = {
 
 export type ComposerStateStore = {
   sessions: Record<string, ComposerSessionState>;
+  /**
+   * Sent-prompt history per session, oldest first. Kept outside
+   * `sessions` because `clearSession` resets the composer after every
+   * send and must not wipe the recall history (#2012).
+   */
+  history: Record<string, string[]>;
   setDraft: (sessionId: string, draft: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
+  appendHistory: (sessionId: string, text: string) => void;
   clearSession: (sessionId: string) => void;
 };
 
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
 const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
+const EMPTY_HISTORY: string[] = [];
+const HISTORY_LIMIT = 50;
 
 function createEmptyComposerSession(): ComposerSessionState {
   return {
@@ -45,6 +54,7 @@ function getWritableSession(state: ComposerStateStore, sessionId: string): Compo
 
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   sessions: {},
+  history: {},
   setDraft: (sessionId, draft) => set((state) => {
     const current = getWritableSession(state, sessionId);
     if (current.draft === draft) return state;
@@ -64,6 +74,16 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const current = getWritableSession(state, sessionId);
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
+  }),
+  appendHistory: (sessionId, text) => set((state) => {
+    const trimmed = text.trim();
+    if (!trimmed) return state;
+    const current = state.history[sessionId] ?? EMPTY_HISTORY;
+    // Skip consecutive duplicates so spamming the same prompt does not
+    // fill the recall buffer.
+    if (current[current.length - 1] === trimmed) return state;
+    const next = [...current, trimmed].slice(-HISTORY_LIMIT);
+    return { history: { ...state.history, [sessionId]: next } };
   }),
   clearSession: (sessionId) => set((state) => {
     if (!state.sessions[sessionId]) return state;
@@ -87,4 +107,8 @@ export function getComposerMentions(state: ComposerStateStore, sessionId: string
 
 export function getComposerPasteParts(state: ComposerStateStore, sessionId: string): ComposerPastePart[] {
   return state.sessions[sessionId]?.pasteParts ?? EMPTY_PASTE_PARTS;
+}
+
+export function getComposerHistory(state: ComposerStateStore, sessionId: string): string[] {
+  return state.history[sessionId] ?? EMPTY_HISTORY;
 }

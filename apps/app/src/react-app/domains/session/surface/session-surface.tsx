@@ -61,6 +61,7 @@ import {
 import {
   getComposerAttachments,
   getComposerDraft,
+  getComposerHistory,
   getComposerMentions,
   getComposerPasteParts,
   useComposerStateStore,
@@ -402,6 +403,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
+  const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
+  const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
   const [error, setError] = useState<SessionError | null>(null);
   const [sending, setSending] = useState(false);
   // Locally queued follow-up drafts. OpenCode has no server-side queue, so we
@@ -716,6 +719,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft, draftAttachments: ComposerAttachment[]) => {
     setError(null);
+    // Record the prompt for Up/Down recall in the composer (#2012).
+    appendComposerHistory(props.sessionId, nextDraft.text);
     useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
     setSending(true);
     setAwaitingAssistantBaseline(renderedMessages.length);
@@ -733,7 +738,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setSending(false);
       throw nextError;
     }
-  }, [props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length, setComposerDraft]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1313,6 +1318,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
+        inputHistory={inputHistory}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
         pastedText={pasteParts}
