@@ -116,6 +116,19 @@ test("OpenAI OAuth completion reports pending authorization without tokens", asy
   }
 })
 
+test("OpenAI OAuth completion reports expired device authorization separately from pending", async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 })) as typeof fetch
+  try {
+    await expect(llmProviderModule.completeOpenAiDeviceAuth({
+      deviceAuthId: "device-expired",
+      userCode: "CODE",
+    })).rejects.toMatchObject({ error: "openai_oauth_expired", status: 410 })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test("OpenAI OAuth start reports upstream failure without credential material", async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async () => new Response(JSON.stringify({ error: "upstream" }), { status: 500 })) as typeof fetch

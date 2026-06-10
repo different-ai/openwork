@@ -431,6 +431,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
   const invitedMember = invitedMemberRows[0] ?? null
   const existingMember = existingMemberRows[0] ?? null
   let member = existingMember
+  let createdMember = false
 
   if (!member && invitedMember) {
     await db
@@ -446,6 +447,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
       userId,
       role,
     })
+    createdMember = true
   }
 
   if (invitation.teamId) {
@@ -477,7 +479,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId) {
     .set({ status: "accepted" })
     .where(eq(InvitationTable.id, invitation.id))
 
-  return member
+  return { member, createdMember }
 }
 
 export async function acceptInvitationForUser(input: {
@@ -514,11 +516,13 @@ export async function acceptInvitationForUser(input: {
     throw new OrganizationEmailDomainRestrictionError(input.email, allowedEmailDomains ?? [])
   }
 
-  const member = await acceptInvitation(invitation, input.userId)
-  await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: member.id, change: "added" })
+  const accepted = await acceptInvitation(invitation, input.userId)
+  if (accepted.createdMember) {
+    await runPostOrganizationMemberChangeHooks({ organizationId: invitation.organizationId, memberId: accepted.member.id, change: "added" })
+  }
   return {
     invitation,
-    member,
+    member: accepted.member,
   }
 }
 

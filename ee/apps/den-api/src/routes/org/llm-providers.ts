@@ -247,8 +247,11 @@ export async function completeOpenAiDeviceAuth(input: { deviceAuthId: string; us
     }),
   })
 
-  if (deviceResponse.status === 403 || deviceResponse.status === 404) {
+  if (deviceResponse.status === 403) {
     throw createFailure(409, "openai_oauth_pending", "OpenAI authorization is not complete yet.")
+  }
+  if (deviceResponse.status === 404) {
+    throw createFailure(410, "openai_oauth_expired", "OpenAI authorization expired. Restart the device authorization flow.")
   }
   if (!deviceResponse.ok) {
     throw createFailure(502, "openai_oauth_complete_failed", `OpenAI device authorization failed with ${deviceResponse.status}.`)
