@@ -432,7 +432,7 @@ describe("managed provider sync runtime route", () => {
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
   });
 
-  test("preserves array-shaped provider-list models instead of filtering by numeric keys", async () => {
+  test("filters array-shaped provider-list models by Den-managed allowlist", async () => {
     const { base } = await boot({ providerListShape: "providers-array", providerModelsShape: "array" });
     const sync = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -450,7 +450,10 @@ describe("managed provider sync runtime route", () => {
 
     expect(Array.isArray(openai?.models)).toBe(true);
     expect(Array.isArray(nvidia?.models)).toBe(true);
-    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5", "gpt-4o", "gpt-5.4-fast", "o4-mini"]);
+    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5"]);
+    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).not.toContain("gpt-4o");
+    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).not.toContain("gpt-5.4-fast");
+    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).not.toContain("o4-mini");
     expect((nvidia?.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
   });
 

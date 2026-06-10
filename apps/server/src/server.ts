@@ -1130,7 +1130,14 @@ function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<
   const providerId = typeof provider.id === "string" ? provider.id : fallbackProviderId;
   if (!providerId) return provider;
   const allowed = allowedModelsByProvider.get(providerId);
-  if (!allowed || Array.isArray(provider.models) || !isRecordValue(provider.models)) return provider;
+  if (!allowed) return provider;
+  if (Array.isArray(provider.models)) {
+    return {
+      ...provider,
+      models: provider.models.filter((model) => isRecordValue(model) && typeof model.id === "string" && allowed.has(model.id)),
+    };
+  }
+  if (!isRecordValue(provider.models)) return provider;
   return {
     ...provider,
     models: Object.fromEntries(Object.entries(provider.models).filter(([modelId]) => allowed.has(modelId))),
