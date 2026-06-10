@@ -1945,7 +1945,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     onboardingAutoLaunchKeyRef.current = autoLaunchKey;
-    markOnboardingComplete();
+    // Launch the first worker through the canonical POST /v1/workers path;
+    // the Den API selects the configured provisioner (render/daytona/static)
+    // server-side. PR #1181 replaced this with a bare markOnboardingComplete,
+    // which let signup finish with zero workers (#1961). launchWorker marks
+    // onboarding complete itself on success; on failure onboarding stays
+    // pending so the user sees the error and can retry.
+    void launchWorker({ source: "signup_auto", workerNameOverride: onboardingIntent?.workerName ?? DEFAULT_WORKER_NAME });
   }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
 
   useEffect(() => {
