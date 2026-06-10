@@ -302,6 +302,7 @@ test("Entra auto-join ignores expired pending invitations", async () => {
   const userId = createDenTypeId("user")
   const memberId = createDenTypeId("member")
   const invitationId = createDenTypeId("invitation")
+  const placeholderMemberId = createDenTypeId("member")
   const member = {
     id: memberId,
     organizationId: entraOrganizationId,
@@ -330,6 +331,7 @@ test("Entra auto-join ignores expired pending invitations", async () => {
     [member],
     [{ email: "teammate@example.com" }],
     [invitation],
+    [{ id: placeholderMemberId }],
   ]
 
   const result = await orgsModule.ensureEntraSsoMembershipForAccount({
@@ -340,7 +342,8 @@ test("Entra auto-join ignores expired pending invitations", async () => {
 
   expect(result.status).toBe("created")
   expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(false)
-  expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(false)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "canceled")).toBe(true)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(true)
   expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
 })
 

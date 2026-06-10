@@ -425,6 +425,11 @@ async function reconcilePendingInvitationsForMember(input: {
 
   for (const invitation of invitations) {
     if (getInvitationStatus(invitation) !== "pending") {
+      await removeInvitationPlaceholderMember({ invitation, removedByOrgMemberId: input.memberId })
+      await db
+        .update(InvitationTable)
+        .set({ status: "canceled" })
+        .where(eq(InvitationTable.id, invitation.id))
       continue
     }
 
