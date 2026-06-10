@@ -100,3 +100,52 @@ export function filterWorkspacesForManagedDen(workspaces, denBaseUrl) {
   const input = Array.isArray(workspaces) ? workspaces : [];
   return input.filter((workspace) => isWorkspaceCompatibleWithManagedDen(workspace, denBaseUrl));
 }
+
+const PERSISTED_WORKSPACES_FOR_WRITE = "__openworkPersistedWorkspacesForWrite";
+
+export function runtimeWorkspaceStateForManagedDen(state, denBaseUrl) {
+  const persistedWorkspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
+  const runtimeState = {
+    ...state,
+    workspaces: filterWorkspacesForManagedDen(persistedWorkspaces, denBaseUrl),
+  };
+  return attachPersistedWorkspacesForWrite(runtimeState, persistedWorkspaces);
+}
+
+export function attachPersistedWorkspacesForWrite(state, persistedWorkspaces) {
+  Object.defineProperty(state, PERSISTED_WORKSPACES_FOR_WRITE, {
+    value: Array.isArray(persistedWorkspaces) ? persistedWorkspaces : [],
+    enumerable: false,
+  });
+  return state;
+}
+
+export function mergeWorkspaceListsPreservingHidden(persistedWorkspaces, runtimeWorkspaces) {
+  const output = Array.isArray(persistedWorkspaces) ? [...persistedWorkspaces] : [];
+  const indexById = new Map();
+  output.forEach((workspace, index) => {
+    const workspaceId = String(workspace?.id ?? "").trim();
+    if (workspaceId) indexById.set(workspaceId, index);
+  });
+  for (const workspace of Array.isArray(runtimeWorkspaces) ? runtimeWorkspaces : []) {
+    const workspaceId = String(workspace?.id ?? "").trim();
+    if (!workspaceId) {
+      output.push(workspace);
+      continue;
+    }
+    const existingIndex = indexById.get(workspaceId);
+    if (existingIndex === undefined) {
+      indexById.set(workspaceId, output.length);
+      output.push(workspace);
+      continue;
+    }
+    output[existingIndex] = workspace;
+  }
+  return output;
+}
+
+export function persistedWorkspacesForRuntimeState(state) {
+  return Array.isArray(state?.[PERSISTED_WORKSPACES_FOR_WRITE])
+    ? state[PERSISTED_WORKSPACES_FOR_WRITE]
+    : null;
+}

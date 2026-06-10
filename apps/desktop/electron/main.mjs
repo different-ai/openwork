@@ -31,10 +31,14 @@ import {
 } from "./remote-workspace.mjs";
 import { desktopFetch } from "./desktop-fetch.mjs";
 import {
+  attachPersistedWorkspacesForWrite,
   defaultDesktopBootstrapConfig,
   desktopBootstrapCandidates,
   filterWorkspacesForManagedDen,
+  mergeWorkspaceListsPreservingHidden,
   normalizeDesktopBootstrapConfig,
+  persistedWorkspacesForRuntimeState,
+  runtimeWorkspaceStateForManagedDen,
 } from "./bootstrap-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1950,15 +1954,20 @@ async function readWorkspaceState() {
   if (changed) {
     return writeWorkspaceState(nextState);
   }
-  return nextState;
+  return runtimeWorkspaceStateForManagedDen(nextState, activeDenBaseUrl);
 }
 
 async function writeWorkspaceState(nextState) {
   const outputPath = workspaceStatePath();
   const selectedId = String(nextState?.selectedId ?? nextState?.activeId ?? "");
   const watchedId = typeof nextState?.watchedId === "string" ? nextState.watchedId : "";
+  const runtimeWorkspaces = Array.isArray(nextState?.workspaces) ? nextState.workspaces : [];
+  const persistedWorkspaces = persistedWorkspacesForRuntimeState(nextState);
   const output = {
     ...nextState,
+    workspaces: persistedWorkspaces
+      ? mergeWorkspaceListsPreservingHidden(persistedWorkspaces, runtimeWorkspaces)
+      : runtimeWorkspaces,
     // Tauri's Rust state uses selectedWorkspaceId/watchedWorkspaceId on disk
     // (with activeId as a legacy alias). Keep Electron's selectedId/watchedId
     // too so older Electron builds can still read the same file.
@@ -1969,7 +1978,8 @@ async function writeWorkspaceState(nextState) {
     activeId: selectedId || null,
   };
   await writeJsonFileAtomic(outputPath, output);
-  return output;
+  const activeDenBaseUrl = (await getDesktopBootstrapConfig()).baseUrl;
+  return runtimeWorkspaceStateForManagedDen(output, activeDenBaseUrl);
 }
 
 const runtimeManager = createRuntimeManager({
@@ -2144,7 +2154,10 @@ function normalizeWorkspaceEntry(input) {
 
 async function mutateWorkspaceState(mutator) {
   const current = await readWorkspaceState();
-  const next = await mutator({ ...current, workspaces: [...current.workspaces] });
+  const mutableState = { ...current, workspaces: [...current.workspaces] };
+  const persistedWorkspaces = persistedWorkspacesForRuntimeState(current);
+  if (persistedWorkspaces) attachPersistedWorkspacesForWrite(mutableState, persistedWorkspaces);
+  const next = await mutator(mutableState);
   return writeWorkspaceState(next);
 }
 
