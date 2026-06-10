@@ -11,12 +11,16 @@ function seedRequiredEnv() {
 
 let invitationModule: typeof import("../src/routes/org/invitations.js")
 let orgRoutesModule: typeof import("../src/routes/org/index.js")
+let orgsModule: typeof import("../src/orgs.js")
+let authModule: typeof import("../src/auth.js")
 let userOrganizationsModule: typeof import("../src/middleware/user-organizations.js")
 
 beforeAll(async () => {
   seedRequiredEnv()
   invitationModule = await import("../src/routes/org/invitations.js")
   orgRoutesModule = await import("../src/routes/org/index.js")
+  orgsModule = await import("../src/orgs.js")
+  authModule = await import("../src/auth.js")
   userOrganizationsModule = await import("../src/middleware/user-organizations.js")
 })
 
@@ -72,6 +76,23 @@ test("invitation cancel still validates against the unscoped handler", async () 
 
   expect(response.status).toBe(401)
   await expect(response.json()).resolves.toEqual({ error: "unauthorized" })
+})
+
+test("invitation lookup accepts both invitation IDs and invite tokens", () => {
+  const invitationId = "inv_01j00000000000000000000000"
+  expect(orgsModule.parseInvitationLookupIdentifier(invitationId)).toEqual({
+    invitationId,
+    inviteToken: invitationId,
+  })
+  expect(orgsModule.parseInvitationLookupIdentifier(" invite-token-123 ")).toEqual({
+    invitationId: null,
+    inviteToken: "invite-token-123",
+  })
+})
+
+test("dev sign-up rate limit remains higher than production", () => {
+  expect(authModule.getSignUpEmailRateLimitMax(true)).toBe(100)
+  expect(authModule.getSignUpEmailRateLimitMax(false)).toBe(3)
 })
 
 test("session hydration only runs when a user session is missing an active organization", () => {

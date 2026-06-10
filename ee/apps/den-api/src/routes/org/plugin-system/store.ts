@@ -820,7 +820,7 @@ async function ensureGrantTargetsInOrganization(context: PluginArchActorContext,
     const member = await db
       .select({ id: MemberTable.id })
       .from(MemberTable)
-      .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, value.orgMembershipId)))
+      .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, value.orgMembershipId), isNull(MemberTable.removedAt)))
       .limit(1)
     if (!member[0]) {
       throw new PluginArchRouteFailure(404, "member_not_found", "Member not found.")
@@ -2958,7 +2958,6 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         createdAt: member.createdAt,
         id: member.id,
         isOwner: roleIncludesOwner(member.role),
-        joinedAt: member.joinedAt,
         role: member.role,
         userId: member.userId,
       },

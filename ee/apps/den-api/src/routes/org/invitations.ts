@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthUserTable, InvitationTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { AuthUserTable, InvitationTable, MemberTable, TeamMemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -7,8 +7,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
-import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
-import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
+import { isEmailAllowedForOrganization, listAssignableRoles } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -150,8 +149,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7)
     const invitationId = existingInvitation[0]?.id ?? createInvitationId()
     const inviteToken = createInvitationToken()
-    let createdOrgMemberId: typeof MemberTable.$inferSelect.id | null = null
-
     if (existingInvitation[0]) {
       await db
         .update(InvitationTable)
@@ -180,7 +177,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           role,
           joinedAt: null,
         })
-        createdOrgMemberId = memberId
       }
     } else {
       await db.insert(InvitationTable).values({
@@ -205,11 +201,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role,
         joinedAt: null,
       })
-      createdOrgMemberId = memberId
-    }
-
-    if (createdOrgMemberId) {
-      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
     }
 
     try {
@@ -305,10 +296,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitationId))
 
     if (invitedMemberRows[0]) {
-      await removeOrganizationMember({
-        organizationId: payload.organization.id,
-        memberId: invitedMemberRows[0].id,
-        removedByOrgMemberId: payload.currentMember.id,
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(TeamMemberTable)
+          .where(eq(TeamMemberTable.orgMembershipId, invitedMemberRows[0].id))
+        await tx
+          .update(MemberTable)
+          .set({ removedAt: new Date(), removedByOrgMember: payload.currentMember.id, userId: null })
+          .where(and(eq(MemberTable.id, invitedMemberRows[0].id), isNull(MemberTable.removedAt)))
       })
     }
 
