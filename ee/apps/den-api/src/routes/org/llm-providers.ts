@@ -1007,8 +1007,10 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     requireUserMiddleware,
     paramValidator(orgLlmProviderParamsSchema),
     resolveOrganizationContextMiddleware,
+    resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
+      const memberTeams = c.get("memberTeams") ?? []
       const params = c.req.valid("param")
 
       let llmProviderId: LlmProviderId
@@ -1029,8 +1031,16 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "llm_provider_not_found" }, 404)
       }
 
-      if (!canImportLlmProviderCredential(payload)) {
-        return c.json({ error: "forbidden", message: "Only organization admins can import provider credentials." }, 403)
+      const canImport = canImportLlmProviderCredential(payload)
+        || await canAccessLlmProvider({
+          organizationId: payload.organization.id,
+          llmProviderId,
+          currentMemberId: payload.currentMember.id,
+          memberTeams,
+        })
+
+      if (!canImport) {
+        return c.json({ error: "forbidden", message: "Only members with access to this provider can import its credential." }, 403)
       }
 
       const models = await db
