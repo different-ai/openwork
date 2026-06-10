@@ -71,6 +71,7 @@ import { callExperimentalExtensionAction, listExperimentalExtensionActions } fro
 import {
   mergeOpencodeConfigs,
   readRuntimeOpencodeConfig,
+  runtimeMcpMap,
   type RuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -4005,6 +4006,9 @@ function createRoutes(
       paths: [openworkConfigPath(workspace.path)],
     });
     const result = await addMcp(config, workspace.id, name, configPayload);
+    // Hot-add into the running engine so connect/auth works without a full
+    // engine restart (the spawn-time injected config cannot pick it up).
+    await syncRuntimeMcpToOpencodeEngine(config, workspace, [name]).catch(() => undefined);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -4079,6 +4083,7 @@ function createRoutes(
     if (!updated) {
       throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
     }
+    await syncRuntimeMcpToOpencodeEngine(config, workspace, [name]).catch(() => undefined);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -4808,12 +4813,63 @@ async function reloadOpencodeEngine(config: ServerConfig, workspace: WorkspaceIn
   if (auth) headers.Authorization = auth;
 
   const response = await fetch(targetUrl, { method: "POST", headers });
-  if (response.ok) return;
-  const body = parseOpencodeErrorBody(await response.text());
-  throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
-    status: response.status,
-    body,
-  });
+  if (!response.ok) {
+    const body = parseOpencodeErrorBody(await response.text());
+    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+      status: response.status,
+      body,
+    });
+  }
+
+  // Re-register runtime-DB MCPs: dispose re-reads disk configs plus the
+  // OPENCODE_CONFIG_CONTENT env frozen at spawn, so MCPs added since spawn
+  // would otherwise vanish from the engine after a reload.
+  await syncRuntimeMcpToOpencodeEngine(config, workspace).catch(() => undefined);
+}
+
+// Push runtime-DB MCP entries into the running OpenCode engine via its dynamic
+// add endpoint. The engine only reads OPENCODE_CONFIG_CONTENT once at spawn, so
+// MCPs written to the runtime DB afterwards are invisible to it — auth then
+// fails with McpServerNotFoundError even though the config write succeeded.
+// Best-effort: callers treat engine sync as advisory and swallow failures.
+async function syncRuntimeMcpToOpencodeEngine(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  onlyNames?: string[],
+): Promise<void> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
+  if (!baseUrl) return;
+
+  const runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+  const entries = Object.entries(runtimeMcpMap(runtimeConfig)).filter(
+    ([name]) => !onlyNames || onlyNames.includes(name),
+  );
+  if (entries.length === 0) return;
+
+  const url = new URL(baseUrl);
+  url.pathname = "/mcp";
+  url.search = "";
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) url.searchParams.set("directory", directory);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (connection.authHeader) headers.Authorization = connection.authHeader;
+
+  for (const [name, mcpConfig] of entries) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name, config: mcpConfig }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      const body = parseOpencodeErrorBody(await response.text());
+      throw new ApiError(502, "opencode_mcp_sync_failed", `Failed to register MCP ${name} with the engine`, {
+        status: response.status,
+        body,
+      });
+    }
+  }
 }
 
 async function writeOpenworkConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
