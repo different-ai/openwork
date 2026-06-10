@@ -13,7 +13,7 @@ type Served = {
 
 type ProviderListTestItem = {
   id: string;
-  models?: Record<string, unknown>;
+  models?: unknown;
 };
 
 type ProviderListTestBody = {
@@ -70,7 +70,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[]; initialAuth?: Record<string, unknown> } = {}) {
+async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; providerModelsShape?: "record" | "array"; connected?: string[]; initialAuth?: Record<string, unknown> } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -100,27 +100,42 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
         return Response.json({ ok: true });
       }
       if (url.pathname === "/config/providers") {
+        const nvidiaModels = options.providerModelsShape === "array"
+          ? [
+            { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+            { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
+          ]
+          : {
+            "deepseek-ai/deepseek-v4-flash": { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+            "google/gemma-4-31b-it": { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
+          };
+        const openaiModels = options.providerModelsShape === "array"
+          ? [
+            { id: "gpt-5.4", name: "GPT-5.4" },
+            { id: "gpt-5.5", name: "GPT-5.5" },
+            { id: "gpt-4o", name: "GPT-4o" },
+            { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
+            { id: "o4-mini", name: "o4-mini" },
+          ]
+          : {
+            "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" },
+            "gpt-5.5": { id: "gpt-5.5", name: "GPT-5.5" },
+            "gpt-4o": { id: "gpt-4o", name: "GPT-4o" },
+            "gpt-5.4-fast": { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
+            "o4-mini": { id: "o4-mini", name: "o4-mini" },
+          };
         const providers = [
           {
             id: "lpr_den_nvidia",
             name: "NVIDIA",
             source: "custom",
-            models: {
-              "deepseek-ai/deepseek-v4-flash": { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
-              "google/gemma-4-31b-it": { id: "google/gemma-4-31b-it", name: "Gemma-4-31B-IT" },
-            },
+            models: nvidiaModels,
           },
           {
             id: "openai",
             name: "OpenAI",
             source: "config",
-            models: {
-              "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4" },
-              "gpt-5.5": { id: "gpt-5.5", name: "GPT-5.5" },
-              "gpt-4o": { id: "gpt-4o", name: "GPT-4o" },
-              "gpt-5.4-fast": { id: "gpt-5.4-fast", name: "GPT-5.4 Fast" },
-              "o4-mini": { id: "o4-mini", name: "o4-mini" },
-            },
+            models: openaiModels,
           },
         ];
         if (options.providerListShape === "providers-array") {
@@ -415,6 +430,28 @@ describe("managed provider sync runtime route", () => {
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
     expect(authCalls.some((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
+  });
+
+  test("preserves array-shaped provider-list models instead of filtering by numeric keys", async () => {
+    const { base } = await boot({ providerListShape: "providers-array", providerModelsShape: "array" });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody;
+    const providers = Array.isArray(body.providers) ? body.providers : [];
+    const openai = providers.find((provider) => provider?.id === "openai");
+    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+
+    expect(Array.isArray(openai?.models)).toBe(true);
+    expect(Array.isArray(nvidia?.models)).toBe(true);
+    expect((openai?.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5", "gpt-4o", "gpt-5.4-fast", "o4-mini"]);
+    expect((nvidia?.models as Array<{ id: string }>).map((model) => model.id)).toEqual(["deepseek-ai/deepseek-v4-flash", "google/gemma-4-31b-it"]);
   });
 
   test("failure on a later provider restores previous working auth written earlier in the same attempt", async () => {
