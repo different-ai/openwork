@@ -581,6 +581,12 @@ test("static attach URL policy rejects public HTTP hosts unless explicitly allow
     { allowPrivate: false, allowedHosts: ["worker.example.com"], allowedCidrs: [] },
     async () => [{ address: "203.0.113.10", family: 4 }],
   )).resolves.toMatchObject({ ok: true })
+
+  await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(
+    "http://worker.example.com:8787",
+    { allowPrivate: false, allowedHosts: [], allowedCidrs: ["10.0.0.0/8"] },
+    async () => [{ address: "203.0.113.10", family: 4 }, { address: "10.1.2.3", family: 4 }],
+  )).resolves.toMatchObject({ ok: false })
 })
 
 test("static attach URL policy rejects non-allow-listed HTTPS hostnames", async () => {

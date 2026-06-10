@@ -370,7 +370,8 @@ export async function validateResolvedStaticWorkerAttachUrl(
   }
 
   const resolvedCidrAllowed = addresses.some((entry) => policy.allowedCidrs.some((cidr) => ipInCidr(entry.address.toLowerCase(), cidr.trim())))
-  if (parsed.protocol === "http:" && !policy.allowPrivate && !hostExplicitlyAllowed && !resolvedCidrAllowed) {
+  const hasResolvedAddressOutsideAllowedCidrs = addresses.some((entry) => !policy.allowedCidrs.some((cidr) => ipInCidr(entry.address.toLowerCase(), cidr.trim())))
+  if (parsed.protocol === "http:" && !policy.allowPrivate && !hostExplicitlyAllowed && (!resolvedCidrAllowed || hasResolvedAddressOutsideAllowedCidrs)) {
     return {
       ok: false as const,
       message: "HTTP static worker URLs must be explicitly allowed by on-prem attach host or CIDR policy before tokens are verified.",
