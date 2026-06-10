@@ -122,6 +122,8 @@ import {
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionOption as PaletteSessionOption } from "./command-palette";
+import { SessionSearchDialog } from "./session-search-dialog";
+import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { useBootState } from "./boot-state";
 import {
@@ -591,6 +593,7 @@ export function SessionRoute() {
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [paletteAccessibleTargets, setPaletteAccessibleTargets] = useState<OpenTarget[]>([]);
   // Model picker modal state (ported from settings-route; previously the
@@ -2540,13 +2543,19 @@ export function SessionRoute() {
   }, [baseUrl, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, token, workspaces]);
 
   // Global shortcuts:
-  //   Cmd/Ctrl+N  -> new task in selected workspace
-  //   Cmd/Ctrl+K  -> toggle command palette
-  //   Cmd/Ctrl+J  -> toggle terminal panel (matches VS Code)
+  //   Cmd/Ctrl+N        -> new task in selected workspace
+  //   Cmd/Ctrl+K        -> toggle command palette
+  //   Cmd/Ctrl+J        -> toggle terminal panel (matches VS Code)
+  //   Cmd/Ctrl+Shift+F  -> search every session (titles + messages)
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (!mod) return;
+    if (event.shiftKey && !event.altKey && event.key?.toLowerCase() === "f") {
+      event.preventDefault();
+      setSessionSearchOpen((value) => !value);
+      return;
+    }
     if (event.shiftKey || event.altKey) return;
 
     const target = event.target as HTMLElement | null;
@@ -2684,6 +2693,24 @@ export function SessionRoute() {
     });
     return out;
   }, [sessionsByWorkspaceId, selectedWorkspaceId, workspaces]);
+
+  const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
+    if (!client) return null;
+    return async (workspaceId: string, sessionId: string) =>
+      (await client.getSessionMessages(workspaceId, sessionId, { limit: 200 })).items;
+  }, [client]);
+
+  const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({
+    id: "session-search.open",
+    title: "Search session messages",
+    detail: "Deep search every session, including message content",
+    meta: "Cmd/Ctrl+Shift+F",
+    searchText: "search find sessions messages history transcript content",
+    action: () => {
+      setCommandPaletteOpen(false);
+      setSessionSearchOpen(true);
+    },
+  }), []);
 
   const terminalPaletteItems = useMemo<PaletteItem[]>(() => [
     {
@@ -3219,7 +3246,14 @@ export function SessionRoute() {
         }
       }}
       sessions={paletteSessionOptions}
-      extraItems={terminalPaletteItems}
+      extraItems={[sessionSearchPaletteItem, ...terminalPaletteItems]}
+    />
+    <SessionSearchDialog
+      open={sessionSearchOpen}
+      onClose={() => setSessionSearchOpen(false)}
+      sessions={paletteSessionOptions}
+      fetchMessages={sessionSearchFetcher}
+      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal
       open={modelPickerOpen}
