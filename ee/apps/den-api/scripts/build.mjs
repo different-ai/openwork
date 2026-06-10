@@ -8,7 +8,8 @@ const serviceDir = path.resolve(scriptDir, "..")
 const repoRoot = path.resolve(serviceDir, "..", "..", "..")
 const desktopPackagePath = path.join(repoRoot, "apps", "desktop", "package.json")
 const generatedVersionPath = path.join(serviceDir, "src", "generated", "app-version.ts")
-const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm"
+const pnpmCommand = "pnpm"
+const useShellForPnpm = process.platform === "win32"
 const fallbackAppVersion = "0.0.0"
 
 function readDesktopVersion() {
@@ -40,12 +41,23 @@ function writeGeneratedVersionFile(latestAppVersion) {
   )
 }
 
+function quoteShellArg(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`
+}
+
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const shellCommand = [command, ...args.map(quoteShellArg)].join(" ")
+  const result = spawnSync(useShellForPnpm ? shellCommand : command, useShellForPnpm ? [] : args, {
     cwd: serviceDir,
     env: process.env,
     stdio: "inherit",
+    shell: useShellForPnpm,
   })
+
+  if (result.error) {
+    console.error(result.error)
+    process.exit(1)
+  }
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1)
