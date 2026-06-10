@@ -3012,11 +3012,13 @@ async function handleDesktopInvoke(event, command, ...args) {
       const timeoutMs = Number(init.timeoutMs);
       const headers = init.headers && typeof init.headers === "object" ? init.headers : undefined;
       const sensitiveHeaders = new Headers(headers);
+      const method = typeof init.method === "string" ? init.method : "GET";
+      const hasBody = typeof init.body === "string";
       const response = await fetch(url, {
-        method: typeof init.method === "string" ? init.method : undefined,
-        redirect: sensitiveHeaders.has("authorization") || sensitiveHeaders.has("x-openwork-host-token") ? "manual" : "follow",
+        method,
+        redirect: sensitiveHeaders.has("authorization") || sensitiveHeaders.has("x-openwork-host-token") || hasBody || !["GET", "HEAD"].includes(method.toUpperCase()) ? "manual" : "follow",
         headers,
-        body: typeof init.body === "string" ? init.body : undefined,
+        body: hasBody ? init.body : undefined,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
       });
       return {
