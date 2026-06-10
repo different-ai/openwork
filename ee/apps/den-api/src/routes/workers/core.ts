@@ -525,6 +525,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "organization_unavailable" }, 400)
     }
 
+    if (env.provisionerMode === "static") {
+      await withStaticAssignmentMutex(async () => cleanupStaleStaticReservations())
+    }
+
     if (shouldUseSignupAutoExistingWorker(input)) {
       const existingSignupAutoWorker = await getExistingSignupAutoWorkerResponse({
         orgId,
