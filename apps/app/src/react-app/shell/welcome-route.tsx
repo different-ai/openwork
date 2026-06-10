@@ -19,13 +19,14 @@ import { WelcomePage } from "../domains/onboarding/welcome-page";
 import { ProviderSelectionStep } from "../domains/onboarding/provider-selection-step";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import {
+  getOpenWorkModelsActionUrl,
   hideOpenWorkModelsPromo,
   markOpenWorkModelsStartupPromoShown,
 } from "../domains/cloud/openwork-models-promo";
+import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
-import { buildDenAuthUrl, readDenSettings } from "../../app/lib/den";
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -110,6 +111,7 @@ export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
   const platform = usePlatform();
+  const denAuth = useDenAuth();
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
   const [manualFolder, setManualFolder] = useState("");
 
@@ -327,9 +329,10 @@ export function WelcomeRoute() {
       {state.providerStep ? (
         <ProviderSelectionStep
           onOpenWorkModels={() => {
-            const settings = readDenSettings();
-            platform.openLink(buildDenAuthUrl(settings.baseUrl, "sign-up"));
-            // Navigate to session after opening sign-up — user will complete in browser
+            // Land on the OpenWork Models value-prop page when already
+            // signed in to Den; otherwise start sign-up. Previously this
+            // always opened a bare sign-up page — payment before value.
+            platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
               : "/session";

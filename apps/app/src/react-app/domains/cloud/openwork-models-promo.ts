@@ -37,10 +37,15 @@ export function hasOpenWorkModelsProvider(providerIds: readonly string[]) {
   return providerIds.some((id) => id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID);
 }
 
-export function getOpenWorkModelsActionUrl(isSignedIn: boolean) {
+export function getOpenWorkModelsActionUrl(
+  isSignedIn: boolean,
+  authMode: "sign-in" | "sign-up" = "sign-in",
+) {
   const settings = readDenSettings();
   const baseUrl = settings.baseUrl || readDenBootstrapConfig().baseUrl;
-  return isSignedIn ? getDenInferenceUrl(baseUrl) : buildDenAuthUrl(baseUrl, "sign-in");
+  // Signed-in users go straight to the OpenWork Models page — the value-prop
+  // + subscribe surface — never to a bare auth or billing page.
+  return isSignedIn ? getDenInferenceUrl(baseUrl) : buildDenAuthUrl(baseUrl, authMode);
 }
 
 export function isOpenWorkModelsPromoHidden() {
