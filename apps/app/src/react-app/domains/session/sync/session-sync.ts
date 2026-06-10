@@ -551,6 +551,18 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const update = getSessionUpdatedInfo(event);
     if (!update) return;
     if (!isTrackedSession(entry, update.sessionId)) return;
+    // Keep the cached snapshot's revert cursor in sync with the server. The
+    // renderer derives the visible transcript from this cursor, so a revert
+    // (or its cleanup on the next prompt) must reach the snapshot cache or
+    // the transcript stays frozen on stale history.
+    queryClient.setQueryData<OpenworkSessionSnapshot>(
+      snapshotKey(workspaceId, update.sessionId),
+      (current) => {
+        if (!current) return current;
+        const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
+        return { ...current, session: { ...current.session, revert } };
+      },
+    );
     for (const listener of entry.sessionUpdatedListeners) listener(update);
     return;
   }
@@ -703,13 +715,20 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.removed") {
     // Revert cleanup (and explicit message deletion) removes messages
-    // server-side; drop them from the live transcript cache so they can't be
-    // resurrected by later snapshot merges.
+    // server-side; drop them from both the live transcript cache and the
+    // cached snapshot so they can't be resurrected by later merges.
     const props = (event.properties ?? {}) as { sessionID?: string; messageID?: string };
     if (!props.sessionID || !props.messageID) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((message) => message.id !== props.messageID),
+    );
+    queryClient.setQueryData<OpenworkSessionSnapshot>(
+      snapshotKey(workspaceId, props.sessionID),
+      (current) => {
+        if (!current) return current;
+        return { ...current, messages: current.messages.filter((message) => message.info.id !== props.messageID) };
+      },
     );
     return;
   }
