@@ -33,6 +33,7 @@ import {
   getGithubAppSummary,
   getGithubConnectorAppConfig,
   getGithubInstallationAccessToken,
+  getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
   getGithubInstallationSummary,
@@ -3207,11 +3208,24 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
     && cached.branch === discoveryContext.branch
     && cached.ref === discoveryContext.ref
     && cached.repositoryFullName === discoveryContext.repositoryFullName) {
-    return {
-      autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
-      cache: cached,
-      connectorInstance: serializeConnectorInstance(discoveryContext.connectorInstance),
-      connectorTarget: serializeConnectorTarget(discoveryContext.connectorTarget),
+    // A matching branch/ref says nothing about content: compare the cached
+    // snapshot's commit SHA against the live head, otherwise the discovery
+    // UI stays permanently stuck on the old repository structure after a
+    // push (#1871). The probe is a single commits API call; if it fails
+    // (rate limit, network), prefer availability and serve the cache.
+    const liveHeadSha = await getGithubRepositoryHeadSha({
+      branch: discoveryContext.branch,
+      config: githubConnectorAppConfig(),
+      installationId: discoveryContext.installationId,
+      repositoryFullName: discoveryContext.repositoryFullName,
+    }).catch(() => null)
+    if (liveHeadSha === null || liveHeadSha === cached.sourceRevisionRef) {
+      return {
+        autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
+        cache: cached,
+        connectorInstance: serializeConnectorInstance(discoveryContext.connectorInstance),
+        connectorTarget: serializeConnectorTarget(discoveryContext.connectorTarget),
+      }
     }
   }
 

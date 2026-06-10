@@ -529,6 +529,40 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
   return results
 }
 
+/**
+ * Resolve the current head commit SHA of a branch with a single commits API
+ * call. Used as a cheap staleness probe for the discovery cache: a branch
+ * name alone says nothing about content (#1871).
+ */
+export async function getGithubRepositoryHeadSha(input: {
+  branch: string
+  config: GithubConnectorAppConfig
+  fetchFn?: GithubFetch
+  installationId: number
+  repositoryFullName: string
+  token?: string
+}) {
+  const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
+  if (!repositoryParts) {
+    throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
+  }
+
+  const token = input.token ?? await createGithubInstallationAccessToken(input)
+  const commitResponse = await requestGithubJson<{ sha?: string }>({
+    fetchFn: input.fetchFn,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/commits/${encodeURIComponent(input.branch.trim())}`,
+  })
+
+  const headSha = typeof commitResponse.body.sha === "string" ? commitResponse.body.sha : ""
+  if (!headSha) {
+    throw new GithubConnectorRequestError("GitHub commit response was missing the head sha.", 502, commitResponse.body)
+  }
+  return headSha
+}
+
 export async function getGithubRepositoryTree(input: {
   branch: string
   config: GithubConnectorAppConfig
