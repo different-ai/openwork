@@ -111,12 +111,11 @@ describe("OpenWork workspace discovery client", () => {
     assert.equal(headers.has("X-OpenWork-Host-Token"), false);
   });
 
-  it("does not forward host tokens to /workspaces even when stored", async () => {
+  it("does not expose host token input on discovery API surface", async () => {
     const requests = [];
     const discovered = await discoverOpenworkWorkspace({
       hostUrl: "https://worker.example.test",
       token: "remote-client-token",
-      hostToken: "remote-host-token",
       directory: "/workspace/project",
       fetchImpl: async (url, init) => {
         requests.push({ url, headers: init.headers });

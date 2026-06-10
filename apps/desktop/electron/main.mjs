@@ -1913,7 +1913,6 @@ async function readWorkspaceState() {
   if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
 
   const compatibleWorkspaces = filterWorkspacesForManagedDen(dedupedWorkspaces, activeDenBaseUrl);
-  if (compatibleWorkspaces.length !== dedupedWorkspaces.length) changed = true;
   let nextSelectedId = migratedSelectedId;
   let nextWatchedId = migratedWatchedId;
   let nextActiveId = migratedActiveId;
@@ -1945,7 +1944,7 @@ async function readWorkspaceState() {
       nextSelectedId,
     watchedId: nextWatchedId,
     activeId: nextActiveId,
-    workspaces: compatibleWorkspaces,
+    workspaces: dedupedWorkspaces,
   };
 
   if (changed) {

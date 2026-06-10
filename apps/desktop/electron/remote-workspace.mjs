@@ -88,9 +88,9 @@ export async function fetchOpenworkWorkspaceList(hostUrl, token, options = {}) {
 }
 
 /**
- * @param {{ hostUrl: unknown; token?: unknown; directory?: unknown; fetchImpl?: typeof fetch; timeoutMs?: number; hostToken?: unknown }} input
+ * @param {{ hostUrl: unknown; token?: unknown; directory?: unknown; fetchImpl?: typeof fetch; timeoutMs?: number }} input
  */
-export async function discoverOpenworkWorkspace({ hostUrl, token, directory, fetchImpl, timeoutMs, hostToken: _hostToken }) {
+export async function discoverOpenworkWorkspace({ hostUrl, token, directory, fetchImpl, timeoutMs }) {
   const list = await fetchOpenworkWorkspaceList(hostUrl, token, { fetchImpl, timeoutMs });
   return selectOpenworkWorkspaceForConnection(list, directory);
 }
