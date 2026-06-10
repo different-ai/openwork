@@ -49,6 +49,7 @@ const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const PRODUCT_DESKTOP_FETCH_ORIGINS = new Set(["https://api.openai.com", "https://github.com"]);
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 const terminalProcesses = new Map();
@@ -3004,7 +3005,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       const state = await readWorkspaceState();
       const bootstrap = await getDesktopBootstrapConfig();
       if (!isDesktopFetchAllowedForWorkspaces(parsed.toString(), state.workspaces)
-        && !isDesktopFetchAllowedForDenBootstrap(parsed.toString(), bootstrap)) {
+        && !isDesktopFetchAllowedForDenBootstrap(parsed.toString(), bootstrap)
+        && !PRODUCT_DESKTOP_FETCH_ORIGINS.has(parsed.origin)) {
         throw new Error("Desktop fetch is limited to configured remote workspace origins.");
       }
       const timeoutMs = Number(init.timeoutMs);
