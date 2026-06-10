@@ -15,6 +15,7 @@ function queryFor(rows: unknown[]) {
   const chain: any = {
     from: () => chain,
     innerJoin: () => chain,
+    leftJoin: () => chain,
     where: () => chain,
     orderBy: () => rows,
     limit: () => rows,
@@ -115,4 +116,55 @@ test("existing access rows to removed members are not returned as active grants"
 
   expect(providers).toHaveLength(1)
   expect(providers[0]?.access.members.map((member) => member.orgMembershipId)).toEqual([activeMemberId])
+})
+
+test("pending invited members remain visible in LLM provider access listings", async () => {
+  const organizationId = createDenTypeId("organization")
+  const currentMemberId = createDenTypeId("member")
+  const pendingMemberId = createDenTypeId("member")
+  const llmProviderId = createDenTypeId("llmProvider")
+  const now = new Date("2026-06-10T00:00:00.000Z")
+
+  queryRows = [
+    [],
+    [{
+      id: llmProviderId,
+      organizationId,
+      createdByOrgMembershipId: currentMemberId,
+      source: "models_dev",
+      credentialKind: "api_key",
+      providerId: "openai",
+      name: "OpenAI",
+      providerConfig: {},
+      apiKey: "sk-test",
+      opencodeAuth: null,
+      createdAt: now,
+      updatedAt: now,
+    }],
+    [],
+    [{
+      access: { id: createDenTypeId("llmProviderAccess"), llmProviderId, createdAt: now },
+      member: { id: pendingMemberId, role: "member", removedAt: null },
+      user: null,
+      invitation: { email: "pending@example.com" },
+    }],
+    [],
+  ]
+
+  const providers = await llmProviderModule.loadLlmProviders({
+    organizationId,
+    currentMemberId,
+    memberTeams: [],
+    isAdmin: true,
+    scope: "manageable",
+  })
+
+  expect(providers).toHaveLength(1)
+  expect(providers[0]?.access.members).toEqual([{
+    id: expect.any(String),
+    orgMembershipId: pendingMemberId,
+    role: "member",
+    user: { id: null, name: "pending@example.com", email: "pending@example.com", image: null },
+    createdAt: now,
+  }])
 })

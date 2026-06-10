@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
+  InvitationTable,
   LlmProviderAccessTable,
   LlmProviderModelTable,
   LlmProviderTable,
@@ -163,6 +164,19 @@ const openAiOauthCompleteResponseSchema = z.object({
 
 function createFailure(status: number, error: string, message?: string): RouteFailure {
   return { status, error, message }
+}
+
+function buildProviderAccessUserFallback(input: {
+  user: { id: string; name: string | null; email: string; image: string | null } | null
+  invitation: { email: string } | null
+}) {
+  const email = input.user?.email ?? input.invitation?.email ?? ""
+  return {
+    id: input.user?.id ?? null,
+    name: input.user?.name ?? email,
+    email,
+    image: input.user?.image ?? null,
+  }
 }
 
 function isRouteFailure(value: unknown): value is RouteFailure {
@@ -623,10 +637,14 @@ export async function loadLlmProviders(input: {
         email: AuthUserTable.email,
         image: AuthUserTable.image,
       },
+      invitation: {
+        email: InvitationTable.email,
+      },
     })
     .from(LlmProviderAccessTable)
     .innerJoin(MemberTable, eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id))
-    .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+    .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(and(
       inArray(LlmProviderAccessTable.llmProviderId, providerIds),
       isNotNull(LlmProviderAccessTable.orgMembershipId),
@@ -701,7 +719,7 @@ export async function loadLlmProviders(input: {
         id: row.access.id,
         orgMembershipId: row.member.id,
         role: row.member.role,
-        user: row.user,
+        user: buildProviderAccessUserFallback({ user: row.user, invitation: row.invitation }),
         createdAt: row.access.createdAt,
       })),
       teams: (teamAccessByProviderId.get(provider.id) ?? []).map((row) => ({
