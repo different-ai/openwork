@@ -19,7 +19,7 @@ export type DenLlmProviderMemberAccess = {
   role: string;
   createdAt: string | null;
   user: {
-    id: string;
+    id: string | null;
     name: string;
     email: string;
     image: string | null;
@@ -126,10 +126,12 @@ function asLlmProviderMemberAccess(value: unknown): DenLlmProviderMemberAccess |
   const id = asString(value.id);
   const orgMembershipId = asString(value.orgMembershipId);
   const role = asString(value.role);
-  const userId = asString(value.user.id);
+  const rawUserId = value.user.id;
+  const userId = rawUserId === null ? null : asString(rawUserId);
+  const validUserId = rawUserId === null || (typeof rawUserId === "string" && rawUserId.length > 0);
   const name = asString(value.user.name);
   const email = asString(value.user.email);
-  if (!id || !orgMembershipId || !role || !userId || !name || !email) {
+  if (!id || !orgMembershipId || !role || !validUserId || !name || !email) {
     return null;
   }
 
@@ -145,6 +147,12 @@ function asLlmProviderMemberAccess(value: unknown): DenLlmProviderMemberAccess |
       image: asString(value.user.image),
     },
   };
+}
+
+export function parseDenLlmProvidersResponse(payload: unknown): DenLlmProvider[] {
+  return isRecord(payload) && Array.isArray(payload.llmProviders)
+    ? payload.llmProviders.map(asLlmProvider).filter((entry): entry is DenLlmProvider => entry !== null)
+    : [];
 }
 
 function asLlmProviderTeamAccess(value: unknown): DenLlmProviderTeamAccess | null {
@@ -425,9 +433,7 @@ export function useOrgLlmProviders(
         throw new Error(getErrorMessage(payload, `Failed to load providers (${response.status}).`));
       }
 
-      const nextProviders = isRecord(payload) && Array.isArray(payload.llmProviders)
-        ? payload.llmProviders.map(asLlmProvider).filter((entry): entry is DenLlmProvider => entry !== null)
-        : [];
+      const nextProviders = parseDenLlmProvidersResponse(payload);
       setLlmProviders(nextProviders);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");
