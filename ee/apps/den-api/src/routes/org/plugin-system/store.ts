@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -820,7 +820,7 @@ async function ensureGrantTargetsInOrganization(context: PluginArchActorContext,
     const member = await db
       .select({ id: MemberTable.id })
       .from(MemberTable)
-      .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, value.orgMembershipId), isNull(MemberTable.removedAt)))
+      .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, value.orgMembershipId), isNotNull(MemberTable.userId), isNull(MemberTable.removedAt)))
       .limit(1)
     if (!member[0]) {
       throw new PluginArchRouteFailure(404, "member_not_found", "Member not found.")

@@ -642,19 +642,19 @@ export async function ensureEntraSsoMembershipForAccount(input: {
     },
   })
 
-  if (result.status === "created") {
-    await runPostOrganizationMemberChangeHooks({
-      organizationId: result.member.organizationId,
-      memberId: result.member.id,
-      change: "added",
-    })
-  }
-
   if (result.status === "created" || result.status === "updated" || result.status === "unchanged" || result.status === "owner_preserved") {
     await reconcilePendingInvitationsForMember({
       organizationId: result.member.organizationId,
       memberId: result.member.id,
       userId: input.userId,
+    })
+  }
+
+  if (result.status === "created") {
+    await runPostOrganizationMemberChangeHooks({
+      organizationId: result.member.organizationId,
+      memberId: result.member.id,
+      change: "added",
     })
   }
 
