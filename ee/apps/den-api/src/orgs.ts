@@ -452,7 +452,7 @@ async function insertMemberIfMissing(input: {
   const existing = await db
     .select()
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId)))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
     .limit(1)
 
   if (existing.length > 0) {
@@ -469,7 +469,7 @@ async function insertMemberIfMissing(input: {
   const created = await db
     .select()
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId)))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
     .limit(1)
 
   if (!created[0]) {
@@ -540,7 +540,7 @@ export async function ensureEntraSsoMembershipForAccount(input: {
         const existing = await db
           .select()
           .from(MemberTable)
-          .where(and(eq(MemberTable.organizationId, organizationId as OrgId), eq(MemberTable.userId, userId as UserId)))
+          .where(and(eq(MemberTable.organizationId, organizationId as OrgId), eq(MemberTable.userId, userId as UserId), isNull(MemberTable.removedAt)))
           .limit(1)
 
         return existing[0] ?? null
@@ -981,7 +981,7 @@ export async function getOrganizationContextForUser(input: {
   const currentMemberRows = await db
     .select()
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId)))
+    .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
     .limit(1)
 
   const currentMember = currentMemberRows[0]
