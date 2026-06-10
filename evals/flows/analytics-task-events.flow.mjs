@@ -6,12 +6,32 @@
  * instrumentation without any analytics backend or network access.
  *
  * Requires an onboarded profile with at least one workspace (so the
- * session.create_task control action is available).
+ * session.create_task control action is available). On fresh profiles the
+ * app sits on the welcome screen and the flow skips instead of failing.
  */
 export default {
   id: "analytics-task-events",
   title: "Analytics events fire for app open and task creation",
   spec: "evals/react-session-flows.md",
+  precondition: async (ctx) => {
+    await ctx.waitFor("Boolean(window.__openworkControl)", {
+      timeoutMs: 60_000,
+      label: "control API",
+    });
+    const state = await ctx.waitFor(
+      `(() => {
+        const control = window.__openworkControl;
+        if (control.snapshot().route.startsWith("/welcome")) return "welcome";
+        const action = control.listActions().find((a) => a.id === "session.create_task");
+        if (action && !action.disabled) return "ready";
+        return null;
+      })()`,
+      { timeoutMs: 30_000, label: "session.create_task enabled (or welcome screen)" },
+    );
+    return state === "welcome"
+      ? "Profile is not onboarded (welcome screen, no workspace); session.create_task is unavailable."
+      : null;
+  },
   steps: [
     {
       name: "App booted",

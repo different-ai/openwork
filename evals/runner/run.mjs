@@ -89,6 +89,27 @@ async function runFlow(flow, { cdpBaseUrl, outDir, env }) {
   const ctx = new EvalContext({ client, outDir, flowId: flow.id, env });
 
   try {
+    if (typeof flow.precondition === "function") {
+      const startedAt = Date.now();
+      try {
+        const skipReason = await flow.precondition(ctx);
+        if (skipReason) {
+          result.status = "skipped";
+          result.skipReason = String(skipReason);
+          return result;
+        }
+      } catch (error) {
+        result.status = "failed";
+        result.steps.push({
+          name: "Precondition",
+          status: "failed",
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await ctx.screenshot("failure").catch(() => undefined);
+        return result;
+      }
+    }
     for (const step of flow.steps) {
       const stepResult = { name: step.name, status: "passed", durationMs: 0, error: null };
       const startedAt = Date.now();
