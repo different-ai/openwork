@@ -7,6 +7,7 @@ import {
   Copy,
   FileIcon,
   LoaderCircle,
+  Pencil,
   Split,
   Undo2,
 } from "lucide-react"
@@ -43,6 +44,12 @@ import {
   DescriptiveButtonTitle,
 } from "@/components/descriptive-button"
 import { Button } from "@/components/ui/button"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -385,7 +392,8 @@ function renderUserTextWithSkillChips(text: string) {
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage } = useMessageList()
+    const messageText = React.useMemo(() => getMessagesText([message]), [message])
 
     return (
       <Message
@@ -393,47 +401,89 @@ const UserMessage = React.memo(
         data-message-id={message.id}
         data-message-role={message.role}
       >
-        <div className="group flex w-full flex-col items-end gap-1">
-          {message.parts.filter(isFileUIPart).map((part, index) => (
-            <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
-          ))}
-          {message.parts.some((part) => part.type === "text" && part.text) ? (
-            <MessageContent
-              layoutId={message.id}
-              className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
-            >
-              {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""))}
-            </MessageContent>
-          ) : null}
-          {!isStreaming && (
-            <MessageActions
-              className={cn(
-                "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
-              )}
-            >
-              <MessageTimestamp message={message} className="mr-1.5" />
-              <CopyMessageButton messages={[message]} />
-              <MessageAction tooltip="Branch in new chat">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onForkAtMessage(message.id)}
-                >
-                  <Split className="rotate-90" />
-                </Button>
-              </MessageAction>
-              <MessageAction tooltip="Revert">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onRevertToUserMessage(message.id)}
-                >
-                  <Undo2 />
-                </Button>
-              </MessageAction>
-            </MessageActions>
-          )}
-        </div>
+        <ContextMenu>
+          <ContextMenuTrigger
+            render={
+              <div className="group flex w-full flex-col items-end gap-1">
+                {message.parts.filter(isFileUIPart).map((part, index) => (
+                  <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
+                ))}
+                {message.parts.some((part) => part.type === "text" && part.text) ? (
+                  <MessageContent
+                    layoutId={message.id}
+                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-5 py-2.5 whitespace-pre-wrap sm:max-w-[75%]"
+                  >
+                    {renderUserTextWithSkillChips(message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""))}
+                  </MessageContent>
+                ) : null}
+                {!isStreaming && (
+                  <MessageActions
+                    className={cn(
+                      "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                    )}
+                  >
+                    <MessageTimestamp message={message} className="mr-1.5" />
+                    <CopyMessageButton messages={[message]} />
+                    {messageText ? (
+                      <MessageAction tooltip="Edit message">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Edit message"
+                          onClick={() => onEditUserMessage(message.id, messageText)}
+                        >
+                          <Pencil />
+                        </Button>
+                      </MessageAction>
+                    ) : null}
+                    <MessageAction tooltip="Branch in new chat">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Branch in new chat"
+                        onClick={() => onForkAtMessage(message.id)}
+                      >
+                        <Split className="rotate-90" />
+                      </Button>
+                    </MessageAction>
+                    <MessageAction tooltip="Revert">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Revert"
+                        onClick={() => onRevertToUserMessage(message.id)}
+                      >
+                        <Undo2 />
+                      </Button>
+                    </MessageAction>
+                  </MessageActions>
+                )}
+              </div>
+            }
+          />
+          <ContextMenuContent className="w-56">
+            {messageText ? (
+              <ContextMenuItem onClick={() => onEditUserMessage(message.id, messageText)}>
+                <Pencil className="size-4" />
+                Edit message
+              </ContextMenuItem>
+            ) : null}
+            {messageText ? (
+              <ContextMenuItem onClick={() => void navigator.clipboard.writeText(messageText)}>
+                <Copy className="size-4" />
+                Copy
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuItem onClick={() => onForkAtMessage(message.id)}>
+              <Split className="size-4 rotate-90" />
+              Branch in new chat
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
+              <Undo2 className="size-4" />
+              Revert
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </Message>
     )
   }
@@ -619,6 +669,10 @@ function MessageGroup({
 }: AssistantMessageGroupProps) {
   const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
   const lastItem = items[items.length - 1]
+  // Branch/revert must target a real server-side message id. Synthetic
+  // client-side messages (e.g. session errors) don't exist on the server and
+  // silently corrupt fork/revert boundaries.
+  const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const isLiveGroup = isStreaming && lastItem !== undefined && lastItem.index === messages.length - 1
   const stepsRef = React.useRef<HTMLDivElement>(null)
 
@@ -679,24 +733,30 @@ function MessageGroup({
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
-            <MessageAction tooltip="Branch in new chat">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onForkAtMessage(lastItem.message.id)}
-              >
-                <Split className="rotate-90" />
-              </Button>
-            </MessageAction>
-            <MessageAction tooltip="Revert">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onRevertToUserMessage(lastItem.message.id)}
-              >
-                <Undo2 />
-              </Button>
-            </MessageAction>
+            {lastRealItem ? (
+              <>
+                <MessageAction tooltip="Branch in new chat">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Branch in new chat"
+                    onClick={() => onForkAtMessage(lastRealItem.message.id)}
+                  >
+                    <Split className="rotate-90" />
+                  </Button>
+                </MessageAction>
+                <MessageAction tooltip="Revert">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Revert"
+                    onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
+                  >
+                    <Undo2 />
+                  </Button>
+                </MessageAction>
+              </>
+            ) : null}
           </MessageActions>
           <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}

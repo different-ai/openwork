@@ -6,7 +6,11 @@ import {
   deriveRenderedSessionMessages,
   resolveRenderedSessionSnapshot,
 } from "../src/react-app/domains/session/surface/session-render-state";
-import { reconcileTranscriptMessages } from "../src/react-app/domains/session/sync/transcript-reconcile";
+import {
+  applyRevertCursor,
+  reconcileTranscriptMessages,
+  resolveForkBoundaryId,
+} from "../src/react-app/domains/session/sync/transcript-reconcile";
 import { describeOpencodeSessionError } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 function snapshotWithMessages(
@@ -335,5 +339,85 @@ describe("describeOpencodeSessionError", () => {
         retries: 3,
       },
     })).toBe("Invalid JSON\nRetries: 3");
+  });
+});
+
+describe("applyRevertCursor", () => {
+  const transcript = [
+    uiMessage("msg_1", "user", "turn one"),
+    uiMessage("msg_2", "assistant", "answer one"),
+    uiMessage("msg_3", "user", "turn two"),
+    uiMessage("msg_4", "assistant", "answer two"),
+  ];
+
+  it("hides the reverted message itself and everything after it", () => {
+    // OpenCode marks revert.messageID as the FIRST reverted message.
+    const result = applyRevertCursor(transcript, "msg_3");
+    expect(result.map((message) => message.id)).toEqual(["msg_1", "msg_2"]);
+  });
+
+  it("returns the transcript unchanged without a revert cursor", () => {
+    expect(applyRevertCursor(transcript, null)).toBe(transcript);
+    expect(applyRevertCursor(transcript, undefined)).toBe(transcript);
+  });
+
+  it("returns the transcript unchanged when the cursor id is unknown", () => {
+    expect(applyRevertCursor(transcript, "msg_missing")).toBe(transcript);
+  });
+
+  it("hides everything when the first message is reverted", () => {
+    expect(applyRevertCursor(transcript, "msg_1")).toEqual([]);
+  });
+});
+
+describe("deriveRenderedSessionMessages with revert", () => {
+  it("hides reverted messages from the rendered transcript", () => {
+    const snapshot = snapshotWithMessages([
+      { id: "msg_1", role: "user", text: "turn one" },
+      { id: "msg_2", role: "assistant", text: "answer one" },
+      { id: "msg_3", role: "user", text: "turn two" },
+      { id: "msg_4", role: "assistant", text: "answer two" },
+    ]);
+    (snapshot.session as { revert?: { messageID: string } }).revert = { messageID: "msg_3" };
+
+    const rendered = deriveRenderedSessionMessages({
+      transcriptState: [],
+      snapshot,
+    });
+
+    expect(rendered.map((message) => message.id)).toEqual(["msg_1", "msg_2"]);
+  });
+});
+
+describe("resolveForkBoundaryId", () => {
+  const transcript = [
+    uiMessage("msg_1", "user", "turn one"),
+    uiMessage("msg_2", "assistant", "answer one"),
+    uiMessage("msg_3", "user", "turn two"),
+    uiMessage("msg_4", "assistant", "answer two"),
+  ];
+
+  it("returns the next message so the fork includes the branch point", () => {
+    expect(resolveForkBoundaryId(transcript, "msg_2")).toBe("msg_3");
+    expect(resolveForkBoundaryId(transcript, "msg_3")).toBe("msg_4");
+  });
+
+  it("returns null when branching at the last message (fork everything)", () => {
+    expect(resolveForkBoundaryId(transcript, "msg_4")).toBeNull();
+  });
+
+  it("returns null for unknown ids instead of corrupting the boundary", () => {
+    expect(resolveForkBoundaryId(transcript, "msg_missing")).toBeNull();
+  });
+
+  it("skips synthetic session-error messages when picking the boundary", () => {
+    const withSynthetic = [
+      ...transcript.slice(0, 2),
+      uiMessage("session-error:msg_2", "assistant", "boom"),
+      ...transcript.slice(2),
+    ];
+    expect(resolveForkBoundaryId(withSynthetic, "msg_2")).toBe("msg_3");
+    // Branching at the synthetic message itself falls through to the next real message.
+    expect(resolveForkBoundaryId(withSynthetic, "session-error:msg_2")).toBe("msg_3");
   });
 });

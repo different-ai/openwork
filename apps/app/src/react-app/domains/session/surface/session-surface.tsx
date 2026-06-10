@@ -55,9 +55,11 @@ import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/reac
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   seedSessionState,
+  snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
 } from "@/react-app/domains/session/sync/session-sync";
+import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
   getComposerDraft,
@@ -128,8 +130,8 @@ export type SessionSurfaceProps = {
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   providerConnectedCount?: number;
   onOpenSettingsSection?: ((section: "commands" | "skills" | "mcps" | "plugins" | "providers") => void) | undefined;
-  onRevertToMessage?: (messageId: string, sessionId: string) => void;
-  onForkAtMessage?: (messageId: string, sessionId: string) => void;
+  onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
+  onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }, sessionId?: string) => void;
 };
 
@@ -430,7 +432,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
 
   const snapshotQueryKey = useMemo(
-    () => ["react-session-snapshot", props.workspaceId, props.sessionId],
+    () => reactSnapshotKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
   const transcriptQueryKey = useMemo(
@@ -1103,12 +1105,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [typeComposerText]);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
-    props.onRevertToMessage?.(messageId, props.sessionId);
+    void props.onRevertToMessage?.(messageId, props.sessionId);
   }, [props.onRevertToMessage, props.sessionId]);
 
   const handleForkAtMessage = useCallback((messageId: string) => {
-    props.onForkAtMessage?.(messageId, props.sessionId);
-  }, [props.onForkAtMessage, props.sessionId]);
+    // OpenCode's fork copies messages strictly before the given id, so pass
+    // the next real message to make the branch include the clicked message.
+    props.onForkAtMessage?.(resolveForkBoundaryId(renderedMessages, messageId), props.sessionId);
+  }, [props.onForkAtMessage, props.sessionId, renderedMessages]);
+
+  const handleEditUserMessage = useCallback((messageId: string, text: string) => {
+    void (async () => {
+      // Rewind the session to just before this prompt, then restore the
+      // prompt text into the composer so the user can rewrite and resend it.
+      const reverted = await props.onRevertToMessage?.(messageId, props.sessionId);
+      if (reverted === false) return;
+      await typeComposerText(text);
+    })();
+  }, [props.onRevertToMessage, props.sessionId, typeComposerText]);
 
   const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.scroll_top",
@@ -1265,6 +1279,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     setPrompt={handleMessageListSetPrompt}
                     onRevertToUserMessage={handleRevertToUserMessage}
                     onForkAtMessage={handleForkAtMessage}
+                    onEditUserMessage={handleEditUserMessage}
                   >
                     <MessageList
                       messages={renderedMessages}

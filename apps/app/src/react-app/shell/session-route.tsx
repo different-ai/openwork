@@ -20,7 +20,7 @@ import type {
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { trackSessionActive } from "@/app/lib/den-telemetry";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
+import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildOpenworkWorkspaceBaseUrl,
@@ -87,6 +87,7 @@ import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sy
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { buildOpenworkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
+  applySessionRevert,
   permissionKey as reactPermissionKey,
   questionKey as reactQuestionKey,
   seedPermissionState,
@@ -2243,28 +2244,29 @@ export function SessionRoute() {
       },
       isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
       isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
-      onRevertToMessage: (messageId: string, sessionId: string) => {
-        void (async () => {
-          const targetSessionId = sessionId.trim() || selectedSessionId;
-          if (!targetSessionId) return;
-          try {
-            // Abort any running generation first, like the actions-store does
-            try { await opencodeClient.session.abort({ sessionID: targetSessionId }); } catch { /* ok if not running */ }
-            await revertSession(opencodeClient, targetSessionId, messageId);
-            // Force a full reload of the session to pick up reverted state
-            navigateToWorkspaceSession(selectedWorkspaceId, targetSessionId);
-            void refreshRouteState();
-          } catch (error) {
-            console.warn("[revert] failed", error);
-          }
-        })();
+      onRevertToMessage: async (messageId: string, sessionId: string) => {
+        const targetSessionId = sessionId.trim() || selectedSessionId;
+        if (!targetSessionId) return false;
+        try {
+          // Abort any running generation first; OpenCode rejects revert on busy sessions.
+          await abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined);
+          const reverted = await revertSession(opencodeClient, targetSessionId, messageId);
+          // Stamp the revert cursor into the local caches so the transcript
+          // rewinds immediately instead of waiting for a full reload.
+          applySessionRevert(selectedWorkspaceId, reverted);
+          return true;
+        } catch (error) {
+          console.warn("[revert] failed", error);
+          toast.error(t("session.revert_failed"));
+          return false;
+        }
       },
-      onForkAtMessage: (messageId: string, sessionId: string) => {
+      onForkAtMessage: (messageId: string | null, sessionId: string) => {
         void (async () => {
           const targetSessionId = sessionId.trim() || selectedSessionId;
           if (!targetSessionId) return;
           try {
-            const forked = await forkSession(opencodeClient, targetSessionId, messageId);
+            const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
             writeLastSessionFor(selectedWorkspaceId, forked.id);
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
             setSessionsByWorkspaceId((current) => ({
@@ -2275,6 +2277,7 @@ export function SessionRoute() {
             void refreshRouteState();
           } catch (error) {
             console.warn("[fork] failed", error);
+            toast.error(t("session.branch_failed"));
           }
         })();
       },

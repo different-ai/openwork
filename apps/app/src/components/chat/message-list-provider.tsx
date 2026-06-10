@@ -14,6 +14,7 @@ interface MessageListContextValue {
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
+  onEditUserMessage: (messageId: string, text: string) => void
 }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
@@ -26,6 +27,7 @@ interface MessageListProviderProps {
   developerMode: boolean
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
+  onEditUserMessage: (messageId: string, text: string) => void
   displaySuggestions: boolean
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
@@ -50,6 +52,7 @@ export function MessageListProvider({
   setPrompt,
   onRevertToUserMessage,
   onForkAtMessage,
+  onEditUserMessage,
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
@@ -63,6 +66,7 @@ export function MessageListProvider({
       setPrompt,
       onRevertToUserMessage,
       onForkAtMessage,
+      onEditUserMessage,
     }),
     [
       workspaceId,
@@ -75,6 +79,7 @@ export function MessageListProvider({
       setPrompt,
       onRevertToUserMessage,
       onForkAtMessage,
+      onEditUserMessage,
     ],
   )
 

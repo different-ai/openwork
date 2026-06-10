@@ -817,6 +817,8 @@ export default {
   "session.default_agent": "Default agent",
   "session.default_model": "Pick a model",
   "session.stop_failed": "Could not stop the run — the engine reported no active run was aborted. Try again.",
+  "session.revert_failed": "Could not revert the conversation. Try again once the current run finishes.",
+  "session.branch_failed": "Could not branch this conversation. Try again.",
   "session.default_title": "New session",
   "session.delete": "Delete",
   "session.delete_named_session_message": "This will permanently delete \"{title}\" and its messages.",
