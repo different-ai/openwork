@@ -69,11 +69,16 @@ function startElectron(label, env) {
   const prefix = `[${label}]`;
   child.stdout.on("data", (chunk) => process.stdout.write(`${prefix} ${chunk}`));
   child.stderr.on("data", (chunk) => process.stderr.write(`${prefix} ${chunk}`));
+  child.once("error", (error) => {
+    if (stopping) return;
+    console.error(`${prefix} failed to start: ${error.message}`);
+    void stopAll(1);
+  });
   child.once("exit", (code, signal) => {
     if (stopping) return;
-    const detail = signal ? `signal ${signal}` : `exit ${code ?? 1}`;
+    const detail = signal ? `signal ${signal}` : `exit ${code ?? 0}`;
     console.error(`${prefix} stopped with ${detail}`);
-    void stopAll(1);
+    void stopAll(signal ? 1 : (code ?? 0));
   });
 
   return child;
