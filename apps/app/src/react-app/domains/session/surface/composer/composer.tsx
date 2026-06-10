@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, ChevronDown, ChevronRight, FileText, ListPlus, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -34,7 +34,7 @@ type PastedTextChip = {
 };
 
 type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
-type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
+type ToolMenuSection = "agents" | "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
@@ -377,9 +377,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [mentionOpenNext, mentionQuery]);
 
   useEffect(() => {
-    if (!agentMenuOpen) return;
+    if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, props.listAgents]);
+  }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
 
   useEffect(() => {
     setSkills(props.skills ?? []);
@@ -737,6 +737,12 @@ export function ReactSessionComposer(props: ComposerProps) {
       return;
     }
     props.onInsertMention("file", file.path);
+    setToolMenuOpen(false);
+  };
+
+  const applyAgentSelection = (name: string | null) => {
+    props.onSelectAgent(name);
+    setAgentMenuOpen(false);
     setToolMenuOpen(false);
   };
 
@@ -1241,6 +1247,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
                         <div className="border-r border-dls-border bg-gray-2/30 p-2">
                           {([
+                            ["agents", t("composer.agents_label")],
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
@@ -1283,6 +1290,37 @@ export function ReactSessionComposer(props: ComposerProps) {
                               {t("composer.configure")}
                             </button>
                           </div>
+                          {toolMenuSection === "agents" ? (
+                            <div className="grid gap-1">
+                              <button
+                                type="button"
+                                className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
+                                onClick={() => applyAgentSelection(null)}
+                              >
+                                <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
+                                {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
+                              </button>
+                              {agents.map((agent) => {
+                                const active = props.selectedAgent === agent.name;
+                                return (
+                                  <button
+                                    key={agent.name}
+                                    type="button"
+                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
+                                    onClick={() => applyAgentSelection(agent.name)}
+                                  >
+                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
+                                      {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
+                                    </div>
+                                    {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           {toolMenuSection === "commands" ? (
                             toolCommandItems.length > 0 ? (
                               <div className="grid gap-1">
@@ -1415,6 +1453,73 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </div>
                           ) : null}
                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Agent picker (#2101/#1971). Shows the active agent and lets
+                    the user switch without leaving the composer. The same
+                    selection is reachable from the plug menu, the command
+                    palette ("Switch agent"), and @agent mentions. */}
+                <div ref={agentMenuRef} className="relative">
+                  <button
+                    type="button"
+                    className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                    onClick={() => setAgentMenuOpen((value) => !value)}
+                    disabled={props.busy}
+                    aria-expanded={agentMenuOpen}
+                    title={t("composer.agent_label")}
+                  >
+                    <span className="max-w-[140px] truncate">{props.agentLabel}</span>
+                    <ChevronDown size={13} />
+                  </button>
+                  {agentMenuOpen ? (
+                    <div className="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                      <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
+                        {t("composer.agent_label")}
+                      </div>
+                      <div
+                        role="presentation"
+                        className="max-h-64 space-y-1 overflow-y-auto p-2"
+                        onMouseDown={(event) => event.preventDefault()}
+                      >
+                        <button
+                          ref={(element) => {
+                            agentItemRefs.current[0] = element;
+                          }}
+                          type="button"
+                          className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent || agentMenuIndex === 0 ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
+                          onMouseEnter={() => setAgentMenuIndex(0)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyAgentSelection(null);
+                          }}
+                        >
+                          <span>{t("composer.default_agent")}</span>
+                          {!props.selectedAgent ? <Check size={14} className="text-gray-10" /> : null}
+                        </button>
+                        {agents.map((agent, index) => {
+                          const active = props.selectedAgent === agent.name;
+                          return (
+                            <button
+                              key={agent.name}
+                              ref={(element) => {
+                                agentItemRefs.current[index + 1] = element;
+                              }}
+                              type="button"
+                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active || agentMenuIndex === index + 1 ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
+                              onMouseEnter={() => setAgentMenuIndex(index + 1)}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                applyAgentSelection(agent.name);
+                              }}
+                            >
+                              <span className="truncate">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</span>
+                              {active ? <Check size={14} className="text-gray-10" /> : null}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}

@@ -25,6 +25,12 @@ export type LocalPreferences = {
   modelVariant: string | null;
   defaultModel: ModelRef | null;
   /**
+   * Name of the opencode agent used for new prompts (null = the server's
+   * default, usually "build"). Persisted so a reload does not silently
+   * fall back to the default agent (#2101).
+   */
+  selectedAgent: string | null;
+  /**
    * Release channel the desktop app is subscribed to. Defaults to
    * "stable". Alpha is only honored on macOS; the updater helper falls
    * back to stable elsewhere.
@@ -65,6 +71,7 @@ const INITIAL_PREFS: LocalPreferences = {
   showThinking: DEFAULT_SHOW_THINKING,
   modelVariant: null,
   defaultModel: null,
+  selectedAgent: null,
   releaseChannel: "stable",
   featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,

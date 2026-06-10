@@ -575,7 +575,15 @@ export function SessionRoute() {
       resolveWorkspaceEndpoint(workspace, localServerRef.current),
     [],
   );
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  // Agent selection is persisted in local prefs (like the model variant) so
+  // it survives reloads instead of silently falling back to "build" (#2101).
+  const selectedAgent = local.prefs.selectedAgent;
+  const setSelectedAgent = useCallback(
+    (agent: string | null) => {
+      local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+    },
+    [local.setPrefs],
+  );
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const refreshInFlightRef = useRef(false);
@@ -2069,6 +2077,15 @@ export function SessionRoute() {
     return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
   }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot]);
 
+  // Shared by the composer (plug menu, @ mentions) and the command palette.
+  // Hidden and subagent-only entries are excluded — those are task-tool
+  // delegation targets, not agents the user can run a session as.
+  const listAgents = useCallback(async () => {
+    if (!opencodeClient) return [];
+    const list = unwrap(await opencodeClient.app.agents());
+    return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
+  }, [opencodeClient]);
+
   const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
@@ -2207,10 +2224,7 @@ export function SessionRoute() {
       },
       agentLabel: selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : t("session.default_agent"),
       selectedAgent,
-      listAgents: async () => {
-        const list = unwrap(await opencodeClient.app.agents());
-        return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
-      },
+      listAgents,
       onSelectAgent: (agent: string | null) => setSelectedAgent(agent),
       listCommands: listSlashCommands,
       recentFiles: [],
@@ -2280,6 +2294,7 @@ export function SessionRoute() {
     handleOpenSettings,
     hasUsableModel,
     local,
+    listAgents,
     listSlashCommands,
     modelBehaviorOptions,
     modelLabel,
@@ -3255,6 +3270,9 @@ export function SessionRoute() {
       }}
       sessions={paletteSessionOptions}
       extraItems={[sessionSearchPaletteItem, ...terminalPaletteItems]}
+      listAgents={listAgents}
+      selectedAgent={selectedAgent}
+      onSelectAgent={setSelectedAgent}
     />
     <SessionSearchDialog
       open={sessionSearchOpen}
