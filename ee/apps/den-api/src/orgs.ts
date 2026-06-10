@@ -424,6 +424,10 @@ async function reconcilePendingInvitationsForMember(input: {
     .where(and(eq(InvitationTable.organizationId, input.organizationId), eq(InvitationTable.email, email), eq(InvitationTable.status, "pending")))
 
   for (const invitation of invitations) {
+    if (getInvitationStatus(invitation) !== "pending") {
+      continue
+    }
+
     await ensureInvitationTeamMembership({ invitation, memberId: input.memberId })
     await removeInvitationPlaceholderMember({ invitation, removedByOrgMemberId: input.memberId })
     await db

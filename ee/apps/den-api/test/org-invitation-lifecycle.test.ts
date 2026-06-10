@@ -298,6 +298,52 @@ test("Entra auto-join accepts matching pending invitations and removes placehold
   expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
 })
 
+test("Entra auto-join ignores expired pending invitations", async () => {
+  const userId = createDenTypeId("user")
+  const memberId = createDenTypeId("member")
+  const invitationId = createDenTypeId("invitation")
+  const member = {
+    id: memberId,
+    organizationId: entraOrganizationId,
+    userId,
+    inviteId: null,
+    invitedByOrgMember: null,
+    role: "member",
+    joinedAt: new Date("2026-06-09T00:00:00.000Z"),
+    removedAt: null,
+    removedByOrgMember: null,
+    createdAt: new Date("2026-06-09T00:00:00.000Z"),
+  }
+  const invitation = {
+    id: invitationId,
+    email: "teammate@example.com",
+    role: "member",
+    organizationId: entraOrganizationId,
+    status: "pending",
+    expiresAt: new Date(Date.now() - 60_000),
+    teamId: null,
+  }
+  queryRows = [
+    [{ id: entraOrganizationId }],
+    [],
+    [],
+    [member],
+    [{ email: "teammate@example.com" }],
+    [invitation],
+  ]
+
+  const result = await orgsModule.ensureEntraSsoMembershipForAccount({
+    userId,
+    providerId: "microsoft",
+    idToken: unsignedJwt({ groups: [] }),
+  })
+
+  expect(result.status).toBe("created")
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(false)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(false)
+  expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
+})
+
 test("member removal targets active members only and repeated removals emit no hook", async () => {
   const organizationId = createDenTypeId("organization")
   const memberId = createDenTypeId("member")

@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable, TeamMemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -50,8 +50,48 @@ const invitePaymentRequiredSchema = z.object({
 }).meta({ ref: "InvitePaymentRequiredError" })
 
 type InvitationId = typeof InvitationTable.$inferSelect.id
+type OrganizationId = typeof InvitationTable.$inferSelect.organizationId
+type MemberId = typeof MemberTable.$inferSelect.id
 
 const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
+
+async function cleanupExpiredInvitationPlaceholders(input: {
+  organizationId: OrganizationId
+  email: string
+  removedByOrgMemberId: MemberId
+}) {
+  const expiredInvitations = await db
+    .select({ id: InvitationTable.id })
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.organizationId, input.organizationId),
+      eq(InvitationTable.email, input.email),
+      eq(InvitationTable.status, "pending"),
+      sql`${InvitationTable.expiresAt} < ${new Date()}`,
+    ))
+
+  for (const invitation of expiredInvitations) {
+    const invitedMemberRows = await db
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.inviteId, invitation.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.joinedAt), isNull(MemberTable.removedAt)))
+      .limit(1)
+
+    await db.update(InvitationTable).set({ status: "canceled" }).where(eq(InvitationTable.id, invitation.id))
+
+    if (invitedMemberRows[0]) {
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(TeamMemberTable)
+          .where(eq(TeamMemberTable.orgMembershipId, invitedMemberRows[0].id))
+        await tx
+          .update(MemberTable)
+          .set({ removedAt: new Date(), removedByOrgMember: input.removedByOrgMemberId, userId: null })
+          .where(and(eq(MemberTable.id, invitedMemberRows[0].id), isNull(MemberTable.removedAt)))
+      })
+    }
+  }
+}
 
 export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
@@ -118,6 +158,12 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         message: "That email address is already a member of this organization.",
       }, 409)
     }
+
+    await cleanupExpiredInvitationPlaceholders({
+      organizationId: payload.organization.id,
+      email,
+      removedByOrgMemberId: payload.currentMember.id,
+    })
 
     const existingInvitation = await db
       .select()
