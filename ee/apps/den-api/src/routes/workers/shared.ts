@@ -86,7 +86,7 @@ type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 export type WorkerId = WorkerRow["id"]
 type OrgId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
-type StaticAssignmentDb = Pick<typeof db, "execute" | "insert" | "select" | "update">
+type StaticAssignmentDb = Pick<typeof db, "delete" | "execute" | "insert" | "select" | "update">
 type MySqlLockConnection = {
   query: (statement: string, values?: unknown[]) => Promise<unknown>
   release: () => void
@@ -277,6 +277,11 @@ function isLocalHostname(hostname: string) {
   return normalized === "localhost" || normalized.endsWith(".local") || normalized.endsWith(".localhost")
 }
 
+function normalizeUrlHostname(hostname: string) {
+  const normalized = hostname.toLowerCase()
+  return normalized.startsWith("[") && normalized.endsWith("]") ? normalized.slice(1, -1) : normalized
+}
+
 export function validateStaticWorkerAttachUrl(value: string, policy: StaticWorkerAttachUrlPolicy) {
   let parsed: URL
   try {
@@ -295,7 +300,7 @@ export function validateStaticWorkerAttachUrl(value: string, policy: StaticWorke
     return { ok: false as const, message: "Worker URL must not include query parameters or fragments." }
   }
 
-  const hostname = parsed.hostname.toLowerCase()
+  const hostname = normalizeUrlHostname(parsed.hostname)
   const allowedHosts = new Set(policy.allowedHosts.map((host) => host.trim().toLowerCase()).filter(Boolean))
   const hostExplicitlyAllowed = allowedHosts.has(hostname)
   const cidrAllowed = policy.allowedCidrs.some((cidr) => ipInCidr(hostname, cidr.trim()))
@@ -313,10 +318,11 @@ export function validateStaticWorkerAttachUrl(value: string, policy: StaticWorke
 }
 
 async function defaultDnsLookup(hostname: string) {
-  if (isIP(hostname)) {
-    return [{ address: hostname, family: isIP(hostname) as 4 | 6 }]
+  const normalized = normalizeUrlHostname(hostname)
+  if (isIP(normalized)) {
+    return [{ address: normalized, family: isIP(normalized) as 4 | 6 }]
   }
-  return dnsLookup(hostname, { all: true }) as Promise<DnsLookupAddress[]>
+  return dnsLookup(normalized, { all: true }) as Promise<DnsLookupAddress[]>
 }
 
 export async function validateResolvedStaticWorkerAttachUrl(
@@ -330,7 +336,7 @@ export async function validateResolvedStaticWorkerAttachUrl(
   }
 
   const parsed = new URL(basic.url)
-  const hostname = parsed.hostname.toLowerCase()
+  const hostname = normalizeUrlHostname(parsed.hostname)
   const allowedHosts = new Set(policy.allowedHosts.map((host) => host.trim().toLowerCase()).filter(Boolean))
   const hostExplicitlyAllowed = allowedHosts.has(hostname)
 
@@ -673,6 +679,10 @@ async function markStaleStaticReservationsFailed(tx: StaticAssignmentDb) {
     )
   const staleWorkerIds = [...new Set(staleRows.map((row) => row.workerId))]
   if (staleWorkerIds.length > 0) {
+    await tx
+      .delete(WorkerTokenTable)
+      .where(inArray(WorkerTokenTable.worker_id, staleWorkerIds))
+
     await tx
       .update(WorkerTable)
       .set({ status: "failed" })

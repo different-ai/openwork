@@ -529,6 +529,10 @@ test("static attach URL policy rejects unsafe URLs and allows explicit on-prem h
   })
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://lan-worker.local:8787", { ...defaultPolicy, allowedHosts: ["lan-worker.local"] })).toMatchObject({ ok: true })
   expect(workersSharedModule.validateStaticWorkerAttachUrl("http://lan-worker.local:8787", { ...defaultPolicy, allowedCidrs: ["192.168.0.0/16"] })).toMatchObject({ ok: true })
+  expect(workersSharedModule.validateStaticWorkerAttachUrl("http://[fd00::10]:8787", { ...defaultPolicy, allowedCidrs: ["fd00::/8"] })).toMatchObject({
+    ok: true,
+    url: "http://[fd00::10]:8787",
+  })
 })
 
 test("static attach URL policy blocks DNS names resolving to unsafe IPv4 and IPv6 addresses", async () => {
