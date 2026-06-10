@@ -41,6 +41,7 @@ function startMockOpencode() {
 
       if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
       if (url.pathname === "/mcp" && request.method === "POST") return Response.json({});
+      if (url.pathname.match(/^\/mcp\/[^/]+\/disconnect$/) && request.method === "POST") return Response.json({});
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
     },
   }) as Served;
@@ -175,6 +176,39 @@ describe("runtime MCP engine sync", () => {
       const syncRequest = mock.requests.find((entry) => entry.method === "POST" && entry.pathname === "/mcp");
       expect(syncRequest).toBeDefined();
       expect(syncRequest?.body).toEqual({ name: "posthog", config: { ...POSTHOG_CONFIG, enabled: false } });
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("disconnects a removed MCP from the engine", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const addResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
+      });
+      expect(addResponse.status).toBe(200);
+      mock.requests.length = 0;
+
+      const removeResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog`, {
+        method: "DELETE",
+        headers: auth(openwork.token),
+      });
+      expect(removeResponse.status).toBe(200);
+
+      const disconnectRequest = mock.requests.find(
+        (entry) => entry.method === "POST" && entry.pathname === "/mcp/posthog/disconnect",
+      );
+      expect(disconnectRequest).toBeDefined();
+      expect(disconnectRequest?.search).toContain(`directory=${encodeURIComponent(workspaceRoot)}`);
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;

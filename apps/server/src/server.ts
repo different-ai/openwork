@@ -4049,6 +4049,7 @@ function createRoutes(
       timestamp: Date.now(),
     });
     if (removed) {
+      await disconnectMcpFromOpencodeEngine(config, workspace, name).catch(() => undefined);
       emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
         type: "mcp",
         name,
@@ -4869,6 +4870,36 @@ async function syncRuntimeMcpToOpencodeEngine(
         body,
       });
     }
+  }
+}
+
+// Counterpart of syncRuntimeMcpToOpencodeEngine for removals: tell the engine
+// to drop the MCP's client so deleted MCPs stop serving tools immediately
+// instead of lingering until the next engine restart. Best-effort.
+async function disconnectMcpFromOpencodeEngine(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  name: string,
+): Promise<void> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim() ?? "";
+  if (!baseUrl) return;
+
+  const url = new URL(baseUrl);
+  url.pathname = `/mcp/${encodeURIComponent(name)}/disconnect`;
+  url.search = "";
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) url.searchParams.set("directory", directory);
+  const headers: Record<string, string> = {};
+  if (connection.authHeader) headers.Authorization = connection.authHeader;
+
+  const response = await fetch(url, { method: "POST", headers, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) {
+    const body = parseOpencodeErrorBody(await response.text());
+    throw new ApiError(502, "opencode_mcp_disconnect_failed", `Failed to disconnect MCP ${name} from the engine`, {
+      status: response.status,
+      body,
+    });
   }
 }
 
