@@ -1,12 +1,24 @@
 import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 
+const entraOrganizationId = createDenTypeId("organization")
+
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  process.env.DEN_ENTRA_TENANT_ID = "00000000-0000-0000-0000-000000000123"
+  process.env.DEN_ENTRA_CLIENT_ID = "client-123"
+  process.env.DEN_ENTRA_CLIENT_SECRET = "secret-123"
+  process.env.DEN_ENTRA_AUTO_JOIN_ENABLED = "true"
+  process.env.DEN_ENTRA_AUTO_JOIN_ORG_ID = entraOrganizationId
+}
+
+function unsignedJwt(payload: Record<string, unknown>) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
+  return `eyJhbGciOiJub25lIn0.${encodedPayload}.`
 }
 
 let queryRows: unknown[][] = []
@@ -236,6 +248,54 @@ test("accept by invite token does not emit duplicate member hooks for existing a
   expect(accepted?.member.id).toBe(existingMemberId)
   expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(true)
   expect(hookCalls).toEqual([])
+})
+
+test("Entra auto-join accepts matching pending invitations and removes placeholders", async () => {
+  const userId = createDenTypeId("user")
+  const memberId = createDenTypeId("member")
+  const invitationId = createDenTypeId("invitation")
+  const placeholderMemberId = createDenTypeId("member")
+  const member = {
+    id: memberId,
+    organizationId: entraOrganizationId,
+    userId,
+    inviteId: null,
+    invitedByOrgMember: null,
+    role: "member",
+    joinedAt: new Date("2026-06-09T00:00:00.000Z"),
+    removedAt: null,
+    removedByOrgMember: null,
+    createdAt: new Date("2026-06-09T00:00:00.000Z"),
+  }
+  const invitation = {
+    id: invitationId,
+    email: "teammate@example.com",
+    role: "member",
+    organizationId: entraOrganizationId,
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+    teamId: null,
+  }
+  queryRows = [
+    [{ id: entraOrganizationId }],
+    [],
+    [],
+    [member],
+    [{ email: "teammate@example.com" }],
+    [invitation],
+    [{ id: placeholderMemberId }],
+  ]
+
+  const result = await orgsModule.ensureEntraSsoMembershipForAccount({
+    userId,
+    providerId: "microsoft",
+    idToken: unsignedJwt({ groups: [] }),
+  })
+
+  expect(result.status).toBe("created")
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "accepted")).toBe(true)
+  expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date && operation.value?.userId === null)).toBe(true)
+  expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
 })
 
 test("member removal targets active members only and repeated removals emit no hook", async () => {

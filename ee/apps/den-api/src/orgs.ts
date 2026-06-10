@@ -402,6 +402,37 @@ async function removeInvitationPlaceholderMember(input: {
   })
 }
 
+async function reconcilePendingInvitationsForMember(input: {
+  organizationId: OrgId
+  memberId: MemberId
+  userId: UserId
+}) {
+  const userRows = await db
+    .select({ email: AuthUserTable.email })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, input.userId))
+    .limit(1)
+
+  const email = userRows[0]?.email?.trim()
+  if (!email) {
+    return
+  }
+
+  const invitations = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(eq(InvitationTable.organizationId, input.organizationId), eq(InvitationTable.email, email), eq(InvitationTable.status, "pending")))
+
+  for (const invitation of invitations) {
+    await ensureInvitationTeamMembership({ invitation, memberId: input.memberId })
+    await removeInvitationPlaceholderMember({ invitation, removedByOrgMemberId: input.memberId })
+    await db
+      .update(InvitationTable)
+      .set({ status: "accepted" })
+      .where(eq(InvitationTable.id, invitation.id))
+  }
+}
+
 async function ensureInvitationTeamMembership(input: {
   invitation: InvitationRow
   memberId: MemberId
@@ -607,6 +638,14 @@ export async function ensureEntraSsoMembershipForAccount(input: {
       organizationId: result.member.organizationId,
       memberId: result.member.id,
       change: "added",
+    })
+  }
+
+  if (result.status === "created" || result.status === "updated" || result.status === "unchanged" || result.status === "owner_preserved") {
+    await reconcilePendingInvitationsForMember({
+      organizationId: result.member.organizationId,
+      memberId: result.member.id,
+      userId: input.userId,
     })
   }
 
