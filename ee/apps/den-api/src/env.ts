@@ -41,6 +41,7 @@ const EnvSchema = z.object({
   STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
   STATIC_WORKER_HEALTHCHECK_INTERVAL_MS: z.string().optional(),
   STATIC_WORKER_RESERVATION_TTL_MS: z.string().optional(),
+  STATIC_WORKER_TOKEN_MAP_JSON: z.string().optional(),
   STATIC_WORKER_ATTACH_ALLOW_PRIVATE: z.string().optional(),
   STATIC_WORKER_ATTACH_ALLOWED_HOSTS: z.string().optional(),
   STATIC_WORKER_ATTACH_ALLOWED_CIDRS: z.string().optional(),
@@ -172,6 +173,7 @@ type StaticWorkersEnvInput = {
   STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS?: string
   STATIC_WORKER_HEALTHCHECK_INTERVAL_MS?: string
   STATIC_WORKER_RESERVATION_TTL_MS?: string
+  STATIC_WORKER_TOKEN_MAP_JSON?: string
   STATIC_WORKER_ATTACH_ALLOW_PRIVATE?: string
   STATIC_WORKER_ATTACH_ALLOWED_HOSTS?: string
   STATIC_WORKER_ATTACH_ALLOWED_CIDRS?: string
@@ -200,10 +202,24 @@ function normalizeStaticWorkerUrl(value: string) {
   return serialized
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function parseStaticWorkerTokenPair(value: unknown) {
+  if (!isRecord(value)) {
+    return null
+  }
+  const clientToken = typeof value.clientToken === "string" ? value.clientToken.trim() : ""
+  const hostToken = typeof value.hostToken === "string" ? value.hostToken.trim() : ""
+  return clientToken && hostToken ? { clientToken, hostToken } : null
+}
+
 export function parseStaticWorkersEnv(input: StaticWorkersEnvInput) {
   const issues: StaticWorkersEnvIssue[] = []
   const urls: string[] = []
   const seenUrls = new Set<string>()
+  const tokenMap: Record<string, { clientToken: string; hostToken: string }> = {}
 
   for (const rawUrl of splitCsv(input.STATIC_WORKER_URLS)) {
     let normalizedUrl: string
@@ -242,6 +258,71 @@ export function parseStaticWorkersEnv(input: StaticWorkersEnvInput) {
       path: "STATIC_WORKER_URLS",
       message: "STATIC_WORKER_URLS is required when PROVISIONER_MODE=static",
     })
+  }
+
+  const rawTokenMap = optionalString(input.STATIC_WORKER_TOKEN_MAP_JSON)
+  if (!rawTokenMap) {
+    issues.push({
+      path: "STATIC_WORKER_TOKEN_MAP_JSON",
+      message: "STATIC_WORKER_TOKEN_MAP_JSON is required when PROVISIONER_MODE=static",
+    })
+  } else {
+    try {
+      const parsedTokenMap = JSON.parse(rawTokenMap) as unknown
+      if (!isRecord(parsedTokenMap)) {
+        issues.push({
+          path: "STATIC_WORKER_TOKEN_MAP_JSON",
+          message: "STATIC_WORKER_TOKEN_MAP_JSON must be a JSON object keyed by worker URL",
+        })
+      } else {
+        for (const [rawUrl, rawPair] of Object.entries(parsedTokenMap)) {
+          let normalizedUrl: string
+          try {
+            normalizedUrl = normalizeStaticWorkerUrl(rawUrl)
+          } catch {
+            issues.push({
+              path: "STATIC_WORKER_TOKEN_MAP_JSON",
+              message: "STATIC_WORKER_TOKEN_MAP_JSON keys must be valid worker URLs",
+            })
+            continue
+          }
+
+          const pair = parseStaticWorkerTokenPair(rawPair)
+          if (!pair) {
+            issues.push({
+              path: "STATIC_WORKER_TOKEN_MAP_JSON",
+              message: `STATIC_WORKER_TOKEN_MAP_JSON entry for ${normalizedUrl} must include non-empty clientToken and hostToken`,
+            })
+            continue
+          }
+          tokenMap[normalizedUrl] = pair
+        }
+
+        for (const url of urls) {
+          if (!tokenMap[url]) {
+            issues.push({
+              path: "STATIC_WORKER_TOKEN_MAP_JSON",
+              message: `STATIC_WORKER_TOKEN_MAP_JSON is missing token pair for ${url}`,
+            })
+          }
+        }
+
+        const configuredUrls = new Set(urls)
+        for (const url of Object.keys(tokenMap)) {
+          if (!configuredUrls.has(url)) {
+            issues.push({
+              path: "STATIC_WORKER_TOKEN_MAP_JSON",
+              message: `STATIC_WORKER_TOKEN_MAP_JSON contains token pair for unconfigured URL ${url}`,
+            })
+          }
+        }
+      }
+    } catch {
+      issues.push({
+        path: "STATIC_WORKER_TOKEN_MAP_JSON",
+        message: "STATIC_WORKER_TOKEN_MAP_JSON must be valid JSON",
+      })
+    }
   }
 
   const healthPath = optionalString(input.STATIC_WORKER_HEALTH_PATH) ?? "/health"
@@ -286,6 +367,7 @@ export function parseStaticWorkersEnv(input: StaticWorkersEnvInput) {
     healthcheckTimeoutMs: healthcheckTimeoutMs ?? 10000,
     healthcheckIntervalMs: healthcheckIntervalMs ?? 1000,
     reservationTtlMs: reservationTtlMs ?? 300000,
+    tokenMap,
     allowPrivateAttach,
     attachAllowedHosts,
     attachAllowedCidrs,
@@ -376,6 +458,7 @@ export const env = {
     healthcheckTimeoutMs: staticWorkers.healthcheckTimeoutMs,
     healthcheckIntervalMs: staticWorkers.healthcheckIntervalMs,
     reservationTtlMs: staticWorkers.reservationTtlMs,
+    tokenMap: staticWorkers.tokenMap,
     allowPrivateAttach: staticWorkers.allowPrivateAttach,
     attachAllowedHosts: staticWorkers.attachAllowedHosts,
     attachAllowedCidrs: staticWorkers.attachAllowedCidrs,

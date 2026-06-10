@@ -24,6 +24,7 @@ import {
   listWorkersQuerySchema,
   parseWorkerIdParam,
   requireCloudAccessOrPayment,
+  shouldUseSignupAutoExistingWorker,
   toInstanceResponse,
   toWorkerResponse,
   token,
@@ -107,6 +108,8 @@ const workerTokensResponseSchema = z.object({
   }).nullable(),
 }).meta({ ref: "WorkerTokensResponse" })
 
+type WorkerRow = typeof WorkerTable.$inferSelect
+
 const organizationUnavailableSchema = z.object({
   error: z.literal("organization_unavailable"),
 }).meta({ ref: "OrganizationUnavailableError" })
@@ -139,6 +142,42 @@ const workerRuntimeUnavailableSchema = z.object({
   error: z.literal("worker_runtime_unavailable"),
   message: z.string(),
 })).meta({ ref: "WorkerConnectionError" })
+
+async function getExistingSignupAutoWorkerResponse(input: {
+  orgId: WorkerRow["org_id"]
+  userId: NonNullable<WorkerRow["created_by_user_id"]>
+}) {
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(
+      eq(WorkerTable.org_id, input.orgId),
+      eq(WorkerTable.created_by_user_id, input.userId),
+      eq(WorkerTable.destination, "cloud"),
+      inArray(WorkerTable.status, ["provisioning", "healthy"]),
+    ))
+    .orderBy(desc(WorkerTable.created_at))
+    .limit(1)
+
+  const existingWorker = rows[0]
+  if (!existingWorker) {
+    return null
+  }
+
+  const instance = await getLatestWorkerInstance(existingWorker.id)
+  const tokensAndConnect = await getWorkerTokensAndConnect(existingWorker)
+  const tokens = "tokens" in tokensAndConnect ? tokensAndConnect.tokens : undefined
+  if (!tokens) {
+    return null
+  }
+
+  return {
+    worker: toWorkerResponse(existingWorker, input.userId),
+    tokens,
+    instance: toInstanceResponse(instance),
+    launch: { mode: "existing", pollAfterMs: 0 },
+  }
+}
 
 export async function fetchStaticWorker(url: string, path: string, headers: Record<string, string>) {
   return fetch(`${url}${path}`, {
@@ -481,6 +520,16 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "organization_unavailable" }, 400)
     }
 
+    if (shouldUseSignupAutoExistingWorker(input)) {
+      const existingSignupAutoWorker = await getExistingSignupAutoWorkerResponse({
+        orgId,
+        userId: user.id,
+      })
+      if (existingSignupAutoWorker) {
+        return c.json(existingSignupAutoWorker, 202)
+      }
+    }
+
     if (input.destination === "local" && !input.workspacePath) {
       return c.json({ error: "workspace_path_required" }, 400)
     }
@@ -556,36 +605,57 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       },
     ])
 
+    const workerRow: WorkerRow = {
+      id: workerId,
+      org_id: orgId,
+      created_by_user_id: user.id,
+      name: input.name,
+      description: input.description ?? null,
+      destination: input.destination,
+      status: workerStatus,
+      image_version: input.imageVersion ?? null,
+      workspace_path: input.workspacePath ?? null,
+      sandbox_backend: input.sandboxBackend ?? null,
+      last_heartbeat_at: null,
+      last_active_at: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+
     if (input.destination === "cloud") {
-      void continueCloudProvisioning({
+      const provisioningInput = {
         workerId,
         name: input.name,
         hostToken,
         clientToken,
         activityToken,
-      })
+      }
+
+      if (env.provisionerMode === "static") {
+        await continueCloudProvisioning(provisioningInput)
+        const latestWorkerRows = await db
+          .select()
+          .from(WorkerTable)
+          .where(eq(WorkerTable.id, workerId))
+          .limit(1)
+        const latestWorker = latestWorkerRows[0] ?? workerRow
+        const tokensAndConnect = await getWorkerTokensAndConnect(latestWorker)
+        const responseTokens = "tokens" in tokensAndConnect
+          ? tokensAndConnect.tokens
+          : { owner: hostToken, host: hostToken, client: clientToken }
+        return c.json({
+          worker: toWorkerResponse(latestWorker, user.id),
+          tokens: responseTokens,
+          instance: toInstanceResponse(await getLatestWorkerInstance(workerId)),
+          launch: { mode: "instant", pollAfterMs: 0 },
+        }, 201)
+      }
+
+      void continueCloudProvisioning(provisioningInput)
     }
 
     return c.json({
-      worker: toWorkerResponse(
-        {
-          id: workerId,
-          org_id: orgId,
-          created_by_user_id: user.id,
-          name: input.name,
-          description: input.description ?? null,
-          destination: input.destination,
-          status: workerStatus,
-          image_version: input.imageVersion ?? null,
-          workspace_path: input.workspacePath ?? null,
-          sandbox_backend: input.sandboxBackend ?? null,
-          last_heartbeat_at: null,
-          last_active_at: null,
-          created_at: new Date(),
-          updated_at: new Date(),
-        },
-        user.id,
-      ),
+      worker: toWorkerResponse(workerRow, user.id),
       tokens: {
         owner: hostToken,
         host: hostToken,

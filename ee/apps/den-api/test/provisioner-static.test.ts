@@ -13,6 +13,7 @@ function seedRequiredEnv() {
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.PROVISIONER_MODE = "static"
   process.env.STATIC_WORKER_URLS = process.env.STATIC_WORKER_URLS ?? "http://127.0.0.1:8787"
+  process.env.STATIC_WORKER_TOKEN_MAP_JSON = process.env.STATIC_WORKER_TOKEN_MAP_JSON ?? '{"http://127.0.0.1:8787":{"clientToken":"static-client-token","hostToken":"static-host-token"}}'
   process.env.STATIC_WORKER_ATTACH_ALLOW_PRIVATE = "true"
 }
 
@@ -169,6 +170,10 @@ beforeAll(async () => {
     },
   })
   staticWorkerUrl = `http://127.0.0.1:${server.port}`
+  process.env.STATIC_WORKER_URLS = staticWorkerUrl
+  process.env.STATIC_WORKER_TOKEN_MAP_JSON = JSON.stringify({
+    [staticWorkerUrl]: { clientToken: "valid-client-token", hostToken: "valid-host-token" },
+  })
   envModule = await import("../src/env.js")
   provisionerModule = await import("../src/workers/provisioner.js")
   workersSharedModule = await import("../src/routes/workers/shared.js")
@@ -197,6 +202,41 @@ test("static provisioner assigns a configured healthy worker URL", async () => {
     status: "healthy",
     url: staticWorkerUrl,
   })
+})
+
+test("static provisioner verifies configured token-map tokens against worker runtime", async () => {
+  const provisioned = await provisionerModule.provisionStaticWorker(
+    {
+      workerId: "worker_static_token_map_auth_123",
+      name: "Static Token Map Auth",
+      hostToken: "generated-host-token-not-used",
+      clientToken: "generated-client-token-not-used",
+      activityToken: "activity-token",
+    },
+    staticWorkerConfig({
+      tokenMap: {
+        [staticWorkerUrl]: { clientToken: "valid-client-token", hostToken: "valid-host-token" },
+      },
+    }),
+  )
+
+  expect(provisioned.url).toBe(staticWorkerUrl)
+  expect(provisioned.status).toBe("healthy")
+
+  await expect(provisionerModule.provisionStaticWorker(
+    {
+      workerId: "worker_static_token_map_reject_123",
+      name: "Static Token Map Reject",
+      hostToken: "generated-host-token-not-used",
+      clientToken: "generated-client-token-not-used",
+      activityToken: "activity-token",
+    },
+    staticWorkerConfig({
+      tokenMap: {
+        [staticWorkerUrl]: { clientToken: "invalid-client-token", hostToken: "valid-host-token" },
+      },
+    }),
+  )).rejects.toThrow("Worker rejected configured static client token")
 })
 
 test("static provisioner skips URLs already assigned to active workers", async () => {
@@ -650,11 +690,18 @@ test("static env validation requires config only when static mode is enabled", (
     path: "STATIC_WORKER_URLS",
     message: "STATIC_WORKER_URLS is required when PROVISIONER_MODE=static",
   })
+  expect(envModule.parseStaticWorkersEnv({ STATIC_WORKER_URLS: undefined }).issues).toContainEqual({
+    path: "STATIC_WORKER_TOKEN_MAP_JSON",
+    message: "STATIC_WORKER_TOKEN_MAP_JSON is required when PROVISIONER_MODE=static",
+  })
 })
 
 test("static env validation normalizes URLs and rejects duplicate normalized URLs", () => {
   const parsed = envModule.parseStaticWorkersEnv({
     STATIC_WORKER_URLS: "https://Worker.Example.com/, https://worker.example.com",
+    STATIC_WORKER_TOKEN_MAP_JSON: JSON.stringify({
+      "https://worker.example.com": { clientToken: "client-token", hostToken: "host-token" },
+    }),
   })
 
   expect(parsed.urls).toEqual(["https://worker.example.com"])
@@ -668,6 +715,7 @@ test("static env validation rejects invalid URL, protocol, health path, and time
     STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS: "0",
     STATIC_WORKER_HEALTHCHECK_INTERVAL_MS: "NaN",
     STATIC_WORKER_RESERVATION_TTL_MS: "-1",
+    STATIC_WORKER_TOKEN_MAP_JSON: "not-json",
   })
 
   expect(parsed.issues.some((issue) => issue.message === "STATIC_WORKER_URLS entries must be valid URLs")).toBe(true)
@@ -676,6 +724,21 @@ test("static env validation rejects invalid URL, protocol, health path, and time
   expect(parsed.issues.some((issue) => issue.path === "STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS")).toBe(true)
   expect(parsed.issues.some((issue) => issue.path === "STATIC_WORKER_HEALTHCHECK_INTERVAL_MS")).toBe(true)
   expect(parsed.issues.some((issue) => issue.path === "STATIC_WORKER_RESERVATION_TTL_MS")).toBe(true)
+  expect(parsed.issues.some((issue) => issue.message === "STATIC_WORKER_TOKEN_MAP_JSON must be valid JSON")).toBe(true)
+})
+
+test("static env validation requires one token-map pair per configured worker URL", () => {
+  const parsed = envModule.parseStaticWorkersEnv({
+    STATIC_WORKER_URLS: "http://worker-a.example.com,http://worker-b.example.com",
+    STATIC_WORKER_TOKEN_MAP_JSON: JSON.stringify({
+      "http://worker-a.example.com/": { clientToken: "client-a", hostToken: "host-a" },
+      "http://worker-extra.example.com": { clientToken: "client-extra", hostToken: "host-extra" },
+    }),
+  })
+
+  expect(parsed.tokenMap["http://worker-a.example.com"]).toEqual({ clientToken: "client-a", hostToken: "host-a" })
+  expect(parsed.issues.some((issue) => issue.message.includes("missing token pair for http://worker-b.example.com"))).toBe(true)
+  expect(parsed.issues.some((issue) => issue.message.includes("unconfigured URL http://worker-extra.example.com"))).toBe(true)
 })
 
 test("static provisioner in-process reservations prevent concurrent duplicate assignment", async () => {
