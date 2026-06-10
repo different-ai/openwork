@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { ServerConfig } from "./types.js";
 import { ApiError } from "./errors.js";
+import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { addMcp, removeMcp } from "./mcp.js";
 import { ensureDir } from "./utils.js";
 
@@ -281,6 +282,71 @@ function buildCloudSkillContent(name: string, description: string, body: string)
     "",
     normalizedBody,
   ].join("\n");
+}
+
+const OPENCODE_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+function translateClaudeTools(value: unknown): Record<string, boolean> | null {
+  const names = typeof value === "string"
+    ? value.split(",")
+    : Array.isArray(value)
+      ? value.flatMap((entry) => (typeof entry === "string" ? [entry] : []))
+      : null;
+  if (names) {
+    const tools: Record<string, boolean> = {};
+    for (const raw of names) {
+      const name = raw.trim().toLowerCase();
+      if (name) tools[name] = true;
+    }
+    return Object.keys(tools).length ? tools : null;
+  }
+  if (isRecord(value)) {
+    const tools: Record<string, boolean> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const name = key.trim().toLowerCase();
+      if (name && typeof entry === "boolean") tools[name] = entry;
+    }
+    return Object.keys(tools).length ? tools : null;
+  }
+  return null;
+}
+
+function translateClaudeModel(value: unknown): string | null {
+  const model = readString(value);
+  return model && OPENCODE_MODEL_ID_RE.test(model) ? model : null;
+}
+
+function cloudConfigObjectDescription(object: CloudPluginConfigObject): string {
+  const rawDesc = (object.description?.trim() || object.title).trim();
+  return rawDesc.slice(0, 1024) || object.title.slice(0, 1024);
+}
+
+function buildCloudAgentContent(description: string, rawSourceText: string): string {
+  const { data, body } = parseFrontmatter(rawSourceText.trim());
+  const safeDescription = (readString(data.description) ?? description).replace(/\s+/g, " ").trim();
+  const model = translateClaudeModel(data.model);
+  const tools = translateClaudeTools(data.tools);
+  const frontmatter = buildFrontmatter({
+    description: safeDescription,
+    ...(model ? { model } : {}),
+    ...(tools ? { tools } : {}),
+  });
+  return frontmatter + "\n" + body.replace(/^\s*\n?/, "");
+}
+
+function buildCloudCommandContent(name: string, description: string, rawSourceText: string): string {
+  const { data, body } = parseFrontmatter(rawSourceText.trim());
+  const safeDescription = (readString(data.description) ?? description).replace(/\s+/g, " ").trim();
+  const model = translateClaudeModel(data.model);
+  const agent = readString(data.agent);
+  const frontmatter = buildFrontmatter({
+    name,
+    description: safeDescription,
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+    ...(typeof data.subtask === "boolean" ? { subtask: data.subtask } : {}),
+  });
+  return frontmatter + "\n" + body.replace(/^\s*\n?/, "");
 }
 
 function pluginMcpName(rawName: string, namespace: string, fallback: string, namespaceName: boolean): string {
@@ -568,10 +634,14 @@ export async function installCloudPlugin(input: {
     const path = getPluginObjectInstallPath(object, namespace);
     let content = version.rawSourceText;
     if (object.objectType === "skill") {
-      const rawDesc = (object.description?.trim() || object.title).trim();
-      const description = rawDesc.slice(0, 1024) || object.title.slice(0, 1024) || "Skill";
+      const description = cloudConfigObjectDescription(object) || "Skill";
       const installName = path.match(/^\.opencode\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/)?.[1] ?? slugifyConfigObjectName(object.title, object.id);
       content = buildCloudSkillContent(installName, description, extractSkillBodyMarkdown(content));
+    } else if (object.objectType === "agent") {
+      content = buildCloudAgentContent(cloudConfigObjectDescription(object), content);
+    } else if (object.objectType === "command") {
+      const fileName = path.match(/\/([^/]+)\.md$/)?.[1] ?? object.title;
+      content = buildCloudCommandContent(slugifyConfigObjectName(fileName, object.id), cloudConfigObjectDescription(object), content);
     }
     await writePluginWorkspaceFile(input.workspaceRoot, path, content);
     files.push({

@@ -159,6 +159,126 @@ function extractSkillBodyMarkdown(skillText: string): string {
   return rest.slice(end + 4).replace(/^\s*\n?/, "");
 }
 
+function stripYamlScalarQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseClaudeFrontmatter(text: string): { data: Record<string, unknown>; body: string } {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!match) return { data: {}, body: trimmed };
+  const data: Record<string, unknown> = {};
+  let listKey: string | null = null;
+  for (const line of (match[1] ?? "").split(/\r?\n/)) {
+    if (listKey) {
+      const listItem = line.match(/^\s+-\s*(.*)$/);
+      if (listItem) {
+        const entry = stripYamlScalarQuotes(listItem[1] ?? "");
+        const current = data[listKey];
+        if (entry && Array.isArray(current)) current.push(entry);
+        continue;
+      }
+    }
+    const keyMatch = line.match(/^([A-Za-z0-9_-]+):(.*)$/);
+    if (!keyMatch) continue;
+    const key = keyMatch[1] ?? "";
+    const value = (keyMatch[2] ?? "").trim();
+    if (!value) {
+      data[key] = [];
+      listKey = key;
+      continue;
+    }
+    listKey = null;
+    data[key] = value === "true" ? true : value === "false" ? false : stripYamlScalarQuotes(value);
+  }
+  return { data, body: trimmed.slice(match[0].length) };
+}
+
+const OPENCODE_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
+
+function translateClaudeTools(value: unknown): Record<string, boolean> | null {
+  const names = typeof value === "string"
+    ? value.split(",")
+    : Array.isArray(value)
+      ? value.flatMap((entry) => (typeof entry === "string" ? [entry] : []))
+      : null;
+  if (names) {
+    const tools: Record<string, boolean> = {};
+    for (const raw of names) {
+      const name = raw.trim().toLowerCase();
+      if (name) tools[name] = true;
+    }
+    return Object.keys(tools).length ? tools : null;
+  }
+  if (isRecord(value)) {
+    const tools: Record<string, boolean> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const name = key.trim().toLowerCase();
+      if (name && typeof entry === "boolean") tools[name] = entry;
+    }
+    return Object.keys(tools).length ? tools : null;
+  }
+  return null;
+}
+
+function translateClaudeModel(value: unknown): string | null {
+  const model = readNonEmptyString(value);
+  return model && OPENCODE_MODEL_ID_RE.test(model) ? model : null;
+}
+
+function buildCloudPluginFrontmatter(data: Record<string, string | boolean | Record<string, boolean>>): string {
+  const lines: string[] = ["---"];
+  for (const [key, value] of Object.entries(data)) {
+    if (typeof value === "string") {
+      lines.push(`${key}: ${JSON.stringify(value)}`);
+    } else if (typeof value === "boolean") {
+      lines.push(`${key}: ${value}`);
+    } else {
+      lines.push(`${key}:`);
+      for (const [name, enabled] of Object.entries(value)) {
+        lines.push(`  ${JSON.stringify(name)}: ${enabled}`);
+      }
+    }
+  }
+  lines.push("---");
+  return lines.join("\n") + "\n";
+}
+
+function buildCloudAgentContent(description: string, rawSourceText: string): string {
+  const { data, body } = parseClaudeFrontmatter(rawSourceText);
+  const safeDescription = (readNonEmptyString(data.description) ?? description).replace(/\s+/g, " ").trim();
+  const model = translateClaudeModel(data.model);
+  const tools = translateClaudeTools(data.tools);
+  const frontmatter = buildCloudPluginFrontmatter({
+    description: safeDescription,
+    ...(model ? { model } : {}),
+    ...(tools ? { tools } : {}),
+  });
+  return frontmatter + "\n" + body.replace(/^\s*\n?/, "");
+}
+
+function buildCloudCommandContent(name: string, description: string, rawSourceText: string): string {
+  const { data, body } = parseClaudeFrontmatter(rawSourceText);
+  const safeDescription = (readNonEmptyString(data.description) ?? description).replace(/\s+/g, " ").trim();
+  const model = translateClaudeModel(data.model);
+  const agent = readNonEmptyString(data.agent);
+  const frontmatter = buildCloudPluginFrontmatter({
+    name,
+    description: safeDescription,
+    ...(agent ? { agent } : {}),
+    ...(model ? { model } : {}),
+    ...(typeof data.subtask === "boolean" ? { subtask: data.subtask } : {}),
+  });
+  return frontmatter + "\n" + body.replace(/^\s*\n?/, "");
+}
+
 function slugifyOpencodeSkillName(title: string): string {
   let base = title
     .trim()
@@ -1031,6 +1151,29 @@ export function createExtensionsStore(options: {
     throw new Error("OpenWork server unavailable. Connect to import plugin files into this workspace.");
   };
 
+  const deletePluginWorkspaceFiles = async (files: Array<{ path: string; recursive?: boolean }>) => {
+    if (files.length === 0) return;
+    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+      await resolveWorkspaceServerTarget();
+    if (
+      hasOpenworkTarget &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkSnapshot.openworkServerCapabilities?.config?.write !== false &&
+      typeof openworkClient.deleteWorkspaceFiles === "function"
+    ) {
+      const results = await openworkClient.deleteWorkspaceFiles(openworkWorkspaceId, files);
+      const failed = results.filter((result) => !result.ok && result.code !== "file_not_found");
+      if (failed.length > 0) {
+        throw new Error(
+          `Failed to remove ${failed.length} imported plugin file${failed.length === 1 ? "" : "s"} from the workspace.`,
+        );
+      }
+      return;
+    }
+    throw new Error("OpenWork server unavailable. Connect to remove imported plugin files from this workspace.");
+  };
+
   const applyCloudOrgPluginImport = async (
     marketplaceId: string | null,
     resolved: DenOrgPluginResolved,
@@ -1069,11 +1212,16 @@ export function createExtensionsStore(options: {
 
       const path = getPluginObjectInstallPath(object, namespace);
       let content = version.rawSourceText;
+      const rawDesc = (object.description?.trim() || object.title).trim();
+      const description = rawDesc.slice(0, 1024) || object.title.slice(0, 1024);
       if (object.objectType === "skill") {
-        const rawDesc = (object.description?.trim() || object.title).trim();
-        const description = rawDesc.slice(0, 1024) || object.title.slice(0, 1024) || "Skill";
         const installName = path.match(/^\.opencode\/skills\/[^/]+\/([^/]+)\/SKILL\.md$/)?.[1] ?? slugifyConfigObjectName(object.title, object.id);
-        content = buildCloudSkillContent(installName, description, extractSkillBodyMarkdown(content));
+        content = buildCloudSkillContent(installName, description || "Skill", extractSkillBodyMarkdown(content));
+      } else if (object.objectType === "agent") {
+        content = buildCloudAgentContent(description, content);
+      } else if (object.objectType === "command") {
+        const fileName = path.match(/\/([^/]+)\.md$/)?.[1] ?? object.title;
+        content = buildCloudCommandContent(slugifyConfigObjectName(fileName, object.id), description, content);
       }
       await writePluginWorkspaceFile(path, content);
 
@@ -1562,17 +1710,20 @@ export function createExtensionsStore(options: {
       const imported = snapshot.importedCloudPlugins[pluginId];
       if (!imported) throw new Error("Marketplace package is not installed in this workspace.");
 
-      const removedSkillNames = imported.files.flatMap((file) => {
-        if (file.objectType !== "skill") return [];
-        const name = file.path.match(/^\.opencode\/skills\/(?:[^/]+\/)?([^/]+)\/SKILL\.md$/)?.[1];
-        return name ? [name] : [];
-      });
-      await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name).catch(() => undefined)));
-      const removedMcpNames = imported.files.flatMap((file) => {
-        const name = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
-        return name ? [name] : [];
-      });
+      const removedMcpNames: string[] = [];
+      const fileDeletes: Array<{ path: string; recursive?: boolean }> = [];
+      for (const file of imported.files) {
+        const mcpName = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
+        if (mcpName) {
+          removedMcpNames.push(mcpName);
+          continue;
+        }
+        if (!file.path.startsWith(".opencode/")) continue;
+        const skillDir = file.path.match(/^(\.opencode\/skills\/[^/]+\/[^/]+)\/SKILL\.md$/)?.[1];
+        fileDeletes.push(skillDir ? { path: skillDir, recursive: true } : { path: file.path });
+      }
       await Promise.all(removedMcpNames.map((name) => deletePluginMcpConfig(name)));
+      await deletePluginWorkspaceFiles(fileDeletes);
 
       const nextPlugins = { ...snapshot.importedCloudPlugins };
       delete nextPlugins[pluginId];
@@ -1581,8 +1732,7 @@ export function createExtensionsStore(options: {
       if (removedMcpNames.length > 0) {
         options.markReloadRequired?.("mcp", { type: "mcp", name: imported.name, action: "removed" });
       }
-      const removedManagedCount = removedSkillNames.length + removedMcpNames.length;
-      if (imported.files.length > removedManagedCount) {
+      if (fileDeletes.length > 0) {
         options.markReloadRequired?.("config", { type: "config", name: imported.name, action: "removed" });
       }
       await Promise.all([
@@ -1590,10 +1740,7 @@ export function createExtensionsStore(options: {
         refreshCloudOrgMarketplaces({ force: true }),
       ]);
 
-      const partial = imported.files.length > removedManagedCount
-        ? " Non-skill and non-MCP files remain in the workspace and can be removed manually."
-        : "";
-      return { ok: true, message: `Removed ${imported.name}.${partial}` };
+      return { ok: true, message: `Removed ${imported.name}.` };
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));

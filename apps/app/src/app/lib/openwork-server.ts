@@ -177,6 +177,12 @@ export type OpenworkWorkspaceFileWriteResult = {
   revision?: string;
 };
 
+export type OpenworkWorkspaceFileDeleteResult = {
+  ok: boolean;
+  path: string;
+  code?: string;
+};
+
 export type OpenworkAuthorizedFoldersResponse = {
   folders: string[];
   hiddenCount: number;
@@ -1523,6 +1529,48 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           body: payload,
         },
       ),
+
+    deleteWorkspaceFiles: async (
+      workspaceId: string,
+      files: Array<{ path: string; recursive?: boolean }>,
+    ): Promise<OpenworkWorkspaceFileDeleteResult[]> => {
+      if (files.length === 0) return [];
+      const created = await requestJson<{ session: { id: string } }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/sessions`,
+        { token, hostToken, method: "POST", body: { write: true } },
+      );
+      const sessionId = created.session.id;
+      try {
+        const result = await requestJson<{ items: Array<{ ok?: boolean; path?: string; code?: string }> }>(
+          baseUrl,
+          `/files/sessions/${encodeURIComponent(sessionId)}/ops`,
+          {
+            token,
+            hostToken,
+            method: "POST",
+            body: {
+              operations: files.map((file) => ({
+                type: "delete",
+                path: file.path,
+                recursive: file.recursive === true,
+              })),
+            },
+          },
+        );
+        return result.items.map((item, index) => ({
+          ok: item.ok === true,
+          path: typeof item.path === "string" ? item.path : files[index]?.path ?? "",
+          ...(typeof item.code === "string" ? { code: item.code } : {}),
+        }));
+      } finally {
+        await requestJson<{ ok: boolean }>(baseUrl, `/files/sessions/${encodeURIComponent(sessionId)}`, {
+          token,
+          hostToken,
+          method: "DELETE",
+        }).catch(() => undefined);
+      }
+    },
 
     writeWorkspaceBinaryFile: (
       workspaceId: string,
