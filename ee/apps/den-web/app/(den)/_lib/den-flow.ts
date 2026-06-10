@@ -830,7 +830,14 @@ export function buildOpenworkDeepLink(
   openworkUrl: string | null,
   accessToken: string | null,
   workerId: string | null,
-  workerName: string | null
+  workerName: string | null,
+  options?: {
+    clientToken?: string | null;
+    hostToken?: string | null;
+    denBaseUrl?: string | null;
+    denApiBaseUrl?: string | null;
+    denOrgId?: string | null;
+  }
 ): string | null {
   if (!openworkUrl || !accessToken) {
     return null;
@@ -844,11 +851,18 @@ export function buildOpenworkDeepLink(
 
   if (workerId) {
     params.set("workerId", workerId);
+    params.set("openworkDenWorkerId", workerId);
   }
 
   if (workerName) {
     params.set("workerName", workerName);
   }
+
+  if (options?.clientToken) params.set("openworkClientToken", options.clientToken);
+  if (options?.hostToken) params.set("openworkHostToken", options.hostToken);
+  if (options?.denBaseUrl) params.set("openworkDenBaseUrl", options.denBaseUrl);
+  if (options?.denApiBaseUrl) params.set("openworkDenApiBaseUrl", options.denApiBaseUrl);
+  if (options?.denOrgId) params.set("openworkDenOrgId", options.denOrgId);
 
   return `openwork://connect-remote?${params.toString()}`;
 }
@@ -859,7 +873,14 @@ export function buildOpenworkAppConnectUrl(
   accessToken: string | null,
   workerId: string | null,
   workerName: string | null,
-  options?: { autoConnect?: boolean }
+  options?: {
+    autoConnect?: boolean;
+    clientToken?: string | null;
+    hostToken?: string | null;
+    denBaseUrl?: string | null;
+    denApiBaseUrl?: string | null;
+    denOrgId?: string | null;
+  }
 ): string | null {
   if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
     return null;
@@ -890,11 +911,18 @@ export function buildOpenworkAppConnectUrl(
 
   if (workerId) {
     connectUrl.searchParams.set("workerId", workerId);
+    connectUrl.searchParams.set("openworkDenWorkerId", workerId);
   }
 
   if (workerName) {
     connectUrl.searchParams.set("workerName", workerName);
   }
+
+  if (options?.clientToken) connectUrl.searchParams.set("openworkClientToken", options.clientToken);
+  if (options?.hostToken) connectUrl.searchParams.set("openworkHostToken", options.hostToken);
+  if (options?.denBaseUrl) connectUrl.searchParams.set("openworkDenBaseUrl", options.denBaseUrl);
+  if (options?.denApiBaseUrl) connectUrl.searchParams.set("openworkDenApiBaseUrl", options.denApiBaseUrl);
+  if (options?.denOrgId) connectUrl.searchParams.set("openworkDenOrgId", options.denOrgId);
 
   return connectUrl.toString();
 }

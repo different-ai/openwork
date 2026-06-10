@@ -1,0 +1,106 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  attachPersistedWorkspacesForWrite,
+  desktopBootstrapCandidates,
+  filterWorkspacesForManagedDen,
+  managedDesktopBootstrapPath,
+  mergeWorkspaceListsPreservingHidden,
+  normalizeDesktopBootstrapConfig,
+  persistedWorkspacesForRuntimeState,
+  runtimeWorkspaceStateForManagedDen,
+} from "./bootstrap-config.mjs";
+
+test("desktop bootstrap candidates use env, managed, user/dev, then defaults", () => {
+  const env = {
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: "D:\\managed\\override.json",
+    ProgramData: "C:\\ProgramData",
+    APPDATA: "C:\\Users\\Alice\\AppData\\Roaming",
+  };
+
+  const candidates = desktopBootstrapCandidates({
+    env,
+    platform: "win32",
+    homedir: "C:\\Users\\Alice",
+  });
+
+  assert.deepEqual(candidates.map((candidate) => candidate.source), [
+    "env",
+    "managed",
+    "user",
+    "user-dev",
+  ]);
+  assert.equal(candidates[0].path, env.OPENWORK_DESKTOP_BOOTSTRAP_PATH);
+  assert.equal(candidates[1].path, path.join("C:\\ProgramData", "OpenWork", "desktop-bootstrap.json"));
+  assert.equal(candidates[2].path, path.join("C:\\Users\\Alice\\AppData\\Roaming", "openwork", "desktop-bootstrap.json"));
+  assert.equal(candidates[3].path, path.join("C:\\Users\\Alice", ".config", "openwork", "desktop-bootstrap.json"));
+});
+
+test("windows managed bootstrap defaults to ProgramData without env override", () => {
+  assert.equal(
+    managedDesktopBootstrapPath({ env: {}, platform: "win32" }),
+    path.join("C:\\ProgramData", "OpenWork", "desktop-bootstrap.json"),
+  );
+});
+
+test("normalize desktop bootstrap honors forced sign-in env", () => {
+  assert.deepEqual(
+    normalizeDesktopBootstrapConfig(
+      { baseUrl: " http://den.local:3005 ", apiBaseUrl: "", requireSignin: false },
+      { env: { OPENWORK_FORCE_SIGNIN: "true" } },
+    ),
+    { baseUrl: "http://den.local:3005", apiBaseUrl: null, requireSignin: true },
+  );
+});
+
+test("managed Den filtering keeps legacy remote OpenWork workspaces non-destructively", () => {
+  const workspaces = [
+    { id: "local", workspaceType: "local" },
+    { id: "legacy", workspaceType: "remote", remoteType: "openwork", openworkHostUrl: "http://old-worker:8787" },
+    { id: "wrong-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://old-den:3005" },
+    { id: "current-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://den.company.local:3005/api/den" },
+    { id: "other-remote", workspaceType: "remote", remoteType: "opencode" },
+  ];
+
+  assert.deepEqual(
+    filterWorkspacesForManagedDen(workspaces, "http://den.company.local:3005").map((workspace) => workspace.id),
+    ["local", "legacy", "current-den", "other-remote"],
+  );
+});
+
+test("managed Den runtime state hides incompatible workspaces while preserving persistence input", () => {
+  const persistedWorkspaces = [
+    { id: "wrong-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://old-den:3005" },
+    { id: "current-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://den.company.local:3005" },
+    { id: "local", workspaceType: "local", path: "/repo" },
+  ];
+
+  const runtimeState = runtimeWorkspaceStateForManagedDen(
+    { selectedId: "current-den", workspaces: persistedWorkspaces },
+    "http://den.company.local:3005/api/den",
+  );
+
+  assert.deepEqual(runtimeState.workspaces.map((workspace) => workspace.id), ["current-den", "local"]);
+  assert.deepEqual(persistedWorkspacesForRuntimeState(runtimeState), persistedWorkspaces);
+});
+
+test("managed Den writes merge compatible runtime edits without dropping hidden persisted entries", () => {
+  const persistedWorkspaces = [
+    { id: "wrong-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://old-den:3005" },
+    { id: "current-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://den.company.local:3005", name: "Before" },
+  ];
+  const runtimeState = attachPersistedWorkspacesForWrite(
+    { workspaces: [{ id: "current-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://den.company.local:3005", name: "After" }] },
+    persistedWorkspaces,
+  );
+
+  assert.deepEqual(
+    mergeWorkspaceListsPreservingHidden(persistedWorkspacesForRuntimeState(runtimeState), runtimeState.workspaces),
+    [
+      { id: "wrong-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://old-den:3005" },
+      { id: "current-den", workspaceType: "remote", remoteType: "openwork", openworkDenBaseUrl: "http://den.company.local:3005", name: "After" },
+    ],
+  );
+});

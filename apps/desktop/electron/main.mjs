@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import net from "node:net";
 import { existsSync } from "node:fs";
 import {
   cp,
@@ -19,19 +18,35 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { startBrowserMcpServers } from "./browser-mcp.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
+import { parseOpencodeConfig } from "./opencode-config-json.mjs";
 import {
+  discoverOpenworkWorkspace,
+  isDesktopFetchAllowedForDenBootstrap,
+  isDesktopFetchAllowedForWorkspaces,
   openworkWorkspaceDisplayName,
-  selectOpenworkWorkspaceForConnection,
 } from "./remote-workspace.mjs";
+import { desktopFetch } from "./desktop-fetch.mjs";
+import {
+  attachPersistedWorkspacesForWrite,
+  defaultDesktopBootstrapConfig,
+  desktopBootstrapCandidates,
+  filterWorkspacesForManagedDen,
+  mergeWorkspaceListsPreservingHidden,
+  normalizeDesktopBootstrapConfig,
+  persistedWorkspacesForRuntimeState,
+  runtimeWorkspaceStateForManagedDen,
+} from "./bootstrap-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
+const electron = globalThis.__OPENWORK_ELECTRON__ ?? require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } = electron;
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
@@ -47,6 +62,7 @@ const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const PRODUCT_DESKTOP_FETCH_ORIGINS = new Set(["https://api.openai.com", "https://github.com"]);
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 const terminalProcesses = new Map();
@@ -408,41 +424,18 @@ if (process.platform === "darwin" && APP_ICON_IMAGE && !APP_ICON_IMAGE.isEmpty()
   app.dock.setIcon(APP_ICON_IMAGE);
 }
 
-// Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
-// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
-// pin a specific port; otherwise probe for a free one starting at 9223.
-// Must resolve before app.commandLine.appendSwitch (before `ready`).
-function probePort(port) {
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once("error", () => resolve(false));
-    srv.listen({ port, host: "127.0.0.1" }, () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findFreeCdpPort(candidates) {
-  for (const port of candidates) {
-    if (await probePort(port)) return port;
-  }
-  return 0;
-}
-
-const explicitCdpPort = Number.parseInt(
+// Optional: expose Chrome DevTools Protocol so external tools (raw CDP clients,
+// DevTools front-ends) can attach to this Electron instance for debugging.
+// NOT required for the built-in browser — that uses native webContents APIs.
+// Enable by setting OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=<port> before launch.
+const remoteDebugPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
-const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
-  ? explicitCdpPort
-  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
-if (remoteDebugPort > 0) {
+if (Number.isFinite(remoteDebugPort) && remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
-// Make the resolved port available to the embedded server so it flows into
-// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
-process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
@@ -459,17 +452,16 @@ if (extraLaunchArgs) {
     }
   }
 }
-configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
-const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
-const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
-const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
-let applicationMenuVisible = process.platform === "darwin";
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
+
+configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
+const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
+let applicationMenuVisible = process.platform === "darwin";
 
 const EMPTY_WORKSPACE_LIST = Object.freeze({
   selectedId: "",
@@ -626,7 +618,7 @@ async function zoomFromNativeMenu(action) {
 
 function installApplicationMenu() {
   const isMac = process.platform === "darwin";
-  const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
+  const template = /** @type {any[]} */ ([
     ...(isMac
       ? [
           {
@@ -1200,8 +1192,9 @@ async function setBrowserProxy(proxyInput) {
   return browserProxyState();
 }
 
-app.on("login", (event, _webContents, _details, authInfo, callback) => {
+app.on("login", (event, webContents, _details, authInfo, callback) => {
   if (!authInfo?.isProxy || !browserProxy?.username) return;
+  if (!webContents || webContents.session !== session.fromPartition(BROWSER_SESSION_PARTITION)) return;
   event.preventDefault();
   callback(browserProxy.username, browserProxy.password);
 });
@@ -1338,7 +1331,8 @@ function selectBrowserTab(tabId) {
   if (previousView && previousView !== getActiveBrowserView()) {
     detachBrowserView(previousView);
   }
-    attachActiveBrowserView();
+  _snapshotReset?.();
+  attachActiveBrowserView();
   sendBrowserState();
   return getBrowserTab(tabId);
 }
@@ -1358,6 +1352,7 @@ function closeBrowserTab(tabId = activeBrowserTabId) {
       browserTabOrder[closingIndex - 1] ??
       null;
     activeBrowserTabId = nextTabId;
+    _snapshotReset?.();
     if (nextTabId) {
       attachActiveBrowserView();
     } else {
@@ -1378,6 +1373,7 @@ function closeAllBrowserTabs() {
     .map((tabId) => browserTabs.get(tabId))
     .filter(Boolean);
   hideBrowserView();
+  _snapshotReset?.();
   browserTabs.clear();
   browserTabOrder = [];
   activeBrowserTabId = null;
@@ -1412,7 +1408,7 @@ function sendBrowserState() {
 
 /**
  * Attach the browser view to the main window.
- * @param {object} bounds — { x, y, width, height }
+ * @param {object} bounds - { x, y, width, height }
  * @param {object} [opts]
  * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
  * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
@@ -1443,12 +1439,15 @@ function hideBrowserView() {
   }
 }
 
+let _snapshotReset = null; // set by ensureBrowserMcpServers
+
 function destroyBrowserView() {
   hideBrowserView();
   const overlayView = menuOverlayView;
   menuOverlayView = null;
   menuOverlayRequest = null;
   try { overlayView?.webContents.close(); } catch { /* already destroyed */ }
+  _snapshotReset?.();
   for (const tab of browserTabs.values()) {
     try { tab.view.webContents.close(); } catch { /* already destroyed */ }
   }
@@ -1457,6 +1456,120 @@ function destroyBrowserView() {
   activeBrowserTabId = null;
   lastBrowserBounds = null;
   sendBrowserState();
+}
+
+// ── In-process browser MCP servers ─────────────────────────────────────
+// Two MCP servers run inside the Electron main process:
+//   "openwork-browser" — controls the embedded WebContentsView
+//   "chrome"           — connects to the user's external Chrome
+// Both are exposed as HTTP endpoints.  OpenCode connects as a remote client.
+let browserMcpPorts = null; // { builtinPort, externalPort, _snapshotReset, stop }
+
+async function ensureBrowserMcpServers() {
+  if (browserMcpPorts) return browserMcpPorts;
+
+  try {
+    browserMcpPorts = await startBrowserMcpServers({
+      getWebContents: () => getActiveWebContents(),
+      listTabs: () => listBrowserTabs(),
+      createTab: async (url) => createBrowserTab(url ?? "about:blank", { select: true }).tabId,
+      closeTab: async (tabId) => closeBrowserTab(tabId),
+      selectTab: async (tabId) => selectBrowserTab(tabId).tabId,
+      onBuiltinToolCall: async (toolName) => {
+        // Ensure the browser panel is open so the agent can interact.
+        // preloadDefault: false — the tool will navigate on its own.
+        if (!mainWindow) return;
+        if (!browserViewVisible) {
+          attachBrowserView(
+            { x: 0, y: 0, width: 0, height: 0 },
+            { preloadDefault: false, ensureTab: toolName !== "create_page" },
+          );
+        }
+        sendToRenderer("openwork:browser:panel-opened");
+      },
+      onHideBrowser: () => {
+        hideBrowserView();
+        sendToRenderer("openwork:browser:panel-closed");
+      },
+    });
+    // Wire snapshot reset so destroyBrowserView clears stale uid state
+    if (browserMcpPorts._snapshotReset) {
+      _snapshotReset = browserMcpPorts._snapshotReset;
+    }
+    console.log(`[browser-mcp] Built-in browser MCP at http://127.0.0.1:${browserMcpPorts.builtinPort}/mcp`);
+    console.log(`[browser-mcp] External Chrome MCP at http://127.0.0.1:${browserMcpPorts.externalPort}/mcp`);
+  } catch (err) {
+    console.error("[browser-mcp] Failed to start:", err);
+    return null;
+  }
+  return browserMcpPorts;
+}
+
+/**
+ * Inject the in-process MCP servers as remote entries in opencode.json.
+ * Replaces any legacy local chrome-devtools entries.
+ *
+ * Browser MCP servers prefer stable localhost ports (64883/64884), so this
+ * remains stable across app restarts instead of writing a fresh random port
+ * every time.
+ */
+async function seedBrowserMcpConfig(workspaceDir) {
+  const ports = await ensureBrowserMcpServers();
+  if (!ports) return;
+
+  const jsoncPath = path.join(workspaceDir, "opencode.jsonc");
+  const jsonPath = path.join(workspaceDir, "opencode.json");
+  const configPath = existsSync(jsoncPath) ? jsoncPath : existsSync(jsonPath) ? jsonPath : null;
+
+  let config;
+  if (configPath) {
+    try { config = parseOpencodeConfig(await readFile(configPath, "utf8")); } catch { return; }
+  } else {
+    config = { $schema: "https://opencode.ai/config.json" };
+  }
+
+  if (!config.mcp || typeof config.mcp !== "object") config.mcp = {};
+
+  let changed = !configPath;
+
+  const builtinUrl = `http://127.0.0.1:${ports.builtinPort}/mcp`;
+  if (config.mcp["openwork-browser"]?.url !== builtinUrl) {
+    config.mcp["openwork-browser"] = { type: "remote", url: builtinUrl };
+    changed = true;
+  }
+
+  const externalUrl = `http://127.0.0.1:${ports.externalPort}/mcp`;
+  if (config.mcp["chrome"]?.url !== externalUrl) {
+    config.mcp["chrome"] = { type: "remote", url: externalUrl };
+    changed = true;
+  }
+
+  // UI control bridge
+  try {
+    const uiDiscovery = JSON.parse(await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8"));
+    if (uiDiscovery?.baseUrl) {
+      const uiUrl = `${uiDiscovery.baseUrl}/mcp`;
+      if (config.mcp["openwork-ui"]?.url !== uiUrl) {
+        config.mcp["openwork-ui"] = { type: "remote", url: uiUrl };
+        changed = true;
+      }
+    }
+  } catch {
+    // UI control bridge not started yet — skip.
+  }
+
+  // Remove legacy entries
+  for (const key of ["chrome-devtools", "control-chrome"]) {
+    if (config.mcp[key]) {
+      delete config.mcp[key];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const targetPath = configPath || jsoncPath;
+    await writeFile(targetPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  }
 }
 
 function normalizePlatform(value) {
@@ -1493,27 +1606,47 @@ function flushPendingDeepLinks() {
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
+function deterministicDevDesktopBootstrapPath() {
+  return path.join(
+    app.getPath("userData"),
+    "openwork-dev-data",
+    "home",
+    ".config",
+    "openwork",
+    "desktop-bootstrap.json",
+  );
+}
+
+function desktopBootstrapCandidatesForRuntime() {
+  const candidates = desktopBootstrapCandidates();
+  if (process.env.OPENWORK_DEV_MODE !== "1") return candidates;
+
+  // Dev mode swaps process.env.HOME/XDG paths to the sandboxed dev-data home
+  // midway through startup (runtime.mjs buildChildEnv → Object.assign(process.env)).
+  // Keep the branch's env/managed/user candidate model, but collapse user-level
+  // dev config reads/writes to the same deterministic path before and after the
+  // environment mutation so the renderer never bootstraps from a stale file.
+  const devPath = deterministicDevDesktopBootstrapPath();
+  const resolved = [];
+  let addedDevUser = false;
+  for (const candidate of candidates) {
+    if (candidate.source === "user" || candidate.source === "user-dev") {
+      if (!addedDevUser) {
+        resolved.push({ source: "user-dev", path: devPath });
+        addedDevUser = true;
+      }
+      continue;
+    }
+    resolved.push(candidate);
+  }
+  if (!addedDevUser) {
+    resolved.push({ source: "user-dev", path: devPath });
+  }
+  return resolved;
+}
+
 function desktopBootstrapPath() {
-  if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
-    return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH.trim();
-  }
-  // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
-  // through startup (runtime.mjs buildChildEnv → Object.assign(process.env)),
-  // which changes what os.homedir() returns. Resolve the dev-data home
-  // deterministically so early and late IPC reads target the same file —
-  // otherwise the renderer can bootstrap against the wrong control plane
-  // until a manual reload.
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return path.join(
-      app.getPath("userData"),
-      "openwork-dev-data",
-      "home",
-      ".config",
-      "openwork",
-      "desktop-bootstrap.json",
-    );
-  }
-  return path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+  return desktopBootstrapCandidatesForRuntime()[0]?.path ?? path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
 }
 
 function workspaceStatePath() {
@@ -1653,61 +1786,63 @@ async function writeJsonFileAtomic(outputPath, value) {
   await rename(tempPath, outputPath);
 }
 
-function normalizeDesktopBootstrapConfig(input) {
-  const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
-  if (!baseUrl) {
-    throw new Error("baseUrl is required");
-  }
-
-  const apiBaseUrl =
-    typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
-      ? input.apiBaseUrl.trim()
-      : null;
-  return {
-    baseUrl,
-    apiBaseUrl,
-    requireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN || input?.requireSignin === true,
-  };
-}
-
 async function getDesktopBootstrapConfig() {
-  const configPath = desktopBootstrapPath();
-  try {
-    const raw = await readFile(configPath, "utf8");
-    return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-  } catch (error) {
-    console.warn("[desktop-bootstrap] falling back to defaults", {
-      path: configPath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      baseUrl: DEFAULT_DEN_BASE_URL,
-      apiBaseUrl: null,
-      requireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
-    };
+  const errors = [];
+  for (const candidate of desktopBootstrapCandidatesForRuntime()) {
+    if (!existsSync(candidate.path)) continue;
+    try {
+      const raw = await readFile(candidate.path, "utf8");
+      return {
+        ...normalizeDesktopBootstrapConfig(JSON.parse(raw)),
+        source: candidate.source,
+        path: candidate.path,
+      };
+    } catch (error) {
+      errors.push({
+        source: candidate.source,
+        path: candidate.path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+  if (errors.length) {
+    console.warn("[desktop-bootstrap] ignored invalid bootstrap config", errors);
+  }
+  return defaultDesktopBootstrapConfig();
 }
 
 async function debugDesktopBootstrapConfig() {
-  const configPath = desktopBootstrapPath();
+  const candidates = desktopBootstrapCandidatesForRuntime();
+  const config = await getDesktopBootstrapConfig();
   const result = {
-    path: configPath,
+    path: config.path ?? candidates[0]?.path ?? null,
+    source: config.source ?? "default",
+    candidates: [],
     home: os.homedir(),
     envHome: process.env.HOME ?? null,
     envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
-    exists: existsSync(configPath),
+    exists: Boolean(config.path && existsSync(config.path)),
     raw: null,
     parsed: null,
-    normalized: null,
+    normalized: config,
     error: null,
   };
 
-  try {
-    result.raw = await readFile(configPath, "utf8");
-    result.parsed = JSON.parse(result.raw);
-    result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
+  for (const candidate of candidates) {
+    const entry = { ...candidate, exists: existsSync(candidate.path), normalized: null, error: null };
+    if (entry.exists) {
+      try {
+        const raw = await readFile(candidate.path, "utf8");
+        entry.normalized = normalizeDesktopBootstrapConfig(JSON.parse(raw));
+        if (candidate.path === config.path) {
+          result.raw = raw;
+          result.parsed = JSON.parse(raw);
+        }
+      } catch (error) {
+        entry.error = error instanceof Error ? error.message : String(error);
+      }
+    }
+    result.candidates.push(entry);
   }
 
   return result;
@@ -1715,7 +1850,8 @@ async function debugDesktopBootstrapConfig() {
 
 async function setDesktopBootstrapConfig(config) {
   const normalized = normalizeDesktopBootstrapConfig(config);
-  const outputPath = desktopBootstrapPath();
+  const writableSource = process.env.OPENWORK_DEV_MODE === "1" ? "user-dev" : "user";
+  const outputPath = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim() || desktopBootstrapCandidatesForRuntime().find((candidate) => candidate.source === writableSource)?.path || desktopBootstrapPath();
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
   return normalized;
@@ -1860,32 +1996,6 @@ function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
   return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
 }
 
-async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
-  const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  const headers = new Headers();
-  const bearerToken = String(token ?? "").trim();
-  const hostAuthToken = String(hostToken ?? "").trim();
-  if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
-  if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
-
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
-  const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
-  return selectOpenworkWorkspaceForConnection(list, directory);
-}
-
 async function readWorkspaceOpenworkConfig(workspacePath) {
   const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
   if (!(await pathExists(openworkPath))) {
@@ -1904,6 +2014,7 @@ async function writeWorkspaceOpenworkConfig(workspacePath, config) {
 
 async function readWorkspaceState() {
   const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
+  const activeDenBaseUrl = (await getDesktopBootstrapConfig()).baseUrl;
   const selectedId =
     typeof state?.selectedId === "string"
       ? state.selectedId
@@ -1974,26 +2085,58 @@ async function readWorkspaceState() {
   const migratedActiveId = activeId ? idMap.get(activeId) ?? activeId : null;
   if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
 
+  const compatibleWorkspaces = filterWorkspacesForManagedDen(dedupedWorkspaces, activeDenBaseUrl);
+  let nextSelectedId = migratedSelectedId;
+  let nextWatchedId = migratedWatchedId;
+  let nextActiveId = migratedActiveId;
+  if (nextSelectedId && !compatibleWorkspaces.some((entry) => entry?.id === nextSelectedId)) {
+    nextSelectedId = "";
+    changed = true;
+  }
+  if (nextWatchedId && !compatibleWorkspaces.some((entry) => entry?.id === nextWatchedId)) {
+    nextWatchedId = null;
+    changed = true;
+  }
+  if (nextActiveId && !compatibleWorkspaces.some((entry) => entry?.id === nextActiveId)) {
+    nextActiveId = null;
+    changed = true;
+  }
+  const selectedWorkspace = nextSelectedId
+    ? compatibleWorkspaces.find((entry) => entry?.id === nextSelectedId)
+    : null;
+  if (!selectedWorkspace && nextSelectedId) {
+    const fallback = compatibleWorkspaces[0];
+    nextSelectedId = fallback?.id ?? "";
+    nextWatchedId = fallback?.id ?? null;
+    nextActiveId = fallback?.id ?? null;
+    changed = true;
+  }
+
   const nextState = {
     selectedId:
-      migratedSelectedId,
-    watchedId: migratedWatchedId,
-    activeId: migratedActiveId,
+      nextSelectedId,
+    watchedId: nextWatchedId,
+    activeId: nextActiveId,
     workspaces: dedupedWorkspaces,
   };
 
   if (changed) {
     return writeWorkspaceState(nextState);
   }
-  return nextState;
+  return runtimeWorkspaceStateForManagedDen(nextState, activeDenBaseUrl);
 }
 
 async function writeWorkspaceState(nextState) {
   const outputPath = workspaceStatePath();
   const selectedId = String(nextState?.selectedId ?? nextState?.activeId ?? "");
   const watchedId = typeof nextState?.watchedId === "string" ? nextState.watchedId : "";
+  const runtimeWorkspaces = Array.isArray(nextState?.workspaces) ? nextState.workspaces : [];
+  const persistedWorkspaces = persistedWorkspacesForRuntimeState(nextState);
   const output = {
     ...nextState,
+    workspaces: persistedWorkspaces
+      ? mergeWorkspaceListsPreservingHidden(persistedWorkspaces, runtimeWorkspaces)
+      : runtimeWorkspaces,
     // Tauri's Rust state uses selectedWorkspaceId/watchedWorkspaceId on disk
     // (with activeId as a legacy alias). Keep Electron's selectedId/watchedId
     // too so older Electron builds can still read the same file.
@@ -2004,7 +2147,8 @@ async function writeWorkspaceState(nextState) {
     activeId: selectedId || null,
   };
   await writeJsonFileAtomic(outputPath, output);
-  return output;
+  const activeDenBaseUrl = (await getDesktopBootstrapConfig()).baseUrl;
+  return runtimeWorkspaceStateForManagedDen(output, activeDenBaseUrl);
 }
 
 const runtimeManager = createRuntimeManager({
@@ -2168,6 +2312,10 @@ function normalizeWorkspaceEntry(input) {
     openworkHostToken: input.openworkHostToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    openworkDenBaseUrl: input.openworkDenBaseUrl ?? null,
+    openworkDenApiBaseUrl: input.openworkDenApiBaseUrl ?? null,
+    openworkDenOrgId: input.openworkDenOrgId ?? null,
+    openworkDenWorkerId: input.openworkDenWorkerId ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
     sandboxRunId: input.sandboxRunId ?? null,
     sandboxContainerName: input.sandboxContainerName ?? null,
@@ -2176,7 +2324,10 @@ function normalizeWorkspaceEntry(input) {
 
 async function mutateWorkspaceState(mutator) {
   const current = await readWorkspaceState();
-  const next = await mutator({ ...current, workspaces: [...current.workspaces] });
+  const mutableState = { ...current, workspaces: [...current.workspaces] };
+  const persistedWorkspaces = persistedWorkspacesForRuntimeState(current);
+  if (persistedWorkspaces) attachPersistedWorkspacesForWrite(mutableState, persistedWorkspaces);
+  const next = await mutator(mutableState);
   return writeWorkspaceState(next);
 }
 
@@ -2493,6 +2644,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
       await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
 
+      // Clean up any legacy browser MCP entries from the new workspace config
+      await seedBrowserMcpConfig(folderPath);
       return mutateWorkspaceState((state) => {
         const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
         state.workspaces = state.workspaces.filter(
@@ -2530,7 +2683,7 @@ async function handleDesktopInvoke(event, command, ...args) {
       if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
         const discovered = await discoverOpenworkWorkspace({
           hostUrl: openworkHostUrl ?? baseUrl,
-          token: input.openworkToken,
+          token: input.openworkClientToken ?? input.openworkToken,
           hostToken: input.openworkHostToken,
           directory,
         });
@@ -2563,6 +2716,10 @@ async function handleDesktopInvoke(event, command, ...args) {
         openworkHostToken: input.openworkHostToken ?? null,
         openworkWorkspaceId: resolvedOpenworkWorkspaceId,
         openworkWorkspaceName: resolvedOpenworkWorkspaceName,
+        openworkDenBaseUrl: input.openworkDenBaseUrl ?? null,
+        openworkDenApiBaseUrl: input.openworkDenApiBaseUrl ?? null,
+        openworkDenOrgId: input.openworkDenOrgId ?? null,
+        openworkDenWorkerId: input.openworkDenWorkerId ?? null,
         sandboxBackend: input.sandboxBackend ?? null,
         sandboxRunId: input.sandboxRunId ?? null,
         sandboxContainerName: input.sandboxContainerName ?? null,
@@ -2605,7 +2762,7 @@ async function handleDesktopInvoke(event, command, ...args) {
           if (!remoteWorkspaceId) {
             const discovered = await discoverOpenworkWorkspace({
               hostUrl: hostUrl ?? nextBaseUrl,
-              token: nextWorkspace.openworkToken,
+              token: nextWorkspace.openworkClientToken ?? nextWorkspace.openworkToken,
               hostToken: nextWorkspace.openworkHostToken,
               directory,
             });
@@ -2995,19 +3152,18 @@ async function handleDesktopInvoke(event, command, ...args) {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
-      const timeoutMs = Number(init.timeoutMs);
-      const response = await fetch(url, {
-        method: typeof init.method === "string" ? init.method : undefined,
-        headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-        body: typeof init.body === "string" ? init.body : undefined,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-      });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
-      };
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("Desktop fetch only supports HTTP(S) URLs.");
+      }
+      const state = await readWorkspaceState();
+      const bootstrap = await getDesktopBootstrapConfig();
+      if (!isDesktopFetchAllowedForWorkspaces(parsed.toString(), state.workspaces)
+        && !isDesktopFetchAllowedForDenBootstrap(parsed.toString(), bootstrap)
+        && !PRODUCT_DESKTOP_FETCH_ORIGINS.has(parsed.origin)) {
+        throw new Error("Desktop fetch is limited to configured remote workspace origins.");
+      }
+      return desktopFetch(url, init);
     }
     case "__homeDir":
       return os.homedir();
@@ -3026,6 +3182,10 @@ async function handleDesktopInvoke(event, command, ...args) {
       return applyNativeTheme(String(args[0]));
     case "__setApplicationMenuVisible":
       return setApplicationMenuVisible(args[0]);
+    case "getBrowserMcpPorts":
+      return browserMcpPorts
+        ? { builtinPort: browserMcpPorts.builtinPort, externalPort: browserMcpPorts.externalPort }
+        : null;
     default:
       throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
@@ -3451,6 +3611,20 @@ if (!app.requestSingleInstanceLock()) {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     }));
+
+    // Start in-process browser MCP servers and inject stable endpoints into
+    // workspace configs.
+    ensureBrowserMcpServers().then(async (ports) => {
+      if (!ports) return;
+      try {
+        const wsState = await readWorkspaceState();
+        for (const ws of wsState.workspaces ?? []) {
+          if (ws.path && ws.workspaceType === "local") {
+            await seedBrowserMcpConfig(ws.path).catch(() => {});
+          }
+        }
+      } catch {}
+    }).catch((err) => console.warn("[browser-mcp] boot error:", err));
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();

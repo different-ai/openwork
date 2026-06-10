@@ -1,4 +1,8 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const electron = require("electron");
+const { contextBridge, ipcRenderer } = electron;
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";

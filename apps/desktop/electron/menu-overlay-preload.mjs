@@ -1,4 +1,8 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const electron = require("electron");
+const { contextBridge, ipcRenderer } = electron;
 
 let latestRequest = null;
 let showCallback = null;

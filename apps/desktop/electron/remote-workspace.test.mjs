@@ -2,6 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  discoverOpenworkWorkspace,
+  fetchOpenworkWorkspaceList,
+  isDesktopFetchAllowedForDenBootstrap,
+  isDesktopFetchAllowedForWorkspaces,
+  openworkWorkspaceDiscoveryHeaders,
   openworkWorkspaceDisplayName,
   selectOpenworkWorkspaceForConnection,
 } from "./remote-workspace.mjs";
@@ -87,6 +92,45 @@ describe("selectOpenworkWorkspaceForConnection", () => {
   });
 });
 
+describe("isDesktopFetchAllowedForWorkspaces", () => {
+  const workspaces = [
+    {
+      workspaceType: "remote",
+      baseUrl: "https://worker.example.com/w/rem_ws_123",
+      openworkHostUrl: "https://worker.example.com",
+    },
+    { workspaceType: "local", baseUrl: "https://ignored.example.com" },
+  ];
+
+  it("allows configured remote workspace origins", () => {
+    assert.equal(isDesktopFetchAllowedForWorkspaces("https://worker.example.com/workspaces", workspaces), true);
+  });
+
+  it("rejects unconfigured origins and non-HTTP protocols", () => {
+    assert.equal(isDesktopFetchAllowedForWorkspaces("https://attacker.example.com/workspaces", workspaces), false);
+    assert.equal(isDesktopFetchAllowedForWorkspaces("file:///etc/passwd", workspaces), false);
+  });
+});
+
+describe("isDesktopFetchAllowedForDenBootstrap", () => {
+  it("allows configured Den web and API origins before a workspace exists", () => {
+    const bootstrap = {
+      baseUrl: "https://den.company.local",
+      apiBaseUrl: "https://den-api.company.local",
+    };
+
+    assert.equal(isDesktopFetchAllowedForDenBootstrap("https://den.company.local/api/auth/get-session", bootstrap), true);
+    assert.equal(isDesktopFetchAllowedForDenBootstrap("https://den-api.company.local/v1/workers", bootstrap), true);
+  });
+
+  it("rejects unconfigured Den origins and non-HTTP protocols", () => {
+    const bootstrap = { baseUrl: "https://den.company.local", apiBaseUrl: null };
+
+    assert.equal(isDesktopFetchAllowedForDenBootstrap("https://attacker.example.com/v1/workers", bootstrap), false);
+    assert.equal(isDesktopFetchAllowedForDenBootstrap("file:///etc/passwd", bootstrap), false);
+  });
+});
+
 describe("openworkWorkspaceDisplayName", () => {
   it("prefers display fields before id", () => {
     assert.equal(
@@ -97,5 +141,46 @@ describe("openworkWorkspaceDisplayName", () => {
       }),
       "Demo",
     );
+  });
+});
+
+describe("OpenWork workspace discovery client", () => {
+  it("builds normal discovery headers with bearer auth only", () => {
+    const headers = openworkWorkspaceDiscoveryHeaders("remote-client-token");
+
+    assert.equal(headers.get("Authorization"), "Bearer remote-client-token");
+    assert.equal(headers.has("X-OpenWork-Host-Token"), false);
+  });
+
+  it("does not expose host token input on discovery API surface", async () => {
+    const requests = [];
+    const discovered = await discoverOpenworkWorkspace({
+      hostUrl: "https://worker.example.test",
+      token: "remote-client-token",
+      directory: "/workspace/project",
+      fetchImpl: async (url, init) => {
+        requests.push({ url, headers: init.headers });
+        return Response.json({
+          items: [{ id: "ws_project", name: "Project", path: "/workspace/project" }],
+        });
+      },
+    });
+
+    assert.equal(discovered?.id, "ws_project");
+    assert.equal(requests[0].url, "https://worker.example.test/workspaces");
+    assert.equal(requests[0].headers.get("Authorization"), "Bearer remote-client-token");
+    assert.equal(requests[0].headers.has("X-OpenWork-Host-Token"), false);
+  });
+
+  it("uses the normal client path for workspace list fetches", async () => {
+    const list = await fetchOpenworkWorkspaceList("https://worker.example.test/", "remote-client-token", {
+      fetchImpl: async (_url, init) => {
+        assert.equal(init.headers.get("Authorization"), "Bearer remote-client-token");
+        assert.equal(init.headers.get("X-OpenWork-Host-Token"), null);
+        return Response.json({ items: [] });
+      },
+    });
+
+    assert.deepEqual(list, { items: [] });
   });
 });

@@ -348,6 +348,12 @@ describe("workspace lifecycle registry", () => {
         baseUrl: `http://127.0.0.1:${remote.server.port}`,
         openworkHostUrl: `http://127.0.0.1:${remote.server.port}`,
         openworkToken: "remote_token",
+        openworkClientToken: "remote_client_token",
+        openworkHostToken: "remote_host_token",
+        openworkDenBaseUrl: "http://den.example.test",
+        openworkDenApiBaseUrl: "http://den-api.example.test",
+        openworkDenOrgId: "org_test",
+        openworkDenWorkerId: "wrk_test",
         directory: "/remote/project",
         remoteType: "openwork",
         sandboxRunId: "run_1",
@@ -357,6 +363,12 @@ describe("workspace lifecycle registry", () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.activeId).toBe("rem_ws_remote");
+    expect(body.workspaces[0].openworkClientToken).toBe("remote_client_token");
+    expect(body.workspaces[0].openworkHostToken).toBe("remote_host_token");
+    expect(body.workspaces[0].openworkDenBaseUrl).toBe("http://den.example.test");
+    expect(body.workspaces[0].openworkDenApiBaseUrl).toBe("http://den-api.example.test");
+    expect(body.workspaces[0].openworkDenOrgId).toBe("org_test");
+    expect(body.workspaces[0].openworkDenWorkerId).toBe("wrk_test");
     expect(body.workspaces[0].openworkWorkspaceId).toBe("ws_remote");
     expect(body.workspaces[0].openworkWorkspaceName).toBe("Remote Project");
     expect(remote.requests[0]).toEqual({ pathname: "/workspaces", authorization: "Bearer remote_token" });
@@ -366,6 +378,12 @@ describe("workspace lifecycle registry", () => {
     expect(workspaces[0]?.id).toBe("rem_ws_remote");
     expect(workspaces[0]?.workspaceType).toBe("remote");
     expect(workspaces[0]?.remoteType).toBe("openwork");
+    expect(workspaces[0]?.openworkClientToken).toBe("remote_client_token");
+    expect(workspaces[0]?.openworkHostToken).toBe("remote_host_token");
+    expect(workspaces[0]?.openworkDenBaseUrl).toBe("http://den.example.test");
+    expect(workspaces[0]?.openworkDenApiBaseUrl).toBe("http://den-api.example.test");
+    expect(workspaces[0]?.openworkDenOrgId).toBe("org_test");
+    expect(workspaces[0]?.openworkDenWorkerId).toBe("wrk_test");
     expect(workspaces[0]?.sandboxRunId).toBe("run_1");
     expect(authorizedRootsFromConfig(persisted)).toEqual([]);
   });

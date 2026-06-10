@@ -45,6 +45,7 @@ import {
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
 import { newProvidersEvent } from "@/app/lib/provider-events";
+import { buildCloudManagedModelOptions } from "@/app/cloud/managed-provider-models";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -55,7 +56,7 @@ function getProviderDisplayName(providerId: string) {
 }
 
 function useModelOptions(open: boolean) {
-  const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
+  const { client, opencodeBaseUrl, selectedWorkspaceRoot, cloudManagedModelIdsByProvider } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
   const { data, refetch } = useProviderListQuery({
@@ -89,21 +90,10 @@ function useModelOptions(open: boolean) {
       restriction: "allowCustomProviders",
     });
 
-    const options = getConnectedProviderItems(data)
-      .flatMap((provider) =>
-        Object.entries(provider.models).map(([id, model]) => ({
-          providerID: provider.id,
-          modelID: id,
-          title: model.name,
-          description: provider.name,
-          behaviorTitle: "Reasoning",
-          behaviorLabel: "Default",
-          behaviorDescription: "",
-          behaviorValue: null,
-          isFree: false,
-          isConnected: true,
-        })),
-      );
+    const options = buildCloudManagedModelOptions({
+      providers: getConnectedProviderItems(data),
+      cloudManagedModelIdsByProvider,
+    });
 
     return options.filter((option) => {
       if (
@@ -121,7 +111,7 @@ function useModelOptions(open: boolean) {
 
       return true;
     });
-  }, [checkDesktopRestriction, data]);
+  }, [checkDesktopRestriction, cloudManagedModelIdsByProvider, data]);
 }
 
 type ModelSelectModelItem = {

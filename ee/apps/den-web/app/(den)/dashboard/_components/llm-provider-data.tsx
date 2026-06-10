@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 
 export type DenLlmProviderSource = "models_dev" | "custom" | "openwork";
+export type DenLlmProviderCredentialKind = "api_key" | "opencode_oauth";
 
 export type DenLlmProviderModel = {
   id: string;
@@ -18,7 +19,7 @@ export type DenLlmProviderMemberAccess = {
   role: string;
   createdAt: string | null;
   user: {
-    id: string;
+    id: string | null;
     name: string;
     email: string;
     image: string | null;
@@ -41,7 +42,10 @@ export type DenLlmProvider = {
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
+  credentialKind: DenLlmProviderCredentialKind;
   hasApiKey: boolean;
+  hasOpencodeAuth: boolean;
+  hasCredential: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
@@ -122,10 +126,12 @@ function asLlmProviderMemberAccess(value: unknown): DenLlmProviderMemberAccess |
   const id = asString(value.id);
   const orgMembershipId = asString(value.orgMembershipId);
   const role = asString(value.role);
-  const userId = asString(value.user.id);
-  const name = asString(value.user.name);
+  const rawUserId = value.user.id;
+  const userId = rawUserId === null ? null : asString(rawUserId);
+  const validUserId = rawUserId === null || (typeof rawUserId === "string" && rawUserId.length > 0);
   const email = asString(value.user.email);
-  if (!id || !orgMembershipId || !role || !userId || !name || !email) {
+  const name = asString(value.user.name) || email;
+  if (!id || !orgMembershipId || !role || !validUserId || !name || !email) {
     return null;
   }
 
@@ -141,6 +147,12 @@ function asLlmProviderMemberAccess(value: unknown): DenLlmProviderMemberAccess |
       image: asString(value.user.image),
     },
   };
+}
+
+export function parseDenLlmProvidersResponse(payload: unknown): DenLlmProvider[] {
+  return isRecord(payload) && Array.isArray(payload.llmProviders)
+    ? payload.llmProviders.map(asLlmProvider).filter((entry): entry is DenLlmProvider => entry !== null)
+    : [];
 }
 
 function asLlmProviderTeamAccess(value: unknown): DenLlmProviderTeamAccess | null {
@@ -178,6 +190,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     value.source === "models_dev" || value.source === "custom" || value.source === "openwork"
       ? value.source
       : null;
+  const credentialKind = value.credentialKind === "opencode_oauth" ? "opencode_oauth" : "api_key";
   if (!id || !organizationId || !createdByOrgMembershipId || !providerId || !name || !source) {
     return null;
   }
@@ -190,7 +203,10 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     providerId,
     name,
     providerConfig: asJsonRecord(value.providerConfig),
+    credentialKind,
     hasApiKey: value.hasApiKey === true,
+    hasOpencodeAuth: value.hasOpencodeAuth === true,
+    hasCredential: value.hasCredential === true || value.hasApiKey === true || value.hasOpencodeAuth === true,
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
@@ -417,9 +433,7 @@ export function useOrgLlmProviders(
         throw new Error(getErrorMessage(payload, `Failed to load providers (${response.status}).`));
       }
 
-      const nextProviders = isRecord(payload) && Array.isArray(payload.llmProviders)
-        ? payload.llmProviders.map(asLlmProvider).filter((entry): entry is DenLlmProvider => entry !== null)
-        : [];
+      const nextProviders = parseDenLlmProvidersResponse(payload);
       setLlmProviders(nextProviders);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");

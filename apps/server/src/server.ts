@@ -12,7 +12,7 @@ import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
-import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncPath, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint } from "./reload-fingerprint.js";
@@ -365,7 +365,6 @@ async function fetchOpenworkWorkspaceList(hostUrl: string, token: string, hostTo
   const timeout = setTimeout(() => controller.abort(), 8_000);
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (hostToken) headers.set("X-OpenWork-Host-Token", hostToken);
 
   try {
     const response = await fetch(url, { headers, signal: controller.signal });
@@ -1011,7 +1010,170 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
+  if (workspace && isProviderListProxyRequest(method, proxyPath)) {
+    return filterManagedProviderListResponse(workspace.path, response);
+  }
+
   return sanitizeProxyResponse(response);
+}
+
+function isProviderListProxyRequest(method: string, proxyPath: string) {
+  return method === "GET" && normalizeOpencodeProxyPath(proxyPath) === "/config/providers";
+}
+
+type ManagedProviderAccessPolicy = {
+  allowedModelsByProvider: Map<string, Set<string>>;
+  revokedProviderIds: Set<string>;
+};
+
+async function filterManagedProviderListResponse(workspaceRoot: string, response: Response): Promise<Response> {
+  if (!response.ok) return sanitizeProxyResponse(response);
+
+  const text = await response.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text) as unknown;
+  } catch {
+    return proxyTextResponse(response, text);
+  }
+
+  let policy: ManagedProviderAccessPolicy;
+  try {
+    policy = await readManagedProviderAccessPolicy(workspaceRoot);
+  } catch {
+    return proxyJsonResponse(response, data);
+  }
+  if (policy.allowedModelsByProvider.size === 0 && policy.revokedProviderIds.size === 0) return proxyJsonResponse(response, data);
+
+  return proxyJsonResponse(response, filterProviderListModels(data, policy));
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+async function readManagedProviderAccessPolicy(workspaceRoot: string): Promise<ManagedProviderAccessPolicy> {
+  const openwork = await readOpenworkConfig(workspaceRoot);
+  const managedProviders = openwork.managedProviders;
+  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") {
+    return { allowedModelsByProvider: new Map(), revokedProviderIds: new Set() };
+  }
+
+  const opencode = await readOpencodeConfig(workspaceRoot);
+  const providers = opencode.provider;
+  const revokedProviderIds = new Set(readStringArray(managedProviders.revoked));
+  if (!isRecordValue(providers)) return { allowedModelsByProvider: new Map(), revokedProviderIds };
+
+  const allowlist = new Map<string, Set<string>>();
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (!isRecordValue(providerConfig) || !isRecordValue(providerConfig.models)) continue;
+    const modelIds = Object.keys(providerConfig.models);
+    if (modelIds.length > 0) allowlist.set(providerId, new Set(modelIds));
+  }
+  return { allowedModelsByProvider: allowlist, revokedProviderIds };
+}
+
+function filterProviderListModels(data: unknown, policy: ManagedProviderAccessPolicy): unknown {
+  if (!isRecordValue(data)) return data;
+  const managedProviderIds = new Set(policy.allowedModelsByProvider.keys());
+  if (Array.isArray(data.all)) {
+    const all = data.all
+      .filter((provider) => !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+      .map((provider) => filterProviderListItem(provider, policy.allowedModelsByProvider));
+    return {
+      ...data,
+      all,
+      connected: mergeManagedConnectedProviderIds(data.connected, all, managedProviderIds, policy.revokedProviderIds),
+    };
+  }
+  if (Array.isArray(data.providers)) {
+    const providers = data.providers
+      .filter((provider) => !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+      .map((provider) => filterProviderListItem(provider, policy.allowedModelsByProvider));
+    return {
+      ...data,
+      providers,
+      connected: mergeManagedConnectedProviderIds(data.connected, providers, managedProviderIds, policy.revokedProviderIds),
+    };
+  }
+  if (isRecordValue(data.providers)) {
+    const providers = Object.fromEntries(
+      Object.entries(data.providers)
+        .filter(([providerId, provider]) => !policy.revokedProviderIds.has(providerId) && !isRevokedProviderListItem(provider, policy.revokedProviderIds))
+        .map(([providerId, provider]) => [providerId, filterProviderListItem(provider, policy.allowedModelsByProvider, providerId)]),
+    );
+    return {
+      ...data,
+      providers,
+      connected: mergeManagedConnectedProviderIds(data.connected, Object.keys(providers), managedProviderIds, policy.revokedProviderIds),
+    };
+  }
+  return data;
+}
+
+function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<string>) {
+  return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
+}
+
+function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>, revokedProviderIds: Set<string>): string[] | undefined {
+  if (!Array.isArray(connected)) return undefined;
+  const providerIds = new Set(
+    providers.map((provider) => {
+      if (typeof provider === "string") return provider;
+      if (isRecordValue(provider) && typeof provider.id === "string") return provider.id;
+      return "";
+    }).filter(Boolean),
+  );
+  const next = new Set(connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)));
+  for (const providerId of managedProviderIds) {
+    if (providerIds.has(providerId)) next.add(providerId);
+  }
+  return [...next];
+}
+
+function filterProviderListItem(provider: unknown, allowedModelsByProvider: Map<string, Set<string>>, fallbackProviderId?: string): unknown {
+  if (!isRecordValue(provider)) return provider;
+  const providerId = typeof provider.id === "string" ? provider.id : fallbackProviderId;
+  if (!providerId) return provider;
+  const allowed = allowedModelsByProvider.get(providerId);
+  if (!allowed) return provider;
+  if (Array.isArray(provider.models)) {
+    return {
+      ...provider,
+      models: provider.models.filter((model) => isRecordValue(model) && typeof model.id === "string" && allowed.has(model.id)),
+    };
+  }
+  if (!isRecordValue(provider.models)) return provider;
+  return {
+    ...provider,
+    models: Object.fromEntries(Object.entries(provider.models).filter(([modelId]) => allowed.has(modelId))),
+  };
+}
+
+function proxyJsonResponse(upstream: Response, data: unknown): Response {
+  const headers = sanitizedProxyHeaders(upstream.headers);
+  headers.set("Content-Type", "application/json");
+  return new Response(JSON.stringify(data), {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers,
+  });
+}
+
+function proxyTextResponse(upstream: Response, text: string): Response {
+  return new Response(text, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: sanitizedProxyHeaders(upstream.headers),
+  });
+}
+
+function sanitizedProxyHeaders(input: Headers): Headers {
+  const headers = new Headers(input);
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.delete("content-length");
+  return headers;
 }
 
 /**
@@ -1022,14 +1184,10 @@ async function proxyOpencodeRequest(input: {
  * code that reaches through /opencode/* (including session.create).
  */
 function sanitizeProxyResponse(response: Response): Response {
-  const headers = new Headers(response.headers);
-  headers.delete("content-encoding");
-  headers.delete("transfer-encoding");
-  headers.delete("content-length");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers,
+    headers: sanitizedProxyHeaders(response.headers),
   });
 }
 
@@ -1060,6 +1218,46 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
+}
+
+async function fetchOpencodeJson(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<unknown> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const baseUrl = connection.baseUrl?.trim();
+  if (!baseUrl) {
+    throw new ApiError(502, "opencode_unavailable", "OpenCode base URL is not configured");
+  }
+
+  const target = new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) {
+    headers.set("X-OpenCode-Directory", directory);
+    headers.set("X-Opencode-Directory", directory);
+  }
+  if (connection.authHeader) {
+    headers.set("Authorization", connection.authHeader);
+  }
+
+  const response = await fetch(target, {
+    method: init.method ?? "GET",
+    headers,
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+  });
+  const text = await response.text();
+  const json = text ? parseOpencodeErrorBody(text) : null;
+  if (!response.ok) {
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      status: response.status,
+      body: json,
+      path,
+    });
+  }
+  return json;
 }
 
 async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
@@ -1818,6 +2016,21 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
+function serializeClientWorkspace(workspace: ServerConfig["workspaces"][number]) {
+  const { openworkToken, openworkHostToken, opencodeUsername, opencodePassword, ...rest } = workspace;
+  const opencodeDirectory = resolveOpencodeDirectory(workspace);
+  const opencode = workspace.baseUrl || opencodeDirectory
+    ? {
+        baseUrl: workspace.baseUrl,
+        directory: opencodeDirectory ?? undefined,
+      }
+    : undefined;
+  return {
+    ...rest,
+    opencode,
+  };
+}
+
 function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
@@ -1969,7 +2182,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: 1,
       activeWorkspaceId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeClientWorkspace(workspace),
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -1989,7 +2202,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
+    return jsonResponse({ items: [serializeClientWorkspace(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
@@ -2004,7 +2217,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: config.workspaces.length,
       activeWorkspaceId: active?.id ?? null,
-      workspace: active ? serializeWorkspace(active) : null,
+      workspace: active ? serializeClientWorkspace(active) : null,
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -2104,7 +2317,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
-    const items = config.workspaces.map(serializeWorkspace);
+    const items = config.workspaces.map(serializeClientWorkspace);
     return jsonResponse({ items, workspaces: items, activeId: active?.id ?? null });
   });
 
@@ -2266,6 +2479,111 @@ function createRoutes(
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "POST", "/managed-providers/sync", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    const payload = parseManagedProviderSyncPayload(body);
+    const workspace = config.workspaces[0];
+    if (!workspace) {
+      throw new ApiError(409, "workspace_unavailable", "No worker workspace is available for managed provider sync");
+    }
+
+    const configFingerprintBefore = await computeReloadFingerprint(workspace.path, "config");
+    const opencodeConfigFile = opencodeConfigPath(workspace.path);
+    const opencodeConfigBefore = existsSync(opencodeConfigFile)
+      ? await readFile(opencodeConfigFile, "utf8")
+      : null;
+    const previousManagedProviderIds = await readAppliedManagedProviderRuntimeIds(workspace.path);
+    const previousRevokedProviderIds = await readRevokedManagedProviderRuntimeIds(workspace.path);
+    const currentManagedProviderIds = new Set(payload.providers.map((provider) => getManagedProviderRuntimeId(provider)));
+    const staleManagedProviderIds = [...previousManagedProviderIds].filter((providerId) => !currentManagedProviderIds.has(providerId));
+    const revokedManagedProviderIds = new Set([...previousRevokedProviderIds, ...staleManagedProviderIds]);
+    for (const providerId of currentManagedProviderIds) revokedManagedProviderIds.delete(providerId);
+
+    const applied: string[] = [];
+    const previousAuthByProviderId = new Map<string, unknown | null>();
+    try {
+      await applyManagedProviderConfigSet(workspace.path, payload.providers, previousManagedProviderIds);
+      for (const provider of payload.providers) {
+        const providerId = getManagedProviderRuntimeId(provider);
+        previousAuthByProviderId.set(providerId, await readManagedProviderAuth(config, workspace, providerId));
+        await applyManagedProviderAuth(config, workspace, provider);
+        applied.push(providerId);
+      }
+
+      await writeOpenworkConfig(workspace.path, {
+        managedProviders: {
+          source: "den",
+          revision: payload.revision,
+          applied,
+          appliedAt: new Date().toISOString(),
+        },
+      }, true);
+    } catch (error) {
+      if (opencodeConfigBefore === null) {
+        await rm(opencodeConfigFile, { force: true });
+      } else {
+        await writeFile(opencodeConfigFile, opencodeConfigBefore, "utf8");
+      }
+      await rollbackAppliedManagedProviderAuth(config, workspace, previousAuthByProviderId);
+      return jsonResponse({
+        status: "failed",
+        providerCount: applied.length,
+        revision: payload.revision,
+        reason: sanitizeManagedProviderApplyError(error),
+      }, 502);
+    }
+
+    const writeManagedProviderSyncMetadata = async (nextApplied: string[]) => writeOpenworkConfig(workspace.path, {
+        managedProviders: {
+          source: "den",
+          revision: payload.revision,
+          applied: nextApplied,
+          revoked: [...revokedManagedProviderIds],
+          appliedAt: new Date().toISOString(),
+        },
+    }, true);
+
+    const pendingCleanupApplied = [...new Set([...applied, ...staleManagedProviderIds])];
+    await writeManagedProviderSyncMetadata(pendingCleanupApplied);
+
+    try {
+      for (const providerId of staleManagedProviderIds) {
+        await deleteManagedProviderAuth(config, workspace, providerId);
+      }
+    } catch (error) {
+      if (configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+      }
+      return jsonResponse({
+        status: "failed",
+        providerCount: applied.length,
+        revision: payload.revision,
+        reason: sanitizeManagedProviderApplyError(error),
+      }, 502);
+    }
+
+    if (staleManagedProviderIds.length > 0) {
+      await writeManagedProviderSyncMetadata(applied);
+    }
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "managedProviders.sync",
+      target: "opencode.json",
+      summary: `Synced ${applied.length} managed provider${applied.length === 1 ? "" : "s"}`,
+      timestamp: Date.now(),
+    });
+
+    if (configFingerprintBefore !== await computeReloadFingerprint(workspace.path, "config")) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+    }
+
+    return jsonResponse({ status: "applied", providerCount: applied.length, revision: payload.revision });
+  });
+
   addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
@@ -2338,7 +2656,12 @@ function createRoutes(
       ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
       : rawOpenworkHostUrl;
     const openworkToken = readStringField(body, "openworkToken");
+    const openworkClientToken = readStringField(body, "openworkClientToken");
     const openworkHostToken = readStringField(body, "openworkHostToken");
+    const openworkDenBaseUrl = readStringField(body, "openworkDenBaseUrl");
+    const openworkDenApiBaseUrl = readStringField(body, "openworkDenApiBaseUrl");
+    const openworkDenOrgId = readStringField(body, "openworkDenOrgId");
+    const openworkDenWorkerId = readStringField(body, "openworkDenWorkerId");
     const sandboxBackend = readStringField(body, "sandboxBackend");
     const sandboxRunId = readStringField(body, "sandboxRunId");
     const sandboxContainerName = readStringField(body, "sandboxContainerName");
@@ -2383,6 +2706,12 @@ function createRoutes(
       ...(displayName ? { displayName } : {}),
       ...(remoteType === "openwork" && openworkHostUrl ? { openworkHostUrl } : {}),
       ...(openworkToken ? { openworkToken } : {}),
+      ...(remoteType === "openwork" && openworkClientToken ? { openworkClientToken } : {}),
+      ...(remoteType === "openwork" && openworkHostToken ? { openworkHostToken } : {}),
+      ...(remoteType === "openwork" && openworkDenBaseUrl ? { openworkDenBaseUrl } : {}),
+      ...(remoteType === "openwork" && openworkDenApiBaseUrl ? { openworkDenApiBaseUrl } : {}),
+      ...(remoteType === "openwork" && openworkDenOrgId ? { openworkDenOrgId } : {}),
+      ...(remoteType === "openwork" && openworkDenWorkerId ? { openworkDenWorkerId } : {}),
       ...(remoteType === "openwork" && openworkWorkspaceId ? { openworkWorkspaceId } : {}),
       ...(remoteType === "openwork" && openworkWorkspaceName ? { openworkWorkspaceName } : {}),
       ...(sandboxBackend ? { sandboxBackend } : {}),
@@ -4707,6 +5036,12 @@ function serializeWorkspaceConfigEntry(workspace: WorkspaceInfo): Record<string,
     ...(workspace.displayName ? { displayName: workspace.displayName } : {}),
     ...(workspace.openworkHostUrl ? { openworkHostUrl: workspace.openworkHostUrl } : {}),
     ...(workspace.openworkToken ? { openworkToken: workspace.openworkToken } : {}),
+    ...(workspace.openworkClientToken ? { openworkClientToken: workspace.openworkClientToken } : {}),
+    ...(workspace.openworkHostToken ? { openworkHostToken: workspace.openworkHostToken } : {}),
+    ...(workspace.openworkDenBaseUrl ? { openworkDenBaseUrl: workspace.openworkDenBaseUrl } : {}),
+    ...(workspace.openworkDenApiBaseUrl ? { openworkDenApiBaseUrl: workspace.openworkDenApiBaseUrl } : {}),
+    ...(workspace.openworkDenOrgId ? { openworkDenOrgId: workspace.openworkDenOrgId } : {}),
+    ...(workspace.openworkDenWorkerId ? { openworkDenWorkerId: workspace.openworkDenWorkerId } : {}),
     ...(workspace.openworkWorkspaceId ? { openworkWorkspaceId: workspace.openworkWorkspaceId } : {}),
     ...(workspace.openworkWorkspaceName ? { openworkWorkspaceName: workspace.openworkWorkspaceName } : {}),
     ...(workspace.sandboxBackend ? { sandboxBackend: workspace.sandboxBackend } : {}),
@@ -4745,6 +5080,268 @@ async function persistServerWorkspaceState(config: ServerConfig): Promise<boolea
 
 function normalizeOpencodeScope(value: string | null | undefined): "project" | "global" {
   return value?.trim().toLowerCase() === "global" ? "global" : "project";
+}
+
+type ManagedProviderSyncProvider = {
+  id: string;
+  providerId: string;
+  name: string;
+  source: string;
+  credentialKind: "api_key" | "opencode_oauth";
+  providerConfig: Record<string, unknown>;
+  models: Array<{ id: string; name: string; config: Record<string, unknown> }>;
+  apiKey?: string;
+  opencodeAuth?: string;
+  revision: string;
+};
+
+type ManagedProviderSyncPayload = {
+  providers: ManagedProviderSyncProvider[];
+  revision: string;
+};
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ApiError(400, "invalid_payload", `${key} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ApiError(400, "invalid_payload", `${key} must be a string`);
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function parseManagedProviderSyncPayload(input: unknown): ManagedProviderSyncPayload {
+  if (!isRecordValue(input) || !Array.isArray(input.providers)) {
+    throw new ApiError(400, "invalid_payload", "providers must be an array");
+  }
+  const revision = readRequiredString(input, "revision");
+  const providers = input.providers.map((entry) => {
+    if (!isRecordValue(entry)) {
+      throw new ApiError(400, "invalid_payload", "Each provider must be an object");
+    }
+    const rawCredentialKind = entry.credentialKind;
+    if (rawCredentialKind !== "api_key" && rawCredentialKind !== "opencode_oauth") {
+      throw new ApiError(400, "invalid_payload", "credentialKind must be api_key or opencode_oauth");
+    }
+    const credentialKind: ManagedProviderSyncProvider["credentialKind"] = rawCredentialKind;
+    const providerConfig = entry.providerConfig;
+    if (!isRecordValue(providerConfig)) {
+      throw new ApiError(400, "invalid_payload", "providerConfig must be an object");
+    }
+    const modelsInput = entry.models;
+    if (!Array.isArray(modelsInput)) {
+      throw new ApiError(400, "invalid_payload", "models must be an array");
+    }
+    const models = modelsInput.map((model) => {
+      if (!isRecordValue(model) || !isRecordValue(model.config)) {
+        throw new ApiError(400, "invalid_payload", "Each model must include config");
+      }
+      return {
+        id: readRequiredString(model, "id"),
+        name: readRequiredString(model, "name"),
+        config: model.config,
+      };
+    });
+    return {
+      id: readRequiredString(entry, "id"),
+      providerId: readRequiredString(entry, "providerId"),
+      name: readRequiredString(entry, "name"),
+      source: readRequiredString(entry, "source"),
+      credentialKind,
+      providerConfig,
+      models,
+      apiKey: readOptionalString(entry, "apiKey"),
+      opencodeAuth: readOptionalString(entry, "opencodeAuth"),
+      revision: readRequiredString(entry, "revision"),
+    };
+  });
+  const runtimeProviderIds = new Set<string>();
+  for (const provider of providers) {
+    const runtimeProviderId = getManagedProviderRuntimeId(provider);
+    if (runtimeProviderIds.has(runtimeProviderId)) {
+      throw new ApiError(400, "duplicate_provider_runtime_id", "Managed provider runtime ids must be unique");
+    }
+    runtimeProviderIds.add(runtimeProviderId);
+  }
+  return { providers, revision };
+}
+
+function getManagedProviderEnv(config: Record<string, unknown>) {
+  return Array.isArray(config.env) ? config.env.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
+}
+
+export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncProvider, "id" | "providerId" | "source" | "credentialKind">) {
+  if (provider.source === "openwork") return "openwork";
+  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
+  return provider.id.trim();
+}
+
+export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncProvider) {
+  const models = Object.fromEntries(provider.models.map((model) => [model.id, buildManagedProviderModelRuntimeConfig(model)]));
+  const next: Record<string, unknown> = {
+    id: provider.providerId,
+    name: provider.name,
+    env: getManagedProviderEnv(provider.providerConfig),
+    models,
+  };
+  for (const key of ["npm", "api", "options", "whitelist", "blacklist"] as const) {
+    const value = provider.providerConfig[key];
+    if (value !== undefined) next[key] = value;
+  }
+  return next;
+}
+
+async function readManagedProviderRuntimeIds(workspaceRoot: string, key: "applied" | "revoked"): Promise<Set<string>> {
+  const openwork = await readOpenworkConfig(workspaceRoot);
+  const managedProviders = openwork.managedProviders;
+  if (!isRecordValue(managedProviders) || managedProviders.source !== "den") return new Set();
+  return new Set(readStringArray(managedProviders[key]));
+}
+
+async function readAppliedManagedProviderRuntimeIds(workspaceRoot: string): Promise<Set<string>> {
+  return readManagedProviderRuntimeIds(workspaceRoot, "applied");
+}
+
+async function readRevokedManagedProviderRuntimeIds(workspaceRoot: string): Promise<Set<string>> {
+  return readManagedProviderRuntimeIds(workspaceRoot, "revoked");
+}
+
+async function applyManagedProviderConfigSet(workspaceRoot: string, providers: ManagedProviderSyncProvider[], previousManagedProviderIds: Set<string>) {
+  const config = await readOpencodeConfig(workspaceRoot);
+  const providerConfig = isRecordValue(config.provider) ? { ...config.provider } : {};
+  const currentProviderIds = new Set(providers.map((provider) => getManagedProviderRuntimeId(provider)));
+
+  for (const providerId of previousManagedProviderIds) {
+    if (!currentProviderIds.has(providerId)) {
+      delete providerConfig[providerId];
+    }
+  }
+
+  for (const provider of providers) {
+    providerConfig[getManagedProviderRuntimeId(provider)] = buildManagedProviderRuntimeConfig(provider);
+  }
+
+  const nextConfig = { ...config };
+  if (Object.keys(providerConfig).length > 0) {
+    nextConfig.provider = providerConfig;
+  } else {
+    delete nextConfig.provider;
+  }
+
+  await writeJsoncFile(opencodeConfigPath(workspaceRoot), nextConfig);
+}
+
+function buildManagedProviderModelRuntimeConfig(model: ManagedProviderSyncProvider["models"][number]) {
+  const raw = model.config;
+  const next: Record<string, unknown> = { id: model.id, name: model.name };
+
+  for (const key of ["family", "release_date", "status"] as const) {
+    const value = raw[key];
+    if (typeof value === "string") next[key] = value;
+  }
+
+  for (const key of ["attachment", "reasoning", "temperature", "tool_call", "interleaved", "experimental"] as const) {
+    const value = raw[key];
+    if (typeof value === "boolean") next[key] = value;
+  }
+
+  for (const key of ["cost", "limit", "modalities", "options", "headers", "provider", "variants"] as const) {
+    const value = raw[key];
+    if (isRecordValue(value)) next[key] = value;
+  }
+
+  return next;
+}
+
+async function applyManagedProviderConfig(workspaceRoot: string, provider: ManagedProviderSyncProvider) {
+  const providerId = getManagedProviderRuntimeId(provider);
+  await updateJsoncPath(opencodeConfigPath(workspaceRoot), ["provider", providerId], buildManagedProviderRuntimeConfig(provider));
+}
+
+function parseManagedOpencodeAuth(provider: ManagedProviderSyncProvider): unknown {
+  if (provider.credentialKind === "api_key") {
+    if (!provider.apiKey) throw new ApiError(400, "missing_provider_credential", "Managed provider is missing an API credential");
+    return { type: "api", key: provider.apiKey };
+  }
+  if (!provider.opencodeAuth) throw new ApiError(400, "missing_provider_credential", "Managed provider is missing an OAuth credential");
+  try {
+    const auth = JSON.parse(provider.opencodeAuth) as unknown;
+    if (!isRecordValue(auth) || auth.type !== "oauth") throw new Error("invalid auth");
+    return auth;
+  } catch {
+    throw new ApiError(400, "invalid_provider_credential", "Managed provider OAuth credential is invalid");
+  }
+}
+
+async function applyManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, provider: ManagedProviderSyncProvider) {
+  const providerId = getManagedProviderRuntimeId(provider);
+  await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: parseManagedOpencodeAuth(provider),
+  });
+}
+
+async function readManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string) {
+  try {
+    return await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+      method: "GET",
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "opencode_request_failed" && isRecordValue(error.details) && error.details.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function deleteManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string) {
+  try {
+    await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+      method: "DELETE",
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "opencode_request_failed" && isRecordValue(error.details) && error.details.status === 404) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function restoreManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string, previousAuth: unknown | null) {
+  if (previousAuth === null) {
+    await deleteManagedProviderAuth(config, workspace, providerId);
+    return;
+  }
+  await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: previousAuth,
+  });
+}
+
+async function rollbackAppliedManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, previousAuthByProviderId: Map<string, unknown | null>) {
+  await Promise.all([...previousAuthByProviderId.entries()].map(async ([providerId, previousAuth]) => {
+    try {
+      await restoreManagedProviderAuth(config, workspace, providerId, previousAuth);
+    } catch {
+      // Best-effort restoration. The sync response remains failed and sanitized.
+    }
+  }));
+}
+
+function sanitizeManagedProviderApplyError(error: unknown) {
+  return "Managed provider sync failed";
 }
 
 function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
@@ -4819,9 +5416,17 @@ async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   const explicit = workspace.directory?.trim() ?? "";
+  if (workspace.remoteType === "openwork" && (isWindowsDirectory(explicit) || isWindowsDirectory(workspace.path))) {
+    return null;
+  }
   if (explicit) return normalizeOpencodeDirectory(explicit);
   if (workspace.workspaceType === "local") return normalizeOpencodeDirectory(workspace.path);
   return null;
+}
+
+function isWindowsDirectory(directory: string | undefined): boolean {
+  const value = directory?.trim() ?? "";
+  return /^[a-z]:[\\/]/i.test(value) || value.startsWith("\\\\") || value.startsWith("//");
 }
 
 function normalizeOpencodeDirectory(directory: string): string {

@@ -15,7 +15,7 @@ import { z } from "zod"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import type { UserOrganizationsContext } from "../../middleware/index.js"
+import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
@@ -49,7 +49,7 @@ export const workerIdParamSchema = z.object({
   id: denTypeIdSchema("worker"),
 })
 
-export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext>
+export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
@@ -192,7 +192,16 @@ async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: 
 }
 
 async function getWorkerRuntimeAccess(workerId: WorkerId) {
-  const instance = await getLatestWorkerInstance(workerId)
+  const workerRows = await db
+    .select({ status: WorkerTable.status })
+    .from(WorkerTable)
+    .where(eq(WorkerTable.id, workerId))
+    .limit(1)
+  if (workerRows[0] && workerRows[0].status !== "healthy") {
+    return null
+  }
+
+  const instance = await getLatestHealthyWorkerInstance(workerId)
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)
@@ -284,6 +293,23 @@ export async function getLatestWorkerInstance(workerId: WorkerId) {
   return rows[0] ?? null
 }
 
+export async function getLatestHealthyWorkerInstance(workerId: WorkerId) {
+  const rows = await db
+    .select()
+    .from(WorkerInstanceTable)
+    .where(and(eq(WorkerInstanceTable.worker_id, workerId), eq(WorkerInstanceTable.status, "healthy")))
+    .orderBy(desc(WorkerInstanceTable.created_at))
+    .limit(1)
+
+  return rows[0] ?? null
+}
+
+export function isWorkerRuntimeSyncTarget(input: { workerStatus?: string | null; instanceStatus?: string | null; instanceUrl?: string | null; hostToken?: string | null }) {
+  return input.workerStatus === "healthy"
+    && input.instanceStatus === "healthy"
+    && Boolean(input.instanceUrl?.trim())
+    && Boolean(input.hostToken?.trim())
+}
 export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   if (!instance) {
     return null

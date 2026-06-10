@@ -182,9 +182,9 @@ export function LlmProvidersScreen() {
                 </div>
 
                 <div className="mt-5 flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium ${provider.hasCredential ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                     <KeyRound className="h-3.5 w-3.5" />
-                    {provider.hasApiKey ? "Credential saved" : "Credential missing"}
+                    {provider.hasCredential ? (provider.credentialKind === "opencode_oauth" ? "OpenCode OAuth" : "Credential saved") : "Credential missing"}
                   </span>
                   {envNames.slice(0, 2).map((envName) => (
                     <span key={envName} className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">

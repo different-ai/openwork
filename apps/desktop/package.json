@@ -18,12 +18,15 @@
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "electron": "pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
+    "check:packaged-startup": "node ./scripts/check-packaged-startup.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.17.3",
     "better-sqlite3": "^11.10.0",
+    "chrome-devtools-mcp": "0.17.0",
     "drizzle-orm": "^0.45.1",
     "electron-updater": "^6.3.9",
     "jsonc-parser": "^3.2.1",

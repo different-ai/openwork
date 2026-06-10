@@ -147,6 +147,10 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent } from "@/app/lib/den-session-events";
+import {
+  buildCloudManagedModelOptions,
+  buildCloudManagedModelIdsByProvider,
+} from "@/app/cloud/managed-provider-models";
 
 import { openModelPickerEvent, pendingModelPickerProviderIdsKey } from "./new-providers-toast";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
@@ -1444,8 +1448,8 @@ export function SessionRoute() {
     if (loading) return;
     if (workspaces.length > 0) return;
     if (local.prefs.hasCompletedOnboarding) return;
-    navigate("/welcome", { replace: true });
-  }, [loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+    navigate(denAuth.isSignedIn ? "/onboarding" : "/welcome", { replace: true });
+  }, [denAuth.isSignedIn, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every
@@ -1736,6 +1740,10 @@ export function SessionRoute() {
   // sync here so sign-in applies opencode.json changes before Settings opens.
   useCloudProviderAutoSync(sessionProviderAuthStore.runCloudProviderSync);
   const sessionProviderAuthSnapshot = useProviderAuthStoreSnapshot(sessionProviderAuthStore);
+  const cloudManagedModelIdsByProvider = useMemo(
+    () => buildCloudManagedModelIdsByProvider(sessionProviderAuthSnapshot.importedCloudProviders),
+    [sessionProviderAuthSnapshot.importedCloudProviders],
+  );
   const permissionQueryKey = useMemo(
     () =>
       selectedWorkspaceId && selectedSessionId
@@ -2012,28 +2020,11 @@ export function SessionRoute() {
         } catch {
           seenIds = new Set();
         }
-        const options: ModelOption[] = [];
-        for (const provider of getConnectedProviderItems(data)) {
-          const modelIds = Object.keys(provider.models);
-          const isNew = !seenIds.has(provider.id) || recentProviderIds.has(provider.id);
-          for (const id of modelIds) {
-            const model = provider.models[id];
-            options.push({
-              providerID: provider.id,
-              modelID: id,
-              title: model.name || id,
-              description: provider.name,
-              behaviorTitle: "Reasoning",
-              behaviorLabel: "Default",
-              behaviorDescription: "",
-              behaviorValue: null,
-              isFree: false,
-              isConnected: true,
-              isRecommended: isNew,
-              source: /^lpr_/i.test(provider.id) ? "cloud" as const : undefined,
-            });
-          }
-        }
+        const options = buildCloudManagedModelOptions({
+          providers: getConnectedProviderItems(data),
+          cloudManagedModelIdsByProvider,
+          isRecommendedProvider: (providerId) => !seenIds.has(providerId) || recentProviderIds.has(providerId),
+        });
         setModelOptions(options);
       } catch {
         // Silent: the picker surfaces an empty list rather than blocking the UI.
@@ -2042,7 +2033,7 @@ export function SessionRoute() {
     return () => {
       cancelled = true;
     };
-  }, [modelPickerOpen, opencodeBaseUrl, opencodeClient, recentProviderIds, selectedWorkspaceRoot]);
+  }, [cloudManagedModelIdsByProvider, modelPickerOpen, opencodeBaseUrl, opencodeClient, recentProviderIds, selectedWorkspaceRoot]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:
@@ -2915,6 +2906,7 @@ export function SessionRoute() {
       client={opencodeClient}
       opencodeBaseUrl={opencodeBaseUrl}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
+      cloudManagedModelIdsByProvider={cloudManagedModelIdsByProvider}
     >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
