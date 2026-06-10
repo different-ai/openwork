@@ -1810,6 +1810,11 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
+function serializeClientWorkspace(workspace: ServerConfig["workspaces"][number]) {
+  const { openworkHostToken, ...rest } = serializeWorkspace(workspace);
+  return rest;
+}
+
 function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
@@ -1981,7 +1986,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
+    return jsonResponse({ items: [serializeClientWorkspace(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
@@ -1996,7 +2001,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: config.workspaces.length,
       activeWorkspaceId: active?.id ?? null,
-      workspace: active ? serializeWorkspace(active) : null,
+      workspace: active ? serializeClientWorkspace(active) : null,
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -2096,7 +2101,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0] ?? null;
-    const items = config.workspaces.map(serializeWorkspace);
+    const items = config.workspaces.map(serializeClientWorkspace);
     return jsonResponse({ items, workspaces: items, activeId: active?.id ?? null });
   });
 

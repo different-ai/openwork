@@ -38,8 +38,41 @@ function baseConfig(): ServerConfig {
   } as ServerConfig;
 }
 
+function remoteWorkspaceConfig(): ServerConfig {
+  const config = baseConfig();
+  config.workspaces = [{
+    id: "rem_ws_remote",
+    name: "Remote",
+    path: "",
+    preset: "remote",
+    workspaceType: "remote",
+    remoteType: "openwork",
+    baseUrl: "https://worker.example.com/w/rem_ws_remote",
+    openworkHostUrl: "https://worker.example.com",
+    openworkToken: "legacy-client-token",
+    openworkClientToken: "client-token",
+    openworkHostToken: "host-token-secret",
+    openworkDenBaseUrl: "https://den.example.com",
+    openworkDenApiBaseUrl: "https://api.den.example.com",
+    openworkDenOrgId: "org_123",
+    openworkDenWorkerId: "worker_123",
+    openworkWorkspaceId: "ws_remote",
+    openworkWorkspaceName: "Remote Workspace",
+  }];
+  return config;
+}
+
 async function boot() {
   const server = await startServer(baseConfig()) as Served;
+  stops.push(() => server.stop(true));
+  return {
+    server,
+    base: `http://127.0.0.1:${server.port}`,
+  };
+}
+
+async function bootWithConfig(config: ServerConfig) {
+  const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
   return {
     server,
@@ -126,6 +159,29 @@ describe("env routes", () => {
     const hostOnlyRoute = await fetch(`${base}/env/keys`, { headers: hostAuth() });
     expect(hostOnlyRoute.status).toBe(200);
     expect(await hostOnlyRoute.json()).toEqual({ keys: [] });
+  });
+
+  test("workspace discovery preserves remote metadata but redacts host token from client responses", async () => {
+    const { base } = await bootWithConfig(remoteWorkspaceConfig());
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "viewer", label: "workspace discovery viewer" }),
+    });
+    expect(issued.status).toBe(201);
+    const body = await issued.json() as { token: string };
+
+    const response = await fetch(`${base}/workspaces`, { headers: { authorization: `Bearer ${body.token}` } });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { items: Array<Record<string, unknown>> };
+    expect(payload.items[0]).toMatchObject({
+      openworkClientToken: "client-token",
+      openworkDenBaseUrl: "https://den.example.com",
+      openworkDenApiBaseUrl: "https://api.den.example.com",
+      openworkDenOrgId: "org_123",
+      openworkDenWorkerId: "worker_123",
+    });
+    expect(payload.items[0].openworkHostToken).toBeUndefined();
   });
 
   test("CORS preflight allows PUT", async () => {
