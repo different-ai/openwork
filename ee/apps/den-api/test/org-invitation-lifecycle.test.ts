@@ -25,6 +25,7 @@ let queryRows: unknown[][] = []
 let operations: Array<{ type: "insert" | "update"; value: any }> = []
 let hookCalls: Array<{ organizationId: string; memberId: string; change: "added" | "removed" }> = []
 let whereInputs: unknown[] = []
+let seatEligibility = { allowed: true, currentCount: 1, freeSeatCount: 1 }
 
 function queryFor(rows: unknown[]) {
   const chain: any = {
@@ -107,6 +108,28 @@ mock.module("../src/organization-member-hooks.js", () => ({
   },
 }))
 
+mock.module("../src/stripe-billing.js", () => ({
+  FREE_ORG_SEAT_COUNT: 5,
+  billableSeatQuantity: (memberCount: number) => Math.max(0, memberCount - 5),
+  createInferenceCheckoutSession: () => Promise.resolve(null),
+  createInferencePortalSession: () => Promise.resolve(null),
+  createOrgSubscriptionCheckoutSession: () => Promise.resolve(null),
+  createSeatCheckoutSession: () => Promise.resolve(null),
+  createStripePortalSession: () => Promise.resolve(null),
+  findOrCreateStripeCustomer: () => Promise.resolve(null),
+  getActiveMemberCountForBilling: () => Promise.resolve(seatEligibility.currentCount),
+  getOrgBillingSummary: () => Promise.resolve(null),
+  getOrganizationSeatAddEligibility: () => Promise.resolve(seatEligibility),
+  handleStripeWebhook: () => Promise.resolve({ received: true }),
+  organizationHasActiveInferenceSubscription: () => Promise.resolve(false),
+  organizationHasActiveSeatSubscription: () => Promise.resolve(seatEligibility.allowed),
+  syncInferenceSubscriptionQuantityAfterMemberChange: () => Promise.resolve(),
+  syncSeatCheckoutSession: () => Promise.resolve(null),
+  syncSeatSubscriptionQuantityAfterMemberChange: () => Promise.resolve(),
+  upsertInferenceSubscriptionFromStripe: () => Promise.resolve(),
+  upsertOrgSubscriptionFromStripe: () => Promise.resolve(),
+}))
+
 let orgsModule: typeof import("../src/orgs.js")
 
 beforeAll(async () => {
@@ -119,6 +142,7 @@ beforeEach(() => {
   operations = []
   hookCalls = []
   whereInputs = []
+  seatEligibility = { allowed: true, currentCount: 1, freeSeatCount: 1 }
 })
 
 test("invitation preview resolves an invite token", async () => {
@@ -345,6 +369,24 @@ test("Entra auto-join ignores expired pending invitations", async () => {
   expect(operations.some((operation) => operation.type === "update" && operation.value?.status === "canceled")).toBe(true)
   expect(operations.some((operation) => operation.type === "update" && operation.value?.removedAt instanceof Date)).toBe(true)
   expect(hookCalls).toEqual([{ organizationId: entraOrganizationId, memberId, change: "added" }])
+})
+
+test("Entra auto-join does not bypass seat billing gate", async () => {
+  const userId = createDenTypeId("user")
+  seatEligibility = { allowed: false, currentCount: 1, freeSeatCount: 1 }
+  queryRows = [
+    [{ id: entraOrganizationId }],
+    [],
+  ]
+
+  await expect(orgsModule.ensureEntraSsoMembershipForAccount({
+    userId,
+    providerId: "microsoft",
+    idToken: unsignedJwt({ groups: [] }),
+  })).rejects.toThrow("entra_sso_seat_subscription_required")
+
+  expect(operations).toEqual([])
+  expect(hookCalls).toEqual([])
 })
 
 test("member removal targets active members only and repeated removals emit no hook", async () => {

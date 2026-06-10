@@ -18,6 +18,7 @@ import { runPostOrganizationMemberChangeHooks } from "./organization-member-hook
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata, serializeOrganizationMetadata } from "./organization-limits.js"
 import { denDefaultDynamicOrganizationRoles, denOrganizationStaticRoles } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
+import { getOrganizationSeatAddEligibility } from "./stripe-billing.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type SessionId = typeof AuthSessionTable.$inferSelect.id
@@ -619,11 +620,19 @@ export async function ensureEntraSsoMembershipForAccount(input: {
 
         return existing[0] ?? null
       },
-      createMember: async ({ organizationId, userId, role }) => insertMemberIfMissing({
-        organizationId: organizationId as OrgId,
-        userId: userId as UserId,
-        role,
-      }),
+      createMember: async ({ organizationId, userId, role }) => {
+        const normalizedOrganizationId = organizationId as OrgId
+        const seatEligibility = await getOrganizationSeatAddEligibility(normalizedOrganizationId)
+        if (!seatEligibility.allowed) {
+          throw new Error("entra_sso_seat_subscription_required")
+        }
+
+        return insertMemberIfMissing({
+          organizationId: normalizedOrganizationId,
+          userId: userId as UserId,
+          role,
+        })
+      },
       updateMemberRole: async ({ memberId, role }) => {
         await db
           .update(MemberTable)
