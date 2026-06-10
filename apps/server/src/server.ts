@@ -654,7 +654,7 @@ function normalizeOpencodeProxyPath(proxyPath: string): string {
   return normalized || "/";
 }
 
-function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
+export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
 
@@ -662,12 +662,17 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
     throw new ApiError(403, "forbidden", "Viewer tokens are read-only");
   }
 
-  // Prevent collaborators/viewers from self-approving OpenCode permission requests via the proxy.
-  // OpenCode uses /permission/:requestId/reply (and historically also a session-scoped variant).
-  if (scope !== "owner" && m !== "GET" && m !== "HEAD") {
+  // Prevent viewers from self-approving OpenCode permission requests via the
+  // proxy. OpenCode uses /permission/:requestId/reply (and historically also
+  // a session-scoped variant). Collaborators must be allowed: the SPA's only
+  // credential is the collaborator-scoped client token (OPENWORK_TOKEN), so
+  // an owner-only gate made every interactive permission dialog un-answerable
+  // (403 "Only owner tokens can reply") and left tool calls stuck in
+  // "running" forever (#1918).
+  if (scope === "viewer" && m !== "GET" && m !== "HEAD") {
     const normalized = normalizeOpencodeProxyPath(proxyPath);
     if (/\/permission\/[^/]+\/reply$/.test(normalized)) {
-      throw new ApiError(403, "forbidden", "Only owner tokens can reply to permission requests");
+      throw new ApiError(403, "forbidden", "Viewer tokens cannot reply to permission requests");
     }
   }
 }
