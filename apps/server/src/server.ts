@@ -2014,6 +2014,21 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   };
 }
 
+function serializeClientWorkspace(workspace: ServerConfig["workspaces"][number]) {
+  const { openworkToken, opencodeUsername, opencodePassword, ...rest } = workspace;
+  const opencodeDirectory = resolveOpencodeDirectory(workspace);
+  const opencode = workspace.baseUrl || opencodeDirectory
+    ? {
+        baseUrl: workspace.baseUrl,
+        directory: opencodeDirectory ?? undefined,
+      }
+    : undefined;
+  return {
+    ...rest,
+    opencode,
+  };
+}
+
 function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
@@ -2165,7 +2180,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: 1,
       activeWorkspaceId: workspace.id,
-      workspace: serializeWorkspace(workspace),
+      workspace: serializeClientWorkspace(workspace),
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -2185,7 +2200,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
+    return jsonResponse({ items: [serializeClientWorkspace(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
@@ -2200,7 +2215,7 @@ function createRoutes(
       corsOrigins: config.corsOrigins,
       workspaceCount: config.workspaces.length,
       activeWorkspaceId: active?.id ?? null,
-      workspace: active ? serializeWorkspace(active) : null,
+      workspace: active ? serializeClientWorkspace(active) : null,
       authorizedRoots: config.authorizedRoots,
       server: {
         host: config.host,
@@ -2492,6 +2507,15 @@ function createRoutes(
         await applyManagedProviderAuth(config, workspace, provider);
         applied.push(providerId);
       }
+
+      await writeOpenworkConfig(workspace.path, {
+        managedProviders: {
+          source: "den",
+          revision: payload.revision,
+          applied,
+          appliedAt: new Date().toISOString(),
+        },
+      }, true);
     } catch (error) {
       if (opencodeConfigBefore === null) {
         await rm(opencodeConfigFile, { force: true });

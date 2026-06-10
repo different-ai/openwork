@@ -15,7 +15,7 @@ import { z } from "zod"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import type { OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
+import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
@@ -49,7 +49,7 @@ export const workerIdParamSchema = z.object({
   id: denTypeIdSchema("worker"),
 })
 
-export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
+export type WorkerRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect

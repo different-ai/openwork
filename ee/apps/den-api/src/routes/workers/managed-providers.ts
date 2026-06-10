@@ -1,11 +1,11 @@
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { LlmProviderModelTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
+import { LlmProviderAccessTable, LlmProviderModelTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { paramValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { memberHasRole } from "../org/shared.js"
 import { fetchWorkerRuntimeJson, getWorkerByIdForOrg, parseWorkerIdParam, type WorkerId, type WorkerRouteVariables, workerIdParamSchema } from "./shared.js"
@@ -13,6 +13,8 @@ import { fetchWorkerRuntimeJson, getWorkerByIdForOrg, parseWorkerIdParam, type W
 type LlmProviderRow = typeof LlmProviderTable.$inferSelect
 type LlmProviderModelRow = typeof LlmProviderModelTable.$inferSelect
 type OrganizationId = LlmProviderRow["organizationId"]
+type MemberId = typeof LlmProviderAccessTable.$inferSelect.orgMembershipId
+type TeamId = typeof LlmProviderAccessTable.$inferSelect.teamId
 
 export type ManagedProviderSyncProvider = {
   id: string
@@ -68,11 +70,49 @@ export function sanitizeManagedProviderSyncFailure(payload: unknown) {
   return "Worker provider sync failed."
 }
 
-export async function listManagedProviderSyncProviders(organizationId: OrganizationId) {
+async function listAccessibleManagedProviderIds(input: {
+  organizationId: OrganizationId
+  currentMemberId: NonNullable<MemberId>
+  memberTeamIds: NonNullable<TeamId>[]
+}) {
+  const rows = await db
+    .select({ llmProviderId: LlmProviderAccessTable.llmProviderId })
+    .from(LlmProviderAccessTable)
+    .innerJoin(LlmProviderTable, eq(LlmProviderAccessTable.llmProviderId, LlmProviderTable.id))
+    .where(input.memberTeamIds.length > 0
+      ? and(
+          eq(LlmProviderTable.organizationId, input.organizationId),
+          or(
+            eq(LlmProviderAccessTable.orgMembershipId, input.currentMemberId),
+            inArray(LlmProviderAccessTable.teamId, input.memberTeamIds),
+          ),
+        )
+      : and(
+          eq(LlmProviderTable.organizationId, input.organizationId),
+          eq(LlmProviderAccessTable.orgMembershipId, input.currentMemberId),
+        ))
+
+  return [...new Set(rows.map((row) => row.llmProviderId))]
+}
+
+export async function listManagedProviderSyncProviders(input: OrganizationId | {
+  organizationId: OrganizationId
+  currentMemberId: NonNullable<MemberId>
+  memberTeamIds: NonNullable<TeamId>[]
+}) {
+  const organizationId = typeof input === "string" ? input : input.organizationId
+  const accessibleProviderIds = typeof input === "string"
+    ? null
+    : await listAccessibleManagedProviderIds(input)
+
+  if (accessibleProviderIds && accessibleProviderIds.length === 0) return []
+
   const providers = await db
     .select()
     .from(LlmProviderTable)
-    .where(eq(LlmProviderTable.organizationId, organizationId))
+    .where(accessibleProviderIds
+      ? and(eq(LlmProviderTable.organizationId, organizationId), inArray(LlmProviderTable.id, accessibleProviderIds))
+      : eq(LlmProviderTable.organizationId, organizationId))
 
   const eligible = providers.filter(credentialPresent)
   if (!eligible.length) return []
@@ -100,7 +140,7 @@ export async function listManagedProviderSyncProviders(organizationId: Organizat
 }
 
 export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerRouteVariables }>, deps: ManagedProviderRouteDeps = {}) {
-  const routeMiddlewares = deps.middlewares ?? [requireUserMiddleware, resolveOrganizationContextMiddleware, paramValidator(workerIdParamSchema)]
+  const routeMiddlewares = deps.middlewares ?? [requireUserMiddleware, resolveOrganizationContextMiddleware, resolveMemberTeamsMiddleware, paramValidator(workerIdParamSchema)]
   const getWorker = deps.getWorker ?? getWorkerByIdForOrg
   const listProviders = deps.listProviders ?? listManagedProviderSyncProviders
   const pushRuntime = deps.pushRuntime ?? ((workerId, payload) => fetchWorkerRuntimeJson({
@@ -129,6 +169,7 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       const organizationContext = c.get("organizationContext")
+      const memberTeams = c.get("memberTeams") ?? []
       const params = c.req.valid("param" as never) as { id: string }
 
       if (!orgId) return c.json({ error: "worker_not_found" }, 404)
@@ -147,7 +188,13 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
       const worker = await getWorker(workerId, normalizedOrgId)
       if (!worker) return c.json({ error: "worker_not_found" }, 404)
 
-      const providers = await listProviders(normalizedOrgId)
+      const providers = deps.listProviders
+        ? await listProviders(normalizedOrgId)
+        : await listManagedProviderSyncProviders({
+            organizationId: normalizedOrgId,
+            currentMemberId: organizationContext.currentMember.id,
+            memberTeamIds: memberTeams.map((team) => team.id),
+          })
       const revision = computeManagedProviderRevision(providers)
 
       const runtime = await pushRuntime(worker.id, { providers, revision })
