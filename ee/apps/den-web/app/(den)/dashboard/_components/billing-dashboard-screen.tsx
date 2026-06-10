@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CreditCard } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { getInferenceRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -119,12 +121,13 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 }
 
 export function BillingDashboardScreen() {
+  const router = useRouter();
   const { sessionHydrated, user } = useDenFlow();
-  const { orgContext } = useOrgDashboard();
+  const { activeOrg, orgContext } = useOrgDashboard();
   const [stripeBilling, setStripeBilling] = useState<StripeBilling | null>(null);
   const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
-  const [stripeActionBusy, setStripeActionBusy] = useState<"checkout" | "seat-checkout" | "portal" | null>(null);
+  const [stripeActionBusy, setStripeActionBusy] = useState<"seat-checkout" | "portal" | null>(null);
   const [stripeError, setStripeError] = useState<string | null>(null);
   const [stripeReturnChecking, setStripeReturnChecking] = useState(false);
 
@@ -202,26 +205,6 @@ export function BillingDashboardScreen() {
       cancelled = true;
     };
   }, [sessionHydrated, user, orgContext?.organization.id]);
-
-  async function startStripeCheckout() {
-    setStripeActionBusy("checkout");
-    setStripeError(null);
-    try {
-      const { response, payload } = await requestJson(
-        "/v1/billing/stripe/checkout",
-        { method: "POST", body: JSON.stringify({ type: "inference" }) },
-        12000,
-      );
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Checkout failed (${response.status}).`));
-      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-      if (!url) throw new Error("Checkout response did not include a URL.");
-      window.location.href = url;
-    } catch (error) {
-      setStripeError(error instanceof Error ? error.message : "Could not start Stripe checkout.");
-    } finally {
-      setStripeActionBusy(null);
-    }
-  }
 
   async function startSeatCheckout() {
     setStripeActionBusy("seat-checkout");
@@ -408,10 +391,13 @@ export function BillingDashboardScreen() {
         ) : (
           <div className="flex flex-col gap-4 rounded-[16px] border border-blue-100 bg-blue-50 p-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-[15px] font-medium text-blue-950">Subscribe to enable OpenWork Models</p>
+              <p className="text-[15px] font-medium text-blue-950">Not subscribed yet</p>
+              <p className="mt-1 text-[13px] leading-5 text-blue-900/70">
+                See the model lineup and subscribe from the OpenWork Models page.
+              </p>
             </div>
-            <DenButton disabled={!isOwner || stripeBilling?.configured === false} loading={stripeActionBusy === "checkout"} onClick={startStripeCheckout}>
-              Subscribe with Stripe
+            <DenButton onClick={() => router.push(getInferenceRoute(activeOrg?.slug))}>
+              View OpenWork Models
             </DenButton>
           </div>
         )}

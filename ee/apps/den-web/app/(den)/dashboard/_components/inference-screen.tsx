@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles } from "lucide-react";
+import { Check, Sparkles } from "lucide-react";
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
@@ -148,13 +149,91 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
   );
 }
 
+const MODEL_LINEUP = Object.entries(INFERENCE_MODEL_ALIASES)
+  .filter(([, model]) => model.enabled)
+  .map(([id, model]) => ({
+    id,
+    name: model.displayName.replace(/^OpenWork:\s*/, ""),
+  }));
+
+const VALUE_POINTS = [
+  "Open-source frontier models, hosted and kept up to date by OpenWork",
+  "No API keys to manage — every member is provisioned automatically",
+  "One subscription covers your whole workspace, with usage limits that scale with your team",
+];
+
+function ModelsValueProp(props: {
+  isOwner: boolean;
+  memberCount: number;
+  subscribeBusy: boolean;
+  onSubscribe: () => void;
+}) {
+  return (
+    <section className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+      <div className="grid gap-8 p-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <h2 className="text-[24px] font-medium leading-8 tracking-[-0.4px] text-gray-950">
+            The best open-source models, ready for your whole team.
+          </h2>
+          <p className="mt-3 max-w-[560px] text-[14px] leading-6 text-gray-500">
+            OpenWork Models gives every member of your workspace instant access to a hand-picked
+            lineup of OSS frontier models — no provider accounts, no key juggling.
+          </p>
+          <ul className="mt-6 grid gap-3">
+            {VALUE_POINTS.map((point) => (
+              <li key={point} className="flex items-start gap-3 text-[14px] leading-6 text-gray-700">
+                <Check className="mt-1 h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
+                <span>{point}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <DenButton
+              type="button"
+              disabled={!props.isOwner}
+              loading={props.subscribeBusy}
+              onClick={props.onSubscribe}
+            >
+              Subscribe with Stripe
+            </DenButton>
+            <p className="text-[13px] leading-5 text-gray-500">
+              $10/user/month · {props.memberCount > 0 ? `${props.memberCount} active member${props.memberCount === 1 ? "" : "s"}` : "billed per active member"} · cancel anytime
+            </p>
+          </div>
+          {props.isOwner ? null : (
+            <p className="mt-3 text-[13px] leading-5 text-amber-700">
+              Only workspace owners can subscribe. Ask an owner to enable OpenWork Models for your team.
+            </p>
+          )}
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+            Included models
+          </p>
+          <ul className="mt-3 divide-y divide-gray-100">
+            {MODEL_LINEUP.map((model) => (
+              <li key={model.id} className="py-2.5">
+                <p className="text-[14px] font-medium text-gray-900">{model.name}</p>
+                <p className="text-[12px] text-gray-500">{model.id}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function InferenceScreen() {
   const router = useRouter();
   const { activeOrg, orgContext, refreshOrgData } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isOwner = orgContext?.currentMember.isOwner === true;
 
   async function loadStatus() {
     setLoading(true);
@@ -179,6 +258,32 @@ export function InferenceScreen() {
   useEffect(() => {
     void loadStatus();
   }, [orgContext?.organization.id]);
+
+  // Subscribe at the point of value: start the Stripe checkout right here
+  // instead of bouncing the user to the billing page. Billing stays the
+  // status/portal view.
+  async function startSubscribeCheckout() {
+    setSubscribeBusy(true);
+    setError(null);
+    try {
+      const { response, payload } = await requestJson(
+        "/v1/billing/stripe/checkout",
+        { method: "POST", body: JSON.stringify({ type: "inference" }) },
+        12000,
+      );
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Checkout failed (${response.status}).`));
+      }
+      const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
+      if (!url) {
+        throw new Error("Checkout response did not include a URL.");
+      }
+      window.location.href = url;
+    } catch (checkoutError) {
+      setError(checkoutError instanceof Error ? checkoutError.message : "Could not start Stripe checkout.");
+      setSubscribeBusy(false);
+    }
+  }
 
   async function toggleEnabled() {
     if (!status) return;
@@ -214,8 +319,10 @@ export function InferenceScreen() {
   }
 
   const enabled = status?.enabled === true;
+  const subscribed = status?.subscribed === true;
+  const showValueProp = !loading && status !== null && !subscribed;
   const cardTitle = enabled ? "OpenWork Models enabled" : "Enable OpenWork Models";
-  const actionLabel = enabled ? "Manage subscription" : status?.subscribed === false ? "Subscribe" : "Enable";
+  const actionLabel = enabled ? "Manage subscription" : "Enable";
 
   return (
     <DashboardPageTemplate
@@ -232,21 +339,30 @@ export function InferenceScreen() {
           </div>
         ) : null}
 
-        <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-            <div className="max-w-[560px]">
-              <div className="mb-3 inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-blue-700">
-                {loading ? "Checking" : enabled ? "Enabled" : "Disabled"}
+        {showValueProp ? (
+          <ModelsValueProp
+            isOwner={isOwner}
+            memberCount={status?.memberCount ?? 0}
+            subscribeBusy={subscribeBusy}
+            onSubscribe={() => void startSubscribeCheckout()}
+          />
+        ) : (
+          <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
+            <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+              <div className="max-w-[560px]">
+                <div className="mb-3 inline-flex rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-blue-700">
+                  {loading ? "Checking" : enabled ? "Enabled" : "Disabled"}
+                </div>
+                <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950">
+                  {cardTitle}
+                </h2>
               </div>
-              <h2 className="text-[20px] font-medium tracking-[-0.3px] text-gray-950">
-                {cardTitle}
-              </h2>
+              <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
+                {actionLabel}
+              </DenButton>
             </div>
-            <DenButton type="button" onClick={toggleEnabled} loading={saving || loading} variant={enabled ? "secondary" : "primary"}>
-              {actionLabel}
-            </DenButton>
-          </div>
-        </section>
+          </section>
+        )}
 
         {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
       </div>

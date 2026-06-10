@@ -32,7 +32,11 @@ function billingReturnUrl(c: { req: { raw: Request } }) {
 }
 
 function checkoutSuccessUrl(c: { req: { raw: Request } }) {
-  return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}`
+  // `return=models` sends the user back to the OpenWork Models page after a
+  // successful inference checkout — that's where they subscribed from and
+  // where the unlocked value (the model lineup) is visible. The billing page
+  // remains the status/portal view.
+  return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}&return=models`
 }
 
 function appendSeatCheckoutParams(input: string) {

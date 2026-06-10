@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, CreditCard, Loader2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../../_components/ui/dashboard-page-template";
-import { getBillingRoute } from "../../../../../_lib/den-org";
+import { getBillingRoute, getInferenceRoute } from "../../../../../_lib/den-org";
 import { requestJson } from "../../../../../_lib/den-flow";
 import { useOrgDashboard } from "../../../../_providers/org-dashboard-provider";
 
@@ -25,7 +25,17 @@ export default function StripeCheckingPage() {
   const [failed, setFailed] = useState(false);
   const attemptsRef = useRef(0);
   const intervalRef = useRef<number | null>(null);
-  const billingRoute = getBillingRoute(activeOrg?.slug);
+  // Inference checkouts started from the OpenWork Models page carry
+  // `return=models` so the user lands back where they subscribed from and
+  // sees the value unlocked, not the billing status page. Read from
+  // window.location instead of useSearchParams to avoid the Suspense
+  // requirement on this client-only page.
+  const returnTarget = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("return")
+    : null;
+  const billingRoute = returnTarget === "models"
+    ? getInferenceRoute(activeOrg?.slug)
+    : getBillingRoute(activeOrg?.slug);
 
   useEffect(() => {
     let cancelled = false;
