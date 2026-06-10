@@ -162,6 +162,13 @@
       "when": 1781298097472,
       "tag": "0023_grandfather_enterprise_plans",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1781307676381,
+      "tag": "0024_violet_rawhide_kid",
+      "breakpoints": true
     }
   ]
 }
