@@ -9,7 +9,7 @@ import {
   type McpDirectoryInfo,
 } from "../../../app/constants";
 import { extensionResource } from "../../../app/extensions";
-import { mintCloudControlMcpToken, readDenSettings } from "../../../app/lib/den";
+import { isLegacyWebAppMcpUrl, mintCloudControlMcpToken, readDenSettings } from "../../../app/lib/den";
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
@@ -848,6 +848,13 @@ export function createConnectionsStore(options: {
     const entryUnhealthy = entryStatus === "needs_auth" || entryStatus === "failed";
     const shouldRemintForHealth = entryUnhealthy && !cloudMcpUnhealthyRemintAttempted;
 
+    // Builds before #2116's follow-up wrote the MCP URL against the bare
+    // web-app origin (https://app.openworklabs.com/mcp), which 404s.
+    // Reconfigure those entries even when the marker is still fresh.
+    const configuredEntry = snapshot.mcpServers.find((server) => server.name === slug);
+    const hasLegacyUrl =
+      configuredEntry?.config.type === "remote" && isLegacyWebAppMcpUrl(configuredEntry.config.url);
+
     // The marker is the source of truth for "configured recently". Do NOT
     // gate this on snapshot.mcpServers: the store is recreated on every
     // settings mount with an empty (or refresh-errored) server list, and
@@ -855,7 +862,7 @@ export function createConnectionsStore(options: {
     // on every visit — endless "Reload to connect" toasts. If a user
     // manually removed the entry, we respect that until the marker expires
     // instead of silently re-adding it.
-    if (markerFresh && !shouldRemintForHealth) {
+    if (markerFresh && !shouldRemintForHealth && !hasLegacyUrl) {
       return "unchanged";
     }
     if (shouldRemintForHealth) {

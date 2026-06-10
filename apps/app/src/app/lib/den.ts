@@ -514,6 +514,35 @@ function isWebAppHost(hostname: string): boolean {
   );
 }
 
+/**
+ * Hosted web-app hosts (`app.openworklabs.com`, `app.openwork.software`,
+ * `app.*`) never serve the Den API at their root — only behind the
+ * `/api/den` proxy. Loopback/private hosts are excluded on purpose: in dev
+ * an explicit apiBaseUrl may point directly at den-api.
+ */
+function isHostedWebAppHost(hostname: string): boolean {
+  return hostname.trim().toLowerCase().startsWith("app.");
+}
+
+/**
+ * Older builds persisted the bare web-app origin as the API base URL
+ * (bootstrap file and localStorage). Requests against that origin 404 —
+ * notably the cloud MCP at `https://app.openworklabs.com/mcp`. Heal such
+ * values by routing them through the web app's `/api/den` proxy.
+ */
+function healWebAppApiBaseUrl(input: string | null): string | null {
+  if (!input) return null;
+  try {
+    const url = new URL(input);
+    if (isHostedWebAppHost(url.hostname)) {
+      return ensureDenApiBasePath(input);
+    }
+  } catch {
+    // Not a URL — leave untouched.
+  }
+  return input;
+}
+
 function stripDenApiBasePath(input: string | null | undefined): string | null {
   const normalized = normalizeDenBaseUrl(input);
   if (!normalized) return null;
@@ -579,8 +608,34 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
 
   return {
     baseUrl: stripDenApiBasePath(normalizedBaseUrl ?? seedUrl) ?? DEFAULT_DEN_BASE_URL,
-    apiBaseUrl: normalizedApiBaseUrl ?? deriveDenApiBaseUrl(seedUrl),
+    apiBaseUrl: healWebAppApiBaseUrl(normalizedApiBaseUrl) ?? deriveDenApiBaseUrl(seedUrl),
   };
+}
+
+/**
+ * The MCP endpoint served by den-api, resolved from the bootstrap config.
+ * On the hosted web app this goes through the `/api/den` proxy
+ * (`https://app.openworklabs.com/api/den/mcp`); a direct API origin maps to
+ * `<apiBaseUrl>/mcp` (canonically `https://api.openworklabs.com/mcp`).
+ */
+export function getDenMcpUrl(): string {
+  const { apiBaseUrl } = resolveDenBaseUrls(readDenBootstrapConfig());
+  return `${apiBaseUrl.replace(/\/+$/, "")}/mcp`;
+}
+
+/**
+ * Detects MCP URLs written by older builds that pointed `/mcp` at the bare
+ * web-app origin (e.g. `https://app.openworklabs.com/mcp`). Nothing serves
+ * MCP there — those entries fail with a 404 and must be reconfigured.
+ */
+export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean {
+  if (!input) return false;
+  try {
+    const url = new URL(input);
+    return isHostedWebAppHost(url.hostname) && url.pathname.replace(/\/+$/, "") === "/mcp";
+  } catch {
+    return false;
+  }
 }
 
 function resolveDenBootstrapConfig(

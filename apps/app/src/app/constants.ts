@@ -1,6 +1,6 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 import { t } from "../i18n";
-import { readDenBootstrapConfig } from "./lib/den";
+import { getDenMcpUrl } from "./lib/den";
 import {
   BUILT_IN_OPENWORK_EXTENSION_MANIFESTS,
   extensionContribution,
@@ -150,10 +150,11 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
-      // The Den MCP server is hosted on the API origin (see
-      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx), not the web app.
+      // The Den MCP server is hosted by den-api (see
+      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx), never at the
+      // web app's root — getDenMcpUrl heals stale web-app origins.
       try {
-        return `${readDenBootstrapConfig().apiBaseUrl.replace(/\/+$/, "")}/mcp`;
+        return getDenMcpUrl();
       } catch {
         return "https://api.openworklabs.com/mcp";
       }
