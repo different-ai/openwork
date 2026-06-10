@@ -28,6 +28,7 @@ import {
   type WorkerListItem,
 } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ConnectionDetails = {
   openworkUrl: string | null;
@@ -302,6 +303,7 @@ export function BackgroundAgentsScreen() {
     renameWorker,
     renameBusyWorkerId,
   } = useDenFlow();
+  const { orgId } = useOrgDashboard();
 
   async function loadConnectionDetails(workerId: string, workerName: string) {
     setConnectBusyWorkerId(workerId);
@@ -338,13 +340,27 @@ export function BackgroundAgentsScreen() {
           tokens.clientToken,
           workerId,
           workerName,
-          { autoConnect: true },
+          {
+            autoConnect: true,
+            clientToken: tokens.clientToken,
+            hostToken: tokens.hostToken,
+            denBaseUrl: window.location.origin,
+            denApiBaseUrl: `${window.location.origin}/api/den`,
+            denOrgId: orgId,
+          },
         ),
         openworkDeepLink: buildOpenworkDeepLink(
           tokens.openworkUrl,
           tokens.clientToken,
           workerId,
           workerName,
+          {
+            clientToken: tokens.clientToken,
+            hostToken: tokens.hostToken,
+            denBaseUrl: window.location.origin,
+            denApiBaseUrl: `${window.location.origin}/api/den`,
+            denOrgId: orgId,
+          },
         ),
       };
 

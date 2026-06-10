@@ -2144,6 +2144,7 @@ function normalizeWorkspaceEntry(input) {
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
     openworkDenBaseUrl: input.openworkDenBaseUrl ?? null,
+    openworkDenApiBaseUrl: input.openworkDenApiBaseUrl ?? null,
     openworkDenOrgId: input.openworkDenOrgId ?? null,
     openworkDenWorkerId: input.openworkDenWorkerId ?? null,
     sandboxBackend: input.sandboxBackend ?? null,
@@ -2513,7 +2514,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
         const discovered = await discoverOpenworkWorkspace({
           hostUrl: openworkHostUrl ?? baseUrl,
-          token: input.openworkToken,
+          token: input.openworkClientToken ?? input.openworkToken,
+          hostToken: input.openworkHostToken,
           directory,
         });
         if (!discovered?.id) {
@@ -2546,6 +2548,7 @@ async function handleDesktopInvoke(event, command, ...args) {
         openworkWorkspaceId: resolvedOpenworkWorkspaceId,
         openworkWorkspaceName: resolvedOpenworkWorkspaceName,
         openworkDenBaseUrl: input.openworkDenBaseUrl ?? null,
+        openworkDenApiBaseUrl: input.openworkDenApiBaseUrl ?? null,
         openworkDenOrgId: input.openworkDenOrgId ?? null,
         openworkDenWorkerId: input.openworkDenWorkerId ?? null,
         sandboxBackend: input.sandboxBackend ?? null,
@@ -2590,7 +2593,8 @@ async function handleDesktopInvoke(event, command, ...args) {
           if (!remoteWorkspaceId) {
             const discovered = await discoverOpenworkWorkspace({
               hostUrl: hostUrl ?? nextBaseUrl,
-              token: nextWorkspace.openworkToken,
+              token: nextWorkspace.openworkClientToken ?? nextWorkspace.openworkToken,
+              hostToken: nextWorkspace.openworkHostToken,
               directory,
             });
             if (!discovered?.id) {

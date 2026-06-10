@@ -300,6 +300,7 @@ export function ResourceSelectionPage() {
       openworkClientToken: tokens.clientToken?.trim() || null,
       openworkHostToken: tokens.hostToken?.trim() || null,
       openworkDenBaseUrl: settings.baseUrl,
+      openworkDenApiBaseUrl: settings.apiBaseUrl,
       openworkDenOrgId: orgId,
       openworkDenWorkerId: healthyWorker.workerId,
       displayName: healthyWorker.workerName,

@@ -1997,6 +1997,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     openworkClientToken?: string | null;
     openworkHostToken?: string | null;
     openworkDenBaseUrl?: string | null;
+    openworkDenApiBaseUrl?: string | null;
     openworkDenOrgId?: string | null;
     openworkDenWorkerId?: string | null;
     directory?: string | null;
@@ -2015,6 +2016,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         openworkClientToken: input.openworkClientToken?.trim() || null,
         openworkHostToken: input.openworkHostToken?.trim() || null,
         openworkDenBaseUrl: input.openworkDenBaseUrl?.trim() || null,
+        openworkDenApiBaseUrl: input.openworkDenApiBaseUrl?.trim() || null,
         openworkDenOrgId: input.openworkDenOrgId?.trim() || null,
         openworkDenWorkerId: input.openworkDenWorkerId?.trim() || null,
         displayName: input.displayName?.trim() || null,

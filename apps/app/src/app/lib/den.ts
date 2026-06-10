@@ -674,9 +674,11 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   // boot are more trustworthy than build defaults, and clobbering them
   // silently reverted custom/self-hosted control planes to the production
   // URL until a manual reload.
+  const storedBaseUrl = typeof window === "undefined" ? null : window.localStorage.getItem(STORAGE_BASE_URL);
+  const storedApiBaseUrl = typeof window === "undefined" ? null : window.localStorage.getItem(STORAGE_API_BASE_URL);
   desktopBootstrapConfig = resolveDenBootstrapConfig({
-    baseUrl: BUILD_DEN_BASE_URL,
-    apiBaseUrl: BUILD_DEN_API_BASE_URL,
+    baseUrl: storedBaseUrl ?? BUILD_DEN_BASE_URL,
+    apiBaseUrl: storedApiBaseUrl ?? BUILD_DEN_API_BASE_URL,
     requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
   });
 

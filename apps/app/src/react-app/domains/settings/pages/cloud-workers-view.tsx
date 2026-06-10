@@ -17,6 +17,7 @@ export type CloudWorkersViewProps = {
     openworkClientToken?: string | null;
     openworkHostToken?: string | null;
     openworkDenBaseUrl?: string | null;
+    openworkDenApiBaseUrl?: string | null;
     openworkDenOrgId?: string | null;
     openworkDenWorkerId?: string | null;
     directory?: string | null;
@@ -29,7 +30,7 @@ export function CloudWorkersView({
   connectRemoteWorkspace,
   onOpenAccount,
 }: CloudWorkersViewProps) {
-  const { activeOrganization: activeOrg, authToken, baseUrl, client, isSignedIn, user } = useCloudSession();
+  const { activeOrganization: activeOrg, apiBaseUrl, authToken, baseUrl, client, isSignedIn, user } = useCloudSession();
   const [workersBusy, setWorkersBusy] = React.useState(false);
   const [openingWorkerId, setOpeningWorkerId] = React.useState<string | null>(null);
   const [attachBusy, setAttachBusy] = React.useState(false);
@@ -106,6 +107,7 @@ export function CloudWorkersView({
           openworkClientToken: tokens.clientToken?.trim() || null,
           openworkHostToken: tokens.hostToken?.trim() || null,
           openworkDenBaseUrl: baseUrl,
+          openworkDenApiBaseUrl: apiBaseUrl,
           openworkDenOrgId: activeOrgId,
           openworkDenWorkerId: workerId,
           directory: null,
