@@ -283,7 +283,7 @@ async function listMembershipRows(userId: UserId) {
   return db
     .select()
     .from(MemberTable)
-    .where(eq(MemberTable.userId, userId))
+    .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 }
 
@@ -895,7 +895,7 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
-    .where(eq(MemberTable.userId, userId))
+    .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
   const organizationIds = memberships.map((row) => row.organization.id)
@@ -985,7 +985,7 @@ export async function getOrganizationContextForUser(input: {
     .limit(1)
 
   const currentMember = currentMemberRows[0]
-  if (!currentMember) {
+  if (!currentMember?.userId) {
     return null
   }
 
@@ -994,7 +994,7 @@ export async function getOrganizationContextForUser(input: {
   const members = await db
     .select({
       id: MemberTable.id,
-      userId: MemberTable.userId,
+      userId: AuthUserTable.id,
       role: MemberTable.role,
       createdAt: MemberTable.createdAt,
       user: {
@@ -1006,7 +1006,7 @@ export async function getOrganizationContextForUser(input: {
     })
     .from(MemberTable)
     .innerJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-    .where(eq(MemberTable.organizationId, organization.id))
+    .where(and(eq(MemberTable.organizationId, organization.id), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
   const invitations = await db
