@@ -1132,9 +1132,22 @@ function createBrowserTab(url = "about:blank", { select = true } = {}) {
     return { action: "deny" };
   });
   view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace && targetUrl !== "about:blank") {
-      sendToRenderer("openwork:browser:panel-opened");
+    if (!isMainFrame || isInPlace) return;
+    const target = String(targetUrl ?? "");
+    // data: loads are internal plumbing (CDP target-marker pages), not
+    // user-visible navigations — don't surface the panel for them.
+    if (target === "about:blank" || target.startsWith("data:")) return;
+    // Agent-driven CDP navigation can target a background tab whose view is
+    // detached. Bring that tab on screen, otherwise navigation "succeeds"
+    // while the visible tab stays on about:blank (#2015).
+    if (activeBrowserTabId !== tabId) {
+      try {
+        selectBrowserTab(tabId);
+      } catch {
+        // The tab may be mid-close; the panel-opened event below still fires.
+      }
     }
+    sendToRenderer("openwork:browser:panel-opened");
   });
   view.webContents.on("did-navigate", () => sendBrowserState());
   view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -3102,6 +3115,23 @@ async function createMainWindow() {
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (isMainWindowAllowedNavigation(url)) return;
     event.preventDefault();
+    routeBlockedMainWindowNavigation(url);
+  });
+
+  // `will-navigate` does NOT fire for CDP `Page.navigate` (it behaves like
+  // loadURL), so agent automation that picks the wrong CDP target — the app
+  // window itself is the first page target when no browser tab exists — used
+  // to replace the entire workspace UI with the website, with no way back
+  // (#2000). Catch those at `did-start-navigation`, cancel the load, and
+  // reroute the URL into a built-in browser tab instead.
+  mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (!isMainFrame || isInPlace) return;
+    if (isMainWindowAllowedNavigation(url)) return;
+    try {
+      mainWindow?.webContents.stop();
+    } catch {
+      // best effort — routing below still gives the user a way back
+    }
     routeBlockedMainWindowNavigation(url);
   });
 
