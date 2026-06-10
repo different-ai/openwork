@@ -70,7 +70,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[] } = {}) {
+async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; connected?: string[]; initialAuth?: Record<string, unknown> } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -78,18 +78,25 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
 
   const authCalls: Array<{ method: string; path: string; body: unknown }> = [];
   const failedDeletePaths = new Set<string>();
+  const authStore = new Map(Object.entries(options.initialAuth ?? {}));
   const opencode = Bun.serve({
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/auth/")) {
-        const body = request.method === "DELETE" ? null : await request.json();
+        const body = request.method === "DELETE" || request.method === "GET" ? null : await request.json();
         authCalls.push({ method: request.method, path: url.pathname, body });
+        if (request.method === "GET") {
+          if (!authStore.has(url.pathname)) return Response.json({ error: "not_found" }, { status: 404 });
+          return Response.json(authStore.get(url.pathname));
+        }
         const shouldFailDeleteOnce = request.method === "DELETE" && url.pathname === options.failAuthDeletePathOnce && !failedDeletePaths.has(url.pathname);
         if (shouldFailDeleteOnce) failedDeletePaths.add(url.pathname);
         if (options.failAuth || url.pathname === options.failAuthPath || (request.method === "DELETE" && url.pathname === options.failAuthDeletePath) || shouldFailDeleteOnce) {
           return Response.json({ error: "bad plain-server-secret access-secret refresh-secret" }, { status: 500 });
         }
+        if (request.method === "DELETE") authStore.delete(url.pathname);
+        if (request.method === "PUT") authStore.set(url.pathname, body);
         return Response.json({ ok: true });
       }
       if (url.pathname === "/config/providers") {
@@ -157,7 +164,7 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
-  return { base: `http://127.0.0.1:${server.port}`, workspace, authCalls };
+  return { base: `http://127.0.0.1:${server.port}`, workspace, authCalls, authStore };
 }
 
 function readManagedProviderMetadata(workspace: string) {
@@ -222,13 +229,13 @@ describe("managed provider sync runtime route", () => {
     expect(config).not.toContain('"modes"');
     expect(config).not.toContain('"knowledge"');
     expect(config).not.toContain("plain-server-secret");
-    expect(authCalls).toHaveLength(4);
-    expect(authCalls[0]?.method).toBe("PUT");
-    expect(authCalls[0]?.path).toBe("/auth/lpr_den_nvidia");
-    expect(authCalls[0]?.body).toEqual({ type: "api", key: "plain-server-secret" });
-    expect(authCalls[1]?.method).toBe("PUT");
-    expect(authCalls[1]?.path).toBe("/auth/openai");
-    expect(authCalls[1]?.body).toEqual({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 });
+    const putCalls = authCalls.filter((call) => call.method === "PUT");
+    expect(authCalls.filter((call) => call.method === "GET")).toHaveLength(4);
+    expect(putCalls).toHaveLength(4);
+    expect(putCalls[0]?.path).toBe("/auth/lpr_den_nvidia");
+    expect(putCalls[0]?.body).toEqual({ type: "api", key: "plain-server-secret" });
+    expect(putCalls[1]?.path).toBe("/auth/openai");
+    expect(putCalls[1]?.body).toEqual({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 });
   });
 
   test("filters managed OAuth provider-list models to Den-selected config models", async () => {
@@ -408,6 +415,24 @@ describe("managed provider sync runtime route", () => {
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
     expect(authCalls.some((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
+  });
+
+  test("failure on a later provider restores previous working auth written earlier in the same attempt", async () => {
+    const previousAuth = { type: "api", key: "previous-working-key" };
+    const { base, authCalls, authStore } = await boot({
+      failAuthPath: "/auth/openai",
+      initialAuth: { "/auth/lpr_den_nvidia": previousAuth },
+    });
+    const response = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(response.status).toBe(502);
+    expect(authStore.get("/auth/lpr_den_nvidia")).toEqual(previousAuth);
+    expect(authCalls.some((call) => call.method === "GET" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
+    expect(authCalls.filter((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toHaveLength(2);
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(false);
   });
 
   test("stale auth deletion failure does not restore config that references stale providers", async () => {

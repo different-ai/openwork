@@ -2476,13 +2476,13 @@ function createRoutes(
     for (const providerId of currentManagedProviderIds) revokedManagedProviderIds.delete(providerId);
 
     const applied: string[] = [];
-    const authApplied: string[] = [];
+    const previousAuthByProviderId = new Map<string, unknown | null>();
     try {
       await applyManagedProviderConfigSet(workspace.path, payload.providers, previousManagedProviderIds);
       for (const provider of payload.providers) {
-        await applyManagedProviderAuth(config, workspace, provider);
         const providerId = getManagedProviderRuntimeId(provider);
-        authApplied.push(providerId);
+        previousAuthByProviderId.set(providerId, await readManagedProviderAuth(config, workspace, providerId));
+        await applyManagedProviderAuth(config, workspace, provider);
         applied.push(providerId);
       }
     } catch (error) {
@@ -2491,7 +2491,7 @@ function createRoutes(
       } else {
         await writeFile(opencodeConfigFile, opencodeConfigBefore, "utf8");
       }
-      await rollbackAppliedManagedProviderAuth(config, workspace, authApplied);
+      await rollbackAppliedManagedProviderAuth(config, workspace, previousAuthByProviderId);
       return jsonResponse({
         status: "failed",
         providerCount: applied.length,
@@ -5171,6 +5171,19 @@ async function applyManagedProviderAuth(config: ServerConfig, workspace: Workspa
   });
 }
 
+async function readManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string) {
+  try {
+    return await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+      method: "GET",
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "opencode_request_failed" && isRecordValue(error.details) && error.details.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function deleteManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string) {
   try {
     await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
@@ -5184,12 +5197,23 @@ async function deleteManagedProviderAuth(config: ServerConfig, workspace: Worksp
   }
 }
 
-async function rollbackAppliedManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerIds: string[]) {
-  await Promise.all(providerIds.map(async (providerId) => {
+async function restoreManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, providerId: string, previousAuth: unknown | null) {
+  if (previousAuth === null) {
+    await deleteManagedProviderAuth(config, workspace, providerId);
+    return;
+  }
+  await fetchOpencodeJson(config, workspace, `/auth/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: previousAuth,
+  });
+}
+
+async function rollbackAppliedManagedProviderAuth(config: ServerConfig, workspace: WorkspaceInfo, previousAuthByProviderId: Map<string, unknown | null>) {
+  await Promise.all([...previousAuthByProviderId.entries()].map(async ([providerId, previousAuth]) => {
     try {
-      await deleteManagedProviderAuth(config, workspace, providerId);
+      await restoreManagedProviderAuth(config, workspace, providerId, previousAuth);
     } catch {
-      // Best-effort cleanup. The sync response remains failed and sanitized.
+      // Best-effort restoration. The sync response remains failed and sanitized.
     }
   }));
 }

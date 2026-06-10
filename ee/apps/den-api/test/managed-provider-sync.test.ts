@@ -124,3 +124,30 @@ test("managed provider revision is stable and redaction helper removes token-sha
   expect(managedProviderModule.computeManagedProviderRevision([{ id: "b", revision: "2" }, { id: "a", revision: "1" }])).toBe("a:1|b:2")
   expect(managedProviderModule.sanitizeManagedProviderSyncFailure({ message: "bad plain-secret access-token refresh-token" })).toBe("Worker provider sync failed.")
 })
+
+test("managed provider runtime sync targets only current healthy worker instances", () => {
+  expect(workersSharedModule.isWorkerRuntimeSyncTarget({
+    workerStatus: "healthy",
+    instanceStatus: "healthy",
+    instanceUrl: "https://worker.example.com",
+    hostToken: "host-token",
+  })).toBe(true)
+  expect(workersSharedModule.isWorkerRuntimeSyncTarget({
+    workerStatus: "failed",
+    instanceStatus: "healthy",
+    instanceUrl: "https://worker.example.com",
+    hostToken: "host-token",
+  })).toBe(false)
+  expect(workersSharedModule.isWorkerRuntimeSyncTarget({
+    workerStatus: "healthy",
+    instanceStatus: "failed",
+    instanceUrl: "https://stale-reservation.example.com",
+    hostToken: "host-token",
+  })).toBe(false)
+  expect(workersSharedModule.isWorkerRuntimeSyncTarget({
+    workerStatus: "healthy",
+    instanceStatus: "healthy",
+    instanceUrl: "",
+    hostToken: "host-token",
+  })).toBe(false)
+})
