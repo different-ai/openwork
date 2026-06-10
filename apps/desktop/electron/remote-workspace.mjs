@@ -87,3 +87,23 @@ export function isDesktopFetchAllowedForWorkspaces(url, workspaces) {
   }
   return false;
 }
+
+export function isDesktopFetchAllowedForDenBootstrap(url, bootstrapConfig) {
+  let parsed;
+  try {
+    parsed = new URL(trim(url));
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) return false;
+
+  for (const candidate of [bootstrapConfig?.baseUrl, bootstrapConfig?.apiBaseUrl]) {
+    if (!candidate) continue;
+    try {
+      if (new URL(trim(candidate)).origin === parsed.origin) return true;
+    } catch {
+      // Ignore malformed bootstrap values; they are not valid fetch targets.
+    }
+  }
+  return false;
+}

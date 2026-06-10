@@ -16,6 +16,7 @@ import {
 } from "./den-session-events";
 import {
   desktopFetch,
+  desktopFetchViaMain,
   getDesktopBootstrapConfig as getDesktopBootstrapConfigFromShell,
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
@@ -1795,17 +1796,16 @@ async function requestJsonRaw<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetchWithTimeout(
-    resolveFetch(),
-    url,
-    {
-      method: options.method ?? "GET",
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: "include",
-    },
-    options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
-  );
+  const requestInit = {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    credentials: "include",
+  } satisfies RequestInit;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS;
+  const response = isDesktopRuntime()
+    ? await desktopFetchViaMain(url, requestInit, timeoutMs)
+    : await fetchWithTimeout(resolveFetch(), url, requestInit, timeoutMs);
 
   const text = await response.text();
   let json: T | null = null;

@@ -26,6 +26,7 @@ import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import {
+  isDesktopFetchAllowedForDenBootstrap,
   isDesktopFetchAllowedForWorkspaces,
   openworkWorkspaceDisplayName,
   selectOpenworkWorkspaceForConnection,
@@ -3001,12 +3002,15 @@ async function handleDesktopInvoke(event, command, ...args) {
         throw new Error("Desktop fetch only supports HTTP(S) URLs.");
       }
       const state = await readWorkspaceState();
-      if (!isDesktopFetchAllowedForWorkspaces(parsed.toString(), state.workspaces)) {
+      const bootstrap = await getDesktopBootstrapConfig();
+      if (!isDesktopFetchAllowedForWorkspaces(parsed.toString(), state.workspaces)
+        && !isDesktopFetchAllowedForDenBootstrap(parsed.toString(), bootstrap)) {
         throw new Error("Desktop fetch is limited to configured remote workspace origins.");
       }
       const timeoutMs = Number(init.timeoutMs);
       const response = await fetch(url, {
         method: typeof init.method === "string" ? init.method : undefined,
+        redirect: "manual",
         headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
         body: typeof init.body === "string" ? init.body : undefined,
         signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,

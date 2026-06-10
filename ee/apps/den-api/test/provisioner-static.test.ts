@@ -647,6 +647,112 @@ test("static worker token discovery pins the validated address before sending cl
   }
 })
 
+test("static runtime fetch does not forward host token across redirects", async () => {
+  const redirectedRequests: string[] = []
+  const redirectTarget = Bun.serve({
+    port: 0,
+    fetch(request) {
+      redirectedRequests.push(request.headers.get("x-openwork-host-token") ?? "")
+      return Response.json({ ok: true })
+    },
+  })
+  const redirectSource = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(null, {
+        status: 307,
+        headers: { location: `http://127.0.0.1:${redirectTarget.port}/sink` },
+      })
+    },
+  })
+  try {
+    tokenQueryRows = [
+      { scope: "host", token: "valid-host-token" },
+      { scope: "client", token: "valid-client-token" },
+    ]
+    instanceQueryRows = [{ provider: "static", url: `http://localhost:${redirectSource.port}` }]
+
+    const response = await workersSharedModule.fetchWorkerRuntimeJson({
+      workerId: "worker_static_runtime_redirect_123" as never,
+      path: "/runtime/upgrade",
+      method: "POST",
+      body: { providerToken: "secret" },
+    })
+
+    expect(response.ok).toBe(false)
+    expect(response.status).toBe(307)
+    expect(redirectedRequests).toEqual([])
+  } finally {
+    tokenQueryRows = []
+    instanceQueryRows = []
+    redirectSource.stop(true)
+    redirectTarget.stop(true)
+  }
+})
+
+test("static runtime versions uses the client bearer token", async () => {
+  const seenAuthorization: string[] = []
+  const runtimeServer = Bun.serve({
+    port: 0,
+    fetch(request) {
+      seenAuthorization.push(request.headers.get("authorization") ?? "")
+      return Response.json({ versions: [] })
+    },
+  })
+  try {
+    tokenQueryRows = [
+      { scope: "host", token: "valid-host-token" },
+      { scope: "client", token: "valid-client-token" },
+    ]
+    instanceQueryRows = [{ provider: "static", url: `http://localhost:${runtimeServer.port}` }]
+
+    const response = await workersSharedModule.fetchWorkerRuntimeJson({
+      workerId: "worker_static_runtime_versions_123" as never,
+      path: "/runtime/versions",
+      auth: "client",
+    })
+
+    expect(response.ok).toBe(true)
+    expect(seenAuthorization).toEqual(["Bearer valid-client-token"])
+  } finally {
+    tokenQueryRows = []
+    instanceQueryRows = []
+    runtimeServer.stop(true)
+  }
+})
+
+test("static token reads are limited to creator, owners, and admins", () => {
+  const creatorId = createDenTypeId("user")
+  const otherUserId = createDenTypeId("user")
+  const worker = { created_by_user_id: creatorId }
+
+  expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: creatorId, currentMember: { isOwner: false, role: "member" } })).toBe(true)
+  expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: true, role: "member" } })).toBe(true)
+  expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: false, role: "admin" } })).toBe(true)
+  expect(workersSharedModule.canReadStaticWorkerTokensForMember({ worker, userId: otherUserId, currentMember: { isOwner: false, role: "member" } })).toBe(false)
+})
+
+test("static pool health checks preserve pinned host headers", async () => {
+  const seenHosts: string[] = []
+  const pinServer = Bun.serve({
+    port: 0,
+    fetch(request) {
+      seenHosts.push(request.headers.get("host") ?? "")
+      return Response.json({ ok: true })
+    },
+  })
+  try {
+    await provisionerModule.checkStaticWorkerHealth({
+      url: `http://127.0.0.1:${pinServer.port}`,
+      headers: { Host: `worker-static.test:${pinServer.port}` },
+    }, staticWorkerConfig())
+
+    expect(seenHosts).toEqual([`worker-static.test:${pinServer.port}`])
+  } finally {
+    pinServer.stop(true)
+  }
+})
+
 test("static attach verification keeps HTTPS hostname for certificate validation", async () => {
   const originalFetch = globalThis.fetch
   const requestedUrls: string[] = []

@@ -125,10 +125,11 @@ export DEN_CORS_ORIGINS=$DEN_WEB_ORIGIN
 export DEN_STATIC_WORKER_URLS=http://worker-01.company.local:8787,http://worker-02.company.local:8787
 export DEN_STATIC_WORKER_HEALTH_PATH=/health
 export DEN_STATIC_WORKER_HEALTHCHECK_TIMEOUT_MS=10000
-# Optional: only needed if operators will use the admin static-attach fallback with LAN/private URLs.
+# Required for LAN/private static worker URLs used by the static pool or admin static-attach.
+# Prefer the narrowest CIDR that covers the resolved worker IPs.
 export DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=false
-export DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS=
-export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=
+export DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS=worker-01.company.local,worker-02.company.local
+export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=10.0.0.0/8
 export DEN_BETTER_AUTH_SECRET='<better-auth-secret>'
 export DEN_DB_ENCRYPTION_KEY='<db-encryption-key>'
 export DEN_MYSQL_ROOT_PASSWORD='<mysql-root-password>'
@@ -147,7 +148,7 @@ docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-sta
 
 When worker containers receive `OPENWORK_TOKEN` and `OPENWORK_HOST_TOKEN` from environment variables or a secret manager, those supplied values remain runtime-only and are not persisted by the image. Only generated fallback token values are written to `/data/openwork-worker.env`, and that fallback should be used only for development or an operator-approved bootstrap.
 
-`DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true` allows admin static-attach requests for LAN/private URLs. Prefer `DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS` or `DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS` when you only need to allow specific internal workers.
+`DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true` allows LAN/private worker URLs broadly. Prefer `DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS` when you only need to allow specific internal worker networks. `DEN_STATIC_WORKER_ATTACH_ALLOWED_HOSTS` is still useful for explicit HTTPS hostnames, but private resolved IPs require either a matching CIDR or `DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true`.
 
 ## Verify Deployment
 
@@ -179,11 +180,11 @@ Configure SMTP or Resend before the first real sign-up so the verification email
 
 After the first account is verified, create the first organization.
 
-When the first organization is created in `static` mode and `DEN_STATIC_WORKER_URLS` is not empty, Den automatically attempts to create one default shared/static worker for that organization.
+When a shared/static worker is created in `static` mode and `DEN_STATIC_WORKER_URLS` is not empty, Den allocates one configured worker URL for that organization.
 
 Expected behavior:
 
-- Den picks the first free worker URL from `DEN_STATIC_WORKER_URLS`
+- Den picks one currently free worker URL from `DEN_STATIC_WORKER_URLS` using deterministic worker-id based selection
 - Den calls `/health` on that worker URL
 - Den verifies the configured client token against `/workspaces` using `Authorization: Bearer <client-token>`
 - Den verifies the configured host token against `/env/keys` using `X-OpenWork-Host-Token: <host-token>`

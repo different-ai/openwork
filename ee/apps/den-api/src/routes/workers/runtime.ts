@@ -1,10 +1,10 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { jsonValidator, paramValidator, requireUserMiddleware, resolveUserOrganizationsMiddleware } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { WorkerRouteVariables } from "./shared.js"
-import { fetchWorkerRuntimeJson, getWorkerByIdForOrg, parseWorkerIdParam, workerIdParamSchema } from "./shared.js"
+import { canReadStaticWorkerTokensForMember, fetchWorkerRuntimeJson, getLatestWorkerInstance, getWorkerByIdForOrg, parseWorkerIdParam, workerIdParamSchema } from "./shared.js"
 
 const workerRuntimeResponseSchema = z.object({}).passthrough().meta({ ref: "WorkerRuntimeResponse" })
 
@@ -19,14 +19,17 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
         200: jsonResponse("Worker runtime information returned successfully.", workerRuntimeResponseSchema),
         400: jsonResponse("The worker runtime path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to read worker runtime information.", unauthorizedSchema),
+        403: jsonResponse("Only the worker creator, organization owners, and admins can access static worker runtime operations.", forbiddenSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
     requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    resolveOrganizationContextMiddleware,
     paramValidator(workerIdParamSchema),
     async (c) => {
+    const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
+    const organizationContext = c.get("organizationContext")
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -45,9 +48,19 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
       return c.json({ error: "worker_not_found" }, 404)
     }
 
+    const instance = await getLatestWorkerInstance(worker.id)
+    if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
+      worker,
+      userId: user.id,
+      currentMember: organizationContext?.currentMember,
+    })) {
+      return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
+    }
+
     const runtime = await fetchWorkerRuntimeJson({
       workerId: worker.id,
       path: "/runtime/versions",
+      auth: "client",
     })
 
     return new Response(JSON.stringify(runtime.payload), {
@@ -69,15 +82,18 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
         200: jsonResponse("Worker runtime upgrade request completed successfully.", workerRuntimeResponseSchema),
         400: jsonResponse("The runtime upgrade request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to upgrade a worker runtime.", unauthorizedSchema),
+        403: jsonResponse("Only the worker creator, organization owners, and admins can access static worker runtime operations.", forbiddenSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
       },
     }),
     requireUserMiddleware,
-    resolveUserOrganizationsMiddleware,
+    resolveOrganizationContextMiddleware,
     paramValidator(workerIdParamSchema),
     jsonValidator(z.object({}).passthrough()),
     async (c) => {
+    const user = c.get("user")
     const orgId = c.get("activeOrganizationId")
+    const organizationContext = c.get("organizationContext")
     const params = c.req.valid("param")
     const body = c.req.valid("json")
 
@@ -95,6 +111,15 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
     const worker = await getWorkerByIdForOrg(workerId, orgId)
     if (!worker) {
       return c.json({ error: "worker_not_found" }, 404)
+    }
+
+    const instance = await getLatestWorkerInstance(worker.id)
+    if (instance?.provider === "static" && !canReadStaticWorkerTokensForMember({
+      worker,
+      userId: user.id,
+      currentMember: organizationContext?.currentMember,
+    })) {
+      return c.json({ error: "forbidden", message: "Only the worker creator, organization owners, and admins can access static worker runtime operations." }, 403)
     }
 
     const runtime = await fetchWorkerRuntimeJson({

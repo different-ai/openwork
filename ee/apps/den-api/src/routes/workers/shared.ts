@@ -19,6 +19,7 @@ import { db, dbClient } from "../../db.js"
 import { env } from "../../env.js"
 import type { OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
+import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
   checkStaticWorkerHealth,
@@ -29,6 +30,7 @@ import {
   selectStaticWorkerUrlFromPool,
   verifyStaticWorkerRuntimeAccess,
 } from "../../workers/provisioner.js"
+import { fetchStaticHttpTarget } from "../../workers/static-fetch.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 
 export const createWorkerSchema = z.object({
@@ -130,6 +132,14 @@ export type ValidatedStaticWorkerAttachUrl = {
 
 export function canAttachStaticWorkerForMember(payload: { currentMember: { isOwner: boolean; role: string } }) {
   return payload.currentMember.isOwner || payload.currentMember.role.split(",").map((role) => role.trim()).includes("admin")
+}
+
+export function canReadStaticWorkerTokensForMember(payload: {
+  worker: Pick<WorkerRow, "created_by_user_id">
+  userId: UserId
+  currentMember?: { isOwner: boolean; role: string } | null
+}) {
+  return payload.worker.created_by_user_id === payload.userId || (payload.currentMember ? canAttachStaticWorkerForMember({ currentMember: payload.currentMember }) : false)
 }
 
 function parseIpv4(value: string) {
@@ -406,8 +416,10 @@ async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: str
     if (staticWorker && !staticTarget) {
       return null
     }
-    const response = await fetch(`${staticTarget?.url ?? baseUrl}/workspaces`, {
+    const response = await fetchStaticHttpTarget(`${staticTarget?.url ?? baseUrl}/workspaces`, {
       method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(env.staticWorkers.healthcheckTimeoutMs),
       headers: {
         Accept: "application/json",
         ...(staticTarget?.headers ?? {}),
@@ -497,13 +509,15 @@ async function getWorkerRuntimeAccess(workerId: WorkerId) {
     .orderBy(asc(WorkerTokenTable.created_at))
 
   const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
-  if (!instance?.url || !hostToken) {
+  const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
+  if (!instance?.url || !hostToken || !clientToken) {
     return null
   }
 
   return {
     instance,
     hostToken,
+    clientToken,
     candidates: getConnectUrlCandidates(workerId, instance.url),
   }
 }
@@ -542,6 +556,7 @@ export async function fetchWorkerRuntimeJson(input: {
   path: string
   method?: "GET" | "POST"
   body?: unknown
+  auth?: "client" | "host"
 }) {
   const access = await getWorkerRuntimeAccess(input.workerId)
   if (!access) {
@@ -568,13 +583,17 @@ export async function fetchWorkerRuntimeJson(input: {
         continue
       }
       const baseUrl = staticTarget?.url ?? normalizeUrl(candidate)
-      const response = await fetch(`${baseUrl}${input.path}`, {
+      const response = await fetchStaticHttpTarget(`${baseUrl}${input.path}`, {
         method: input.method ?? "GET",
+        redirect: "manual",
+        signal: AbortSignal.timeout(env.staticWorkers.healthcheckTimeoutMs),
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
           ...(staticTarget?.headers ?? {}),
-          "X-OpenWork-Host-Token": access.hostToken,
+          ...(input.auth === "client"
+            ? { Authorization: `Bearer ${access.clientToken}` }
+            : { "X-OpenWork-Host-Token": access.hostToken }),
         },
         body: input.body === undefined ? undefined : JSON.stringify(input.body),
       })
@@ -710,10 +729,38 @@ export async function withStaticAssignmentLockUsing<T>(input: {
     lockAcquired = true
     return await input.transaction(input.run)
   } finally {
-    if (lockAcquired) {
-      await connection.query(`SELECT RELEASE_LOCK(?)`, [STATIC_PROVISIONING_LOCK_NAME])
+    try {
+      if (lockAcquired) {
+        await connection.query(`SELECT RELEASE_LOCK(?)`, [STATIC_PROVISIONING_LOCK_NAME])
+      }
+    } finally {
+      connection.release()
     }
-    connection.release()
+  }
+}
+
+export async function withStaticAssignmentMutex<T>(run: () => Promise<T>) {
+  const connection = await getMySqlLockPool().getConnection()
+  let lockAcquired = false
+
+  try {
+    const lockRows = await connection.query(`SELECT GET_LOCK(?, 10) AS acquired`, [STATIC_PROVISIONING_LOCK_NAME])
+    const acquired = readMySqlLockAcquired(lockRows)
+
+    if (acquired !== 1) {
+      throw new Error("Timed out waiting for static worker assignment lock")
+    }
+
+    lockAcquired = true
+    return await run()
+  } finally {
+    try {
+      if (lockAcquired) {
+        await connection.query(`SELECT RELEASE_LOCK(?)`, [STATIC_PROVISIONING_LOCK_NAME])
+      }
+    } finally {
+      connection.release()
+    }
   }
 }
 
@@ -727,8 +774,15 @@ export async function withStaticAssignmentLock<T>(run: (tx: StaticAssignmentDb) 
 
 async function reserveStaticWorkerInstance(input: {
   workerId: WorkerId
+  orgId: OrgId
+  staticLockHeld?: boolean
 }) {
-  return withStaticAssignmentLock(async (tx) => {
+  const reserve = async (tx: StaticAssignmentDb) => {
+    const workerLimit = await getOrganizationLimitStatus(input.orgId, "workers")
+    if (workerLimit.currentCount > workerLimit.limit) {
+      throw new Error("Organization worker limit exceeded")
+    }
+
     await markStaleStaticReservationsFailed(tx)
 
     const rows = await tx
@@ -768,21 +822,29 @@ async function reserveStaticWorkerInstance(input: {
       .where(and(eq(WorkerTokenTable.worker_id, input.workerId), eq(WorkerTokenTable.scope, "client")))
 
     return { instanceId, url, tokens }
-  })
+  }
+
+  return input.staticLockHeld ? db.transaction(reserve) : withStaticAssignmentLock(reserve)
 }
 
-async function continueStaticCloudProvisioning(input: {
+export async function reserveStaticWorkerForCreatedWorker(input: {
   workerId: WorkerId
-  name: string
-  hostToken: string
-  clientToken: string
-  activityToken: string
+  orgId: OrgId
 }) {
-  const reservation = await reserveStaticWorkerInstance({ workerId: input.workerId })
+  return reserveStaticWorkerInstance({ workerId: input.workerId, orgId: input.orgId, staticLockHeld: true })
+}
 
+export async function verifyReservedStaticWorker(input: {
+  workerId: WorkerId
+  reservation: Awaited<ReturnType<typeof reserveStaticWorkerInstance>>
+}) {
   try {
-    await checkStaticWorkerHealth(reservation.url, env.staticWorkers)
-    await verifyStaticWorkerRuntimeAccess(reservation.url, reservation.tokens, env.staticWorkers)
+    const staticTarget = await resolveStaticRuntimeFetchTarget(input.reservation.url)
+    if (!staticTarget) {
+      throw new Error("Static worker URL failed attach policy validation")
+    }
+    await checkStaticWorkerHealth(staticTarget, env.staticWorkers)
+    await verifyStaticWorkerRuntimeAccess(staticTarget, input.reservation.tokens, env.staticWorkers)
 
     await db.transaction(async (tx) => {
       await tx
@@ -793,7 +855,7 @@ async function continueStaticCloudProvisioning(input: {
       await tx
         .update(WorkerInstanceTable)
         .set({ status: "healthy" })
-        .where(eq(WorkerInstanceTable.id, reservation.instanceId))
+        .where(eq(WorkerInstanceTable.id, input.reservation.instanceId))
     })
   } catch (error) {
     await db.transaction(async (tx) => {
@@ -805,10 +867,23 @@ async function continueStaticCloudProvisioning(input: {
       await tx
         .update(WorkerInstanceTable)
         .set({ status: "failed" })
-        .where(eq(WorkerInstanceTable.id, reservation.instanceId))
+        .where(eq(WorkerInstanceTable.id, input.reservation.instanceId))
     })
     throw error
   }
+}
+
+async function continueStaticCloudProvisioning(input: {
+  workerId: WorkerId
+  name: string
+  orgId: OrgId
+  staticLockHeld?: boolean
+  hostToken: string
+  clientToken: string
+  activityToken: string
+}) {
+  const reservation = await reserveStaticWorkerInstance({ workerId: input.workerId, orgId: input.orgId, staticLockHeld: input.staticLockHeld })
+  await verifyReservedStaticWorker({ workerId: input.workerId, reservation })
 }
 
 export function toInstanceResponse(instance: WorkerInstanceRow | null) {
@@ -849,6 +924,8 @@ export function toWorkerResponse(row: WorkerRow, userId: string) {
 export async function continueCloudProvisioning(input: {
   workerId: WorkerId
   name: string
+  orgId: OrgId
+  staticLockHeld?: boolean
   hostToken: string
   clientToken: string
   activityToken: string
@@ -889,6 +966,9 @@ export async function continueCloudProvisioning(input: {
 
     const message = error instanceof Error ? error.message : "provisioning_failed"
     console.error(`[workers] provisioning failed for ${input.workerId}: ${message}`)
+    if (env.provisionerMode === "static") {
+      throw error
+    }
   }
 }
 

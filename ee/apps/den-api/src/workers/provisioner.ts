@@ -8,6 +8,7 @@ import {
   customDomainForWorker,
   ensureVercelDnsRecord,
 } from "./vanity-domain.js"
+import { fetchStaticHttpTarget } from "./static-fetch.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
 
@@ -159,6 +160,7 @@ async function waitForHealth(
   timeoutMs = env.render.healthcheckTimeoutMs,
   intervalMs = env.render.pollIntervalMs,
   healthPath = "/health",
+  headers: Record<string, string> = {},
 ) {
   const normalizedPath = healthPath.startsWith("/") ? healthPath : `/${healthPath}`
   const healthUrl = `${url.replace(/\/$/, "")}${normalizedPath}`
@@ -170,8 +172,10 @@ async function waitForHealth(
     const timeout = setTimeout(() => controller.abort(), remainingMs)
 
     try {
-      const response = await fetch(healthUrl, {
+      const response = await fetchStaticHttpTarget(healthUrl, {
         method: "GET",
+        redirect: "manual",
+        headers,
         signal: controller.signal,
       })
       if (response.ok) {
@@ -221,17 +225,24 @@ export function getStaticWorkerTokenPairForUrl(url: string, config: StaticWorker
   }
 }
 
-async function fetchStaticWorkerRuntime(url: string, path: string, headers: Record<string, string>, timeoutMs: number) {
-  return fetch(`${url.replace(/\/$/, "")}${path}`, {
+export type StaticWorkerRuntimeTarget = string | { url: string; headers: Record<string, string> }
+
+function staticWorkerRuntimeTarget(input: StaticWorkerRuntimeTarget) {
+  return typeof input === "string" ? { url: input, headers: {} } : input
+}
+
+async function fetchStaticWorkerRuntime(targetInput: StaticWorkerRuntimeTarget, path: string, headers: Record<string, string>, timeoutMs: number) {
+  const target = staticWorkerRuntimeTarget(targetInput)
+  return fetchStaticHttpTarget(`${target.url.replace(/\/$/, "")}${path}`, {
     method: "GET",
     redirect: "manual",
-    headers: { Accept: "application/json", ...headers },
+    headers: { Accept: "application/json", ...target.headers, ...headers },
     signal: AbortSignal.timeout(timeoutMs),
   })
 }
 
 export async function verifyStaticWorkerRuntimeAccess(
-  url: string,
+  url: StaticWorkerRuntimeTarget,
   tokens: StaticWorkerTokenPair,
   config: Pick<StaticWorkerConfig, "healthcheckTimeoutMs">,
 ) {
@@ -361,12 +372,14 @@ export async function provisionStaticWorker(
   }
 }
 
-export async function checkStaticWorkerHealth(url: string, config: StaticWorkerConfig) {
+export async function checkStaticWorkerHealth(url: StaticWorkerRuntimeTarget, config: StaticWorkerConfig) {
+  const target = staticWorkerRuntimeTarget(url)
   await waitForHealth(
-    url,
+    target.url,
     config.healthcheckTimeoutMs,
     config.healthcheckIntervalMs,
     config.healthPath,
+    target.headers,
   )
 }
 

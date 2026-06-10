@@ -83,10 +83,11 @@ Run Den against a real LAN worker:
 export DEN_PROVISIONER_MODE=static
 export DEN_STATIC_WORKER_URLS=http://192.168.1.50:8787
 export DEN_STATIC_WORKER_TOKEN_MAP_JSON='{"http://192.168.1.50:8787":{"clientToken":"<worker-client-token>","hostToken":"<worker-host-token>"}}'
+export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=192.168.1.0/24
 ./packaging/docker/den-dev-up.sh
 ```
 
-`DEN_STATIC_WORKER_TOKEN_MAP_JSON` is required for real LAN workers. The URL keys must exactly match `DEN_STATIC_WORKER_URLS` after trimming trailing slashes, and the values must contain the worker's client token for `/workspaces` plus host token for `/env/keys`. Without this map Den must fail the static reservation instead of marking an unreachable or unauthenticated worker healthy.
+`DEN_STATIC_WORKER_TOKEN_MAP_JSON` is required for real LAN workers. The URL keys must exactly match `DEN_STATIC_WORKER_URLS` after trimming trailing slashes, and the values must contain the worker's client token for `/workspaces` plus host token for `/env/keys`. LAN/private static worker URLs also need `DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS` or `DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true` so Den can pin and validate runtime fetches. Without this map Den must fail the static reservation instead of marking an unreachable or unauthenticated worker healthy.
 
 If you need a non-production compose-only smoke test before wiring a real OpenWork runtime, start the bundled health-only worker simulation:
 
@@ -94,6 +95,7 @@ If you need a non-production compose-only smoke test before wiring a real OpenWo
 export DEN_PROVISIONER_MODE=static
 export DEN_STATIC_WORKER_URLS=http://static-worker-smoke:8787
 export DEN_STATIC_WORKER_TOKEN_MAP_JSON='{"http://static-worker-smoke:8787":{"clientToken":"static-smoke-client-token","hostToken":"static-smoke-host-token"}}'
+export DEN_STATIC_WORKER_ATTACH_ALLOW_PRIVATE=true
 docker compose --profile static-worker-smoke -p openwork-den-static \
   -f packaging/docker/docker-compose.den-dev.yml up --build
 ```
