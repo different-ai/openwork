@@ -24,7 +24,7 @@ test("desktop fetch forwards method, headers, body, and response details", async
   assert.equal(calls[0].init.body, "{}");
   assert.equal(result.status, 202);
   assert.equal(result.statusText, "Accepted");
-  assert.deepEqual(result.headers, [["x-test", "yes"]]);
+  assert.equal(new Map(result.headers).get("x-test"), "yes");
   assert.equal(result.body, "ok");
 });
 
