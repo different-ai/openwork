@@ -2696,8 +2696,11 @@ export function SessionRoute() {
 
   const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
     if (!client) return null;
+    // Cap the transcript fetch to keep multi-workspace scans fast; matches in
+    // anything older than the most recent 400 messages are traded away for
+    // responsiveness.
     return async (workspaceId: string, sessionId: string) =>
-      (await client.getSessionMessages(workspaceId, sessionId, { limit: 200 })).items;
+      (await client.getSessionMessages(workspaceId, sessionId, { limit: 400 })).items;
   }, [client]);
 
   const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({

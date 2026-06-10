@@ -33,6 +33,8 @@ type CacheEntry = {
   updatedAt: number;
   /** One entry per message that contains searchable text. */
   texts: Array<{ role: "user" | "assistant"; text: string; lower: string }>;
+  /** Set when the transcript fetch failed; retried after a short cool-down. */
+  failedAt?: number;
 };
 
 export type SessionMessageFetcher = (
@@ -43,6 +45,7 @@ export type SessionMessageFetcher = (
 const SNIPPET_BEFORE = 36;
 const SNIPPET_AFTER = 72;
 const DEFAULT_CONCURRENCY = 6;
+const FAILURE_RETRY_MS = 30_000;
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ");
@@ -125,15 +128,20 @@ export function createSessionSearcher(fetchMessages: SessionMessageFetcher): Ses
 
   const getEntry = async (session: SearchableSession): Promise<CacheEntry> => {
     const cached = cache.get(session.sessionId);
-    if (cached && cached.updatedAt === session.updatedAt) return cached;
+    if (cached && cached.updatedAt === session.updatedAt) {
+      const failureFresh =
+        cached.failedAt !== undefined && Date.now() - cached.failedAt < FAILURE_RETRY_MS;
+      if (cached.failedAt === undefined || failureFresh) return cached;
+    }
     let entry: CacheEntry;
     try {
       const messages = await fetchMessages(session.workspaceId, session.sessionId);
       entry = toCacheEntry(session.updatedAt, messages);
     } catch {
       // Unreachable session (stale workspace, server hiccup): record an empty
-      // entry so one bad session cannot stall every later keystroke.
-      entry = toCacheEntry(session.updatedAt, []);
+      // entry with a cool-down so one bad session cannot stall every later
+      // keystroke, but still gets retried once the cool-down expires.
+      entry = { ...toCacheEntry(session.updatedAt, []), failedAt: Date.now() };
     }
     cache.set(session.sessionId, entry);
     return entry;
