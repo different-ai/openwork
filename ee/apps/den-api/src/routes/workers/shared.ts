@@ -324,17 +324,17 @@ export async function validateResolvedStaticWorkerAttachUrl(
     return { ok: false as const, message: "Worker URL hostname could not be resolved." }
   }
 
-  if (parsed.protocol === "https:" && !isIP(hostname)) {
+  if (parsed.protocol === "https:" && !isIP(hostname) && !hostExplicitlyAllowed) {
     return {
       ok: false as const,
-      message: "HTTPS static worker attach requires a literal IP address so verification cannot be redirected by DNS rebinding.",
+      message: "HTTPS static worker attach hostnames must be explicitly allowed by on-prem attach policy.",
     }
   }
 
   for (const entry of addresses) {
     const address = entry.address.toLowerCase()
     const cidrAllowed = policy.allowedCidrs.some((cidr) => ipInCidr(address, cidr.trim()))
-    if (isUnsafeAddress(address) && !policy.allowPrivate && !hostExplicitlyAllowed && !cidrAllowed) {
+    if (isUnsafeAddress(address) && !policy.allowPrivate && !cidrAllowed) {
       return {
         ok: false as const,
         message: "Worker URL resolves to a private, loopback, link-local, or metadata address that is not explicitly allowed.",

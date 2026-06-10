@@ -491,14 +491,30 @@ test("static attach URL policy blocks DNS names resolving to unsafe IPv4 and IPv
     "http://allowed-host.example.com",
     { allowPrivate: false, allowedHosts: ["allowed-host.example.com"], allowedCidrs: [] },
     async () => [{ address: "::1", family: 6 }],
+  )).resolves.toMatchObject({ ok: false })
+})
+
+test("static attach URL policy allows explicitly allow-listed HTTPS hostnames", async () => {
+  await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(
+    "https://worker.example.com",
+    { allowPrivate: false, allowedHosts: ["worker.example.com"], allowedCidrs: [] },
+    async () => [{ address: "203.0.113.10", family: 4 }],
   )).resolves.toMatchObject({ ok: true })
 })
 
-test("static attach URL policy rejects HTTPS hostnames because verification cannot safely IP-pin TLS", async () => {
+test("static attach URL policy rejects non-allow-listed HTTPS hostnames", async () => {
   await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(
     "https://worker.example.com",
     { allowPrivate: false, allowedHosts: [], allowedCidrs: [] },
     async () => [{ address: "203.0.113.10", family: 4 }],
+  )).resolves.toMatchObject({ ok: false })
+})
+
+test("static attach URL policy still rejects allow-listed HTTPS hostnames resolving to unsafe addresses", async () => {
+  await expect(workersSharedModule.validateResolvedStaticWorkerAttachUrl(
+    "https://worker.example.com",
+    { allowPrivate: false, allowedHosts: ["worker.example.com"], allowedCidrs: [] },
+    async () => [{ address: "127.0.0.1", family: 4 }],
   )).resolves.toMatchObject({ ok: false })
 })
 
