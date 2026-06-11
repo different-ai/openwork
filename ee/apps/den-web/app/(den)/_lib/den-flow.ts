@@ -833,7 +833,6 @@ export function buildOpenworkDeepLink(
   workerName: string | null,
   options?: {
     clientToken?: string | null;
-    hostToken?: string | null;
     denBaseUrl?: string | null;
     denApiBaseUrl?: string | null;
     denOrgId?: string | null;
@@ -859,7 +858,6 @@ export function buildOpenworkDeepLink(
   }
 
   if (options?.clientToken) params.set("openworkClientToken", options.clientToken);
-  if (options?.hostToken) params.set("openworkHostToken", options.hostToken);
   if (options?.denBaseUrl) params.set("openworkDenBaseUrl", options.denBaseUrl);
   if (options?.denApiBaseUrl) params.set("openworkDenApiBaseUrl", options.denApiBaseUrl);
   if (options?.denOrgId) params.set("openworkDenOrgId", options.denOrgId);
@@ -876,7 +874,6 @@ export function buildOpenworkAppConnectUrl(
   options?: {
     autoConnect?: boolean;
     clientToken?: string | null;
-    hostToken?: string | null;
     denBaseUrl?: string | null;
     denApiBaseUrl?: string | null;
     denOrgId?: string | null;
@@ -919,7 +916,6 @@ export function buildOpenworkAppConnectUrl(
   }
 
   if (options?.clientToken) connectUrl.searchParams.set("openworkClientToken", options.clientToken);
-  if (options?.hostToken) connectUrl.searchParams.set("openworkHostToken", options.hostToken);
   if (options?.denBaseUrl) connectUrl.searchParams.set("openworkDenBaseUrl", options.denBaseUrl);
   if (options?.denApiBaseUrl) connectUrl.searchParams.set("openworkDenApiBaseUrl", options.denApiBaseUrl);
   if (options?.denOrgId) connectUrl.searchParams.set("openworkDenOrgId", options.denOrgId);

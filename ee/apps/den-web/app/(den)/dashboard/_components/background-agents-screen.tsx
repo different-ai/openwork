@@ -343,7 +343,6 @@ export function BackgroundAgentsScreen() {
           {
             autoConnect: true,
             clientToken: tokens.clientToken,
-            hostToken: tokens.hostToken,
             denBaseUrl: window.location.origin,
             denApiBaseUrl: `${window.location.origin}/api/den`,
             denOrgId: orgId,
@@ -356,7 +355,6 @@ export function BackgroundAgentsScreen() {
           workerName,
           {
             clientToken: tokens.clientToken,
-            hostToken: tokens.hostToken,
             denBaseUrl: window.location.origin,
             denApiBaseUrl: `${window.location.origin}/api/den`,
             denOrgId: orgId,

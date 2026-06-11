@@ -175,12 +175,12 @@ describe("env routes", () => {
     expect(response.status).toBe(200);
     const payload = await response.json() as { items: Array<Record<string, unknown>> };
     expect(payload.items[0]).toMatchObject({
-      openworkClientToken: "client-token",
       openworkDenBaseUrl: "https://den.example.com",
       openworkDenApiBaseUrl: "https://api.den.example.com",
       openworkDenOrgId: "org_123",
       openworkDenWorkerId: "worker_123",
     });
+    expect(payload.items[0].openworkClientToken).toBeUndefined();
     expect(payload.items[0].openworkHostToken).toBeUndefined();
   });
 

@@ -2017,7 +2017,7 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
 }
 
 function serializeClientWorkspace(workspace: ServerConfig["workspaces"][number]) {
-  const { openworkToken, openworkHostToken, opencodeUsername, opencodePassword, ...rest } = workspace;
+  const { openworkToken, openworkHostToken, openworkClientToken, opencodeUsername, opencodePassword, ...rest } = workspace;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode = workspace.baseUrl || opencodeDirectory
     ? {
