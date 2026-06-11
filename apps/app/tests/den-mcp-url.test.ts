@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { getDenMcpUrl, isLegacyWebAppMcpUrl, resolveDenBaseUrls } from "../src/app/lib/den";
+import {
+  getDenMcpUrl,
+  isLegacyWebAppMcpUrl,
+  resolveCloudMcpResourceUrl,
+  resolveDenBaseUrls,
+} from "../src/app/lib/den";
 
 describe("resolveDenBaseUrls", () => {
   test("heals a stale bare web-app apiBaseUrl through the /api/den proxy", () => {
@@ -56,5 +61,36 @@ describe("isLegacyWebAppMcpUrl", () => {
   test("ignores empty or malformed input", () => {
     expect(isLegacyWebAppMcpUrl(null)).toBe(false);
     expect(isLegacyWebAppMcpUrl("not a url")).toBe(false);
+  });
+});
+
+describe("resolveCloudMcpResourceUrl", () => {
+  test("heals a minted legacy web-app resource through the /api/den proxy", () => {
+    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/mcp")).toBe(
+      "https://app.openworklabs.com/api/den/mcp",
+    );
+    expect(resolveCloudMcpResourceUrl("https://app.openwork.software/mcp/")).toBe(
+      "https://app.openwork.software/api/den/mcp",
+    );
+  });
+
+  test("keeps healthy resources verbatim", () => {
+    expect(resolveCloudMcpResourceUrl("https://api.openworklabs.com/mcp")).toBe(
+      "https://api.openworklabs.com/mcp",
+    );
+    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/api/den/mcp")).toBe(
+      "https://app.openworklabs.com/api/den/mcp",
+    );
+    expect(resolveCloudMcpResourceUrl("http://127.0.0.1:8787/mcp")).toBe(
+      "http://127.0.0.1:8787/mcp",
+    );
+  });
+
+  test("returns null for unusable resources so callers keep their fallback", () => {
+    expect(resolveCloudMcpResourceUrl(null)).toBeNull();
+    expect(resolveCloudMcpResourceUrl("")).toBeNull();
+    expect(resolveCloudMcpResourceUrl("   ")).toBeNull();
+    expect(resolveCloudMcpResourceUrl("not a url")).toBeNull();
+    expect(resolveCloudMcpResourceUrl("ftp://app.openworklabs.com/mcp")).toBeNull();
   });
 });

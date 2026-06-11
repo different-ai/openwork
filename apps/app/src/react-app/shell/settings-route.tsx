@@ -807,6 +807,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useExtensionsStoreSnapshot(extensionsStore);
 
+  const openworkServerStatusForMcp = openworkServerSnapshot.openworkServerStatus;
+  useEffect(() => {
+    if (openworkServerStatusForMcp !== "connected") return;
+    // The first MCP read races the openwork-server store's initial health
+    // check (a fresh store always starts "disconnected"), so it falls back
+    // to config files where server-runtime (config.remote) entries — notably
+    // the cloud control MCP — don't exist. Without this re-read the built-in
+    // cards show "Tap to connect" until the next full remount even though
+    // the entries are configured and healthy.
+    void connectionsStore.refreshMcpServers();
+  }, [connectionsStore, openworkServerStatusForMcp]);
+
   const denSession = useDenSession({
     developerMode,
     openLink: (url) => platform.openLink(url),

@@ -1,6 +1,7 @@
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { env } from "./env.js";
+import { deriveDenMcpResource } from "./mcp/resource.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -45,9 +46,12 @@ function localMcpResourceAliases(resource: string) {
   return [];
 }
 
-export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? `${env.betterAuthUrl}/mcp`;
+export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? deriveDenMcpResource(env.betterAuthUrl, env.webAppHosts);
 export const DEN_MCP_RESOURCES = Array.from(new Set([
   DEN_MCP_RESOURCE,
+  // Audience compatibility: tokens issued before the proxied default carry
+  // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
+  `${env.betterAuthUrl}/mcp`,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
 ]));
 export const DEN_MCP_SCOPES = ["openid", "profile", "email", "offline_access", "mcp:read", "mcp:write"];

@@ -9,7 +9,12 @@ import {
   type McpDirectoryInfo,
 } from "../../../app/constants";
 import { extensionResource } from "../../../app/extensions";
-import { isLegacyWebAppMcpUrl, mintCloudControlMcpToken, readDenSettings } from "../../../app/lib/den";
+import {
+  isLegacyWebAppMcpUrl,
+  mintCloudControlMcpToken,
+  readDenSettings,
+  resolveCloudMcpResourceUrl,
+} from "../../../app/lib/den";
 import { createClient, unwrap } from "../../../app/lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../../../app/lib/perf-log";
 import {
@@ -631,7 +636,11 @@ export function createConnectionsStore(options: {
         try {
           const minted = await mintCloudControlMcpToken();
           if (minted) {
-            resolvedUrl = minted.resource;
+            // Never trust `minted.resource` verbatim: older den-api builds
+            // mint the bare web-app origin (https://app.openworklabs.com/mcp)
+            // where MCP 404s. Heal it, falling back to the entry's
+            // bootstrap-derived URL.
+            resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }
         } catch {

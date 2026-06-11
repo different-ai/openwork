@@ -638,6 +638,29 @@ export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean 
   }
 }
 
+/**
+ * Resolve the URL the cloud MCP entry should connect to from a minted
+ * token's `resource`. Older den-api builds mint the bare web-app origin
+ * (`https://app.openworklabs.com/mcp`) where nothing serves MCP — heal
+ * those to the `/api/den` proxy on the same origin instead of trusting
+ * them verbatim. Returns null when the resource is unusable so callers
+ * can keep their bootstrap-derived URL.
+ */
+export function resolveCloudMcpResourceUrl(resource: string | null | undefined): string | null {
+  const trimmed = resource?.trim() ?? "";
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (isLegacyWebAppMcpUrl(trimmed)) {
+      url.pathname = "/api/den/mcp";
+    }
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
 function resolveDenBootstrapConfig(
   input: { baseUrl: string; apiBaseUrl?: string | null; requireSignin?: boolean | null },
 ): DenBootstrapConfig {
