@@ -229,7 +229,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         ? listItemToWorker(selectedWorker, worker)
         : worker;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
-  const preferredOpenworkToken = activeWorker?.clientToken ?? activeWorker?.ownerToken ?? null;
+  const preferredOpenworkToken = activeWorker?.clientToken ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
@@ -566,7 +566,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const accessToken = candidate.clientToken?.trim() ?? candidate.ownerToken?.trim() ?? "";
+    const accessToken = candidate.clientToken?.trim() ?? "";
     if (!accessToken) {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
@@ -1847,7 +1847,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (pendingRestoredWorkerId === worker.workerId) {
       return;
     }
-    if (worker.ownerToken || worker.clientToken) {
+    if (worker.clientToken) {
       return;
     }
     if (actionBusy !== null || launchBusy) {
