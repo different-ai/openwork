@@ -192,29 +192,33 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
       if (deps.listProviders) {
         providers = await listProviders(normalizedOrgId)
       } else {
-        if (!worker.created_by_user_id) return c.json({ error: "worker_owner_not_found" }, 404)
-        const workerOwnerMembers = await db
-          .select({ id: MemberTable.id })
-          .from(MemberTable)
-          .where(and(
-            eq(MemberTable.organizationId, normalizedOrgId),
-            eq(MemberTable.userId, worker.created_by_user_id),
-            isNull(MemberTable.removedAt),
-          ))
-          .limit(1)
+        const workerOwnerMembers = worker.created_by_user_id
+          ? await db
+              .select({ id: MemberTable.id })
+              .from(MemberTable)
+              .where(and(
+                eq(MemberTable.organizationId, normalizedOrgId),
+                eq(MemberTable.userId, worker.created_by_user_id),
+                isNull(MemberTable.removedAt),
+              ))
+              .limit(1)
+          : []
         const workerOwnerMember = workerOwnerMembers[0]
-        if (!workerOwnerMember) return c.json({ error: "worker_owner_not_found" }, 404)
 
-        const workerOwnerTeams = await db
-          .select({ id: TeamMemberTable.teamId })
-          .from(TeamMemberTable)
-          .where(eq(TeamMemberTable.orgMembershipId, workerOwnerMember.id))
+        if (!workerOwnerMember) {
+          providers = []
+        } else {
+          const workerOwnerTeams = await db
+            .select({ id: TeamMemberTable.teamId })
+            .from(TeamMemberTable)
+            .where(eq(TeamMemberTable.orgMembershipId, workerOwnerMember.id))
 
-        providers = await listManagedProviderSyncProviders({
+          providers = await listManagedProviderSyncProviders({
             organizationId: normalizedOrgId,
             currentMemberId: workerOwnerMember.id,
             memberTeamIds: workerOwnerTeams.map((team) => team.id),
           })
+        }
       }
       const revision = computeManagedProviderRevision(providers)
 

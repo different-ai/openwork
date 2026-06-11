@@ -23,6 +23,8 @@ beforeAll(async () => {
 function createApp(input: {
   role?: string
   isOwner?: boolean
+  getWorker?: Parameters<typeof managedProviderModule.registerManagedProviderSyncRoutes>[1]["getWorker"]
+  useProductionListProviders?: boolean
   listProviders?: Parameters<typeof managedProviderModule.registerManagedProviderSyncRoutes>[1]["listProviders"]
   pushRuntime?: Parameters<typeof managedProviderModule.registerManagedProviderSyncRoutes>[1]["pushRuntime"]
 }) {
@@ -52,8 +54,8 @@ function createApp(input: {
       },
       paramValidator(workersSharedModule.workerIdParamSchema),
     ] as never,
-    getWorker: async (id, activeOrgId) => id === workerId && activeOrgId === orgId ? { id } : null,
-    listProviders: input.listProviders ?? (async () => [provider]),
+    getWorker: input.getWorker ?? (async (id, activeOrgId) => id === workerId && activeOrgId === orgId ? { id } : null),
+    listProviders: input.useProductionListProviders ? undefined : input.listProviders ?? (async () => [provider]),
     pushRuntime: input.pushRuntime ?? (async () => ({ ok: true, status: 200, payload: { status: "applied" } })),
   })
   return { app, workerId, provider }
@@ -111,6 +113,23 @@ test("managed provider sync pushes an empty provider set so workers remove revok
   expect(response.status).toBe(200)
   await expect(response.json()).resolves.toEqual({ status: "applied", providerCount: 0, providerIds: [], revision: "empty" })
   expect(called).toBe(true)
+})
+
+test("managed provider sync pushes an empty provider set when the worker owner is gone", async () => {
+  const calls: unknown[] = []
+  const { app, workerId } = createApp({
+    getWorker: async (id) => id === workerId ? { id, created_by_user_id: null } : null,
+    useProductionListProviders: true,
+    pushRuntime: async (_workerId, payload) => {
+      calls.push(payload)
+      return { ok: true, status: 200, payload: { status: "applied" } }
+    },
+  })
+
+  const response = await app.request(`http://den.local/v1/workers/${workerId}/managed-providers/sync`, { method: "POST" })
+  expect(response.status).toBe(200)
+  await expect(response.json()).resolves.toEqual({ status: "applied", providerCount: 0, providerIds: [], revision: "empty" })
+  expect(calls).toEqual([{ providers: [], revision: "empty" }])
 })
 
 test("managed provider sync reports missing worker as not found", async () => {

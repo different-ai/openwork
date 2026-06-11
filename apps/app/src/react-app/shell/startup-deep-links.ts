@@ -2,6 +2,7 @@ import {
   pushPendingDeepLinks,
 } from "../../app/lib/deep-link-bridge";
 import { subscribeDesktopDeepLinks } from "../../app/lib/desktop";
+import { stripRemoteConnectQuery } from "../../app/lib/openwork-links";
 import { isDesktopRuntime } from "../../app/utils";
 
 let started = false;
@@ -12,6 +13,10 @@ export function startDeepLinkBridge(): void {
 
   if (!isDesktopRuntime()) {
     pushPendingDeepLinks(window, [window.location.href]);
+    const strippedUrl = stripRemoteConnectQuery(window.location.href);
+    if (strippedUrl) {
+      window.history.replaceState(window.history.state, "", strippedUrl);
+    }
     return;
   }
 
