@@ -58,18 +58,26 @@ const orgInvitationParamsSchema = idParamSchema("invitationId", "invitation")
 
 async function cleanupExpiredInvitationPlaceholders(input: {
   organizationId: OrganizationId
-  email: string
+  email?: string
   removedByOrgMemberId: MemberId
 }) {
+  const where = input.email
+    ? and(
+        eq(InvitationTable.organizationId, input.organizationId),
+        eq(InvitationTable.email, input.email),
+        eq(InvitationTable.status, "pending"),
+        sql`${InvitationTable.expiresAt} < ${new Date()}`,
+      )
+    : and(
+        eq(InvitationTable.organizationId, input.organizationId),
+        eq(InvitationTable.status, "pending"),
+        sql`${InvitationTable.expiresAt} < ${new Date()}`,
+      )
+
   const expiredInvitations = await db
     .select({ id: InvitationTable.id })
     .from(InvitationTable)
-    .where(and(
-      eq(InvitationTable.organizationId, input.organizationId),
-      eq(InvitationTable.email, input.email),
-      eq(InvitationTable.status, "pending"),
-      sql`${InvitationTable.expiresAt} < ${new Date()}`,
-    ))
+    .where(where)
 
   for (const invitation of expiredInvitations) {
     const invitedMemberRows = await db
@@ -163,7 +171,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     await cleanupExpiredInvitationPlaceholders({
       organizationId: payload.organization.id,
-      email,
       removedByOrgMemberId: payload.currentMember.id,
     })
 

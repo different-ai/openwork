@@ -310,6 +310,7 @@ test("Entra auto-join accepts matching pending invitations and removes placehold
     [{ id: entraOrganizationId }],
     [],
     [],
+    [],
     [member],
     [{ email: "teammate@example.com" }],
     [invitation],
@@ -357,11 +358,12 @@ test("Entra auto-join ignores expired pending invitations", async () => {
   queryRows = [
     [{ id: entraOrganizationId }],
     [],
+    [invitation],
+    [{ id: placeholderMemberId }],
     [],
     [member],
     [{ email: "teammate@example.com" }],
-    [invitation],
-    [{ id: placeholderMemberId }],
+    [],
   ]
 
   const result = await orgsModule.ensureEntraSsoMembershipForAccount({
@@ -382,6 +384,7 @@ test("Entra auto-join does not bypass seat billing gate", async () => {
   seatEligibility = { allowed: false, currentCount: 1, freeSeatCount: 1 }
   queryRows = [
     [{ id: entraOrganizationId }],
+    [],
     [],
     [{ email: "teammate@example.com" }],
     [],
@@ -426,6 +429,7 @@ test("Entra auto-join accepts an already reserved invite seat", async () => {
   seatEligibility = { allowed: false, currentCount: 5, freeSeatCount: 5 }
   queryRows = [
     [{ id: entraOrganizationId }],
+    [],
     [],
     [{ email: "teammate@example.com" }],
     [{ id: placeholderMemberId }],

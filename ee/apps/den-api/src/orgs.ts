@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthAccountTable,
@@ -377,7 +377,7 @@ async function claimInvitationPlaceholderMember(input: {
 
 async function removeInvitationPlaceholderMember(input: {
   invitation: InvitationRow
-  removedByOrgMemberId: MemberId
+  removedByOrgMemberId: MemberId | null
 }) {
   const placeholderRows = await db
     .select({ id: MemberTable.id })
@@ -405,6 +405,28 @@ async function removeInvitationPlaceholderMember(input: {
       .where(and(eq(MemberTable.id, placeholder.id), isNull(MemberTable.removedAt)))
   })
   await syncOrganizationMemberBillingQuantities({ organizationId: input.invitation.organizationId })
+}
+
+async function cleanupExpiredInvitationPlaceholdersForOrganization(input: {
+  organizationId: OrgId
+  removedByOrgMemberId: MemberId | null
+}) {
+  const expiredInvitations = await db
+    .select()
+    .from(InvitationTable)
+    .where(and(
+      eq(InvitationTable.organizationId, input.organizationId),
+      eq(InvitationTable.status, "pending"),
+      sql`${InvitationTable.expiresAt} < ${new Date()}`,
+    ))
+
+  for (const invitation of expiredInvitations) {
+    await removeInvitationPlaceholderMember({ invitation, removedByOrgMemberId: input.removedByOrgMemberId })
+    await db
+      .update(InvitationTable)
+      .set({ status: "canceled" })
+      .where(eq(InvitationTable.id, invitation.id))
+  }
 }
 
 async function reconcilePendingInvitationsForMember(input: {
@@ -658,6 +680,10 @@ export async function ensureEntraSsoMembershipForAccount(input: {
       createMember: async ({ organizationId, userId, role }) => {
         const normalizedOrganizationId = organizationId as OrgId
         const normalizedUserId = userId as UserId
+        await cleanupExpiredInvitationPlaceholdersForOrganization({
+          organizationId: normalizedOrganizationId,
+          removedByOrgMemberId: null,
+        })
         const seatEligibility = await getOrganizationSeatAddEligibility(normalizedOrganizationId)
         if (!seatEligibility.allowed && !await hasPendingInvitationSeatReservation({
           organizationId: normalizedOrganizationId,
