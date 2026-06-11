@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3978);
@@ -54,11 +54,12 @@ async function readForm(req) {
   return Object.fromEntries(new URLSearchParams(raw));
 }
 
-function record(req, pathname) {
+function record(req, url) {
   const entry = {
     id: requests.length + 1,
     method: req.method,
-    path: pathname,
+    path: url.pathname,
+    url: `${url.pathname}${url.search}`,
     at: new Date().toISOString(),
   };
   requests.push(entry);
@@ -99,6 +100,7 @@ function redirectWithCode(res, params) {
   codes.set(code, {
     clientId: params.get("client_id") || "mock-client",
     codeChallenge: params.get("code_challenge") || null,
+    codeChallengeMethod: params.get("code_challenge_method") || "plain",
     scope: params.get("scope") || "mcp:read mcp:write",
   });
 
@@ -152,9 +154,23 @@ async function issueToken(req, res) {
   const form = await readForm(req);
   const grantType = form.grant_type || "authorization_code";
 
-  if (grantType === "authorization_code" && !codes.has(form.code)) {
-    json(res, 400, { error: "invalid_grant" });
-    return;
+  if (grantType === "authorization_code") {
+    const grant = codes.get(form.code);
+    if (!grant) {
+      json(res, 400, { error: "invalid_grant" });
+      return;
+    }
+    if (grant.codeChallenge) {
+      const verifier = form.code_verifier || "";
+      const expected =
+        grant.codeChallengeMethod === "S256"
+          ? createHash("sha256").update(verifier).digest("base64url")
+          : verifier;
+      if (expected !== grant.codeChallenge) {
+        json(res, 400, { error: "invalid_grant", error_description: "PKCE verification failed" });
+        return;
+      }
+    }
   }
 
   if (form.code) codes.delete(form.code);
@@ -244,7 +260,7 @@ async function handleMcp(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
-    record(req, url.pathname);
+    record(req, url);
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});
