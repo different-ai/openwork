@@ -371,7 +371,7 @@ describe("workspace lifecycle registry", () => {
     expect(body.workspaces[0].openworkDenWorkerId).toBe("wrk_test");
     expect(body.workspaces[0].openworkWorkspaceId).toBe("ws_remote");
     expect(body.workspaces[0].openworkWorkspaceName).toBe("Remote Project");
-    expect(remote.requests[0]).toEqual({ pathname: "/workspaces", authorization: "Bearer remote_token" });
+    expect(remote.requests[0]).toEqual({ pathname: "/workspaces", authorization: "Bearer remote_client_token" });
 
     const persisted = await readPersistedConfig(configPath);
     const workspaces = workspacesFromConfig(persisted);

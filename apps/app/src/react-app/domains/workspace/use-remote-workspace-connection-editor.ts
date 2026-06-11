@@ -49,8 +49,8 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
       return {
         openworkHostUrl: mountedUrl,
         openworkToken:
-          workspace?.openworkToken ??
           workspace?.openworkClientToken ??
+          workspace?.openworkToken ??
           "",
         directory: workspace?.directory ?? workspace?.path ?? "",
         displayName: workspace?.displayName ?? workspace?.name ?? "",
@@ -92,7 +92,7 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
           baseUrl,
           openworkHostUrl: baseUrl,
           openworkToken: fields.openworkToken?.trim() ?? "",
-          openworkClientToken: workspace?.openworkClientToken ?? null,
+          openworkClientToken: fields.openworkToken?.trim() || workspace?.openworkClientToken || null,
           openworkHostToken: null,
           displayName: fields.displayName?.trim() || null,
           directory: fields.directory?.trim() || null,

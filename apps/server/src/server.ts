@@ -2670,6 +2670,7 @@ function createRoutes(
       : rawOpenworkHostUrl;
     const openworkToken = readStringField(body, "openworkToken");
     const openworkClientToken = readStringField(body, "openworkClientToken");
+    const remoteOpenworkToken = remoteType === "openwork" ? openworkClientToken || openworkToken : openworkToken;
     const openworkHostToken = readStringField(body, "openworkHostToken");
     const openworkDenBaseUrl = readStringField(body, "openworkDenBaseUrl");
     const openworkDenApiBaseUrl = readStringField(body, "openworkDenApiBaseUrl");
@@ -2688,7 +2689,7 @@ function createRoutes(
     if (remoteType === "openwork" && !openworkWorkspaceId) {
       const discovered = await discoverOpenworkWorkspace({
         hostUrl: openworkHostUrl ?? baseUrl,
-        token: openworkToken,
+        token: remoteOpenworkToken,
         hostToken: openworkHostToken,
         directory,
       });
@@ -2718,7 +2719,7 @@ function createRoutes(
       ...(directory ? { directory } : {}),
       ...(displayName ? { displayName } : {}),
       ...(remoteType === "openwork" && openworkHostUrl ? { openworkHostUrl } : {}),
-      ...(openworkToken ? { openworkToken } : {}),
+      ...(remoteOpenworkToken ? { openworkToken: remoteOpenworkToken } : {}),
       ...(remoteType === "openwork" && openworkClientToken ? { openworkClientToken } : {}),
       ...(remoteType === "openwork" && openworkHostToken ? { openworkHostToken } : {}),
       ...(remoteType === "openwork" && openworkDenBaseUrl ? { openworkDenBaseUrl } : {}),
