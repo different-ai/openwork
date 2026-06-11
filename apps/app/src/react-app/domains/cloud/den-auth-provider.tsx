@@ -30,7 +30,18 @@ import {
   drainPendingDeepLinks,
   type DeepLinkBridgeDetail,
 } from "../../../app/lib/deep-link-bridge";
-import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import {
+  parseDenAuthDeepLink,
+  parseRemoteConnectDeepLink,
+  type RemoteWorkspaceDefaults,
+} from "../../../app/lib/openwork-links";
+import {
+  resolveWorkspaceListSelectedId,
+  workspaceCreateRemote,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
+  type WorkspaceList,
+} from "../../../app/lib/desktop";
 
 export type DenAuthStatus = "checking" | "signed_in" | "signed_out";
 
@@ -61,6 +72,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
   const handledGrantsRef = useRef<Set<string>>(new Set());
+  const handledRemoteConnectRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
@@ -130,8 +142,47 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    const connectRemoteWorkspace = async (remote: RemoteWorkspaceDefaults) => {
+      const hostUrl = remote.openworkHostUrl?.trim() ?? "";
+      const clientToken = remote.openworkClientToken?.trim() || remote.openworkToken?.trim() || "";
+      if (!hostUrl || !clientToken) {
+        throw new Error("Remote workspace link is missing connection details.");
+      }
+
+      const list = await workspaceCreateRemote({
+        baseUrl: hostUrl,
+        openworkHostUrl: hostUrl,
+        openworkToken: clientToken,
+        openworkClientToken: clientToken,
+        openworkDenBaseUrl: remote.openworkDenBaseUrl?.trim() || null,
+        openworkDenApiBaseUrl: remote.openworkDenApiBaseUrl?.trim() || null,
+        openworkDenOrgId: remote.openworkDenOrgId?.trim() || null,
+        openworkDenWorkerId: remote.openworkDenWorkerId?.trim() || null,
+        directory: remote.directory?.trim() || null,
+        displayName: remote.displayName?.trim() || null,
+        remoteType: "openwork",
+      }) as WorkspaceList;
+
+      const workspaceId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
+      if (workspaceId) {
+        await workspaceSetSelected(workspaceId).catch(() => undefined);
+        await workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
+      }
+    };
+
     const handleUrls = (urls: readonly string[]) => {
       for (const rawUrl of urls) {
+        const remoteConnect = parseRemoteConnectDeepLink(rawUrl);
+        if (remoteConnect) {
+          if (handledRemoteConnectRef.current.has(rawUrl)) continue;
+          handledRemoteConnectRef.current.add(rawUrl);
+          void connectRemoteWorkspace(remoteConnect).catch((error) => {
+            handledRemoteConnectRef.current.delete(rawUrl);
+            setError(error instanceof Error ? error.message : "Failed to connect remote workspace.");
+          });
+          continue;
+        }
+
         const parsed = parseDenAuthDeepLink(rawUrl);
         if (!parsed || handledGrantsRef.current.has(parsed.grant)) continue;
         handledGrantsRef.current.add(parsed.grant);

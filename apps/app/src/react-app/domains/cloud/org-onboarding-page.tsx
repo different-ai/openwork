@@ -291,7 +291,7 @@ export function ResourceSelectionPage() {
     const tokens = await denClient.getWorkerTokens(healthyWorker.workerId, orgId);
     const openworkUrl = tokens.openworkUrl?.trim() ?? "";
     const openworkHostUrl = stripOpenworkWorkspaceMount(openworkUrl);
-    const accessToken = tokens.clientToken?.trim() || tokens.ownerToken?.trim() || "";
+    const accessToken = tokens.clientToken?.trim() || "";
     if (!openworkUrl || !accessToken) {
       throw new Error("The shared worker is not ready yet.");
     }
@@ -301,7 +301,6 @@ export function ResourceSelectionPage() {
       openworkHostUrl: openworkUrl,
       openworkToken: accessToken,
       openworkClientToken: tokens.clientToken?.trim() || null,
-      openworkHostToken: tokens.hostToken?.trim() || null,
       openworkDenBaseUrl: settings.baseUrl,
       openworkDenApiBaseUrl: settings.apiBaseUrl,
       openworkDenOrgId: orgId,
@@ -325,7 +324,6 @@ export function ResourceSelectionPage() {
     writeOpenworkServerSettings({
       urlOverride: openworkHostUrl || openworkUrl,
       token: accessToken,
-      hostToken: tokens.hostToken?.trim() || undefined,
     });
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
@@ -334,7 +332,7 @@ export function ResourceSelectionPage() {
     }
 
     return createdId || null;
-  }, [denClient, orgId, settings.baseUrl, workers]);
+  }, [denClient, orgId, settings.apiBaseUrl, settings.baseUrl, workers]);
 
   const handleContinue = useCallback(async () => {
     setContinueBusy(true);
