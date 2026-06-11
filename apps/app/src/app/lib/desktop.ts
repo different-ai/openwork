@@ -210,6 +210,12 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
   }
 }
 
+async function serializeFetchBody(body: RequestInit["body"] | null | undefined): Promise<string | undefined> {
+  if (body === null || body === undefined) return undefined;
+  if (typeof body === "string") return body;
+  return new Response(body).text();
+}
+
 export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   if (isLoopbackUrl(input)) {
     return globalThis.fetch(input, init);
@@ -229,8 +235,8 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
     method = init?.method ?? input.method;
     const headersSource = init?.headers ? new Headers(init.headers) : input.headers;
     headers = Object.fromEntries(headersSource.entries());
-    if (typeof init?.body === "string") {
-      body = init.body;
+    if (init?.body !== undefined) {
+      body = await serializeFetchBody(init.body);
     } else if (input.body) {
       // Request body is a stream — buffer to text so it survives the IPC hop
       // to the Electron main process.
@@ -240,7 +246,7 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
     url = typeof input === "string" ? input : input.toString();
     method = init?.method;
     headers = init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined;
-    body = typeof init?.body === "string" ? init.body : undefined;
+    body = await serializeFetchBody(init?.body);
   }
 
   const result = await invokeElectronHelper<{
@@ -273,8 +279,8 @@ export async function desktopFetchViaMain(input: RequestInfo | URL, init?: Reque
     method = init?.method ?? input.method;
     const headersSource = init?.headers ? new Headers(init.headers) : input.headers;
     headers = Object.fromEntries(headersSource.entries());
-    if (typeof init?.body === "string") {
-      body = init.body;
+    if (init?.body !== undefined) {
+      body = await serializeFetchBody(init.body);
     } else if (input.body) {
       body = await input.clone().text();
     }
@@ -282,7 +288,7 @@ export async function desktopFetchViaMain(input: RequestInfo | URL, init?: Reque
     url = typeof input === "string" ? input : input.toString();
     method = init?.method;
     headers = init?.headers ? Object.fromEntries(new Headers(init.headers).entries()) : undefined;
-    body = typeof init?.body === "string" ? init.body : undefined;
+    body = await serializeFetchBody(init?.body);
   }
 
   const result = await invokeElectronHelper<{

@@ -28,6 +28,20 @@ test("desktop fetch forwards method, headers, body, and response details", async
   assert.equal(result.body, "ok");
 });
 
+test("desktop fetch forwards non-string bodies", async () => {
+  const body = new URLSearchParams({ key: "value" });
+  const calls = [];
+  await desktopFetch("https://worker.example.test/env", {
+    method: "POST",
+    body,
+  }, async (url, init) => {
+    calls.push({ url, init });
+    return new Response("ok");
+  });
+
+  assert.equal(calls[0].init.body, body);
+});
+
 test("desktop fetch honors timeoutMs with a controlled error", async () => {
   await assert.rejects(
     desktopFetch("https://worker.example.test/slow", { timeoutMs: 1 }, async (_url, init) => new Promise((_resolve, reject) => {
@@ -35,4 +49,14 @@ test("desktop fetch honors timeoutMs with a controlled error", async () => {
     })),
     /Fetch timed out after 1ms/,
   );
+});
+
+test("desktop fetch honors caller abort signal", async () => {
+  const controller = new AbortController();
+  const request = desktopFetch("https://worker.example.test/abort", { signal: controller.signal }, async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason ?? new Error("aborted")), { once: true });
+  }));
+
+  controller.abort(new Error("caller aborted"));
+  await assert.rejects(request, /caller aborted/);
 });

@@ -17,4 +17,11 @@ describe("parseRemoteConnectDeepLink", () => {
       openworkClientToken: "client-token",
     });
   });
+
+  test("falls back when client token is blank", () => {
+    expect(parseRemoteConnectDeepLink("openwork://connect-remote?openworkHostUrl=https%3A%2F%2Fworker.example.test&openworkToken=legacy-token&openworkClientToken=%20%20")).toMatchObject({
+      openworkToken: "legacy-token",
+      openworkClientToken: null,
+    });
+  });
 });

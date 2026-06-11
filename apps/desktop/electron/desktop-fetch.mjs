@@ -13,23 +13,43 @@ export async function desktopFetch(urlInput, initInput = {}, fetchImpl = fetch) 
     ? Math.max(1, Math.floor(timeoutMs))
     : null;
   const controller = timeout ? new AbortController() : null;
-  const timer = timeout && controller ? setTimeout(() => controller.abort(), timeout) : null;
-  const signal = controller?.signal;
+  const externalSignal = init.signal && typeof init.signal === "object" && typeof init.signal.addEventListener === "function"
+    ? init.signal
+    : null;
+  let timedOut = false;
+  const timer = timeout && controller ? setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeout) : null;
+  let removeExternalAbort = null;
+  if (controller && externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      removeExternalAbort = () => controller.abort(externalSignal.reason);
+      externalSignal.addEventListener("abort", removeExternalAbort, { once: true });
+    }
+  }
+  const signal = controller?.signal ?? externalSignal ?? undefined;
+  const body = Object.prototype.hasOwnProperty.call(init, "body") ? init.body : undefined;
   let response;
   try {
     response = await fetchImpl(url, {
       method: typeof init.method === "string" ? init.method : undefined,
       headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
-      body: typeof init.body === "string" ? init.body : undefined,
+      body,
       signal,
     });
   } catch (error) {
-    if (signal?.aborted) {
+    if (timedOut) {
       throw new Error(`Fetch timed out after ${timeout}ms`);
     }
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    if (externalSignal && removeExternalAbort) {
+      externalSignal.removeEventListener("abort", removeExternalAbort);
+    }
   }
   return {
     status: response.status,

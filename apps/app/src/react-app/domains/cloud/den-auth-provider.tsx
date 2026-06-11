@@ -176,10 +176,12 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         if (remoteConnect) {
           if (handledRemoteConnectRef.current.has(rawUrl)) continue;
           handledRemoteConnectRef.current.add(rawUrl);
-          void connectRemoteWorkspace(remoteConnect).catch((error) => {
-            handledRemoteConnectRef.current.delete(rawUrl);
-            setError(error instanceof Error ? error.message : "Failed to connect remote workspace.");
-          });
+          void connectRemoteWorkspace(remoteConnect)
+            .then(() => setError(null))
+            .catch((error) => {
+              handledRemoteConnectRef.current.delete(rawUrl);
+              setError(error instanceof Error ? error.message : "Failed to connect remote workspace.");
+            });
           continue;
         }
 

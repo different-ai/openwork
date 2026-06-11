@@ -47,11 +47,9 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
   }
 
   const hostUrlRaw = url.searchParams.get("openworkHostUrl") ?? url.searchParams.get("openworkUrl") ?? "";
-  const clientTokenRaw = url.searchParams.get("openworkClientToken") ?? "";
-  const tokenRaw = clientTokenRaw || url.searchParams.get("openworkToken") || url.searchParams.get("accessToken") || "";
+  const clientToken = (url.searchParams.get("openworkClientToken") ?? "").trim();
+  const token = clientToken || (url.searchParams.get("openworkToken") ?? "").trim() || (url.searchParams.get("accessToken") ?? "").trim();
   const normalizedHostUrl = normalizeOpenworkServerUrl(hostUrlRaw);
-  const token = tokenRaw.trim();
-  const clientToken = clientTokenRaw.trim() || token;
   if (!normalizedHostUrl || !token) {
     return null;
   }
