@@ -31,7 +31,6 @@ import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../..
 import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { useDenAuth } from "../domains/cloud/den-auth-provider";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
