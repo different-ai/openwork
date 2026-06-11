@@ -170,7 +170,6 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       const organizationContext = c.get("organizationContext")
-      const memberTeams = c.get("memberTeams") ?? []
       const params = c.req.valid("param" as never) as { id: string }
 
       if (!orgId) return c.json({ error: "worker_not_found" }, 404)
@@ -191,11 +190,7 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
 
       const providers = deps.listProviders
         ? await listProviders(normalizedOrgId)
-        : await listManagedProviderSyncProviders({
-            organizationId: normalizedOrgId,
-            currentMemberId: organizationContext.currentMember.id,
-            memberTeamIds: memberTeams.map((team) => team.id),
-          })
+        : await listManagedProviderSyncProviders(normalizedOrgId)
       const revision = computeManagedProviderRevision(providers)
 
       const runtime = await pushRuntime(worker.id, { providers, revision })

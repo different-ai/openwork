@@ -1068,7 +1068,13 @@ async function readManagedProviderAccessPolicy(workspaceRoot: string): Promise<M
   for (const [providerId, providerConfig] of Object.entries(providers)) {
     if (!isRecordValue(providerConfig) || !isRecordValue(providerConfig.models)) continue;
     const modelIds = Object.keys(providerConfig.models);
-    if (modelIds.length > 0) allowlist.set(providerId, new Set(modelIds));
+    if (modelIds.length > 0) {
+      const allowed = new Set(modelIds);
+      allowlist.set(providerId, allowed);
+      if (typeof providerConfig.id === "string" && providerConfig.id.trim()) {
+        allowlist.set(providerConfig.id.trim(), allowed);
+      }
+    }
   }
   return { allowedModelsByProvider: allowlist, revokedProviderIds };
 }
@@ -5184,7 +5190,6 @@ function getManagedProviderEnv(config: Record<string, unknown>) {
 
 export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncProvider, "id" | "providerId" | "source" | "credentialKind">) {
   if (provider.source === "openwork") return "openwork";
-  if (provider.credentialKind === "opencode_oauth") return provider.providerId.trim();
   return provider.id.trim();
 }
 

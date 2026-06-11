@@ -249,7 +249,7 @@ describe("managed provider sync runtime route", () => {
     expect(putCalls).toHaveLength(4);
     expect(putCalls[0]?.path).toBe("/auth/lpr_den_nvidia");
     expect(putCalls[0]?.body).toEqual({ type: "api", key: "plain-server-secret" });
-    expect(putCalls[1]?.path).toBe("/auth/openai");
+    expect(putCalls[1]?.path).toBe("/auth/llmProvider_den_openai");
     expect(putCalls[1]?.body).toEqual({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 });
   });
 
@@ -390,10 +390,10 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
     const providers = Array.isArray(body.all) ? body.all : [];
-    expect(providers.some((provider) => provider.id === "openai")).toBe(false);
-    expect(body.connected ?? []).not.toContain("openai");
+    expect(providers.some((provider) => provider.id === "openai")).toBe(true);
+    expect(body.connected ?? []).toContain("openai");
 
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/openai")).toBe(true);
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai")).toBe(true);
   });
 
   test("empty sync removes all managed providers", async () => {
@@ -419,7 +419,7 @@ describe("managed provider sync runtime route", () => {
   });
 
   test("failure on a later provider removes auth written earlier in the same attempt", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthPath: "/auth/openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthPath: "/auth/llmProvider_den_openai" });
     const response = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
       headers: hostAuth(),
@@ -460,7 +460,7 @@ describe("managed provider sync runtime route", () => {
   test("failure on a later provider restores previous working auth written earlier in the same attempt", async () => {
     const previousAuth = { type: "api", key: "previous-working-key" };
     const { base, authCalls, authStore } = await boot({
-      failAuthPath: "/auth/openai",
+      failAuthPath: "/auth/llmProvider_den_openai",
       initialAuth: { "/auth/lpr_den_nvidia": previousAuth },
     });
     const response = await fetch(`${base}/managed-providers/sync`, {
@@ -502,7 +502,7 @@ describe("managed provider sync runtime route", () => {
   });
 
   test("stale auth deletion failure does not restore config that references stale providers", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/llmProvider_den_openai" });
     const fullPayload = providerPayload();
     const initial = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -526,13 +526,13 @@ describe("managed provider sync runtime route", () => {
     expect(config).not.toContain('"openai"');
     expect(config).not.toContain("gpt-5.4");
     const metadata = readManagedProviderMetadata(workspace);
-    expect(metadata.applied?.sort()).toEqual(["lpr_den_nvidia", "openai"]);
-    expect(metadata.revoked).toContain("openai");
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/openai")).toBe(true);
+    expect(metadata.applied?.sort()).toEqual(["llmProvider_den_openai", "lpr_den_nvidia"]);
+    expect(metadata.revoked).toContain("llmProvider_den_openai");
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai")).toBe(true);
   });
 
   test("retries stale auth deletion after a previous deletion failure", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthDeletePathOnce: "/auth/openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthDeletePathOnce: "/auth/llmProvider_den_openai" });
     const fullPayload = providerPayload();
     const initial = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -548,7 +548,7 @@ describe("managed provider sync runtime route", () => {
       body: JSON.stringify(nvidiaOnlyPayload),
     });
     expect(firstUpdate.status).toBe(502);
-    expect(readManagedProviderMetadata(workspace).applied?.sort()).toEqual(["lpr_den_nvidia", "openai"]);
+    expect(readManagedProviderMetadata(workspace).applied?.sort()).toEqual(["llmProvider_den_openai", "lpr_den_nvidia"]);
 
     const retry = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -558,10 +558,10 @@ describe("managed provider sync runtime route", () => {
     expect(retry.status).toBe(200);
     expect(await retry.json()).toEqual({ status: "applied", providerCount: 1, revision: "sync-rev-2" });
 
-    const deleteAttempts = authCalls.filter((call) => call.method === "DELETE" && call.path === "/auth/openai");
+    const deleteAttempts = authCalls.filter((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai");
     expect(deleteAttempts).toHaveLength(2);
     const metadata = readManagedProviderMetadata(workspace);
     expect(metadata.applied).toEqual(["lpr_den_nvidia"]);
-    expect(metadata.revoked).toContain("openai");
+    expect(metadata.revoked).toContain("llmProvider_den_openai");
   });
 });
