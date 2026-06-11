@@ -160,7 +160,7 @@ export function resolveDesktopDenBaseUrl(request: Request) {
     if (isWebAppHost(url.hostname) || isConfiguredBrowserOrigin(url.origin)) {
       return withDenProxyPath(url.origin)
     }
-    return origin
+    throw new DesktopHandoffBaseUrlError("Desktop handoff could not resolve a trusted Den base URL from request configuration.")
   } catch {
     throw new DesktopHandoffBaseUrlError("Desktop handoff could not resolve a trusted Den base URL from request configuration.")
   }

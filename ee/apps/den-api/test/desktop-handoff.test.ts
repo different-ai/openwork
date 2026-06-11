@@ -30,3 +30,11 @@ test("desktop handoff Den base URL fails closed instead of falling back to publi
 
   expect(() => desktopHandoffModule.resolveDesktopDenBaseUrl(request)).toThrow("trusted Den base URL")
 })
+
+test("desktop handoff Den base URL rejects valid but untrusted forwarded hosts", () => {
+  const request = new Request("http://den-api.internal/v1/auth/desktop-handoff", {
+    headers: { "x-forwarded-host": "attacker.example", "x-forwarded-proto": "https" },
+  })
+
+  expect(() => desktopHandoffModule.resolveDesktopDenBaseUrl(request)).toThrow("trusted Den base URL")
+})

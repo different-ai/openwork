@@ -293,6 +293,10 @@ export function canUseOpenAiOAuthCredentialFlow(payload: { currentMember: { isOw
   return isOrganizationAdmin(payload)
 }
 
+function requiresOpenAiOAuthCredentialPermission(input: { credentialKind?: string; opencodeAuth?: string }) {
+  return input.credentialKind === "opencode_oauth" || Boolean(input.opencodeAuth?.trim())
+}
+
 export function canImportLlmProviderCredential(payload: { currentMember: { isOwner: boolean; role: string } }) {
   return isOrganizationAdmin(payload)
 }
@@ -1078,6 +1082,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       try {
         const normalized = await normalizeLlmProviderInput(input)
+        if (requiresOpenAiOAuthCredentialPermission(input) && !canUseOpenAiOAuthCredentialFlow(payload)) {
+          return c.json({ error: "forbidden", message: "Only organization admins can connect OpenAI OAuth credentials." }, 403)
+        }
         const memberIds = await resolveMemberIds({
           organizationId: payload.organization.id,
           values: input.memberIds,
@@ -1222,6 +1229,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       try {
         const normalized = await normalizeLlmProviderInput(input)
+        if (requiresOpenAiOAuthCredentialPermission(input) && !canUseOpenAiOAuthCredentialFlow(payload)) {
+          return c.json({ error: "forbidden", message: "Only organization admins can connect OpenAI OAuth credentials." }, 403)
+        }
         const memberIds = await resolveMemberIds({
           organizationId: payload.organization.id,
           values: input.memberIds,
