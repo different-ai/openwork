@@ -73,7 +73,7 @@ export function parseEntraSsoEnv(input: {
     tenantId: normalizeEntraTenantId(input.DEN_ENTRA_TENANT_ID),
     clientId: optionalString(input.DEN_ENTRA_CLIENT_ID),
     clientSecret: optionalString(input.DEN_ENTRA_CLIENT_SECRET),
-    autoJoinEnabled: (input.DEN_ENTRA_AUTO_JOIN_ENABLED ?? "false").toLowerCase() === "true",
+    autoJoinEnabled: (input.DEN_ENTRA_AUTO_JOIN_ENABLED ?? "false").trim().toLowerCase() === "true",
     autoJoinOrganizationId: optionalString(input.DEN_ENTRA_AUTO_JOIN_ORG_ID),
     autoJoinOrganizationSlug: optionalString(input.DEN_ENTRA_AUTO_JOIN_ORG_SLUG),
     adminGroupIds: splitCsv(input.DEN_ENTRA_ADMIN_GROUP_IDS),

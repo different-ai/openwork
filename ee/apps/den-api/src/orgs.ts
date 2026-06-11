@@ -76,6 +76,7 @@ export type OrganizationContext = {
     id: MemberId
     userId: UserId
     role: string
+    joinedAt: Date | null
     createdAt: Date
     isOwner: boolean
   }
@@ -1212,6 +1213,7 @@ export async function getOrganizationContextForUser(input: {
       id: currentMember.id,
       userId: input.userId,
       role: currentMember.role,
+      joinedAt: currentMember.joinedAt,
       createdAt: currentMember.createdAt,
       isOwner: roleIncludesOwner(currentMember.role),
     },

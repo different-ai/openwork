@@ -23,7 +23,7 @@ test("parses Entra SSO environment into provider and auto-join config", () => {
     DEN_ENTRA_TENANT_ID: " 00000000-0000-0000-0000-000000000123 ",
     DEN_ENTRA_CLIENT_ID: " client-123 ",
     DEN_ENTRA_CLIENT_SECRET: " secret-123 ",
-    DEN_ENTRA_AUTO_JOIN_ENABLED: "true",
+    DEN_ENTRA_AUTO_JOIN_ENABLED: " true ",
     DEN_ENTRA_AUTO_JOIN_ORG_ID: " organization_123 ",
     DEN_ENTRA_ADMIN_GROUP_IDS: "admin-a, admin-b",
     DEN_ENTRA_MEMBER_GROUP_IDS: "member-a,member-b",
