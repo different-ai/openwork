@@ -199,7 +199,7 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
     (team) => !teamGrants.some((grant) => grant.teamId === team.id),
   );
   const membersAvailable = (orgContext?.members ?? []).filter(
-    (member) => !memberGrants.some((grant) => grant.orgMembershipId === member.id),
+    (member) => member.userId && !memberGrants.some((grant) => grant.orgMembershipId === member.id),
   );
 
   async function handleToggleOrgWide() {

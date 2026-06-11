@@ -202,11 +202,11 @@ export function isSafeEntraAuthOrigin(origin: string) {
 }
 
 export function mapEntraProfileToUser(profile: EntraProfile) {
-  const email = profile.email?.trim()
+  const email = (profile.email?.trim()
     || profile.preferred_username?.trim()
     || profile.upn?.trim()
     || (profile.oid?.trim() ? `${profile.oid.trim()}@entra.local` : undefined)
-    || (profile.sub?.trim() ? `${profile.sub.trim()}@entra.local` : undefined)
+    || (profile.sub?.trim() ? `${profile.sub.trim()}@entra.local` : undefined))?.toLowerCase()
 
   return {
     email,

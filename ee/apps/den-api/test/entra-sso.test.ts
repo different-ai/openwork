@@ -155,7 +155,7 @@ test("extracts only token groups claim for Entra role mapping", () => {
 test("maps Entra profile email fallback to preferred username or UPN", () => {
   expect(mapEntraProfileToUser({
     name: "Ada Lovelace",
-    preferred_username: "ada@example.com",
+    preferred_username: "Ada@Example.com",
   })).toEqual({
     email: "ada@example.com",
     emailVerified: true,

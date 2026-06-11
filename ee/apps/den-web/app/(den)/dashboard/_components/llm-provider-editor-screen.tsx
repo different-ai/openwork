@@ -235,7 +235,7 @@ export function LlmProviderEditorScreen({
     }, [accessQuery, orgContext?.teams]);
 
     const filteredMembers = useMemo(() => {
-        const members = orgContext?.members ?? [];
+        const members = (orgContext?.members ?? []).filter((member) => member.userId);
         const normalizedQuery = accessQuery.trim().toLowerCase();
         if (!normalizedQuery) {
             return members;

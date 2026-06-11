@@ -418,7 +418,7 @@ async function reconcilePendingInvitationsForMember(input: {
     .where(eq(AuthUserTable.id, input.userId))
     .limit(1)
 
-  const email = userRows[0]?.email?.trim()
+  const email = userRows[0]?.email?.trim().toLowerCase()
   if (!email) {
     return
   }
@@ -457,7 +457,7 @@ async function hasPendingInvitationSeatReservation(input: {
     .where(eq(AuthUserTable.id, input.userId))
     .limit(1)
 
-  const email = userRows[0]?.email?.trim()
+  const email = userRows[0]?.email?.trim().toLowerCase()
   if (!email) {
     return false
   }
