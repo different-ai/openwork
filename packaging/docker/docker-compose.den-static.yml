@@ -8,8 +8,8 @@ x-shared: &shared
 
 services:
   mysql:
-    <<: *shared
     image: mysql:8.4
+    restart: unless-stopped
     command:
       - --performance_schema=OFF
       - --innodb-buffer-pool-size=64M
