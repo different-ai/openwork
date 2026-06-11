@@ -217,8 +217,12 @@ function mergeRouteWorkspaces(
       return path ? [[path, workspace] as const] : [];
     }),
   );
+  const remoteDesktopIds = new Set(
+    desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
+  );
+  const filteredServer = serverWorkspaces.filter((workspace) => !remoteDesktopIds.has(workspace.id));
 
-  const mergedServer = serverWorkspaces.map((workspace) => {
+  const mergedServer = filteredServer.map((workspace) => {
     const match =
       desktopById.get(workspace.id) ??
       desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
