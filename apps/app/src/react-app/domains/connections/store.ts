@@ -738,7 +738,25 @@ export function createConnectionsStore(options: {
       options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 
-      if (entry.oauth && !resolvedHeaders) {
+      // OAuth is auto-detected: open the sign-in modal when the directory
+      // entry declares OAuth up front, or when the engine reports the fresh
+      // remote entry as needing auth. Custom apps no longer ask the user to
+      // know whether their server uses OAuth.
+      let needsAuth = Boolean(entry.oauth) && !resolvedHeaders;
+      if (!needsAuth && entryType === "remote" && !resolvedHeaders) {
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const detected = snapshot.mcpStatuses[slug]?.status;
+          if (detected === "needs_auth" || detected === "needs_client_registration") {
+            needsAuth = true;
+            break;
+          }
+          if (detected === "connected" || detected === "failed" || detected === "disabled") break;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await refreshMcpServers();
+        }
+      }
+
+      if (needsAuth) {
         mutateState((current) => ({
           ...current,
           mcpAuthEntry: entry,

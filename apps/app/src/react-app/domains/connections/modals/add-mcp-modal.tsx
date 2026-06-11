@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useId, useReducer } from "react";
+import { useReducer } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import {
@@ -29,7 +29,6 @@ type AddMcpState = {
   serverType: "remote" | "local";
   url: string;
   command: string;
-  oauthRequired: boolean;
   error: string | null;
   submitting: boolean;
 };
@@ -39,7 +38,6 @@ const initialAddMcpState: AddMcpState = {
   serverType: "remote",
   url: "",
   command: "",
-  oauthRequired: false,
   error: null,
   submitting: false,
 };
@@ -51,7 +49,6 @@ function addMcpReducer(state: AddMcpState, patch: Partial<AddMcpState> | "reset"
 
 export function AddMcpModal(props: AddMcpModalProps) {
   const [state, dispatch] = useReducer(addMcpReducer, initialAddMcpState);
-  const oauthRequiredId = useId();
 
   const reset = () => {
     dispatch("reset");
@@ -89,7 +86,9 @@ export function AddMcpModal(props: AddMcpModalProps) {
             description: "",
             type: "remote",
             url: trimmedUrl,
-            oauth: state.oauthRequired,
+            // Sign-in is auto-detected after connecting; the engine reports
+            // needs_auth for OAuth servers and the sign-in modal opens itself.
+            oauth: false,
           }),
         );
       } finally {
@@ -192,29 +191,8 @@ export function AddMcpModal(props: AddMcpModalProps) {
                 value={state.url}
                 onChange={(event) => dispatch({ url: event.currentTarget.value })}
               />
-              <div className="rounded-xl border border-dls-border bg-dls-hover/40 p-3">
-                <div className="mb-2 text-xs font-medium text-dls-text">
-                  {t("mcp.sign_in_section_label")}
-                </div>
-                <div className="flex items-start gap-2 text-xs text-dls-secondary">
-                  <input
-                    id={oauthRequiredId}
-                    type="checkbox"
-                    className="mt-0.5 size-4 rounded border border-dls-border"
-                    checked={state.oauthRequired}
-                    onChange={(event) =>
-                      dispatch({ oauthRequired: event.currentTarget.checked })
-                    }
-                  />
-                  <label htmlFor={oauthRequiredId}>
-                    <span className="block text-dls-text">
-                      {t("mcp.oauth_optional_label")}
-                    </span>
-                    <span className="mt-0.5 block text-dls-secondary">
-                      {t("mcp.oauth_optional_hint")}
-                    </span>
-                  </label>
-                </div>
+              <div className="text-[11px] text-dls-secondary">
+                {t("mcp.oauth_autodetect_hint")}
               </div>
             </div>
           ) : null}
