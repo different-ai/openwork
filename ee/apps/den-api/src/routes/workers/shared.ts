@@ -516,7 +516,16 @@ async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: 
 }
 
 async function getWorkerRuntimeAccess(workerId: WorkerId) {
-  const instance = await getLatestWorkerInstance(workerId)
+  const workerRows = await db
+    .select({ status: WorkerTable.status })
+    .from(WorkerTable)
+    .where(eq(WorkerTable.id, workerId))
+    .limit(1)
+  if (workerRows[0] && workerRows[0].status !== "healthy") {
+    return null
+  }
+
+  const instance = await getLatestHealthyWorkerInstance(workerId)
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)
