@@ -390,8 +390,8 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
     const providers = Array.isArray(body.all) ? body.all : [];
-    expect(providers.some((provider) => provider.id === "openai")).toBe(true);
-    expect(body.connected ?? []).toContain("openai");
+    expect(providers.some((provider) => provider.id === "openai")).toBe(false);
+    expect(body.connected ?? []).not.toContain("openai");
 
     expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai")).toBe(true);
   });

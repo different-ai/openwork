@@ -2500,11 +2500,18 @@ function createRoutes(
       ? await readFile(opencodeConfigFile, "utf8")
       : null;
     const previousManagedProviderIds = await readAppliedManagedProviderRuntimeIds(workspace.path);
+    const previousVisibleProviderIds = await readManagedProviderVisibleIds(workspace.path, previousManagedProviderIds);
     const previousRevokedProviderIds = await readRevokedManagedProviderRuntimeIds(workspace.path);
     const currentManagedProviderIds = new Set(payload.providers.map((provider) => getManagedProviderRuntimeId(provider)));
     const staleManagedProviderIds = [...previousManagedProviderIds].filter((providerId) => !currentManagedProviderIds.has(providerId));
-    const revokedManagedProviderIds = new Set([...previousRevokedProviderIds, ...staleManagedProviderIds]);
-    for (const providerId of currentManagedProviderIds) revokedManagedProviderIds.delete(providerId);
+    const staleVisibleProviderIds = staleManagedProviderIds
+      .map((providerId) => previousVisibleProviderIds.get(providerId))
+      .filter((providerId): providerId is string => Boolean(providerId));
+    const revokedManagedProviderIds = new Set([...previousRevokedProviderIds, ...staleManagedProviderIds, ...staleVisibleProviderIds]);
+    for (const provider of payload.providers) {
+      revokedManagedProviderIds.delete(getManagedProviderRuntimeId(provider));
+      revokedManagedProviderIds.delete(provider.providerId);
+    }
 
     const applied: string[] = [];
     const previousAuthByProviderId = new Map<string, unknown | null>();
@@ -5221,6 +5228,20 @@ async function readAppliedManagedProviderRuntimeIds(workspaceRoot: string): Prom
 
 async function readRevokedManagedProviderRuntimeIds(workspaceRoot: string): Promise<Set<string>> {
   return readManagedProviderRuntimeIds(workspaceRoot, "revoked");
+}
+
+async function readManagedProviderVisibleIds(workspaceRoot: string, providerIds: Set<string>): Promise<Map<string, string>> {
+  if (providerIds.size === 0) return new Map();
+  const config = await readOpencodeConfig(workspaceRoot);
+  const providers = isRecordValue(config.provider) ? config.provider : {};
+  const visibleIds = new Map<string, string>();
+  for (const providerId of providerIds) {
+    const provider = providers[providerId];
+    if (isRecordValue(provider) && typeof provider.id === "string" && provider.id.trim()) {
+      visibleIds.set(providerId, provider.id.trim());
+    }
+  }
+  return visibleIds;
 }
 
 async function applyManagedProviderConfigSet(workspaceRoot: string, providers: ManagedProviderSyncProvider[], previousManagedProviderIds: Set<string>) {
