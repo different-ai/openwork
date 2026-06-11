@@ -62,7 +62,7 @@ function SandboxCard({
   onRename: () => void;
 }) {
   const meta = getWorkerStatusMeta(sandbox.status);
-  const canConnect = meta.bucket === "ready";
+  const canConnect = meta.bucket === "ready" && sandbox.isMine;
   const connectionUrl = details?.openworkUrl ?? sandbox.instanceUrl ?? null;
   const openWebUrl = details?.openworkAppConnectUrl ?? null;
   const openDesktopUrl = details?.openworkDeepLink ?? null;
@@ -94,6 +94,7 @@ function SandboxCard({
             type="button"
             onClick={onToggle}
             disabled={!canConnect}
+            title={!sandbox.isMine ? "Only the worker owner can connect to this worker." : meta.bucket !== "ready" ? "This worker is not ready yet." : undefined}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
               expanded
                 ? "bg-gray-100 text-gray-900 hover:bg-gray-200"
@@ -106,9 +107,10 @@ function SandboxCard({
           <button
             type="button"
             onClick={onRename}
-            disabled={renameBusy}
+            disabled={renameBusy || !sandbox.isMine}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={`Rename ${sandbox.workerName}`}
+            title={!sandbox.isMine ? "Only the worker owner can rename this worker." : undefined}
           >
             <MoreHorizontal size={16} />
           </button>
@@ -157,7 +159,7 @@ function SandboxCard({
             </p>
           ) : (
             <p className="mt-4 text-[12px] text-gray-500">
-              Connection details will appear once this workspace is ready.
+              {sandbox.isMine ? "Connection details will appear once this workspace is ready." : "Only the worker owner can connect to this worker."}
             </p>
           )}
         </div>
@@ -257,7 +259,7 @@ export function BackgroundAgentsScreen() {
 
   async function toggleSandbox(worker: WorkerListItem) {
     const meta = getWorkerStatusMeta(worker.status);
-    if (meta.bucket !== "ready") {
+    if (meta.bucket !== "ready" || !worker.isMine) {
       return;
     }
 
