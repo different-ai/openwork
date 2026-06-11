@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const serviceDir = path.resolve(scriptDir, "..")
@@ -9,7 +9,6 @@ const repoRoot = path.resolve(serviceDir, "..", "..", "..")
 const desktopPackagePath = path.join(repoRoot, "apps", "desktop", "package.json")
 const generatedVersionPath = path.join(serviceDir, "src", "generated", "app-version.ts")
 const pnpmCommand = "pnpm"
-const useShellForPnpm = process.platform === "win32"
 const fallbackAppVersion = "0.0.0"
 
 function readDesktopVersion() {
@@ -41,17 +40,26 @@ function writeGeneratedVersionFile(latestAppVersion) {
   )
 }
 
-function quoteShellArg(value) {
+export function quoteShellArg(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`
 }
 
+export function createPnpmSpawnInput(command, args, platform = process.platform) {
+  const useShell = platform === "win32"
+  return {
+    command: useShell ? [command, ...args].map(quoteShellArg).join(" ") : command,
+    args: useShell ? [] : args,
+    shell: useShell,
+  }
+}
+
 function run(command, args) {
-  const shellCommand = [command, ...args.map(quoteShellArg)].join(" ")
-  const result = spawnSync(useShellForPnpm ? shellCommand : command, useShellForPnpm ? [] : args, {
+  const input = createPnpmSpawnInput(command, args)
+  const result = spawnSync(input.command, input.args, {
     cwd: serviceDir,
     env: process.env,
     stdio: "inherit",
-    shell: useShellForPnpm,
+    shell: input.shell,
   })
 
   if (result.error) {
@@ -64,9 +72,15 @@ function run(command, args) {
   }
 }
 
-process.env.DEN_API_LATEST_APP_VERSION = process.env.DEN_API_LATEST_APP_VERSION || readDesktopVersion()
-writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
+function main() {
+  process.env.DEN_API_LATEST_APP_VERSION = process.env.DEN_API_LATEST_APP_VERSION || readDesktopVersion()
+  writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
 
-run(pnpmCommand, ["run", "build:email"])
-run(pnpmCommand, ["run", "build:den-db"])
-run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
+  run(pnpmCommand, ["run", "build:email"])
+  run(pnpmCommand, ["run", "build:den-db"])
+  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+}
