@@ -400,7 +400,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                           type="button"
                           className="rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-primary)] transition hover:bg-[var(--dls-active)] disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => void redeployWorker(selectedWorker.workerId)}
-                          disabled={!isSelectedWorkerFailed || redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          disabled={!selectedWorker.isMine || !isSelectedWorkerFailed || redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          title={!selectedWorker.isMine ? "Only the worker owner can redeploy this worker." : undefined}
                         >
                           {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
                         </button>
@@ -408,7 +409,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                           type="button"
                           className="rounded-[12px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => void deleteWorker(selectedWorker.workerId)}
-                          disabled={deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          disabled={!selectedWorker.isMine || deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                          title={!selectedWorker.isMine ? "Only the worker owner can delete this worker." : undefined}
                         >
                           {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
                         </button>
@@ -450,7 +452,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                           type="button"
                           className="rounded-[12px] bg-[#011627] px-3 py-2 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => void upgradeRuntime()}
-                          disabled={runtimeUpgradeBusy || runtimeBusy || !isReady}
+                          disabled={!selectedWorker.isMine || runtimeUpgradeBusy || runtimeBusy || !isReady}
+                          title={!selectedWorker.isMine ? "Only the worker owner can upgrade this worker runtime." : undefined}
                         >
                           {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
                         </button>

@@ -514,6 +514,12 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "worker_not_found" }, 404)
     }
 
+    if (worker.created_by_user_id !== user.id) {
+      return c.json({
+        error: "forbidden",
+        message: "Only the worker owner can delete this worker.",
+      }, 403)
+    }
     await deleteWorkerCascade(worker)
     return c.body(null, 204)
     },
