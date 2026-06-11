@@ -525,7 +525,7 @@ async function getWorkerRuntimeAccess(workerId: WorkerId) {
     return null
   }
 
-  const instance = await getLatestHealthyWorkerInstance(workerId)
+  const instance = await getLatestWorkerInstance(workerId)
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)
