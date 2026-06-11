@@ -567,9 +567,12 @@ export function stripOpenworkWorkspaceMount(input: string) {
   try {
     const url = new URL(normalized);
     const segments = url.pathname.split("/").filter(Boolean);
-    const mountIndex = segments.length - 2;
-    const mountSegment = segments[mountIndex];
-    if ((mountSegment === "workspace" || mountSegment === "w") && segments[mountIndex + 1]) {
+    const mountIndex = segments.findIndex((segment, index) => {
+      if (segment !== "workspace" && segment !== "w") return false;
+      const workspaceId = segments[index + 1] ?? "";
+      return workspaceId.startsWith("ws_") || workspaceId.startsWith("workspace_") || workspaceId.startsWith("rem_") || index + 2 === segments.length;
+    });
+    if (mountIndex >= 0 && segments[mountIndex + 1]) {
       const prefix = segments.slice(0, mountIndex).join("/");
       url.pathname = prefix ? `/${prefix}` : "/";
       return url.toString().replace(/\/+$/, "");
