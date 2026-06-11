@@ -1,5 +1,5 @@
-import { and, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
-import { LlmProviderAccessTable, LlmProviderModelTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { LlmProviderAccessTable, LlmProviderModelTable, LlmProviderTable, MemberTable, TeamMemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -31,7 +31,7 @@ export type ManagedProviderSyncProvider = {
 
 type ManagedProviderRouteDeps = {
   middlewares?: never[]
-  getWorker?: (workerId: WorkerId, orgId: OrganizationId) => Promise<{ id: WorkerId } | null>
+  getWorker?: (workerId: WorkerId, orgId: OrganizationId) => Promise<{ id: WorkerId; created_by_user_id: typeof MemberTable.$inferSelect.userId } | null>
   listProviders?: (orgId: OrganizationId) => Promise<ManagedProviderSyncProvider[]>
   pushRuntime?: (workerId: WorkerId, payload: { providers: ManagedProviderSyncProvider[]; revision: string }) => Promise<{ ok: boolean; status: number; payload: unknown }>
 }
@@ -188,9 +188,34 @@ export function registerManagedProviderSyncRoutes(app: Hono<{ Variables: WorkerR
       const worker = await getWorker(workerId, normalizedOrgId)
       if (!worker) return c.json({ error: "worker_not_found" }, 404)
 
-      const providers = deps.listProviders
-        ? await listProviders(normalizedOrgId)
-        : await listManagedProviderSyncProviders(normalizedOrgId)
+      let providers: ManagedProviderSyncProvider[]
+      if (deps.listProviders) {
+        providers = await listProviders(normalizedOrgId)
+      } else {
+        if (!worker.created_by_user_id) return c.json({ error: "worker_owner_not_found" }, 404)
+        const workerOwnerMembers = await db
+          .select({ id: MemberTable.id })
+          .from(MemberTable)
+          .where(and(
+            eq(MemberTable.organizationId, normalizedOrgId),
+            eq(MemberTable.userId, worker.created_by_user_id),
+            isNull(MemberTable.removedAt),
+          ))
+          .limit(1)
+        const workerOwnerMember = workerOwnerMembers[0]
+        if (!workerOwnerMember) return c.json({ error: "worker_owner_not_found" }, 404)
+
+        const workerOwnerTeams = await db
+          .select({ id: TeamMemberTable.teamId })
+          .from(TeamMemberTable)
+          .where(eq(TeamMemberTable.orgMembershipId, workerOwnerMember.id))
+
+        providers = await listManagedProviderSyncProviders({
+            organizationId: normalizedOrgId,
+            currentMemberId: workerOwnerMember.id,
+            memberTeamIds: workerOwnerTeams.map((team) => team.id),
+          })
+      }
       const revision = computeManagedProviderRevision(providers)
 
       const runtime = await pushRuntime(worker.id, { providers, revision })
