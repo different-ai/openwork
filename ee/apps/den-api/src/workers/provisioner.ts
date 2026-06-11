@@ -340,7 +340,10 @@ export async function provisionStaticWorker(
   const reservationTtlMs = config.reservationTtlMs ?? 300000
   const url = selectStaticWorkerUrl(input.workerId, {
     ...config,
-    unavailableUrls: config.unavailableUrls ?? input.unavailableStaticWorkerUrls,
+    unavailableUrls: [
+      ...(config.unavailableUrls ?? []),
+      ...(input.unavailableStaticWorkerUrls ?? []),
+    ],
   })
   reserveStaticWorkerUrl(input.workerId, url, reservationTtlMs)
 

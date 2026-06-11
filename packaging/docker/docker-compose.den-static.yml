@@ -8,6 +8,7 @@ x-shared: &shared
 
 services:
   mysql:
+    <<: *shared
     image: mysql:8.4
     command:
       - --performance_schema=OFF
@@ -94,7 +95,7 @@ services:
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       DAYTONA_TARGET: ${DAYTONA_TARGET:-}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-}
-      DAYTONA_WORKER_PROXY_BASE_URL: ${DEN_DAYTONA_WORKER_PROXY_BASE_URL:-http://localhost:8789}
+      DAYTONA_WORKER_PROXY_BASE_URL: ${DEN_DAYTONA_WORKER_PROXY_BASE_URL:-http://worker-proxy:8789}
 
   worker-proxy:
     <<: *shared

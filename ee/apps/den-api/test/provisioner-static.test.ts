@@ -296,6 +296,23 @@ test("static provisioner fails clearly when every configured URL is already acti
   )).rejects.toThrow("No available static worker URL remains")
 })
 
+test("static provisioner combines configured and runtime unavailable URLs", async () => {
+  await expect(provisionerModule.provisionStaticWorker(
+    {
+      workerId: "worker_static_combined_unavailable_123",
+      name: "Static Combined Unavailable",
+      hostToken: "host-token",
+      clientToken: "client-token",
+      activityToken: "activity-token",
+      unavailableStaticWorkerUrls: [staticWorkerUrl],
+    },
+    staticWorkerConfig({
+      urls: ["http://127.0.0.1:1", staticWorkerUrl],
+      unavailableUrls: ["http://127.0.0.1:1"],
+    }),
+  )).rejects.toThrow("No available static worker URL remains")
+})
+
 test("static selector exhausts against DB-recomputed active normalized URLs", () => {
   expect(() => provisionerModule.selectStaticWorkerUrlFromPool(
     "worker_static_db_active_exhausted_123",
