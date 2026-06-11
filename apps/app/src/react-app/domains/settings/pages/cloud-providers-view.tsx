@@ -223,6 +223,7 @@ export function CloudProvidersView({
       actionId={actionId}
       actionKind={actionKind}
       busy={busy}
+      canManageProviders={activeOrg?.role === "owner" || activeOrg?.role === "admin"}
       rows={rows}
       onImport={importProvider}
       onRefresh={refresh}
