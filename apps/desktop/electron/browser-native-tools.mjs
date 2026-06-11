@@ -187,6 +187,11 @@ class NativeSnapshot {
     return object.objectId;
   }
 
+  async sendCommand(command, params) {
+    const wc = this.#ensureDebugger();
+    return wc.debugger.sendCommand(command, params);
+  }
+
   /** Get node data for a uid (used by upload_file for backendDOMNodeId). */
   getNodeData(uid) {
     return this.#nodes.get(uid);
@@ -636,7 +641,6 @@ export function createNativeBuiltinServer({
       includeSnapshot: z.boolean().optional(),
     },
     async (params) => {
-      const w = wc();
       const tokens = params.key.split("+");
       const mainKey = tokens.pop();
       const modifiers = [...tokens]; // defensive copy before reverse
@@ -649,17 +653,16 @@ export function createNativeBuiltinServer({
         if (m === "Shift") flags |= 8;
       }
 
-      const dbg = w.debugger;
       for (const m of modifiers) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: m, modifiers: flags });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: m, modifiers: flags });
       }
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: mainKey, text: mainKey.length === 1 ? mainKey : "", modifiers: flags });
+      await snap.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: mainKey, text: mainKey.length === 1 ? mainKey : "", modifiers: flags });
       if (mainKey.length === 1) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: mainKey, modifiers: flags });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "char", text: mainKey, modifiers: flags });
       }
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: mainKey, modifiers: flags });
+      await snap.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: mainKey, modifiers: flags });
       for (const m of [...modifiers].reverse()) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: m, modifiers: flags });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: m, modifiers: flags });
       }
 
       const text = `Successfully pressed key: ${params.key}`;
@@ -680,13 +683,12 @@ export function createNativeBuiltinServer({
       submitKey: z.string().optional().describe('Optional key to press after typing, e.g. "Enter", "Tab"'),
     },
     async (params) => {
-      const dbg = wc().debugger;
       for (const ch of params.text) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: ch });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "char", text: ch });
       }
       if (params.submitKey) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: params.submitKey });
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: params.submitKey });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", key: params.submitKey });
+        await snap.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: params.submitKey });
       }
       return { content: [{ type: "text", text: `Typed "${params.text}"${params.submitKey ? ` and pressed ${params.submitKey}` : ""}` }] };
     },
@@ -770,7 +772,7 @@ export function createNativeBuiltinServer({
       promptText: z.string().optional().describe("Optional prompt text to enter"),
     },
     async (params) => {
-      await wc().debugger.sendCommand("Page.handleJavaScriptDialog", {
+      await snap.sendCommand("Page.handleJavaScriptDialog", {
         accept: params.action === "accept",
         promptText: params.promptText,
       });
@@ -869,19 +871,18 @@ export function createNativeBuiltinServer({
         .describe("User agent to emulate. Empty string to clear."),
     },
     async (params) => {
-      const dbg = wc().debugger;
       const results = [];
 
       if (params.colorScheme) {
         const media = params.colorScheme === "auto" ? "" : params.colorScheme;
-        await dbg.sendCommand("Emulation.setEmulatedMedia", {
+        await snap.sendCommand("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: media || "" }],
         });
         results.push(`Color scheme: ${params.colorScheme}`);
       }
 
       if (params.userAgent !== undefined) {
-        await dbg.sendCommand("Emulation.setUserAgentOverride", {
+        await snap.sendCommand("Emulation.setUserAgentOverride", {
           userAgent: params.userAgent || "",
         });
         results.push(`User agent: ${params.userAgent || "(cleared)"}`);
