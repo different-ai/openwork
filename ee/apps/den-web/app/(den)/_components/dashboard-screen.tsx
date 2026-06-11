@@ -191,7 +191,6 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
     billingSummary,
     refreshWorkers,
     checkWorkerStatus,
-    generateWorkerToken,
     deleteWorker,
     redeployWorker,
     refreshRuntime,
@@ -341,14 +340,6 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                       >
                         {openworkDeepLink ? "Open in Desktop" : "Preparing connection..."}
                       </button>
-                      <button
-                        type="button"
-                        className="rounded-[16px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 py-3 text-sm font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void generateWorkerToken()}
-                        disabled={actionBusy !== null}
-                      >
-                        {actionBusy === "token" ? "Refreshing token..." : "Refresh token"}
-                      </button>
                     </div>
 
                     <div className="mt-6 space-y-4">
@@ -360,28 +351,6 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                         canCopy={Boolean(activeWorker?.openworkUrl ?? activeWorker?.instanceUrl)}
                         copied={copiedField === "openwork-url"}
                         onCopy={() => void copyToClipboard("openwork-url", activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null)}
-                        muted={!isReady}
-                      />
-
-                      <CredentialRow
-                        label="Owner token"
-                        value={activeWorker?.ownerToken ?? null}
-                        placeholder="Use refresh token"
-                        hint="Use this token when the remote client must answer permission prompts."
-                        canCopy={Boolean(activeWorker?.ownerToken)}
-                        copied={copiedField === "owner-token"}
-                        onCopy={() => void copyToClipboard("owner-token", activeWorker?.ownerToken ?? null)}
-                        muted={!isReady}
-                      />
-
-                      <CredentialRow
-                        label="Collaborator token"
-                        value={activeWorker?.clientToken ?? null}
-                        placeholder="Use refresh token"
-                        hint="Routine remote access without owner-only actions."
-                        canCopy={Boolean(activeWorker?.clientToken)}
-                        copied={copiedField === "client-token"}
-                        onCopy={() => void copyToClipboard("client-token", activeWorker?.clientToken ?? null)}
                         muted={!isReady}
                       />
                     </div>
@@ -426,14 +395,6 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                           disabled={actionBusy !== null}
                         >
                           {actionBusy === "status" ? "Checking..." : "Check status"}
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={() => void generateWorkerToken()}
-                          disabled={actionBusy !== null}
-                        >
-                          {actionBusy === "token" ? "Fetching..." : "Refresh token"}
                         </button>
                         <button
                           type="button"

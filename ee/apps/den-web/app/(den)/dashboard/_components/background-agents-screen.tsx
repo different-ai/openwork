@@ -1,18 +1,13 @@
 "use client";
 
-import { useState } from "react";
 import {
   Bot,
   Box,
-  Check,
   ChevronDown,
   ChevronUp,
-  Copy,
   ExternalLink,
-  KeyRound,
   Monitor,
   MoreHorizontal,
-  RefreshCw,
   Search,
 } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
@@ -51,84 +46,26 @@ function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["buc
   }
 }
 
-function CredentialField({
-  id,
-  label,
-  value,
-  onCopy,
-  copied,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onCopy: (field: string, text: string) => void;
-  copied: boolean;
-}) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-[12px] text-gray-500">{label}</label>
-      <div className="flex items-center gap-2">
-        <input
-          readOnly
-          value={value}
-          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] font-mono text-gray-600 outline-none shadow-sm transition-colors focus:border-gray-300"
-          onClick={(event) => event.currentTarget.select()}
-        />
-        <button
-          type="button"
-          onClick={() => onCopy(id, value)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700"
-          aria-label={`Copy ${label}`}
-        >
-          {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function SandboxCard({
   sandbox,
   expanded,
   details,
-  connectBusy,
   renameBusy,
   onToggle,
-  onRefresh,
   onRename,
 }: {
   sandbox: WorkerListItem;
   expanded: boolean;
   details: ConnectionDetails | null;
-  connectBusy: boolean;
   renameBusy: boolean;
   onToggle: () => void;
-  onRefresh: () => void;
   onRename: () => void;
 }) {
-  const [showTokens, setShowTokens] = useState(false);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
   const meta = getWorkerStatusMeta(sandbox.status);
   const canConnect = meta.bucket === "ready";
   const connectionUrl = details?.openworkUrl ?? sandbox.instanceUrl ?? null;
-  const ownerToken = details?.ownerToken ?? null;
-  const clientToken = details?.clientToken ?? null;
   const openWebUrl = details?.openworkAppConnectUrl ?? null;
   const openDesktopUrl = details?.openworkDeepLink ?? null;
-
-  async function handleCopy(field: string, text: string) {
-    await navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    window.setTimeout(() => {
-      setCopiedField((current) => (current === field ? null : current));
-    }, 2000);
-  }
-
-  const credentialFields = [
-    connectionUrl ? { id: "url", label: "Connection URL", value: connectionUrl } : null,
-    ownerToken ? { id: "owner", label: "Owner token", value: ownerToken } : null,
-    clientToken ? { id: "client", label: "Client token", value: clientToken } : null,
-  ].filter((field): field is { id: string; label: string; value: string } => Boolean(field));
 
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-5 transition-all hover:border-gray-200 hover:shadow-[0_2px_8px_-4px_rgba(0,0,0,0.04)]">
@@ -155,12 +92,7 @@ function SandboxCard({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => {
-              if (expanded) {
-                setShowTokens(false);
-              }
-              onToggle();
-            }}
+            onClick={onToggle}
             disabled={!canConnect}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors ${
               expanded
@@ -220,61 +152,9 @@ function SandboxCard({
           </div>
 
           {canConnect ? (
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={() => setShowTokens((current) => !current)}
-                className="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-gray-50/50 px-4 py-2.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50"
-              >
-                <span className="flex items-center gap-2">
-                  <KeyRound size={14} className="text-gray-400" />
-                  Connection credentials
-                </span>
-                {showTokens ? (
-                  <ChevronUp size={14} className="text-gray-400" />
-                ) : (
-                  <ChevronDown size={14} className="text-gray-400" />
-                )}
-              </button>
-
-              {showTokens ? (
-                <div className="mt-2 space-y-4 rounded-xl border border-gray-100 bg-gray-50/50 p-5">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[10px] font-semibold uppercase tracking-[1px] text-gray-500">
-                      Access Tokens
-                    </span>
-                    <button
-                      type="button"
-                      onClick={onRefresh}
-                      disabled={connectBusy}
-                      className="flex items-center gap-1.5 text-[12px] font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <RefreshCw size={13} className={connectBusy ? "animate-spin" : ""} />
-                      {connectBusy ? "Refreshing..." : "Refresh tokens"}
-                    </button>
-                  </div>
-
-                  {credentialFields.length > 0 ? (
-                    credentialFields.map((field) => (
-                      <CredentialField
-                        key={field.id}
-                        id={field.id}
-                        label={field.label}
-                        value={field.value}
-                        onCopy={handleCopy}
-                        copied={copiedField === field.id}
-                      />
-                    ))
-                  ) : (
-                    <p className="text-[12px] text-gray-500">
-                      {connectBusy
-                        ? "Loading connection credentials..."
-                        : "Connection credentials will appear here once the workspace is ready."}
-                    </p>
-                  )}
-                </div>
-              ) : null}
-            </div>
+            <p className="mt-4 text-[12px] text-gray-500">
+              {connectionUrl ? "Connection is ready. Use the buttons above to open this worker." : "Connection details are still preparing."}
+            </p>
           ) : (
             <p className="mt-4 text-[12px] text-gray-500">
               Connection details will appear once this workspace is ready.
@@ -449,10 +329,8 @@ export function BackgroundAgentsScreen() {
                 sandbox={sandbox}
                 expanded={expandedWorkerId === sandbox.workerId}
                 details={connectionDetailsByWorkerId[sandbox.workerId] ?? null}
-                connectBusy={connectBusyWorkerId === sandbox.workerId}
                 renameBusy={renameBusyWorkerId === sandbox.workerId}
                 onToggle={() => void toggleSandbox(sandbox)}
-                onRefresh={() => void loadConnectionDetails(sandbox.workerId, sandbox.workerName)}
                 onRename={() => {
                   const nextName = window.prompt("Rename workspace", sandbox.workerName)?.trim();
                   if (!nextName || nextName === sandbox.workerName) {
@@ -472,3 +350,4 @@ export function BackgroundAgentsScreen() {
     </DashboardPageTemplate>
   );
 }
+import { useState } from "react";

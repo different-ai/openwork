@@ -2146,7 +2146,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     },
 
     async syncWorkerManagedProviders(orgId: string, workerId: string): Promise<DenManagedProviderSyncResult> {
-      const payload = await requestJson<unknown>(
+      const raw = await requestJsonRaw<unknown>(
         baseUrls,
         `/v1/workers/${encodeURIComponent(workerId)}/managed-providers/sync`,
         {
@@ -2156,7 +2156,14 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
           body: {},
         },
       );
-      const result = getDenManagedProviderSyncResult(payload);
+      if (!raw.ok) {
+        const reason = isRecord(raw.json) && typeof raw.json.reason === "string" && raw.json.reason.trim()
+          ? raw.json.reason.trim()
+          : getErrorMessage(raw.json, `Request failed with ${raw.status}.`);
+        throw new DenApiError(raw.status, "managed_provider_sync_failed", reason);
+      }
+
+      const result = getDenManagedProviderSyncResult(raw.json);
       if (!result) {
         throw new DenApiError(500, "invalid_managed_provider_sync_payload", "Managed provider sync response was invalid.");
       }

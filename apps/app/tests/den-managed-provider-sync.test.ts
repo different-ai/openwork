@@ -55,9 +55,8 @@ describe("Den managed provider worker sync client", () => {
   test("surfaces sanitized worker sync failures", async () => {
     const secret = "sk-secret-value";
     const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
-      error: "managed_provider_sync_failed",
-      message: "Worker provider sync failed.",
-      details: { redacted: true },
+      status: "failed",
+      reason: "Worker provider sync failed.",
       secret,
     }), {
       headers: { "Content-Type": "application/json" },

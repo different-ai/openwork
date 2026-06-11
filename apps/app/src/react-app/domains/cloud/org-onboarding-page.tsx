@@ -277,10 +277,13 @@ export function ResourceSelectionPage() {
       return null;
     }
 
-    const healthyWorker = workers.find((worker) => worker.status === "healthy") ?? null;
+    const healthyWorker = workers.find((worker) => worker.status === "healthy" && worker.isMine) ?? null;
     if (!healthyWorker) {
+      if (workers.some((worker) => worker.status === "healthy")) {
+        throw new Error("A healthy cloud worker exists, but only its owner can open it.");
+      }
       if (workers.length > 0) {
-        throw new Error("No healthy cloud worker is attached to this organization yet.");
+        throw new Error("No healthy owned cloud worker is attached to this organization yet.");
       }
       return null;
     }
