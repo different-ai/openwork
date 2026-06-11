@@ -76,8 +76,8 @@ export function parseEntraSsoEnv(input: {
     autoJoinEnabled: (input.DEN_ENTRA_AUTO_JOIN_ENABLED ?? "false").trim().toLowerCase() === "true",
     autoJoinOrganizationId: optionalString(input.DEN_ENTRA_AUTO_JOIN_ORG_ID),
     autoJoinOrganizationSlug: optionalString(input.DEN_ENTRA_AUTO_JOIN_ORG_SLUG),
-    adminGroupIds: splitCsv(input.DEN_ENTRA_ADMIN_GROUP_IDS),
-    memberGroupIds: splitCsv(input.DEN_ENTRA_MEMBER_GROUP_IDS),
+    adminGroupIds: splitCsv(input.DEN_ENTRA_ADMIN_GROUP_IDS).map((group) => group.toLowerCase()),
+    memberGroupIds: splitCsv(input.DEN_ENTRA_MEMBER_GROUP_IDS).map((group) => group.toLowerCase()),
   }
 }
 
@@ -237,7 +237,7 @@ export function extractEntraGroupsFromClaims(claims: EntraTokenClaims | null | u
 
   return claims.groups
     .filter((group): group is string => typeof group === "string")
-    .map((group) => group.trim())
+    .map((group) => group.trim().toLowerCase())
     .filter(Boolean)
 }
 
@@ -254,7 +254,7 @@ export function resolveEntraSsoRole(input: {
   adminGroupIds: readonly string[]
   memberGroupIds: readonly string[]
 }): DenSsoOrganizationRole {
-  const groups = new Set(input.groups.map((group) => group.trim()).filter(Boolean))
+  const groups = new Set(input.groups.map((group) => group.trim().toLowerCase()).filter(Boolean))
 
   if (input.adminGroupIds.some((groupId) => groups.has(groupId))) {
     return "admin"

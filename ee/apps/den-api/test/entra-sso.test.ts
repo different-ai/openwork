@@ -25,8 +25,8 @@ test("parses Entra SSO environment into provider and auto-join config", () => {
     DEN_ENTRA_CLIENT_SECRET: " secret-123 ",
     DEN_ENTRA_AUTO_JOIN_ENABLED: " true ",
     DEN_ENTRA_AUTO_JOIN_ORG_ID: " organization_123 ",
-    DEN_ENTRA_ADMIN_GROUP_IDS: "admin-a, admin-b",
-    DEN_ENTRA_MEMBER_GROUP_IDS: "member-a,member-b",
+    DEN_ENTRA_ADMIN_GROUP_IDS: "ADMIN-a, admin-b",
+    DEN_ENTRA_MEMBER_GROUP_IDS: "MEMBER-a,member-b",
   })
 
   expect(config).toEqual({
@@ -116,15 +116,15 @@ test("allows local and LAN HTTP trusted origins when Entra is enabled", () => {
 
 test("maps Entra role from token groups with admin precedence and no owner assignment", () => {
   expect(resolveEntraSsoRole({
-    groups: ["group-admin", "group-member"],
+    groups: ["GROUP-admin", "group-member"],
     adminGroupIds: ["group-admin"],
     memberGroupIds: ["group-member"],
   })).toBe("admin")
 
   expect(resolveEntraSsoRole({
     groups: ["group-member"],
-    adminGroupIds: ["group-admin"],
-    memberGroupIds: ["group-member"],
+    adminGroupIds: ["GROUP-admin"],
+    memberGroupIds: ["GROUP-member"],
   })).toBe("member")
 
   expect(resolveEntraSsoRole({
