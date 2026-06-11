@@ -4,6 +4,7 @@ const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
+const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -178,6 +179,11 @@ ipcRenderer.on(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT, () => {
 ipcRenderer.on(NATIVE_MENU_CHECK_UPDATES_EVENT, () => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new Event(NATIVE_MENU_CHECK_UPDATES_EVENT));
+});
+
+ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(NATIVE_MENU_ZOOM_EVENT, { detail: action }));
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

@@ -37,6 +37,7 @@ const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
+const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
@@ -534,6 +535,8 @@ const browserTabs = new Map();
 let browserTabOrder = [];
 let activeBrowserTabId = null;
 let browserViewVisible = false;
+// Last browser panel bounds reported by the renderer, in renderer CSS pixels.
+// Converted to window device-independent pixels at every setBounds call.
 let lastBrowserBounds = null;
 let browserTabCounter = 0;
 const BROWSER_DEFAULT_URL = "about:blank";
@@ -607,6 +610,15 @@ async function checkForUpdatesFromNativeMenu() {
 async function toggleSidebarFromNativeMenu() {
   const win = await createMainWindow();
   win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
+}
+
+// Zoom must flow through the renderer's font-zoom pathway so the persisted
+// preference and the applied webContents zoom factor never drift apart. The
+// built-in resetZoom/zoomIn/zoomOut roles bypass that pathway (and zoom
+// whichever webContents is focused, including the embedded browser view).
+async function zoomFromNativeMenu(action) {
+  const win = await createMainWindow();
+  win.webContents.send(NATIVE_MENU_ZOOM_EVENT, action);
 }
 
 function installApplicationMenu() {
@@ -714,9 +726,27 @@ function installApplicationMenu() {
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
+        {
+          label: "Actual Size",
+          accelerator: "CommandOrControl+0",
+          click: () => {
+            void zoomFromNativeMenu("reset");
+          },
+        },
+        {
+          label: "Zoom In",
+          accelerator: "CommandOrControl+Plus",
+          click: () => {
+            void zoomFromNativeMenu("in");
+          },
+        },
+        {
+          label: "Zoom Out",
+          accelerator: "CommandOrControl+-",
+          click: () => {
+            void zoomFromNativeMenu("out");
+          },
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
@@ -1067,7 +1097,7 @@ async function showBrowserTabContextMenu(tabId, point) {
 
   const showSerial = menuOverlayShowSerial + 1;
   menuOverlayShowSerial = showSerial;
-  const request = tabMenuRequest(tab, point);
+  const request = tabMenuRequest(tab, point ? scaleRendererPoint(point) : point);
   const view = await ensureMenuOverlayView();
   if (showSerial !== menuOverlayShowSerial || menuOverlayView !== view) return;
   menuOverlayRequest = request;
@@ -1187,6 +1217,37 @@ function detachBrowserView(view) {
   }
 }
 
+// The renderer reports bounds in CSS pixels, which Electron scales by the main
+// window's zoom factor. Read the factor from the webContents at apply time so
+// the conversion is always correct, no matter how the zoom was changed
+// (shortcuts, native menu, or Chromium's persisted per-origin zoom).
+function mainWindowZoomFactor() {
+  try {
+    const factor = mainWindow?.webContents.getZoomFactor();
+    return typeof factor === "number" && factor > 0 ? factor : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function scaleRendererBounds(bounds) {
+  const zoom = mainWindowZoomFactor();
+  // Round edges (not width/height) so the far edge has no sub-pixel seam.
+  const x = Math.round(bounds.x * zoom);
+  const y = Math.round(bounds.y * zoom);
+  return {
+    x,
+    y,
+    width: Math.round((bounds.x + bounds.width) * zoom) - x,
+    height: Math.round((bounds.y + bounds.height) * zoom) - y,
+  };
+}
+
+function scaleRendererPoint(point) {
+  const zoom = mainWindowZoomFactor();
+  return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+}
+
 function attachActiveBrowserView() {
   if (!mainWindow || !browserViewVisible) return;
   const view = getActiveBrowserView();
@@ -1198,7 +1259,7 @@ function attachActiveBrowserView() {
     mainWindow.contentView.addChildView(view);
   }
   if (lastBrowserBounds && lastBrowserBounds.width > 0 && lastBrowserBounds.height > 0) {
-    view.setBounds(lastBrowserBounds);
+    view.setBounds(scaleRendererBounds(lastBrowserBounds));
   }
 }
 
@@ -1297,7 +1358,7 @@ function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false }
   const view = getActiveBrowserView();
   attachActiveBrowserView();
   if (bounds.width > 0 && bounds.height > 0) {
-    view?.setBounds(bounds);
+    view?.setBounds(scaleRendererBounds(bounds));
   }
   const url = view?.webContents.getURL();
   if (preloadDefault && (!url || url === "about:blank")) {
@@ -3241,7 +3302,7 @@ ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
   lastBrowserBounds = bounds;
   const view = getActiveBrowserView();
   if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-    view.setBounds(bounds);
+    view.setBounds(scaleRendererBounds(bounds));
   }
 });
 ipcMain.handle("openwork:browser:state", () => browserStatePayload());

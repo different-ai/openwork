@@ -8,28 +8,16 @@ export function getElectronBrowser() {
   return window.__OPENWORK_ELECTRON__?.browser ?? null;
 }
 
-// The renderer uses Electron's webContents.setZoomFactor, which scales the page
-// so getBoundingClientRect() / innerWidth report CSS pixels DIVIDED by the zoom
-// factor (e.g. at zoom 1.5 a 1180 DIP window measures ~786). WebContentsView
-// bounds, however, are in window device-independent pixels. So renderer rects
-// must be multiplied back by the zoom factor to land in the native coordinate
-// space. At zoom = 1 this is the identity.
-function getZoomFactor() {
-  const zoom = window.__OPENWORK_ZOOM_FACTOR__;
-  return typeof zoom === "number" && zoom > 0 ? zoom : 1;
-}
-
+// Bounds and points are sent in renderer CSS pixels. The Electron main process
+// converts them to window device-independent pixels using the authoritative
+// webContents zoom factor at apply time, so the renderer never needs to track
+// (and can never disagree with) the real zoom state.
 export function getNativeMenuPoint(
   el: HTMLElement | null,
   point?: { clientX: number; clientY: number },
 ) {
-  const zoom = getZoomFactor();
-
   if (point) {
-    return {
-      x: Math.round(point.clientX * zoom),
-      y: Math.round(point.clientY * zoom),
-    };
+    return { x: point.clientX, y: point.clientY };
   }
 
   if (!el) {
@@ -39,24 +27,19 @@ export function getNativeMenuPoint(
   const rect = el.getBoundingClientRect();
 
   return {
-    x: Math.round((rect.left + 8) * zoom),
-    y: Math.round((rect.bottom + 4) * zoom),
+    x: rect.left + 8,
+    y: rect.bottom + 4,
   };
 }
 
 export function computeBounds(el: HTMLElement) {
-  // Scale each edge to native DIP, then derive width/height from the rounded
-  // edges so the far edge has no sub-pixel seam at any zoom level.
   const rect = el.getBoundingClientRect();
-  const zoom = getZoomFactor();
-  const x = Math.round(rect.x * zoom);
-  const y = Math.round(rect.y * zoom);
 
   return {
-    x,
-    y,
-    width: Math.round(rect.right * zoom) - x,
-    height: Math.round(rect.bottom * zoom) - y,
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
   };
 }
 

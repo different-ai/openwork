@@ -38,7 +38,6 @@ export type BrowserStatePayload = {
 
 declare global {
   interface Window {
-    __OPENWORK_ZOOM_FACTOR__?: number;
     __OPENWORK_ELECTRON__?: {
       invokeDesktop?: (command: string, ...args: unknown[]) => Promise<unknown>;
       shell?: {
