@@ -3,7 +3,6 @@ import * as React from "react";
 import { toast } from "@/components/ui/sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
@@ -33,15 +32,8 @@ export function CloudWorkersView({
   const [workersBusy, setWorkersBusy] = React.useState(false);
   const [launchBusy, setLaunchBusy] = React.useState(false);
   const [openingWorkerId, setOpeningWorkerId] = React.useState<string | null>(null);
-  const [attachBusy, setAttachBusy] = React.useState(false);
   const [workers, setWorkers] = React.useState<CloudWorker[]>([]);
   const [workersError, setWorkersError] = React.useState<string | null>(null);
-  const [staticWorkerForm, setStaticWorkerForm] = React.useState({
-    name: "LAN static worker",
-    url: "",
-    clientToken: "",
-    hostToken: "",
-  });
   const activeOrgId = activeOrg?.id ?? "";
   const canAttachStaticWorker = activeOrg?.role === "owner" || activeOrg?.role === "admin";
 
@@ -153,44 +145,6 @@ export function CloudWorkersView({
     },
     [activeOrgId, apiBaseUrl, baseUrl, client, connectRemoteWorkspace],
   );
-
-  const attachStaticWorker = React.useCallback(async () => {
-    if (!activeOrgId) {
-      setWorkersError(t("den.error_choose_org"));
-      return;
-    }
-
-    const name = staticWorkerForm.name.trim();
-    const url = staticWorkerForm.url.trim();
-    const clientToken = staticWorkerForm.clientToken.trim();
-    const hostToken = staticWorkerForm.hostToken.trim();
-    if (!name || !url || !clientToken || !hostToken) {
-      setWorkersError("Name, URL, client token, and host token are required to attach a static worker.");
-      return;
-    }
-
-    setAttachBusy(true);
-    setWorkersError(null);
-    try {
-      const worker = await client.attachStaticWorker(activeOrgId, {
-        name,
-        url,
-        clientToken,
-        hostToken,
-      });
-      setWorkers((current) => [worker, ...current.filter((entry) => entry.workerId !== worker.workerId)]);
-      setStaticWorkerForm((current) => ({ ...current, url: "", clientToken: "", hostToken: "" }));
-      toast.success(`Attached ${worker.workerName}`);
-      void refreshWorkers(true);
-    } catch (error) {
-      const status = typeof error === "object" && error !== null && "status" in error ? Number((error as { status?: unknown }).status) : null;
-      setWorkersError(status === 403
-        ? "Only organization owners and admins can attach static workers. Ask an operator to register this worker."
-        : error instanceof Error ? error.message : "Static worker attach failed.");
-    } finally {
-      setAttachBusy(false);
-    }
-  }, [activeOrgId, client, refreshWorkers, staticWorkerForm]);
 
   if (!isSignedIn) {
     return (
