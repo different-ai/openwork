@@ -32,6 +32,10 @@ export type BrowserStatePayload = {
   tabs?: BrowserPanelTab[];
 };
 
+export type BrowserProxyState = {
+  proxy: { rules: string; authenticated: boolean } | null;
+};
+
 // ---------------------------------------------------------------------------
 // Electron bridge surface
 // ---------------------------------------------------------------------------
@@ -119,6 +123,8 @@ declare global {
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
+        setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
+        getProxy?: () => Promise<BrowserProxyState>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;

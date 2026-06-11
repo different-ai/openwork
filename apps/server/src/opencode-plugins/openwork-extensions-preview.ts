@@ -38,6 +38,10 @@ const browserOpenUrlArgsSchema = z.object({
   provider: z.enum(["auto", "builtin", "external"]).optional().describe("Browser provider. Use builtin or auto; external is reserved for future support."),
 });
 
+const browserSetProxyArgsSchema = z.object({
+  proxy: z.string().describe("Proxy URL like http://user:pass@host:8080 or socks5://host:1080. Prefer env:NAME (resolves the OPENWORK_BROWSER_PROXY_NAME environment variable on the user's machine) so credentials never enter the conversation."),
+});
+
 const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_extension_list_actions to inspect available extension actions, then call the matching action with openwork_extension_call.";
 
@@ -270,6 +274,29 @@ export const OpenWorkExtensionsPreview = async () => ({
             actionId: "browser.open_url",
             args: { url: args.url, provider: args.provider ?? "builtin" },
           },
+        });
+        return JSON.stringify(result, null, 2);
+      },
+    },
+    openwork_browser_set_proxy: {
+      description: "Route all OpenWork built-in browser traffic through an HTTP/SOCKS proxy — for example to fetch search results or pages as seen from another location. Applies to every built-in browser tab (including browser_* automation) until cleared with openwork_browser_clear_proxy. If the user has named proxies configured as OPENWORK_BROWSER_PROXY_<NAME> environment variables, pass env:NAME instead of a raw URL.",
+      args: browserSetProxyArgsSchema.shape,
+      async execute(rawArgs: unknown) {
+        const args = browserSetProxyArgsSchema.parse(rawArgs);
+        const result = await uiBridgeRequest("/execute", {
+          method: "POST",
+          body: { actionId: "browser.set_proxy", args: { proxy: args.proxy } },
+        });
+        return JSON.stringify(result, null, 2);
+      },
+    },
+    openwork_browser_clear_proxy: {
+      description: "Clear the OpenWork built-in browser proxy and restore the system network settings.",
+      args: {},
+      async execute() {
+        const result = await uiBridgeRequest("/execute", {
+          method: "POST",
+          body: { actionId: "browser.set_proxy", args: { proxy: "" } },
         });
         return JSON.stringify(result, null, 2);
       },

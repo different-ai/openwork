@@ -445,6 +445,24 @@ export function SessionPage(props: SessionPageProps) {
     },
   }), [setCurrentSidePanel]);
   useControlAction(openBrowserUrlControlAction);
+  const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "browser.set_proxy",
+    label: "Set built-in browser proxy",
+    description: "Route all built-in browser traffic through an HTTP/SOCKS proxy (e.g. to browse from another location). Applies to every built-in browser tab until cleared. Pass an empty proxy to restore system network settings.",
+    sideEffect: "mutation",
+    args: [
+      { name: "proxy", type: "string", description: "Proxy URL like http://user:pass@host:8080 or socks5://host:1080, env:NAME to use the OPENWORK_BROWSER_PROXY_NAME environment variable, or empty to clear." },
+    ],
+    previewArgs: { proxy: "env:DE" },
+    disabled: !isElectronRuntime(),
+    execute: async (args) => {
+      const proxy = controlStringArg(args, "proxy") || "";
+      const setProxy = window.__OPENWORK_ELECTRON__?.browser?.setProxy;
+      if (!setProxy) return { ok: false, error: "Built-in browser is not available." };
+      return setProxy(proxy);
+    },
+  }), []);
+  useControlAction(setBrowserProxyControlAction);
   const openArtifactRailPane = useCallback(() => {
     if (!hasArtifactTargets || !props.selectedSessionId) return;
     const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);

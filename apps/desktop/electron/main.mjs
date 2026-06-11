@@ -536,6 +536,9 @@ let activeBrowserTabId = null;
 let browserViewVisible = false;
 let lastBrowserBounds = null;
 let browserTabCounter = 0;
+const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
+// Active proxy for the built-in browser session: { rules, username, password }.
+let browserProxy = null;
 const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
@@ -1109,6 +1112,70 @@ function handleMenuOverlayChoice(payload) {
   }
 }
 
+// ── Built-in browser proxy ──────────────────────────────────────────────
+// Proxying is session-scoped in Electron, and every built-in browser tab
+// shares BROWSER_SESSION_PARTITION, so one setProxy call covers all tabs
+// (agent CDP traffic included) without touching the rest of the app.
+
+function resolveBrowserProxyInput(input) {
+  const raw = String(input ?? "").trim();
+  const envMatch = raw.match(/^env:([A-Za-z0-9_]+)$/i);
+  if (!envMatch) return raw;
+  const key = `OPENWORK_BROWSER_PROXY_${envMatch[1].toUpperCase()}`;
+  const value = String(process.env[key] ?? "").trim();
+  if (!value) throw new Error(`No proxy configured: set the ${key} environment variable to a proxy URL.`);
+  return value;
+}
+
+function parseBrowserProxyInput(input) {
+  const raw = resolveBrowserProxyInput(input);
+  if (!raw) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  let url;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw new Error(`Invalid proxy URL: ${raw}`);
+  }
+  if (!url.hostname || !url.port) {
+    throw new Error("Proxy must include host and port, e.g. http://user:pass@host:8080 or socks5://host:1080.");
+  }
+  const scheme = url.protocol.replace(/:$/, "").toLowerCase();
+  return {
+    rules: `${scheme}://${url.hostname}:${url.port}`,
+    username: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+  };
+}
+
+function browserProxyState() {
+  return {
+    proxy: browserProxy
+      ? { rules: browserProxy.rules, authenticated: Boolean(browserProxy.username) }
+      : null,
+  };
+}
+
+async function setBrowserProxy(proxyInput) {
+  const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+  const parsed = parseBrowserProxyInput(proxyInput);
+  if (parsed) {
+    await browserSession.setProxy({ proxyRules: parsed.rules, proxyBypassRules: "<local>" });
+  } else {
+    await browserSession.setProxy({ mode: "system" });
+  }
+  browserProxy = parsed;
+  // Drop keep-alive connections so existing tabs cannot bypass the new proxy.
+  await browserSession.closeAllConnections();
+  return browserProxyState();
+}
+
+app.on("login", (event, _webContents, _details, authInfo, callback) => {
+  if (!authInfo?.isProxy || !browserProxy?.username) return;
+  event.preventDefault();
+  callback(browserProxy.username, browserProxy.password);
+});
+
 function createBrowserTab(url = "about:blank", { select = true } = {}) {
   const tabId = createBrowserTabId();
   const view = new WebContentsView({
@@ -1118,7 +1185,7 @@ function createBrowserTab(url = "about:blank", { select = true } = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, "browser-content-preload.cjs"),
-      partition: "persist:openwork-browser",
+      partition: BROWSER_SESSION_PARTITION,
     },
   });
   const tab = { tabId, view, favicon: null };
@@ -3255,6 +3322,8 @@ ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
 ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
 ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
 ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
+ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
+ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
 ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
 ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
 ipcMain.on("openwork:menu-overlay:ready", (event) => {
