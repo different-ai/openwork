@@ -20,6 +20,27 @@ function encodeQueryValue(value: unknown) {
   return JSON.stringify(value)
 }
 
+/**
+ * MCP clients sometimes pass `body` as a JSON-encoded string instead of an
+ * object (the tool input schema accepts unknown). Forwarding that string
+ * as-is double-encodes the payload and route validators reject it with
+ * "expected object, received string". Parse such strings back into JSON.
+ */
+export function normalizeToolBody(body: unknown): unknown {
+  if (typeof body !== "string") {
+    return body
+  }
+  const trimmed = body.trim()
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return body
+  }
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return body
+  }
+}
+
 function buildPath(template: string, values: Record<string, unknown>) {
   return template.replace(/\{([^}]+)\}/g, (_match, key: string) => {
     const value = values[key]
@@ -56,7 +77,7 @@ function buildInternalRequest(input: {
   let body: BodyInit | undefined
   if (input.operation.method !== "GET" && input.operation.method !== "HEAD" && input.toolInput.body !== undefined) {
     headers.set("content-type", "application/json")
-    body = JSON.stringify(input.toolInput.body)
+    body = JSON.stringify(normalizeToolBody(input.toolInput.body))
   }
 
   return new Request(url, {
