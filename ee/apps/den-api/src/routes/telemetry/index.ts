@@ -5,8 +5,9 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { checkEntitlement } from "../../entitlements.js"
 import { requireUserMiddleware, resolveUserOrganizationsMiddleware, resolveOrganizationContextMiddleware, jsonValidator } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
+import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
 
@@ -239,10 +240,12 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       responses: {
         200: jsonResponse("Analytics returned.", analyticsResponseSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
+        402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
     requireUserMiddleware,
     resolveUserOrganizationsMiddleware,
+    resolveOrganizationContextMiddleware,
     async (c) => {
       const orgId = c.get("activeOrganizationId")
 
@@ -263,6 +266,14 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
 
       if (!orgId) {
         return c.json(empty)
+      }
+
+      // Same enterprise gate as SSO / desktop policies (see entitlements.ts):
+      // collection (/ingest) stays open; only the analytics view is gated.
+      const orgContext = c.get("organizationContext")
+      const entitlement = checkEntitlement(orgContext?.organization.metadata ?? null, "analytics")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
       }
 
       const now = new Date()

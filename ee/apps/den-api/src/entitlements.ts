@@ -12,7 +12,7 @@ export type OrganizationPlan = {
   grandfatheredAt?: string
 }
 
-export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls"] as const
+export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics"] as const
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number]
 
 export type OrganizationEntitlements = Record<EntitlementKey, boolean>
@@ -27,6 +27,7 @@ const ENTITLEMENT_FEATURE_LABELS: Record<EntitlementKey, string> = {
   sso: "SSO / SAML",
   desktopPolicies: "Desktop policies",
   orgControls: "Enforced SSO and desktop version controls",
+  analytics: "Usage analytics",
 }
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
@@ -86,6 +87,7 @@ export function getOrganizationEntitlements(
     sso: entitled,
     desktopPolicies: entitled,
     orgControls: entitled,
+    analytics: entitled,
   }
 }
 

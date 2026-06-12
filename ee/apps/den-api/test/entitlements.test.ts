@@ -33,6 +33,7 @@ test("entitlements are all granted when gating is disabled", () => {
     sso: true,
     desktopPolicies: true,
     orgControls: true,
+    analytics: true,
   })
 })
 
@@ -41,16 +42,19 @@ test("entitlements require the enterprise tier when gating is enabled", () => {
     sso: false,
     desktopPolicies: false,
     orgControls: false,
+    analytics: false,
   })
   expect(entitlements.getOrganizationEntitlements({ plan: { tier: "team" } }, { gatingEnabled: true })).toEqual({
     sso: false,
     desktopPolicies: false,
     orgControls: false,
+    analytics: false,
   })
   expect(entitlements.getOrganizationEntitlements({ plan: { tier: "enterprise", source: "manual" } }, { gatingEnabled: true })).toEqual({
     sso: true,
     desktopPolicies: true,
     orgControls: true,
+    analytics: true,
   })
 })
 
@@ -60,6 +64,7 @@ test("grandfathered organizations keep full entitlements when gating is enabled"
     sso: true,
     desktopPolicies: true,
     orgControls: true,
+    analytics: true,
   })
 })
 
@@ -77,4 +82,16 @@ test("checkEntitlement returns a 402 payload with a human-readable message", () 
 test("checkEntitlement passes for entitled organizations", () => {
   expect(entitlements.checkEntitlement({ plan: { tier: "enterprise" } }, "desktopPolicies", { gatingEnabled: true })).toEqual({ ok: true })
   expect(entitlements.checkEntitlement(null, "desktopPolicies", { gatingEnabled: false })).toEqual({ ok: true })
+})
+
+test("usage analytics follows the same enterprise gate", () => {
+  const denied = entitlements.checkEntitlement(null, "analytics", { gatingEnabled: true })
+  expect(denied.ok).toBe(false)
+  if (!denied.ok) {
+    expect(denied.status).toBe(402)
+    expect(denied.response.feature).toBe("analytics")
+    expect(denied.response.message).toContain("Usage analytics")
+  }
+  expect(entitlements.checkEntitlement({ plan: { tier: "enterprise" } }, "analytics", { gatingEnabled: true })).toEqual({ ok: true })
+  expect(entitlements.checkEntitlement(null, "analytics", { gatingEnabled: false })).toEqual({ ok: true })
 })
