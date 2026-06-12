@@ -148,6 +148,13 @@
       "when": 1781286597056,
       "tag": "0021_telemetry_event",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1781288457546,
+      "tag": "0022_marketplace_logo_url",
+      "breakpoints": true
     }
   ]
 }
