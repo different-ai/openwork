@@ -6,8 +6,14 @@ import {
   hasCloudManagedModelAllowlist,
   isCloudManagedModelAllowed,
 } from "../src/app/cloud/managed-provider-models";
+import { createClient } from "../src/app/lib/opencode";
 import type { CloudImportedProvider } from "../src/app/cloud/import-state";
 import type { ProviderListItem } from "../src/app/types";
+import {
+  fetchProviderList,
+  getConnectedProviderItems,
+  normalizeProviderListResponse,
+} from "../src/react-app/domains/connections/provider-list-query";
 
 function importedProvider(input: Pick<CloudImportedProvider, "cloudProviderId" | "providerId" | "sourceProviderId" | "name" | "modelIds">): CloudImportedProvider {
   return {
@@ -40,6 +46,7 @@ function staleOpenAiModelIds(): string[] {
     "text-embedding-3-large",
     "gpt-4o",
     "gpt-image-1-mini",
+    "gpt-5.4-mini",
     "gpt-5.4-fast",
     "o4-mini",
   ];
@@ -48,7 +55,7 @@ function staleOpenAiModelIds(): string[] {
 }
 
 describe("managed cloud provider model allowlists", () => {
-  test("session modal and compact select option builder filters 54 stale OpenAI models to selected IDs", () => {
+  test("session modal and compact select option builder filters stale OpenAI models to selected IDs", () => {
     const allowlist = buildCloudManagedModelIdsByProvider({
       lpr_openai: importedProvider({
         cloudProviderId: "lpr_openai",
@@ -61,7 +68,7 @@ describe("managed cloud provider model allowlists", () => {
 
     const rawOpenAiProviderListIds = staleOpenAiModelIds();
 
-    expect(rawOpenAiProviderListIds).toHaveLength(54);
+    expect(rawOpenAiProviderListIds).toHaveLength(55);
     expect(hasCloudManagedModelAllowlist(allowlist, "openai")).toBe(true);
     expect(visibleModelIds("openai", rawOpenAiProviderListIds, allowlist)).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(buildCloudManagedModelOptions({
@@ -77,6 +84,59 @@ describe("managed cloud provider model allowlists", () => {
       { providerID: "openai", modelID: "gpt-5.4", source: "cloud", isRecommended: true },
       { providerID: "openai", modelID: "gpt-5.5", source: "cloud", isRecommended: true },
     ]);
+  });
+
+  test("prefers worker-filtered providers over stale all catalog when both are present", () => {
+    const filteredOpenAi = provider("openai", "openAI", ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]);
+    const response = {
+      all: [provider("openai", "openAI", staleOpenAiModelIds())],
+      providers: [filteredOpenAi],
+      connected: ["openai"],
+      default: {},
+    };
+
+    expect(
+      buildCloudManagedModelOptions({
+        providers: getConnectedProviderItems(normalizeProviderListResponse(response)),
+        cloudManagedModelIdsByProvider: new Map(),
+      }).map((option) => option.modelID),
+    ).toEqual(["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]);
+  });
+
+  test("fetches configured providers instead of the full available catalog", async () => {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/config/providers") {
+          return Response.json({
+            providers: [provider("openai", "openAI_2", ["gpt-5.4", "gpt-5.5"])],
+            connected: ["openai"],
+            default: {},
+          });
+        }
+        if (url.pathname === "/provider") {
+          return Response.json({
+            all: [provider("openai", "openAI_2", staleOpenAiModelIds())],
+            connected: ["openai", "opencode"],
+            default: {},
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      const response = await fetchProviderList({ client: createClient(server.url.toString()) });
+
+      expect(requests).toEqual(["/config/providers"]);
+      expect(getConnectedProviderItems(response).flatMap((item) => Object.keys(item.models))).toEqual(["gpt-5.4", "gpt-5.5"]);
+    } finally {
+      server.stop(true);
+    }
   });
 
   test("keeps API-key NVIDIA managed provider selected IDs intact", () => {

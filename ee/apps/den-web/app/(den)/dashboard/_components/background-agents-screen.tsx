@@ -11,6 +11,7 @@ import {
   Search,
 } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
+import { DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import {
   OPENWORK_APP_CONNECT_BASE_URL,
@@ -182,6 +183,10 @@ export function BackgroundAgentsScreen() {
     workersBusy,
     workersLoadedOnce,
     workersError,
+    launchBusy,
+    launchError,
+    launchStatus,
+    launchWorker,
     renameWorker,
     renameBusyWorkerId,
   } = useDenFlow();
@@ -282,8 +287,20 @@ export function BackgroundAgentsScreen() {
       description="Run selected workflows in the background without asking each teammate to run them locally. Coming soon."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
-      <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
-        New cloud workspaces are no longer available from this page. Existing workspaces remain available below.
+      <div className="mb-10 rounded-2xl border border-gray-100 bg-white p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-[16px] font-semibold text-gray-950">Shared workspace</h2>
+            <p className="mt-1 max-w-2xl text-[13px] leading-6 text-gray-500">
+              Launch an OpenWork workspace for this organization. In static mode, Den attaches the pre-provisioned worker from the configured pool.
+            </p>
+            {launchError ? <p className="mt-2 text-[13px] font-medium text-red-600">{launchError}</p> : null}
+            {!launchError && launchStatus ? <p className="mt-2 text-[13px] text-gray-500">{launchStatus}</p> : null}
+          </div>
+          <DenButton loading={launchBusy} onClick={() => void launchWorker({ source: "manual" })}>
+            Launch workspace
+          </DenButton>
+        </div>
       </div>
 
       {workersError ? (

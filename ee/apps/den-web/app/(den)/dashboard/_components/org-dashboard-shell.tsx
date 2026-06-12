@@ -187,13 +187,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     },
     ...(access.isAdmin
       ? [
-          // NOTE: Shared Workspace soft-disabled — uncomment to re-enable
-          // {
-          //   href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
-          //   label: "Shared Workspace",
-          //   icon: Bot,
-          //   badge: "Alpha",
-          // },
+          {
+            href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
+            label: "Shared Workspace",
+            icon: Bot,
+            badge: "Alpha",
+          },
           {
             href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
             label: "OpenWork Models",

@@ -1791,7 +1791,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsStore],
   );
-  const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
+  const routeOpenworkStatus = workspaceOpenworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
     : null;
@@ -1800,7 +1800,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       toast.error(notFoundRouteError);
     }
   }, [notFoundRouteError]);
-  const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
+  const routeOpenworkCapabilities: OpenworkServerCapabilities | null = workspaceOpenworkClient
     ? ROUTE_OPENWORK_CAPABILITIES
     : null;
   const environmentRuntimeKey = buildOpenworkEnvRuntimeKey({
@@ -2108,7 +2108,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <SettingsStack>
             <AuthorizedFoldersPanel
-              openworkServerClient={openworkClient}
+              openworkServerClient={workspaceOpenworkClient}
               openworkServerStatus={routeOpenworkStatus}
               openworkServerCapabilities={routeOpenworkCapabilities}
               runtimeWorkspaceId={runtimeWorkspaceId}

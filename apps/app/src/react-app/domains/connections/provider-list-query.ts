@@ -21,6 +21,13 @@ export type ConnectedProviderSnapshotChange = {
   next: ConnectedProviderSnapshot;
 };
 
+type ConfiguredProviderListResponse = {
+  all?: ProviderListItem[];
+  providers?: ProviderListItem[] | Record<string, ProviderListItem>;
+  connected?: string[];
+  default: ProviderListResponse["default"];
+};
+
 const connectedProviderSnapshots = new Map<string, ConnectedProviderSnapshot>();
 const connectedProviderSnapshotChanges = new Map<string, ConnectedProviderSnapshotChange>();
 
@@ -45,13 +52,37 @@ export async function fetchProviderList(input: {
   baseUrl?: string | null;
   directory?: string | null;
 }): Promise<ProviderListResponse> {
-  const value = unwrap(
-    await input.client.provider.list({
-      directory: input.directory?.trim() || undefined,
-    }),
+  const parameters = {
+    directory: input.directory?.trim() || undefined,
+  };
+  const configuredProviders = await input.client.config.providers(parameters);
+  const value = normalizeProviderListResponse(
+    configuredProviders.data !== undefined
+      ? configuredProviders.data
+      : configuredProviders.response.status === 404 || configuredProviders.response.status === 405
+        ? unwrap(await input.client.provider.list(parameters))
+        : unwrap(configuredProviders),
   );
   recordConnectedProviderSnapshot(input, value);
   return value;
+}
+
+export function normalizeProviderListResponse(
+  value: ProviderListResponse | ConfiguredProviderListResponse,
+): ProviderListResponse {
+  const providers = "providers" in value ? value.providers : undefined;
+  const all = Array.isArray(providers)
+    ? providers
+    : providers && typeof providers === "object"
+      ? Object.values(providers)
+      : Array.isArray(value.all)
+        ? value.all
+        : [];
+  return {
+    ...value,
+    all,
+    connected: value.connected ?? all.map((provider) => provider.id),
+  };
 }
 
 export function getConnectedProviderItems(value: ProviderListResponse | null | undefined) {

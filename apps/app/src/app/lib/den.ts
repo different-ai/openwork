@@ -111,6 +111,20 @@ export type DenWorkerTokens = {
   workspaceId: string | null;
 };
 
+export type DenStaticWorkerAttachInput = {
+  name: string;
+  description?: string | null;
+  url: string;
+  clientToken: string;
+  hostToken: string;
+  activityToken?: string | null;
+};
+
+export type DenWorkerLaunchInput = {
+  name: string;
+  source?: "manual" | "signup_auto";
+};
+
 export type DenMcpToken = {
   token: string;
   expiresAt: string;
@@ -2030,6 +2044,31 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getWorkers(payload);
     },
 
+    async createWorker(orgId: string, input: DenWorkerLaunchInput): Promise<DenWorkerSummary> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          destination: "cloud",
+          source: input.source ?? "manual",
+        },
+      });
+      const workers = getWorkers({
+        workers: isRecord(payload) && isRecord(payload.worker)
+          ? [{ ...payload.worker, instance: isRecord(payload.instance) ? payload.instance : null }]
+          : isRecord(payload)
+            ? [payload]
+            : [],
+      });
+      const worker = workers[0];
+      if (!worker) {
+        throw new DenApiError(500, "invalid_worker_create_payload", "Worker launch response was missing worker details.");
+      }
+      return worker;
+    },
+
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
@@ -2056,6 +2095,32 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
       }
       return tokens;
+    },
+
+    async attachStaticWorker(orgId: string, input: DenStaticWorkerAttachInput): Promise<DenWorkerSummary> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/static-attach", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          description: input.description ?? undefined,
+          url: input.url,
+          clientToken: input.clientToken,
+          hostToken: input.hostToken,
+          activityToken: input.activityToken ?? undefined,
+        },
+      });
+      const workers = getWorkers({
+        workers: isRecord(payload) && isRecord(payload.worker)
+          ? [{ ...payload.worker, instance: isRecord(payload.instance) ? payload.instance : null }]
+          : [],
+      });
+      const worker = workers[0];
+      if (!worker) {
+        throw new DenApiError(500, "invalid_worker_attach_payload", "Static worker attach response was missing worker details.");
+      }
+      return worker;
     },
 
     async listOrgSkills(orgId: string): Promise<DenOrgSkillCard[]> {

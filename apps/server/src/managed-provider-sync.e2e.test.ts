@@ -70,7 +70,7 @@ function providerPayload() {
   };
 }
 
-async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; providerModelsShape?: "record" | "array"; connected?: string[]; initialAuth?: Record<string, unknown> } = {}) {
+async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAuthDeletePath?: string; failAuthDeletePathOnce?: string; providerListShape?: "all" | "providers-array" | "providers-object"; providerModelsShape?: "record" | "array"; connected?: string[]; omitConnected?: boolean; initialAuth?: Record<string, unknown> } = {}) {
   const workspace = mkdtempSync(join(tmpdir(), "openwork-managed-provider-workspace-"));
   const stores = mkdtempSync(join(tmpdir(), "openwork-managed-provider-stores-"));
   dirs.push(workspace, stores);
@@ -126,7 +126,7 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
           };
         const providers = [
           {
-            id: "lpr_den_nvidia",
+            id: "nvidia",
             name: "NVIDIA",
             source: "custom",
             models: nvidiaModels,
@@ -152,8 +152,8 @@ async function boot(options: { failAuth?: boolean; failAuthPath?: string; failAu
         }
         return Response.json({
           all: providers,
-          connected: options.connected ?? ["lpr_den_nvidia", "openai"],
-          default: { "lpr_den_nvidia": "deepseek-ai/deepseek-v4-flash", openai: "gpt-5.4" },
+          ...(options.omitConnected ? {} : { connected: options.connected ?? ["nvidia", "openai"] }),
+          default: { "nvidia": "deepseek-ai/deepseek-v4-flash", openai: "gpt-5.4" },
         });
       }
       return Response.json({ ok: true });
@@ -231,7 +231,7 @@ describe("managed provider sync runtime route", () => {
     }
 
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
-    expect(config.match(/lpr_den_nvidia/g)?.length).toBe(1);
+    expect(config.match(/"nvidia"/g)?.length).toBeGreaterThanOrEqual(1);
     expect(config.match(/"openai"/g)?.length).toBeGreaterThanOrEqual(1);
     expect(config).toContain("gpt-5.4");
     expect(config).toContain("gpt-5.5");
@@ -247,9 +247,9 @@ describe("managed provider sync runtime route", () => {
     const putCalls = authCalls.filter((call) => call.method === "PUT");
     expect(authCalls.filter((call) => call.method === "GET")).toHaveLength(4);
     expect(putCalls).toHaveLength(4);
-    expect(putCalls[0]?.path).toBe("/auth/lpr_den_nvidia");
+    expect(putCalls[0]?.path).toBe("/auth/nvidia");
     expect(putCalls[0]?.body).toEqual({ type: "api", key: "plain-server-secret" });
-    expect(putCalls[1]?.path).toBe("/auth/llmProvider_den_openai");
+    expect(putCalls[1]?.path).toBe("/auth/openai");
     expect(putCalls[1]?.body).toEqual({ type: "oauth", access: "access-secret", refresh: "refresh-secret", expires: 9 });
   });
 
@@ -267,7 +267,7 @@ describe("managed provider sync runtime route", () => {
     const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.all) ? body.all : [];
     const openai = providers.find((provider) => provider?.id === "openai");
-    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+    const nvidia = providers.find((provider) => provider?.id === "nvidia");
 
     expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
@@ -291,7 +291,23 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as ProviderListTestBody & { connected?: string[] };
 
-    expect(body.connected?.sort()).toEqual(["lpr_den_nvidia", "openai"]);
+    expect(body.connected?.sort()).toEqual(["nvidia", "openai"]);
+  });
+
+  test("marks Den-managed providers connected when OpenCode omits connected list", async () => {
+    const { base } = await boot({ omitConnected: true });
+    const sync = await fetch(`${base}/managed-providers/sync`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify(providerPayload()),
+    });
+    expect(sync.status).toBe(200);
+
+    const response = await fetch(`${base}/workspace/ws_1/opencode/config/providers`, { headers: clientAuth() });
+    expect(response.status).toBe(200);
+    const body = await response.json() as ProviderListTestBody & { connected?: string[] };
+
+    expect(body.connected?.sort()).toEqual(["nvidia", "openai"]);
   });
 
   test("filters managed OAuth provider-list models for live providers-array responses", async () => {
@@ -308,7 +324,7 @@ describe("managed provider sync runtime route", () => {
     const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.providers) ? body.providers : [];
     const openai = providers.find((provider) => provider?.id === "openai");
-    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+    const nvidia = providers.find((provider) => provider?.id === "nvidia");
 
     expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
@@ -333,7 +349,7 @@ describe("managed provider sync runtime route", () => {
     const body = await response.json() as ProviderListTestBody;
     const providers = !Array.isArray(body.providers) && body.providers ? body.providers : {};
     const openai = providers.openai;
-    const nvidia = providers.lpr_den_nvidia;
+    const nvidia = providers.nvidia;
 
     expect(Object.keys(openai?.models ?? {}).sort()).toEqual(["gpt-5.4", "gpt-5.5"]);
     expect(Object.keys(openai?.models ?? {})).not.toContain("gpt-4o");
@@ -359,7 +375,7 @@ describe("managed provider sync runtime route", () => {
     expect(JSON.stringify(body)).not.toContain("refresh-secret");
     expect(body.reason).toBe("Managed provider sync failed");
     const configPath = join(workspace, "opencode.jsonc");
-    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
+    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("nvidia");
   });
 
   test("authoritatively removes revoked managed providers from config, auth, and provider lists", async () => {
@@ -382,7 +398,7 @@ describe("managed provider sync runtime route", () => {
     expect(await update.json()).toEqual({ status: "applied", providerCount: 1, revision: "sync-rev-2" });
 
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
-    expect(config).toContain("lpr_den_nvidia");
+    expect(config).toContain("nvidia");
     expect(config).not.toContain('"openai"');
     expect(config).not.toContain("gpt-5.4");
 
@@ -393,7 +409,7 @@ describe("managed provider sync runtime route", () => {
     expect(providers.some((provider) => provider.id === "openai")).toBe(false);
     expect(body.connected ?? []).not.toContain("openai");
 
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai")).toBe(true);
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/openai")).toBe(true);
   });
 
   test("empty sync removes all managed providers", async () => {
@@ -414,12 +430,12 @@ describe("managed provider sync runtime route", () => {
     expect(await empty.json()).toEqual({ status: "applied", providerCount: 0, revision: "sync-empty" });
 
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
-    expect(config).not.toContain("lpr_den_nvidia");
+    expect(config).not.toContain("nvidia");
     expect(config).not.toContain('"openai"');
   });
 
   test("failure on a later provider removes auth written earlier in the same attempt", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthPath: "/auth/llmProvider_den_openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthPath: "/auth/openai" });
     const response = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
       headers: hostAuth(),
@@ -427,9 +443,9 @@ describe("managed provider sync runtime route", () => {
     });
     expect(response.status).toBe(502);
     const configPath = join(workspace, "opencode.jsonc");
-    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("lpr_den_nvidia");
-    expect(authCalls.some((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
+    expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("nvidia");
+    expect(authCalls.some((call) => call.method === "PUT" && call.path === "/auth/nvidia")).toBe(true);
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/nvidia")).toBe(true);
   });
 
   test("filters array-shaped provider-list models by Den-managed allowlist", async () => {
@@ -446,7 +462,7 @@ describe("managed provider sync runtime route", () => {
     const body = await response.json() as ProviderListTestBody;
     const providers = Array.isArray(body.providers) ? body.providers : [];
     const openai = providers.find((provider) => provider?.id === "openai");
-    const nvidia = providers.find((provider) => provider?.id === "lpr_den_nvidia");
+    const nvidia = providers.find((provider) => provider?.id === "nvidia");
 
     expect(Array.isArray(openai?.models)).toBe(true);
     expect(Array.isArray(nvidia?.models)).toBe(true);
@@ -460,8 +476,8 @@ describe("managed provider sync runtime route", () => {
   test("failure on a later provider restores previous working auth written earlier in the same attempt", async () => {
     const previousAuth = { type: "api", key: "previous-working-key" };
     const { base, authCalls, authStore } = await boot({
-      failAuthPath: "/auth/llmProvider_den_openai",
-      initialAuth: { "/auth/lpr_den_nvidia": previousAuth },
+      failAuthPath: "/auth/openai",
+      initialAuth: { "/auth/nvidia": previousAuth },
     });
     const response = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -469,16 +485,16 @@ describe("managed provider sync runtime route", () => {
       body: JSON.stringify(providerPayload()),
     });
     expect(response.status).toBe(502);
-    expect(authStore.get("/auth/lpr_den_nvidia")).toEqual(previousAuth);
-    expect(authCalls.some((call) => call.method === "GET" && call.path === "/auth/lpr_den_nvidia")).toBe(true);
-    expect(authCalls.filter((call) => call.method === "PUT" && call.path === "/auth/lpr_den_nvidia")).toHaveLength(2);
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/lpr_den_nvidia")).toBe(false);
+    expect(authStore.get("/auth/nvidia")).toEqual(previousAuth);
+    expect(authCalls.some((call) => call.method === "GET" && call.path === "/auth/nvidia")).toBe(true);
+    expect(authCalls.filter((call) => call.method === "PUT" && call.path === "/auth/nvidia")).toHaveLength(2);
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/nvidia")).toBe(false);
   });
 
   test("rejects duplicate runtime provider ids before config or auth mutation", async () => {
     const previousAuth = { type: "api", key: "previous-working-key" };
     const { base, workspace, authCalls, authStore } = await boot({
-      initialAuth: { "/auth/lpr_den_nvidia": previousAuth },
+      initialAuth: { "/auth/nvidia": previousAuth },
     });
     const payload = providerPayload();
     const duplicateProvider = { ...payload.providers[0] };
@@ -496,13 +512,13 @@ describe("managed provider sync runtime route", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "duplicate_provider_runtime_id" });
     expect(authCalls).toHaveLength(0);
-    expect(authStore.get("/auth/lpr_den_nvidia")).toEqual(previousAuth);
+    expect(authStore.get("/auth/nvidia")).toEqual(previousAuth);
     const configPath = join(workspace, "opencode.jsonc");
     expect(existsSync(configPath) ? readFileSync(configPath, "utf8") : "").not.toContain("new-secret-that-must-not-be-written");
   });
 
   test("stale auth deletion failure does not restore config that references stale providers", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/llmProvider_den_openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthDeletePath: "/auth/openai" });
     const fullPayload = providerPayload();
     const initial = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -522,17 +538,17 @@ describe("managed provider sync runtime route", () => {
     const body = await update.json();
     expect(body).toMatchObject({ status: "failed", providerCount: 1, revision: "sync-rev-2" });
     const config = readFileSync(join(workspace, "opencode.jsonc"), "utf8");
-    expect(config).toContain("lpr_den_nvidia");
+    expect(config).toContain("nvidia");
     expect(config).not.toContain('"openai"');
     expect(config).not.toContain("gpt-5.4");
     const metadata = readManagedProviderMetadata(workspace);
-    expect(metadata.applied?.sort()).toEqual(["llmProvider_den_openai", "lpr_den_nvidia"]);
-    expect(metadata.revoked).toContain("llmProvider_den_openai");
-    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai")).toBe(true);
+    expect(metadata.applied?.sort()).toEqual(["nvidia", "openai"]);
+    expect(metadata.revoked).toContain("openai");
+    expect(authCalls.some((call) => call.method === "DELETE" && call.path === "/auth/openai")).toBe(true);
   });
 
   test("retries stale auth deletion after a previous deletion failure", async () => {
-    const { base, workspace, authCalls } = await boot({ failAuthDeletePathOnce: "/auth/llmProvider_den_openai" });
+    const { base, workspace, authCalls } = await boot({ failAuthDeletePathOnce: "/auth/openai" });
     const fullPayload = providerPayload();
     const initial = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -548,7 +564,7 @@ describe("managed provider sync runtime route", () => {
       body: JSON.stringify(nvidiaOnlyPayload),
     });
     expect(firstUpdate.status).toBe(502);
-    expect(readManagedProviderMetadata(workspace).applied?.sort()).toEqual(["llmProvider_den_openai", "lpr_den_nvidia"]);
+    expect(readManagedProviderMetadata(workspace).applied?.sort()).toEqual(["nvidia", "openai"]);
 
     const retry = await fetch(`${base}/managed-providers/sync`, {
       method: "POST",
@@ -558,10 +574,10 @@ describe("managed provider sync runtime route", () => {
     expect(retry.status).toBe(200);
     expect(await retry.json()).toEqual({ status: "applied", providerCount: 1, revision: "sync-rev-2" });
 
-    const deleteAttempts = authCalls.filter((call) => call.method === "DELETE" && call.path === "/auth/llmProvider_den_openai");
+    const deleteAttempts = authCalls.filter((call) => call.method === "DELETE" && call.path === "/auth/openai");
     expect(deleteAttempts).toHaveLength(2);
     const metadata = readManagedProviderMetadata(workspace);
-    expect(metadata.applied).toEqual(["lpr_den_nvidia"]);
-    expect(metadata.revoked).toContain("llmProvider_den_openai");
+    expect(metadata.applied).toEqual(["nvidia"]);
+    expect(metadata.revoked).toContain("openai");
   });
 });

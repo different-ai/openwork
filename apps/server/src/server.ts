@@ -1121,8 +1121,7 @@ function isRevokedProviderListItem(provider: unknown, revokedProviderIds: Set<st
   return isRecordValue(provider) && typeof provider.id === "string" && revokedProviderIds.has(provider.id);
 }
 
-function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>, revokedProviderIds: Set<string>): string[] | undefined {
-  if (!Array.isArray(connected)) return undefined;
+function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown[], managedProviderIds: Set<string>, revokedProviderIds: Set<string>): string[] {
   const providerIds = new Set(
     providers.map((provider) => {
       if (typeof provider === "string") return provider;
@@ -1130,7 +1129,7 @@ function mergeManagedConnectedProviderIds(connected: unknown, providers: unknown
       return "";
     }).filter(Boolean),
   );
-  const next = new Set(connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)));
+  const next = new Set(Array.isArray(connected) ? connected.filter((id): id is string => typeof id === "string" && !revokedProviderIds.has(id)) : []);
   for (const providerId of managedProviderIds) {
     if (providerIds.has(providerId)) next.add(providerId);
   }
@@ -5196,9 +5195,12 @@ function getManagedProviderEnv(config: Record<string, unknown>) {
   return Array.isArray(config.env) ? config.env.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0) : [];
 }
 
-export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncProvider, "id" | "providerId" | "source" | "credentialKind">) {
+export function getManagedProviderRuntimeId(provider: Pick<ManagedProviderSyncProvider, "id" | "providerId" | "source" | "credentialKind" | "providerConfig">) {
   if (provider.source === "openwork") return "openwork";
-  return provider.id.trim();
+  const configId = isRecordValue(provider.providerConfig) && typeof provider.providerConfig.id === "string"
+    ? provider.providerConfig.id.trim()
+    : "";
+  return configId || provider.providerId.trim() || provider.id.trim();
 }
 
 export function buildManagedProviderRuntimeConfig(provider: ManagedProviderSyncProvider) {

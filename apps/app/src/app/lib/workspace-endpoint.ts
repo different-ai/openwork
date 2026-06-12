@@ -23,6 +23,8 @@ import type { WorkspaceInfo } from "./desktop";
 import {
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  parseOpenworkWorkspaceIdFromUrl,
+  stripOpenworkWorkspaceMount,
   type OpenworkServerClient,
 } from "./openwork-server";
 
@@ -60,6 +62,7 @@ type WorkspaceEndpointInput = Pick<
   | "openworkClientToken"
   | "openworkHostToken"
   | "openworkWorkspaceId"
+  | "remoteType"
 > | null | undefined;
 
 /**
@@ -84,12 +87,20 @@ export function workspaceServerId(workspace: WorkspaceEndpointInput): string {
   if (!isRemoteWorkspace(workspace)) return id;
   const explicit = workspace.openworkWorkspaceId?.trim();
   if (explicit) return explicit;
+  if (workspace.remoteType !== "opencode") {
+    const parsed = parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "")
+      ?? parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "");
+    if (parsed) return parsed;
+  }
   return id.startsWith("rem_") ? id.slice("rem_".length) : id;
 }
 
 function pickRemoteBaseUrl(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
-  return (workspace.baseUrl ?? workspace.openworkHostUrl ?? "").trim();
+  const baseUrl = (workspace.baseUrl ?? workspace.openworkHostUrl ?? "").trim();
+  return workspace.remoteType === "opencode"
+    ? baseUrl
+    : stripOpenworkWorkspaceMount(baseUrl);
 }
 
 function pickRemoteToken(workspace: WorkspaceEndpointInput): string {

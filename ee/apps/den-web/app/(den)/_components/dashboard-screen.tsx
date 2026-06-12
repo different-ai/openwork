@@ -189,6 +189,9 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
     isSelectedWorkerFailed,
     ownedWorkerCount,
     billingSummary,
+    launchError,
+    launchStatus,
+    launchWorker,
     refreshWorkers,
     checkWorkerStatus,
     deleteWorker,
@@ -530,13 +533,17 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
           <div className="rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] p-8">
             <div className="mx-auto max-w-[30rem] text-center">
               <h2 className="text-2xl font-semibold tracking-tight text-[var(--dls-text-primary)]">No workers yet</h2>
-              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Existing cloud workers will appear here when available.</p>
-              <Link
-                href={billingRoute}
-                className="mt-5 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[var(--dls-surface)] px-3 py-2 text-xs font-semibold text-[var(--dls-text-secondary)] transition hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
+              <p className="mt-3 text-sm leading-6 text-[var(--dls-text-secondary)]">Launch a workspace to connect OpenWork web or desktop.</p>
+              {launchError ? <p className="mt-3 text-sm font-medium text-rose-600">{launchError}</p> : null}
+              {!launchError && launchStatus ? <p className="mt-3 text-sm text-[var(--dls-text-secondary)]">{launchStatus}</p> : null}
+              <button
+                type="button"
+                disabled={launchBusy}
+                onClick={() => void launchWorker({ source: "manual" })}
+                className="mt-5 inline-flex rounded-[12px] border border-[var(--dls-border)] bg-[#011627] px-4 py-2 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-70"
               >
-                Open billing
-              </Link>
+                {launchBusy ? "Launching..." : "Launch workspace"}
+              </button>
             </div>
           </div>
         )}

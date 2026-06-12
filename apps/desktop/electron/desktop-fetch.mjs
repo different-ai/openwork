@@ -36,6 +36,7 @@ export async function desktopFetch(urlInput, initInput = {}, fetchImpl = fetch) 
   try {
     response = await fetchImpl(url, {
       method: typeof init.method === "string" ? init.method : undefined,
+      redirect: "manual",
       headers: init.headers && typeof init.headers === "object" ? init.headers : undefined,
       body,
       signal,
