@@ -1,4 +1,6 @@
-> OpenWork is the open source alternative to Claude Cowork/Codex (desktop app).
+# OpenWork
+
+OpenWork is a free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files — the open source alternative to Claude Cowork and Codex. Bring any of 50+ LLMs with your own provider keys, extend agents with skills, plugins, and MCP servers, and share complete setups with your team in one link.
 
 
 ## Core Philosophy
@@ -66,7 +68,7 @@ OpenWork is designed to be:
 
 <img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 05 16 PM" src="https://github.com/user-attachments/assets/9c864390-de69-48f2-82c1-93b328dd60c3" />
 
-## Quick Start
+## Build from Source
 
 ### Requirements
 

@@ -18,6 +18,26 @@ const home = `# OpenWork
 - **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 
+## How it compares
+
+- **vs Claude Cowork** — open source, 50+ LLMs from any provider, local-first (files stay on your machine), one-link team sharing of agent setups
+- **vs Codex** — general knowledge work on files (not only coding), model and provider agnostic
+- **vs ChatGPT Desktop** — agents act on local files and tools (MCP, plugins, skills) with guardrails; the setup is shareable and self-hostable
+
+## FAQ
+
+### What is OpenWork?
+A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
+
+### Is OpenWork free?
+Yes — the desktop app is free and open source with bring-your-own keys. Team Starter is \\$50/mo (5 seats); Enterprise is custom.
+
+### Which models does it support?
+Any model OpenCode supports: OpenAI, Anthropic, Google, local models — 50+ providers.
+
+### Does it send files to the cloud?
+No. Desktop mode keeps files local; prompts go directly to your chosen LLM provider. Cloud workers are optional.
+
 ## For agents
 
 - Agent skills index — \`/.well-known/agent-skills/index.json\`

@@ -4,7 +4,8 @@
  * Principles (mirrors `den-telemetry.ts`):
  * - Never send message content, file paths, code, or prompts. Only event
  *   names, counts, lengths, durations, and coarse context (workspace type,
- *   provider/model id).
+ *   provider/model id). Sole exception: answers the user types directly
+ *   into an explicit survey field (e.g. the onboarding attribution survey).
  * - Fire-and-forget: analytics must never break or slow the app.
  * - Respect the user: a single `analyticsEnabled` preference (Settings ->
  *   Preferences) turns everything off; no key baked in means no network.

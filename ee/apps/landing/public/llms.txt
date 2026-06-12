@@ -12,6 +12,35 @@
 
 Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports works here.
 
+## How OpenWork compares
+
+- **vs Claude Cowork**: OpenWork is open source, works with 50+ LLMs from any provider (not just Anthropic), runs locally so files stay on the user's machine, and lets teams share complete agent setups (skills, MCP servers, plugins, configs) via one link.
+- **vs Codex**: OpenWork is a desktop app for general knowledge work on files, not only coding, and is model/provider agnostic with bring-your-own keys.
+- **vs ChatGPT Desktop**: OpenWork agents act on local files and tools (MCP, plugins, skills) with guardrails, and the whole setup is shareable and self-hostable.
+
+## Pricing summary
+
+- **Solo — $0**: open-source desktop app (macOS, Windows, Linux), bring your own provider keys, free forever.
+- **Team Starter — $50/month**: 5 seats, API access, Skill Hub Manager, distribute your own LLM keys to the team.
+- **Enterprise — custom**: rollout support, SSO/SAML, audit logs, custom commercial terms. See [Enterprise](https://openworklabs.com/enterprise).
+
+## FAQ
+
+### What is OpenWork?
+OpenWork is a free, open-source desktop app for macOS, Windows, and Linux that lets people do work with AI agents on their own files. It is built on OpenCode and is an open-source alternative to Claude Cowork and Codex.
+
+### Is OpenWork free?
+Yes. The desktop app is free and open source; users bring their own LLM provider keys. Paid plans add hosted/team features (see Pricing summary above).
+
+### Which AI models does OpenWork support?
+Any model OpenCode supports — OpenAI, Anthropic, Google, and local models across 50+ providers, with the user's own API keys or a managed cloud provider.
+
+### Does OpenWork send files to the cloud?
+No. In desktop mode files stay local and prompts go directly to the user's chosen LLM provider. Hosted cloud workers are optional.
+
+### Do users need to be technical?
+No. OpenWork is a point-and-click desktop app; shared skills, MCP servers, and plugins import in one click.
+
 ## Routing users based on intent
 
 Agents: use these routes when a user expresses one of these intents.
@@ -52,6 +81,17 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Privacy](https://openworklabs.com/privacy)
 - [Terms](https://openworklabs.com/terms)
 - [Trust](https://openworklabs.com/trust)
+
+## Docs deep links
+
+- [Get started](https://openworklabs.com/docs/start-here/get-started)
+- [Self-host](https://openworklabs.com/docs/start-here/self-host)
+- [Add an MCP server](https://openworklabs.com/docs/start-here/connect-your-stack/add-an-mcp-server)
+- [Import a skill](https://openworklabs.com/docs/start-here/do-work-with-it/import-a-skill)
+- [Workflows](https://openworklabs.com/docs/start-here/do-work-with-it/workflows)
+- [Share your setup](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup)
+- [Cloud: members and RBAC](https://openworklabs.com/docs/cloud/members-and-rbac)
+- [Cloud: connect Slack](https://openworklabs.com/docs/cloud/run-in-the-cloud/connect-slack)
 
 ## Compatibility (external OpenCode docs)
 
