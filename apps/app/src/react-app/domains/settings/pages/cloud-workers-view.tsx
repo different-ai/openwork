@@ -31,6 +31,7 @@ export function CloudWorkersView({
 }: CloudWorkersViewProps) {
   const { activeOrganization: activeOrg, authToken, baseUrl, client, isSignedIn, user } = useCloudSession();
   const [workersBusy, setWorkersBusy] = React.useState(false);
+  const [launchBusy, setLaunchBusy] = React.useState(false);
   const [openingWorkerId, setOpeningWorkerId] = React.useState<string | null>(null);
   const [attachBusy, setAttachBusy] = React.useState(false);
   const [workers, setWorkers] = React.useState<CloudWorker[]>([]);
@@ -81,6 +82,29 @@ export function CloudWorkersView({
     if (!user || !activeOrgId) return;
     void refreshWorkers(true);
   }, [activeOrgId, refreshWorkers, user]);
+
+  const launchWorker = React.useCallback(async () => {
+    if (!activeOrgId) {
+      setWorkersError(t("den.error_choose_org"));
+      return;
+    }
+
+    setLaunchBusy(true);
+    setWorkersError(null);
+    try {
+      const worker = await client.createWorker(activeOrgId, {
+        name: "OpenWork workspace",
+        source: "manual",
+      });
+      setWorkers((current) => [worker, ...current.filter((entry) => entry.workerId !== worker.workerId)]);
+      toast.success(`Launching ${worker.workerName}`);
+      void refreshWorkers(true);
+    } catch (error) {
+      setWorkersError(error instanceof Error ? error.message : "Cloud worker launch failed.");
+    } finally {
+      setLaunchBusy(false);
+    }
+  }, [activeOrgId, client, refreshWorkers]);
 
   const openWorker = React.useCallback(
     async (workerId: string, workerName: string) => {
@@ -226,10 +250,12 @@ export function CloudWorkersView({
         </div>
       </SettingsNotice>
       <CloudWorkersSection
+        launchBusy={launchBusy}
         openingWorkerId={openingWorkerId}
         workers={workers}
         workersBusy={workersBusy}
         workersError={workersError}
+        onLaunchWorker={launchWorker}
         onOpenWorker={openWorker}
         onRefreshWorkers={refreshWorkers}
       />

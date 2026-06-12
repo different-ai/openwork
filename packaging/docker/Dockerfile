@@ -72,9 +72,17 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
+# Build the OpenWork server from this source tree. The Docker worker should not
+# fall back to a downloaded sidecar when the image is built from an unreleased
+# branch/hotfix.
+RUN pnpm --dir apps/server build:bin
+
 # Persistent directories (mount volumes here on PaaS/SSH).
 ENV OPENWORK_DATA_DIR=/data/openwork-orchestrator
 ENV OPENWORK_SIDECAR_DIR=/data/sidecars
+ENV OPENWORK_ALLOW_EXTERNAL=1
+ENV OPENWORK_SIDECAR_SOURCE=external
+ENV OPENWORK_SERVER_BIN=/repo/apps/server/dist/bin/openwork-server
 
 # The workspace is mounted from the host/volume.
 ENV OPENWORK_WORKSPACE=/workspace

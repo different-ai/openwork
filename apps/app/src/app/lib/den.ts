@@ -121,6 +121,11 @@ export type DenStaticWorkerAttachInput = {
   activityToken?: string | null;
 };
 
+export type DenWorkerLaunchInput = {
+  name: string;
+  source?: "manual" | "signup_auto";
+};
+
 export type DenMcpToken = {
   token: string;
   expiresAt: string;
@@ -1986,6 +1991,31 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         organizationId: orgId,
       });
       return getWorkers(payload);
+    },
+
+    async createWorker(orgId: string, input: DenWorkerLaunchInput): Promise<DenWorkerSummary> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/workers", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          destination: "cloud",
+          source: input.source ?? "manual",
+        },
+      });
+      const workers = getWorkers({
+        workers: isRecord(payload) && isRecord(payload.worker)
+          ? [{ ...payload.worker, instance: isRecord(payload.instance) ? payload.instance : null }]
+          : isRecord(payload)
+            ? [payload]
+            : [],
+      });
+      const worker = workers[0];
+      if (!worker) {
+        throw new DenApiError(500, "invalid_worker_create_payload", "Worker launch response was missing worker details.");
+      }
+      return worker;
     },
 
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {

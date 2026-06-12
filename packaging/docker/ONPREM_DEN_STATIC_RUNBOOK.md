@@ -133,6 +133,8 @@ export DEN_STATIC_WORKER_ATTACH_ALLOWED_CIDRS=10.0.0.0/8
 export DEN_BETTER_AUTH_SECRET='<better-auth-secret>'
 export DEN_DB_ENCRYPTION_KEY='<db-encryption-key>'
 export DEN_MYSQL_ROOT_PASSWORD='<mysql-root-password>'
+# Lab/no-SMTP only. Keep verification enabled for production users.
+export DEN_REQUIRE_EMAIL_VERIFICATION=false
 # DATABASE_URL is separate from DEN_MYSQL_ROOT_PASSWORD so URL-special password characters can be percent-encoded.
 # Example for password p@ss:word: mysql://root:p%40ss%3Aword@mysql:3306/openwork_den
 export DEN_DATABASE_URL='mysql://root:<url-encoded-mysql-root-password>@mysql:3306/openwork_den'
@@ -178,6 +180,8 @@ Create the first account and complete email verification.
 
 Configure SMTP or Resend before the first real sign-up so the verification email is delivered normally.
 
+For a closed lab with no SMTP, set `DEN_REQUIRE_EMAIL_VERIFICATION=false` before creating the first account and recreate the Den containers with the same Compose command below. Do not use that setting for production sign-ups.
+
 After the first account is verified, create the first organization.
 
 When a shared/static worker is created in `static` mode and `DEN_STATIC_WORKER_URLS` is not empty, Den allocates one configured worker URL for that organization.
@@ -197,7 +201,17 @@ If you need more capacity than the remaining free URLs:
 1. start another runtime worker
 2. add its URL to `DEN_STATIC_WORKER_URLS`
 3. add its token pair to `DEN_STATIC_WORKER_TOKEN_MAP_JSON`
-4. restart Den
+4. re-export the full Den env in the shell, then recreate Den services so the container receives the new env:
+
+```bash
+docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-static.yml up -d --force-recreate den web worker-proxy
+```
+
+If the source tree or Docker image changed, rebuild as well:
+
+```bash
+docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-static.yml up --build -d --force-recreate den web worker-proxy
+```
 
 ## Minimal Troubleshooting
 
@@ -207,6 +221,6 @@ If you need more capacity than the remaining free URLs:
   - run `curl http://<worker-host>:8787/health`
   - inspect Den logs with `docker compose -p openwork-den-static -f packaging/docker/docker-compose.den-static.yml logs den`
 - `No available static worker URL remains`:
-  - every URL in `DEN_STATIC_WORKER_URLS` is already in use, so add another pre-running worker runtime and restart Den
+  - every URL in `DEN_STATIC_WORKER_URLS` is already in use, so add another pre-running worker runtime, update `DEN_STATIC_WORKER_URLS` and `DEN_STATIC_WORKER_TOKEN_MAP_JSON`, then recreate Den with `up -d --force-recreate den web worker-proxy`
 - `STATIC_WORKER_TOKEN_MAP_JSON must be valid JSON`:
   - export it as a single-quoted JSON string in Bash

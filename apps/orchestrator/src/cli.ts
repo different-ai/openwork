@@ -3579,10 +3579,30 @@ async function waitForOpencodeHealthy(
   client: ReturnType<typeof createOpencodeClient>,
   timeoutMs = 10_000,
   pollMs = 250,
+  fallbackUrl?: string,
+  fallbackHeaders?: Record<string, string>,
 ) {
   const start = Date.now();
   let lastError: string | null = null;
   while (Date.now() - start < timeoutMs) {
+    if (fallbackUrl) {
+      try {
+        const response = await fetch(`${fallbackUrl.replace(/\/$/, "")}/health`, {
+          headers: fallbackHeaders,
+        });
+        if (response.status < 500) {
+          return { healthy: true, degraded: true, reason: lastError ?? undefined };
+        }
+        lastError = `HTTP ${response.status}`;
+      } catch (error) {
+        if (!lastError) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      return { healthy: true, degraded: true, reason: lastError ?? undefined };
+    }
+
     try {
       const health = unwrap(await client.global.health());
       if (health?.healthy) return health;
@@ -4866,12 +4886,14 @@ async function verifyOpenworkServer(input: {
   }
   if (
     input.expectedOpencodeUsername &&
+    opencode?.username &&
     opencode?.username !== input.expectedOpencodeUsername
   ) {
     throw new Error("OpenWork server OpenCode username mismatch.");
   }
   if (
     input.expectedOpencodePassword &&
+    opencode?.password &&
     opencode?.password !== input.expectedOpencodePassword
   ) {
     throw new Error("OpenWork server OpenCode password mismatch.");
@@ -6104,7 +6126,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       headers: authHeaders,
     });
     logger.info("Waiting for health", { url: baseUrl }, "opencode");
-    await waitForOpencodeHealthy(client);
+    await waitForOpencodeHealthy(client, undefined, undefined, baseUrl, authHeaders);
     logger.info("Healthy", { url: baseUrl }, "opencode");
     state.opencode = {
       pid: child.pid ?? 0,
@@ -8233,7 +8255,7 @@ async function runStart(args: ParsedArgs) {
       });
 
       logger.info("Waiting for health", { url: opencodeBaseUrl }, "opencode");
-      await waitForOpencodeHealthy(opencodeClient);
+      await waitForOpencodeHealthy(opencodeClient, undefined, undefined, opencodeBaseUrl, authHeaders);
       logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 

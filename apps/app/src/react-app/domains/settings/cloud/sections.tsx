@@ -776,19 +776,23 @@ export function MarketplacePluginsSection({
 }
 
 export interface CloudWorkersSectionProps {
+  launchBusy: boolean;
   openingWorkerId: string | null;
   workers: CloudWorker[];
   workersBusy: boolean;
   workersError: string | null;
+  onLaunchWorker: () => void | Promise<void>;
   onOpenWorker: (workerId: string, workerName: string) => void | Promise<void>;
   onRefreshWorkers: () => void | Promise<void>;
 }
 
 export function CloudWorkersSection({
+  launchBusy,
   openingWorkerId,
   workers,
   workersBusy,
   workersError,
+  onLaunchWorker,
   onOpenWorker,
   onRefreshWorkers,
 }: CloudWorkersSectionProps) {
@@ -823,6 +827,13 @@ export function CloudWorkersSection({
           <SettingsSectionHeaderDescription>{t("den.cloud_workers_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
+          <Button
+            size="sm"
+            disabled={launchBusy || workersBusy || !hasActiveOrg}
+            onClick={() => void onLaunchWorker()}
+          >
+            {launchBusy ? "Launching..." : "Launch cloud worker"}
+          </Button>
           <RefreshButton
             busy={workersBusy}
             disabled={[workersBusy, !hasActiveOrg].some(Boolean)}
@@ -836,7 +847,9 @@ export function CloudWorkersSection({
       {workersError ? <SettingsNotice tone="error">{workersError}</SettingsNotice> : null}
 
       {!workersBusy && workers.length === 0 ? (
-        <SettingsListEmptyState>{t("den.no_cloud_workers")}</SettingsListEmptyState>
+        <SettingsListEmptyState>
+          No cloud workers are visible for this org yet. Launch one here, then open it from this tab.
+        </SettingsListEmptyState>
       ) : null}
 
       {workers.length > 0 ? (
