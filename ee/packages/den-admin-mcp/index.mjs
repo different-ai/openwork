@@ -178,7 +178,24 @@ function assertReadOnly(input) {
 
 // --- MCP server ---
 
-const server = new McpServer({ name: "den-admin", version: "0.1.0" });
+// Keep in sync with package.json and the server-hosted toolset version in
+// ee/apps/den-api/src/mcp/admin-tools.ts (DEN_ADMIN_MCP_VERSION).
+const DEN_ADMIN_MCP_VERSION = "0.2.0";
+
+const server = new McpServer({ name: "den-admin", version: DEN_ADMIN_MCP_VERSION });
+
+server.tool(
+  "den_admin_version",
+  "Report the den-admin MCP version and runtime so you can verify which build is running.",
+  {},
+  async () =>
+    run(async () => ({
+      name: "den-admin",
+      transport: "stdio",
+      toolsetVersion: DEN_ADMIN_MCP_VERSION,
+      node: process.version,
+    })),
+);
 
 server.tool(
   "den_overview",

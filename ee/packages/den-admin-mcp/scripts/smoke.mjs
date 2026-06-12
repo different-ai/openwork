@@ -102,8 +102,9 @@ try {
 
   const list = await request("tools/list", {});
   const toolNames = (list.result?.tools ?? []).map((tool) => tool.name).sort();
-  report("tools/list", toolNames.length === 7, toolNames.join(", "));
+  report("tools/list", toolNames.length === 8, toolNames.join(", "));
 
+  await callTool("den_admin_version", {});
   await callTool("den_overview", {});
   await callTool("den_growth", { metric: "users", interval: "month", periods: 6 });
   await callTool("den_retention", { weeks: 8 });

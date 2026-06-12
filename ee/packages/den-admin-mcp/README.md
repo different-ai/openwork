@@ -4,10 +4,21 @@ Read-only admin analytics MCP server for the OpenWork Den database. Ask OpenWork
 things like "what's our weekly growth rate?", "show retention for the last 8
 weeks", or "who at acme.test is active?" and the agent answers from real data.
 
+> **Prefer the hosted endpoint.** den-api serves the same toolset over
+> streamable HTTP at `/mcp/admin` (see `ee/apps/den-api/src/mcp/admin.ts`),
+> authenticated with the desktop's first-party MCP token and gated by the
+> platform-admin allowlist — no `DATABASE_URL` on client machines. In the app,
+> connect "OpenWork Admin Analytics" from Settings -> Connections -> MCP
+> (under Show hidden). This stdio package remains the break-glass/dev variant
+> for when den-api itself is down. Keep tool payloads and
+> `DEN_ADMIN_MCP_VERSION` in sync between the two; `den_admin_version` reports
+> which build and transport you are talking to.
+
 ## Tools
 
 | Tool | What it answers |
 |---|---|
+| `den_admin_version` | Toolset version + transport, to spot stale deploys |
 | `den_overview` | Totals, new users 7d/30d, DAU/WAU/MAU, subscriptions |
 | `den_growth` | Signup growth series (day/week/month) + growth rates |
 | `den_retention` | Weekly signup cohorts x weeks-active retention matrix |

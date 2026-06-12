@@ -644,6 +644,8 @@ export default {
   "mcp.quick_connect_linear_title": "Linear",
   "mcp.quick_connect_notion_desc": "Pages, databases, and project docs in sync.",
   "mcp.quick_connect_notion_title": "Notion",
+  "mcp.quick_connect_openwork_admin_desc": "Read-only Den analytics for OpenWork platform admins: growth, retention, company lookups, and ad-hoc queries. Requires an allowlisted admin account. Try: \"What's our weekly signup growth?\"",
+  "mcp.quick_connect_openwork_admin_title": "OpenWork Admin Analytics",
   "mcp.quick_connect_openwork_cloud_desc": "Manage your org, workers, skills, providers, and team config from chat. Try: \"List all workers in my org\" or \"Push this skill to the team.\"",
   "mcp.quick_connect_openwork_cloud_title": "OpenWork Cloud Control",
   "mcp.quick_connect_openwork_ui_desc": "Let agents see and drive the OpenWork app. Navigate sessions, type into the composer, open settings. Try: \"Take a snapshot of what I see\" or \"Create a new session and type hello.\"",

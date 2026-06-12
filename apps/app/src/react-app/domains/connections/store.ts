@@ -630,17 +630,22 @@ export function createConnectionsStore(options: {
         }
       }
 
-      // Signed-in cloud users connect the Den MCP with a first-party token —
+      // Signed-in cloud users connect the Den MCPs with a first-party token —
       // no browser OAuth round-trip. Signed-out users fall back to OAuth.
-      if (entry.serverName === "openwork-cloud") {
+      // The same minted token works for both /mcp (openwork-cloud) and
+      // /mcp/admin (openwork-admin); den-api enforces the platform-admin
+      // allowlist on the admin endpoint server-side.
+      if (entry.serverName === "openwork-cloud" || entry.serverName === "openwork-admin") {
         try {
           const minted = await mintCloudControlMcpToken();
           if (minted) {
-            // Never trust `minted.resource` verbatim: older den-api builds
-            // mint the bare web-app origin (https://app.openworklabs.com/mcp)
-            // where MCP 404s. Heal it, falling back to the entry's
-            // bootstrap-derived URL.
-            resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+            if (entry.serverName === "openwork-cloud") {
+              // Never trust `minted.resource` verbatim: older den-api builds
+              // mint the bare web-app origin (https://app.openworklabs.com/mcp)
+              // where MCP 404s. Heal it, falling back to the entry's
+              // bootstrap-derived URL.
+              resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+            }
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }
         } catch {
