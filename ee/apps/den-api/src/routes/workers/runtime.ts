@@ -78,6 +78,7 @@ export function registerWorkerRuntimeRoutes<T extends { Variables: WorkerRouteVa
     jsonValidator(z.object({}).passthrough()),
     async (c) => {
     const orgId = c.get("activeOrganizationId")
+    const user = c.get("user")
     const params = c.req.valid("param")
     const body = c.req.valid("json")
 

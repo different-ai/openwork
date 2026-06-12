@@ -440,6 +440,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     paramValidator(workerIdParamSchema),
     async (c) => {
     const orgId = c.get("activeOrganizationId")
+    const user = c.get("user")
     const params = c.req.valid("param")
 
     if (!orgId) {
@@ -496,6 +497,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     paramValidator(workerIdParamSchema),
     async (c) => {
     const orgId = c.get("activeOrganizationId")
+    const user = c.get("user")
     const params = c.req.valid("param")
 
     if (!orgId) {
