@@ -27,6 +27,7 @@ type AdminEntry = {
 type ActivityPoint = {
   day: string;
   activeUsers: number;
+  realActiveUsers: number;
   signups: number;
 };
 
@@ -48,6 +49,9 @@ type AdminSummary = {
   activeUsers1d: number;
   activeUsers7d: number;
   activeUsers30d: number;
+  realActiveUsers1d: number;
+  realActiveUsers7d: number;
+  realActiveUsers30d: number;
   recurringUsers: number;
   inviters: number;
   medianHoursToFirstInvite: number | null;
@@ -147,6 +151,7 @@ function parseActivitySeries(value: unknown): ActivityPoint[] {
     points.push({
       day,
       activeUsers: toNumberValue(entry.activeUsers),
+      realActiveUsers: toNumberValue(entry.realActiveUsers),
       signups: toNumberValue(entry.signups)
     });
   }
@@ -235,6 +240,9 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       activeUsers1d: toNumberValue(summary.activeUsers1d),
       activeUsers7d: toNumberValue(summary.activeUsers7d),
       activeUsers30d: toNumberValue(summary.activeUsers30d),
+      realActiveUsers1d: toNumberValue(summary.realActiveUsers1d),
+      realActiveUsers7d: toNumberValue(summary.realActiveUsers7d),
+      realActiveUsers30d: toNumberValue(summary.realActiveUsers30d),
       recurringUsers: toNumberValue(summary.recurringUsers),
       inviters: toNumberValue(summary.inviters),
       medianHoursToFirstInvite: toNullableNumberValue(summary.medianHoursToFirstInvite),
@@ -561,16 +569,30 @@ function ActivityChart({ series }: { series: ActivityPoint[] }) {
     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Active users · last 30 days</p>
-        <p className="text-xs text-slate-500">Sign-ins + app activity · hover bars for daily detail</p>
+        <p className="text-xs text-slate-500">
+          <span className="mr-3 inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-900/80" />Any activity</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-violet-500" />Real DAU (ran a task)</span>
+        </p>
       </div>
       <div className="mt-3 flex h-16 items-end gap-[3px]">
         {series.map((point) => (
           <div
             key={point.day}
-            title={`${point.day}: ${point.activeUsers} active · ${point.signups} signup${point.signups === 1 ? "" : "s"}`}
-            className={`flex-1 rounded-t transition ${point.activeUsers > 0 ? "bg-slate-900/80 hover:bg-slate-950" : "bg-slate-200"}`}
-            style={{ height: `${point.activeUsers > 0 ? Math.max(8, Math.round((point.activeUsers / maxActive) * 100)) : 4}%` }}
-          />
+            title={`${point.day}: ${point.activeUsers} active · ${point.realActiveUsers} ran a task · ${point.signups} signup${point.signups === 1 ? "" : "s"}`}
+            className="relative flex-1"
+            style={{ height: "100%" }}
+          >
+            <div
+              className={`absolute inset-x-0 bottom-0 rounded-t transition ${point.activeUsers > 0 ? "bg-slate-900/30 hover:bg-slate-900/45" : "bg-slate-200"}`}
+              style={{ height: `${point.activeUsers > 0 ? Math.max(8, Math.round((point.activeUsers / maxActive) * 100)) : 4}%` }}
+            />
+            {point.realActiveUsers > 0 ? (
+              <div
+                className="absolute inset-x-0 bottom-0 rounded-t bg-violet-500"
+                style={{ height: `${Math.max(8, Math.round((point.realActiveUsers / maxActive) * 100))}%` }}
+              />
+            ) : null}
+          </div>
         ))}
       </div>
       <div className="mt-2 flex justify-between text-[0.66rem] text-slate-400">
@@ -920,6 +942,7 @@ export function DenAdminPanel() {
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={`${payload.summary.recentUsers7d} new in 7d`} />
           <StatCard label="Active today" value={String(payload.summary.activeUsers1d)} detail={`${payload.summary.activeUsers7d} in 7d · ${payload.summary.activeUsers30d} in 30d`} />
+          <StatCard label="Real DAU" value={String(payload.summary.realActiveUsers1d)} detail={`Ran a task · ${payload.summary.realActiveUsers7d} in 7d · ${payload.summary.realActiveUsers30d} in 30d`} />
           <StatCard label="Recurring" value={String(payload.summary.recurringUsers)} detail="Active on 2+ days" />
           <StatCard label="Inviters" value={String(payload.summary.inviters)} detail={`Median time to invite ${formatHours(payload.summary.medianHoursToFirstInvite)}`} />
           <StatCard label="Verified" value={String(payload.summary.verifiedUsers)} detail={`${payload.summary.totalUsers - payload.summary.verifiedUsers} still unverified`} />

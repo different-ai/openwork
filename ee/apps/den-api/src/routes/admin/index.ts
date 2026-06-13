@@ -1,4 +1,4 @@
-import { asc, desc, eq, gte, isNotNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthSessionTable,
@@ -166,7 +166,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
     const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
 
-    const [admins, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, inviteStatsRows] = await Promise.all([
+    const [admins, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
       db
         .select({
           email: AdminAllowlistTable.email,
@@ -219,6 +219,22 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         .from(TelemetryEventTable)
         .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
         .where(gte(TelemetryEventTable.event_timestamp, activityWindowStart))
+        .groupBy(MemberTable.userId, telemetryDayExpr)
+        .catch(() => []),
+      // "Real" activity: the user executed at least one task in a session
+      // that day — not just a sign-in or a heartbeat ping.
+      db
+        .select({
+          userId: MemberTable.userId,
+          day: telemetryDayExpr,
+        })
+        .from(TelemetryEventTable)
+        .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
+        .where(and(
+          gte(TelemetryEventTable.event_timestamp, activityWindowStart),
+          inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
+          isNotNull(TelemetryEventTable.session_id),
+        ))
         .groupBy(MemberTable.userId, telemetryDayExpr)
         .catch(() => []),
       db
@@ -288,15 +304,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
     const seriesStartKey = toDayKey(new Date(Date.now() - (seriesWindowDays - 1) * 24 * 60 * 60 * 1000)) ?? ""
     const activeUsersByDay = new Map<string, Set<UserId>>()
-    const markActiveDay = (day: string, userId: UserId) => {
+    const realActiveUsersByDay = new Map<string, Set<UserId>>()
+    const markDay = (target: Map<string, Set<UserId>>, day: string, userId: UserId) => {
       if (day < seriesStartKey) {
         return
       }
 
-      const set = activeUsersByDay.get(day) ?? new Set<UserId>()
+      const set = target.get(day) ?? new Set<UserId>()
       set.add(userId)
-      activeUsersByDay.set(day, set)
+      target.set(day, set)
     }
+    const markActiveDay = (day: string, userId: UserId) => markDay(activeUsersByDay, day, userId)
 
     for (const row of sessionDayRows) {
       if (!row.day) {
@@ -324,6 +342,14 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
     }
 
+    for (const row of taskDayRows) {
+      if (!row.userId || !row.day) {
+        continue
+      }
+
+      markDay(realActiveUsersByDay, row.day, row.userId)
+    }
+
     const inviteStatsByUser = new Map<UserId, { invitesSent: number; firstInviteAt: Date | string | null }>()
     for (const row of inviteStatsRows) {
       inviteStatsByUser.set(row.inviterId, {
@@ -341,9 +367,11 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     }
 
     const todayKey = toDayKey(new Date())
-    const activitySeries: Array<{ day: string; activeUsers: number; signups: number }> = []
+    const activitySeries: Array<{ day: string; activeUsers: number; realActiveUsers: number; signups: number }> = []
     const active7d = new Set<UserId>()
     const active30d = new Set<UserId>()
+    const realActive7d = new Set<UserId>()
+    const realActive30d = new Set<UserId>()
     for (let offset = seriesWindowDays - 1; offset >= 0; offset -= 1) {
       const day = toDayKey(new Date(Date.now() - offset * 24 * 60 * 60 * 1000))
       if (!day) {
@@ -351,7 +379,13 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
 
       const activeSet = activeUsersByDay.get(day)
-      activitySeries.push({ day, activeUsers: activeSet?.size ?? 0, signups: signupsByDay.get(day) ?? 0 })
+      const realActiveSet = realActiveUsersByDay.get(day)
+      activitySeries.push({
+        day,
+        activeUsers: activeSet?.size ?? 0,
+        realActiveUsers: realActiveSet?.size ?? 0,
+        signups: signupsByDay.get(day) ?? 0,
+      })
       if (activeSet) {
         for (const id of activeSet) {
           active30d.add(id)
@@ -360,8 +394,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           }
         }
       }
+      if (realActiveSet) {
+        for (const id of realActiveSet) {
+          realActive30d.add(id)
+          if (offset <= 6) {
+            realActive7d.add(id)
+          }
+        }
+      }
     }
     const activeUsers1d = todayKey ? (activeUsersByDay.get(todayKey)?.size ?? 0) : 0
+    const realActiveUsers1d = todayKey ? (realActiveUsersByDay.get(todayKey)?.size ?? 0) : 0
 
     const defaultBilling = {
       status: "unavailable" as const,
@@ -526,6 +569,12 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         activeUsers1d,
         activeUsers7d: active7d.size,
         activeUsers30d: active30d.size,
+        // "Real" DAU/WAU/MAU: users who executed at least one task in a
+        // session that day (task.* telemetry with a session id), vs the
+        // looser activeUsers* which counts any sign-in or telemetry ping.
+        realActiveUsers1d,
+        realActiveUsers7d: realActive7d.size,
+        realActiveUsers30d: realActive30d.size,
         medianHoursToFirstInvite: median(inviteHours),
         activitySeries,
       },

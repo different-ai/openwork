@@ -70,7 +70,7 @@ function summarize(name, text) {
     const data = JSON.parse(text);
     switch (name) {
       case "den_overview":
-        return `users=${data.users.total} orgs=${data.organizations} dau=${data.activeUsers.daily} wau=${data.activeUsers.weekly} mau=${data.activeUsers.monthly}`;
+        return `users=${data.users.total} orgs=${data.organizations} dau=${data.activeUsers.daily} wau=${data.activeUsers.weekly} mau=${data.activeUsers.monthly} realDau=${data.realActiveUsers.daily} realWau=${data.realActiveUsers.weekly} realMau=${data.realActiveUsers.monthly}`;
       case "den_growth":
         return `buckets=${data.buckets.length} latestComplete=${JSON.stringify(data.latestCompletePeriod)}`;
       case "den_retention":

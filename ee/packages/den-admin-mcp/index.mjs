@@ -86,6 +86,25 @@ async function activeUserCount(days) {
   }
 }
 
+// "Real" active users: executed at least one task in a session in the window
+// (task.* telemetry with a session id), vs the looser sign-in/ping activity.
+async function taskActiveUserCount(days) {
+  try {
+    const result = await rows(
+      `SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
+         JOIN member m ON m.id = t.member_id
+        WHERE m.user_id IS NOT NULL
+          AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
+          AND t.session_id IS NOT NULL
+          AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${days} DAY)`,
+    );
+    return n(result[0]?.count);
+  } catch (error) {
+    if (!isMissingTable(error)) throw error;
+    return 0;
+  }
+}
+
 async function activityDays() {
   const withTelemetry = `SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
       UNION
@@ -180,7 +199,7 @@ function assertReadOnly(input) {
 
 // Keep in sync with package.json and the server-hosted toolset version in
 // ee/apps/den-api/src/mcp/admin-tools.ts (DEN_ADMIN_MCP_VERSION).
-const DEN_ADMIN_MCP_VERSION = "0.2.0";
+const DEN_ADMIN_MCP_VERSION = "0.3.0";
 
 const server = new McpServer({ name: "den-admin", version: DEN_ADMIN_MCP_VERSION });
 
@@ -203,7 +222,7 @@ server.tool(
   {},
   async () =>
     run(async () => {
-      const [users, orgs, members, invitations, subscriptions, dau, wau, mau] =
+      const [users, orgs, members, invitations, subscriptions, dau, wau, mau, realDau, realWau, realMau] =
         await Promise.all([
           rows(`SELECT COUNT(*) AS total,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS new7d,
@@ -216,6 +235,9 @@ server.tool(
           activeUserCount(1),
           activeUserCount(7),
           activeUserCount(30),
+          taskActiveUserCount(1),
+          taskActiveUserCount(7),
+          taskActiveUserCount(30),
         ]);
       return {
         users: {
@@ -227,12 +249,13 @@ server.tool(
         activeMembers: n(members[0]?.total),
         pendingInvitations: n(invitations[0]?.pending),
         activeUsers: { daily: dau, weekly: wau, monthly: mau },
+        realActiveUsers: { daily: realDau, weekly: realWau, monthly: realMau },
         subscriptions: subscriptions.map((row) => ({
           type: row.type,
           status: row.status,
           count: n(row.count),
         })),
-        note: "active = sign-in session day or session.active telemetry event",
+        note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
       };
     }),
 );

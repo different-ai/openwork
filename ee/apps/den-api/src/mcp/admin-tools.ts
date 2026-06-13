@@ -18,7 +18,7 @@ import { denApiAppVersion } from "../version.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.2.0"
+export const DEN_ADMIN_MCP_VERSION = "0.3.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -147,6 +147,27 @@ async function activeUserCount(days: number): Promise<number> {
     const result = await rows(sql`SELECT COUNT(DISTINCT user_id) AS count FROM session
        WHERE updated_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
     return n(result[0]?.count)
+  }
+}
+
+/**
+ * "Real" active users: executed at least one task in a session in the
+ * window — task.* telemetry with a session id, not just sign-ins or
+ * heartbeat pings. Returns 0 when the telemetry table is missing.
+ */
+async function taskActiveUserCount(days: number): Promise<number> {
+  const interval = intLiteral(days)
+  try {
+    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
+        JOIN member m ON m.id = t.member_id
+       WHERE m.user_id IS NOT NULL
+         AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
+         AND t.session_id IS NOT NULL
+         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
+    return n(result[0]?.count)
+  } catch (error) {
+    if (!isMissingTable(error)) throw error
+    return 0
   }
 }
 
@@ -285,11 +306,11 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_overview",
     {
       description:
-        "High-level Den admin overview: total users/organizations/members, new users (7d/30d), active users (DAU/WAU/MAU), pending invitations, and subscriptions by status.",
+        "High-level Den admin overview: total users/organizations/members, new users (7d/30d), active users (DAU/WAU/MAU, plus 'real' task-executing variants), pending invitations, and subscriptions by status.",
     },
     async () =>
       run(async () => {
-        const [users, orgs, members, invitations, subscriptions, dau, wau, mau] = await Promise.all([
+        const [users, orgs, members, invitations, subscriptions, dau, wau, mau, realDau, realWau, realMau] = await Promise.all([
           rows(sql`SELECT COUNT(*) AS total,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS new7d,
                   SUM(created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS new30d
@@ -301,6 +322,9 @@ export function registerAdminMcpTools(server: McpServer) {
           activeUserCount(1),
           activeUserCount(7),
           activeUserCount(30),
+          taskActiveUserCount(1),
+          taskActiveUserCount(7),
+          taskActiveUserCount(30),
         ])
         return {
           users: {
@@ -312,12 +336,13 @@ export function registerAdminMcpTools(server: McpServer) {
           activeMembers: n(members[0]?.total),
           pendingInvitations: n(invitations[0]?.pending),
           activeUsers: { daily: dau, weekly: wau, monthly: mau },
+          realActiveUsers: { daily: realDau, weekly: realWau, monthly: realMau },
           subscriptions: subscriptions.map((row) => ({
             type: row.type,
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or session.active telemetry event",
+          note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
         }
       }),
   )
