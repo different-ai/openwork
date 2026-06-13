@@ -884,7 +884,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     // Detect newly connected providers and fire a global event so
-    // the NewProvidersToast shows — regardless of which route is active.
+    // the NewProvidersListener records a notification — regardless of
+    // which route is active.
     if (!opts?.suppressNewProviderEvent) {
       const newIds = nextConnected.filter((id) => !prevConnected.has(id));
       if (newIds.length > 0) {

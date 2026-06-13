@@ -48,6 +48,7 @@ import {
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { StatusBar, type StatusBarProps } from "./status-bar";
 import { OwDotTicker } from "../../../shell/dot-ticker";
+import { NotificationBell } from "../../../shell/notification-center";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
@@ -823,6 +824,7 @@ export function SessionPage(props: SessionPageProps) {
 
             <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
               {/* Revert/redo moved to per-message actions */}
+              <NotificationBell />
               {props.developerMode ? (
                 <Button
                   variant="ghost"

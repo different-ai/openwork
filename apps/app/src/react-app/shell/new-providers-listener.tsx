@@ -1,17 +1,19 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "@/components/ui/sonner";
 import { resolveProviderDisplayName } from "@/app/utils";
 import {
   newProvidersEvent,
   type NewProviderInfo,
   type NewProvidersEventDetail,
 } from "@/app/lib/provider-events";
+import { t } from "@/i18n";
+import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { notifyEvent } from "./notifications";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
 const SEEN_KEY = "openwork.seenProviderIds";
 const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
-const NEW_PROVIDERS_TOAST_ID = "openwork-new-providers";
+const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
 /** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
@@ -34,24 +36,57 @@ function markProvidersSeen(ids: string[]): void {
   } catch {}
 }
 
-type ToastState = {
-  show: boolean;
+/**
+ * Open the model picker focused on the given new providers. If no session
+ * surface picks the event up, fall back to navigating to preferences.
+ */
+export function requestOpenModelPicker(providerIds: string[]): void {
+  try {
+    window.localStorage.setItem(
+      PENDING_MODEL_PICKER_KEY,
+      JSON.stringify({ newProviderIds: providerIds, initialTab: "available" }),
+    );
+  } catch {}
+  window.dispatchEvent(
+    new CustomEvent(openModelPickerEvent, {
+      detail: { newProviderIds: providerIds, initialTab: "available" },
+    }),
+  );
+  window.setTimeout(() => {
+    try {
+      if (window.localStorage.getItem(PENDING_MODEL_PICKER_KEY)) {
+        const path = window.location.hash.replace(/^#/, "") || "/settings/preferences";
+        const match = path.match(/^\/workspace\/([^/]+)/);
+        window.location.hash = match?.[1]
+          ? `/workspace/${match[1]}/settings/preferences`
+          : "/settings/preferences";
+      }
+    } catch {}
+  }, 0);
+}
+
+type ListenerState = {
+  active: boolean;
   providers: NewProviderInfo[];
   newProviderCount: number;
   newModelCount: number;
 };
 
+const EMPTY_STATE: ListenerState = {
+  active: false,
+  providers: [],
+  newProviderCount: 0,
+  newModelCount: 0,
+};
+
 /**
- * Minimal global toast: lists new providers, offers to open the model
- * picker so the user can change their default if they want.
+ * Headless listener: converts "new providers available" events (cloud sync,
+ * sign-in, local config changes) into a single coalesced notification center
+ * entry instead of a popup. Accumulates until the entry is read, so repeated
+ * syncs update one entry with the full summary.
  */
-export function NewProvidersToast() {
-  const [state, setState] = useState<ToastState>({
-    show: false,
-    providers: [],
-    newProviderCount: 0,
-    newModelCount: 0,
-  });
+export function NewProvidersListener() {
+  const [state, setState] = useState<ListenerState>(EMPTY_STATE);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const [pendingProviders, setPendingProviders] = useState<NewProviderInfo[]>([]);
 
@@ -63,14 +98,14 @@ export function NewProvidersToast() {
     if (genuinelyNew.length === 0 && newModelCount === 0) return;
 
     setState((prev) => ({
-      show: true,
-      providers: prev.show
+      active: true,
+      providers: prev.active
         ? [...prev.providers, ...detail.providers.filter((p) => !prev.providers.some((e) => e.id === p.id))]
         : detail.providers,
-      newProviderCount: prev.show
+      newProviderCount: prev.active
         ? prev.newProviderCount + newProviderCount
         : newProviderCount,
-      newModelCount: prev.show
+      newModelCount: prev.active
         ? prev.newModelCount + newModelCount
         : newModelCount,
     }));
@@ -107,42 +142,14 @@ export function NewProvidersToast() {
     setPendingProviders([]);
   }, [orgOnboardingVisible, pendingProviders, showProviders]);
 
-  const dismiss = useCallback(() => {
-    markProvidersSeen(state.providers.map((p) => p.id));
-    setState({ show: false, providers: [], newProviderCount: 0, newModelCount: 0 });
-  }, [state.providers]);
-
-  const pickDefault = useCallback(() => {
-    const ids = state.providers.map((p) => p.id);
-    markProvidersSeen(ids);
-    setState({ show: false, providers: [], newProviderCount: 0, newModelCount: 0 });
-    try {
-      window.localStorage.setItem(
-        PENDING_MODEL_PICKER_KEY,
-        JSON.stringify({ newProviderIds: ids, initialTab: "available" }),
-      );
-    } catch {}
-    window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { newProviderIds: ids, initialTab: "available" } }));
-    window.setTimeout(() => {
-      try {
-        if (window.localStorage.getItem(PENDING_MODEL_PICKER_KEY)) {
-          const path = window.location.hash.replace(/^#/, "") || "/settings/preferences";
-          const match = path.match(/^\/workspace\/([^/]+)/);
-          window.location.hash = match?.[1]
-            ? `/workspace/${match[1]}/settings/preferences`
-            : "/settings/preferences";
-        }
-      } catch {}
-    }, 0);
-  }, [state.providers]);
-
+  // Write the accumulated summary into the notification center. The dedupe
+  // key keeps one unread entry that absorbs repeated provider syncs.
   useEffect(() => {
-    const visible =
-      state.show && (state.providers.length > 0 || state.newModelCount > 0);
-    if (!visible) {
-      toast.dismiss(NEW_PROVIDERS_TOAST_ID);
+    if (!state.active || (state.providers.length === 0 && state.newModelCount === 0)) {
       return;
     }
+
+    markProvidersSeen(state.providers.map((p) => p.id));
 
     const parts: string[] = [];
     if (state.newProviderCount > 0) {
@@ -157,13 +164,34 @@ export function NewProvidersToast() {
         state.providers[0]?.name || state.providers[0]?.providerId || "Models",
       );
 
-    toast(`${summary} available.`, {
-      id: NEW_PROVIDERS_TOAST_ID,
-      duration: Infinity,
-      action: { label: "Select a model", onClick: pickDefault },
-      cancel: { label: "Dismiss", onClick: dismiss },
+    notifyEvent({
+      kind: "providers",
+      severity: "info",
+      dedupeKey: NEW_PROVIDERS_DEDUPE_KEY,
+      title: `${summary} available`,
+      action: {
+        type: "open-model-picker",
+        providerIds: state.providers.map((p) => p.id),
+      },
+      actionLabel: t("notifications.select_model"),
     });
-  }, [state, pickDefault, dismiss]);
+  }, [state]);
+
+  // Once the entry is read (or cleared), restart accumulation so the next
+  // sync produces a fresh unread entry.
+  useEffect(
+    () =>
+      useNotificationStore.subscribe((store) => {
+        const unread = store.notifications.some(
+          (notification) =>
+            notification.dedupeKey === NEW_PROVIDERS_DEDUPE_KEY && notification.readAt === null,
+        );
+        if (!unread) {
+          setState((prev) => (prev.active ? EMPTY_STATE : prev));
+        }
+      }),
+    [],
+  );
 
   return null;
 }

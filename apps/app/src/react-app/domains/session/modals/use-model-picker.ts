@@ -16,7 +16,7 @@ import { getReactQueryClient } from "@/react-app/infra/query-client";
 import {
   openModelPickerEvent,
   pendingModelPickerProviderIdsKey,
-} from "@/react-app/shell/new-providers-toast";
+} from "@/react-app/shell/new-providers-listener";
 
 export type UseModelPickerInput = {
   client: Client | null;

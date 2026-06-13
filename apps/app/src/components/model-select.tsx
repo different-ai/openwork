@@ -43,7 +43,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 
 function getProviderDisplayName(providerId: string) {

@@ -79,22 +79,17 @@ export function useEngineReload(input: UseEngineReloadInput) {
     if (!reloadCoordinator.canReloadWorkspaceEngine) return;
     try {
       if (window.localStorage.getItem(reloadAfterOrgOnboardingKey) !== "1") return;
+      window.localStorage.removeItem(reloadAfterOrgOnboardingKey);
     } catch {
       return;
     }
-    if (!reloadCoordinator.reloadPending) {
-      reloadCoordinator.markReloadRequired("config", {
-        type: "config",
-        name: "opencode.json",
-        action: "updated",
-      });
-      return;
-    }
-    try {
-      window.localStorage.removeItem(reloadAfterOrgOnboardingKey);
-    } catch {}
-    void reloadCoordinator.reloadWorkspaceEngine();
-  }, [reloadCoordinator, reloadCoordinator.canReloadWorkspaceEngine, reloadCoordinator.reloadPending]);
+    // Marking is enough: the reload coordinator auto-reloads once idle.
+    reloadCoordinator.markReloadRequired("config", {
+      type: "config",
+      name: "opencode.json",
+      action: "updated",
+    });
+  }, [reloadCoordinator, reloadCoordinator.canReloadWorkspaceEngine]);
 
   useEffect(() => {
     if (!client || !workspaceId) return;

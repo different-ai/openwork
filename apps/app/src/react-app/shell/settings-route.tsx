@@ -146,6 +146,7 @@ import { recordInspectorEvent } from "../../app/lib/app-inspector";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
+import { notifyAlert } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { getDenInferenceUrl } from "@/app/lib/den";
@@ -793,7 +794,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     desktopConfig: desktopConfig.config,
     setError: (message) => {
       if (message) {
-        toast.error(message);
+        // Auto-checks can fail without any user action; alert + log to the
+        // notification center instead of a bare toast.
+        notifyAlert({
+          kind: "update",
+          title: t("notifications.updater_error"),
+          body: message,
+          dedupeKey: "updater-error",
+        });
       }
     },
   });
@@ -1207,7 +1215,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         message,
         preservedWorkspaceCount: desktopWorkspaces.length,
       });
-      toast.error(message);
+      // Fires on mount/auto-refresh too, not just user actions.
+      notifyAlert({
+        kind: "system",
+        title: t("notifications.refresh_failed"),
+        body: message,
+        dedupeKey: "settings-route-refresh",
+      });
       if (desktopWorkspaces.length > 0) {
         setWorkspaces(desktopWorkspaces);
         setLegacySelectedWorkspaceId((current) => {
@@ -1341,7 +1355,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       allWorkspaces: workspaces,
     }).catch((error) => {
       const message = error instanceof Error ? error.message : describeRouteError(error);
-      toast.error(message);
+      // Background auto-reconnect: alert + persistent center entry.
+      notifyAlert({
+        kind: "system",
+        title: t("notifications.reconnect_failed"),
+        body: message,
+        dedupeKey: "server-reconnect",
+      });
     });
   }, [loading, openworkClient, selectedWorkspace, workspaces]);
 
@@ -1607,7 +1627,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     : null;
   useEffect(() => {
     if (notFoundRouteError) {
-      toast.error(notFoundRouteError);
+      notifyAlert({
+        kind: "system",
+        title: notFoundRouteError,
+        dedupeKey: "workspace-not-found",
+      });
     }
   }, [notFoundRouteError]);
   const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
