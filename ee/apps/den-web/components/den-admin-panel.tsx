@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type WorkerFilter = "all" | "with-workers" | "without-workers";
 type BillingFilter = "all" | "paid" | "unpaid" | "unavailable";
-type ViewMode = "users" | "companies";
+type ViewMode = "users" | "companies" | "organizations";
 type ActivityFilter = "all" | "active-7d" | "active-30d" | "recurring" | "inactive-30d";
 type SortMode = "newest" | "recently-active" | "most-sign-ins" | "most-active-days" | "fastest-invite";
 
@@ -81,6 +81,20 @@ type AdminUser = {
   billing: AdminBillingStatus | null;
 };
 
+type AdminOrganization = {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  memberCount: number;
+  plan: {
+    tier: "free" | "team" | "enterprise";
+    source: string;
+  };
+  seatLimit: number;
+};
+
 type AdminPayload = {
   viewer: {
     id: string;
@@ -90,6 +104,7 @@ type AdminPayload = {
   admins: AdminEntry[];
   summary: AdminSummary;
   users: AdminUser[];
+  organizations: AdminOrganization[];
   generatedAt: string | null;
 };
 
@@ -215,6 +230,33 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
     })
     .filter((value): value is AdminEntry => value !== null);
 
+  const organizations: AdminOrganization[] = Array.isArray(payload.organizations)
+    ? payload.organizations
+      .map((value) => {
+        if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string" || typeof value.slug !== "string") {
+          return null;
+        }
+
+        const plan = isRecord(value.plan) ? value.plan : {};
+        const tier = plan.tier === "team" || plan.tier === "enterprise" ? plan.tier : "free";
+
+        return {
+          id: value.id,
+          name: value.name,
+          slug: value.slug,
+          createdAt: toStringValue(value.createdAt),
+          updatedAt: toStringValue(value.updatedAt),
+          memberCount: toNumberValue(value.memberCount),
+          plan: {
+            tier,
+            source: toStringValue(plan.source) ?? "default"
+          },
+          seatLimit: toNumberValue(value.seatLimit)
+        };
+      })
+      .filter((value): value is AdminOrganization => value !== null)
+    : [];
+
   return {
     viewer: {
       id: typeof viewer.id === "string" ? viewer.id : "unknown",
@@ -249,6 +291,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       activitySeries: parseActivitySeries(summary.activitySeries)
     },
     users,
+    organizations,
     generatedAt: toStringValue(payload.generatedAt)
   };
 }
@@ -307,6 +350,31 @@ async function requestJson(path: string) {
     headers: {
       Accept: "application/json"
     }
+  });
+
+  const text = await response.text();
+  let payload: unknown = null;
+
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  return { response, payload };
+}
+
+async function patchJson(path: string, body: unknown) {
+  const response = await fetch(`/api/den${path}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
   });
 
   const text = await response.text();
@@ -635,6 +703,20 @@ function BillingPill({ billing }: { billing: AdminBillingStatus | null }) {
   );
 }
 
+function PlanPill({ tier }: { tier: AdminOrganization["plan"]["tier"] }) {
+  const palette = tier === "enterprise"
+    ? "border-violet-200 bg-violet-50 text-violet-700"
+    : tier === "team"
+      ? "border-sky-200 bg-sky-50 text-sky-700"
+      : "border-slate-200 bg-slate-100 text-slate-600";
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
+      {tier}
+    </span>
+  );
+}
+
 export function DenAdminPanel() {
   const [accessState, setAccessState] = useState<AccessState>("loading");
   const [payload, setPayload] = useState<AdminPayload | null>(null);
@@ -649,6 +731,8 @@ export function DenAdminPanel() {
   const [billingFilter, setBillingFilter] = useState<BillingFilter>("all");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [includeBilling, setIncludeBilling] = useState(false);
+  const [orgDrafts, setOrgDrafts] = useState<Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }>>({});
+  const [savingOrgId, setSavingOrgId] = useState<string | null>(null);
 
   const loadOverview = useCallback(async (loadBilling: boolean) => {
     setRefreshing(true);
@@ -797,8 +881,85 @@ export function DenAdminPanel() {
     });
   }, [domainGroups, hidePersonalDomains, query]);
 
+  const filteredOrganizations = useMemo(() => {
+    if (!payload) {
+      return [] as AdminOrganization[];
+    }
+
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return payload.organizations;
+    }
+
+    return payload.organizations.filter((org) => `${org.name} ${org.slug} ${org.id}`.toLowerCase().includes(normalizedQuery));
+  }, [payload, query]);
+
+  useEffect(() => {
+    if (!payload) {
+      setOrgDrafts({});
+      return;
+    }
+
+    const drafts: Record<string, { tier: AdminOrganization["plan"]["tier"]; seatLimit: string }> = {};
+    for (const org of payload.organizations) {
+      drafts[org.id] = { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
+    }
+    setOrgDrafts(drafts);
+  }, [payload]);
+
+  const saveOrganizationPlan = useCallback(async (org: AdminOrganization) => {
+    const draft = orgDrafts[org.id];
+    if (!draft) {
+      return;
+    }
+
+    const seatLimit = Number(draft.seatLimit);
+    if (!Number.isInteger(seatLimit) || seatLimit < 1) {
+      setError("Seat limit must be a positive whole number.");
+      return;
+    }
+
+    setSavingOrgId(org.id);
+    setError(null);
+
+    try {
+      const { response, payload: nextPayload } = await patchJson(`/v1/admin/organizations/${org.id}/plan`, {
+        tier: draft.tier,
+        seatLimit
+      });
+
+      if (!response.ok) {
+        setError(getErrorMessage(nextPayload, `Could not update ${org.name}.`));
+        return;
+      }
+
+      await loadOverview(includeBilling);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unknown network error");
+    } finally {
+      setSavingOrgId(null);
+    }
+  }, [includeBilling, loadOverview, orgDrafts]);
+
   const exportCsv = useCallback(() => {
     const date = new Date().toISOString().slice(0, 10);
+
+    if (viewMode === "organizations") {
+      downloadCsv(`den-organizations-${date}.csv`, [
+        ["id", "name", "slug", "plan", "plan_source", "seat_limit", "members", "created_at"],
+        ...filteredOrganizations.map((org) => [
+          org.id,
+          org.name,
+          org.slug,
+          org.plan.tier,
+          org.plan.source,
+          String(org.seatLimit),
+          String(org.memberCount),
+          org.createdAt ?? ""
+        ])
+      ]);
+      return;
+    }
 
     if (viewMode === "companies") {
       downloadCsv(`den-companies-${date}.csv`, [
@@ -835,7 +996,7 @@ export function DenAdminPanel() {
         user.authProviders.join("; ")
       ])
     ]);
-  }, [filteredDomains, filteredUsers, viewMode]);
+  }, [filteredDomains, filteredOrganizations, filteredUsers, viewMode]);
 
   useEffect(() => {
     if (!payload) {
@@ -980,19 +1141,44 @@ export function DenAdminPanel() {
             >
               Companies ({companyDomainCount})
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("organizations")}
+              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${viewMode === "organizations" ? "bg-slate-950 text-white" : "text-slate-600 hover:text-slate-900"}`}
+            >
+              Organizations ({payload.organizations.length})
+            </button>
           </div>
 
           <button
             type="button"
             onClick={exportCsv}
-            disabled={viewMode === "companies" ? filteredDomains.length === 0 : filteredUsers.length === 0}
+            disabled={viewMode === "organizations" ? filteredOrganizations.length === 0 : viewMode === "companies" ? filteredDomains.length === 0 : filteredUsers.length === 0}
             className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Export CSV
           </button>
         </div>
 
-        {viewMode === "companies" ? (
+        {error ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            {error}
+          </div>
+        ) : null}
+
+        {viewMode === "organizations" ? (
+          <div className="mt-4">
+            <label className="grid w-full max-w-xl gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search organizations</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Org name, slug, or id"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+              />
+            </label>
+          </div>
+        ) : viewMode === "companies" ? (
           <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <label className="grid w-full max-w-xl gap-2">
               <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search companies</span>
@@ -1104,7 +1290,84 @@ export function DenAdminPanel() {
         )}
 
         <div className="mt-6 grid gap-3">
-          {viewMode === "companies" ? (
+          {viewMode === "organizations" ? (
+            filteredOrganizations.length > 0 ? filteredOrganizations.map((org) => {
+              const draft = orgDrafts[org.id] ?? { tier: org.plan.tier, seatLimit: String(org.seatLimit) };
+              const changed = draft.tier !== org.plan.tier || draft.seatLimit !== String(org.seatLimit);
+
+              return (
+                <div key={org.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-base font-semibold text-slate-950">{org.name}</p>
+                        <PlanPill tier={org.plan.tier} />
+                      </div>
+                      <p className="mt-1 truncate text-sm text-slate-500">/{org.slug} · {org.id}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                        {org.memberCount} / {org.seatLimit} seats
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    <MetaCell label="Created" value={formatDateTime(org.createdAt)} />
+                    <MetaCell label="Plan source" value={formatProvider(org.plan.source)} />
+                    <MetaCell label="Members" value={String(org.memberCount)} />
+                    <MetaCell label="Seat limit" value={String(org.seatLimit)} />
+                  </div>
+
+                  <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">
+                    <label className="grid gap-2">
+                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Plan</span>
+                      <select
+                        value={draft.tier}
+                        onChange={(event) => {
+                          const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
+                          setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
+                        }}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                      >
+                        <option value="free">Free</option>
+                        <option value="team">Team</option>
+                        <option value="enterprise">Enterprise</option>
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Seats</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={draft.seatLimit}
+                        onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void saveOrganizationPlan(org);
+                      }}
+                      disabled={!changed || savingOrgId === org.id}
+                      className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingOrgId === org.id ? "Saving..." : "Save access"}
+                    </button>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+                <p className="text-base font-semibold text-slate-950">No organizations match</p>
+                <p className="mt-2 text-sm leading-7 text-slate-500">Try a different search.</p>
+              </div>
+            )
+          ) : viewMode === "companies" ? (
             filteredDomains.length > 0 ? filteredDomains.map((group) => (
               <div key={group.domain} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

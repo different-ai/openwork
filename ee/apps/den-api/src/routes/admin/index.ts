@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthSessionTable,
   AuthUserTable,
   InvitationTable,
   MemberTable,
+  OrganizationTable,
   TelemetryEventTable,
   WorkerTable,
   AdminAllowlistTable,
@@ -14,14 +15,22 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerAdminBillingStatus } from "../../billing/polar.js"
 import { db } from "../../db.js"
+import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { queryValidator, requireAdminMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import type { AuthContextVariables } from "../../session.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
+type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
 const overviewQuerySchema = z.object({
   includeBilling: z.string().optional(),
+})
+
+const updateOrganizationPlanSchema = z.object({
+  tier: z.enum(["free", "team", "enterprise"]),
+  seatLimit: z.number().int().min(1).max(100000),
 })
 
 const adminOverviewResponseSchema = z.object({
@@ -118,6 +127,39 @@ function parseBooleanQuery(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes"
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function normalizeMetadata(input: Record<string, unknown> | string | null | undefined): Record<string, unknown> {
+  if (!input) {
+    return {}
+  }
+
+  if (typeof input === "string") {
+    try {
+      const parsed = JSON.parse(input) as unknown
+      return isRecord(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  return isRecord(input) ? input : {}
+}
+
+function getManualPlanMetadata(tier: PlanTier) {
+  return {
+    tier,
+    source: "manual" as const,
+    ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
+  }
+}
+
+function isOrganizationId(value: string): value is OrganizationId {
+  return value.startsWith("org_")
+}
+
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>) {
   if (items.length === 0) {
     return [] as R[]
@@ -140,6 +182,49 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.patch(
+    "/v1/admin/organizations/:organizationId/plan",
+    requireAdminMiddleware,
+    async (c) => {
+      const body = updateOrganizationPlanSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid organization plan request." }, 400)
+      }
+
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) {
+        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      }
+      const rows = await db
+        .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+        .from(OrganizationTable)
+        .where(eq(OrganizationTable.id, organizationId))
+        .limit(1)
+
+      const organization = rows[0]
+      if (!organization) {
+        return c.json({ error: "not_found", message: "Organization not found." }, 404)
+      }
+
+      const normalized = normalizeOrganizationMetadata(organization.metadata).metadata
+      const metadata = {
+        ...normalizeMetadata(normalized),
+        plan: getManualPlanMetadata(body.data.tier),
+        limits: {
+          ...normalized.limits,
+          members: body.data.seatLimit,
+        },
+      }
+
+      await db
+        .update(OrganizationTable)
+        .set({ metadata })
+        .where(eq(OrganizationTable.id, organizationId))
+
+      return c.json({ ok: true, organization: { id: organizationId, plan: parseOrganizationPlan(metadata), seatLimit: body.data.seatLimit } })
+    },
+  )
+
   app.get(
     "/v1/admin/overview",
     describeRoute({
@@ -166,7 +251,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
     const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
 
-    const [admins, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
+    const [admins, organizations, orgMemberStatsRows, users, workerStatsRows, sessionStatsRows, accountRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
       db
         .select({
           email: AdminAllowlistTable.email,
@@ -175,6 +260,15 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         })
         .from(AdminAllowlistTable)
         .orderBy(asc(AdminAllowlistTable.email)),
+      db.select().from(OrganizationTable).orderBy(desc(OrganizationTable.createdAt)),
+      db
+        .select({
+          organizationId: MemberTable.organizationId,
+          memberCount: sql<number>`count(*)`,
+        })
+        .from(MemberTable)
+        .where(isNull(MemberTable.removedAt))
+        .groupBy(MemberTable.organizationId),
       db.select().from(AuthUserTable).orderBy(desc(AuthUserTable.createdAt)),
       db
         .select({
@@ -266,6 +360,28 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         latestWorkerCreatedAt: row.latestWorkerCreatedAt,
       })
     }
+
+    const memberCountByOrg = new Map<string, number>()
+    for (const row of orgMemberStatsRows) {
+      memberCountByOrg.set(row.organizationId, toNumber(row.memberCount))
+    }
+
+    const organizationRows = organizations.map((entry) => {
+      const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
+      const plan = parseOrganizationPlan(metadata)
+      const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
+
+      return {
+        id: entry.id,
+        name: entry.name,
+        slug: entry.slug,
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        memberCount: memberCountByOrg.get(entry.id) ?? 0,
+        plan,
+        seatLimit,
+      }
+    })
 
     const sessionStatsByUser = new Map<UserId, {
       sessionCount: number
@@ -558,6 +674,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         name: user.name,
       },
       admins,
+      organizations: organizationRows,
       summary: {
         ...summary,
         adminCount: admins.length,

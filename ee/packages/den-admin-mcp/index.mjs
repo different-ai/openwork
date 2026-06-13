@@ -197,9 +197,9 @@ function assertReadOnly(input) {
 
 // --- MCP server ---
 
-// Keep in sync with package.json and the server-hosted toolset version in
-// ee/apps/den-api/src/mcp/admin-tools.ts (DEN_ADMIN_MCP_VERSION).
-const DEN_ADMIN_MCP_VERSION = "0.3.0";
+// Keep in sync with package.json. The hosted admin MCP may expose additional
+// admin-only write tools while this break-glass stdio variant remains read-only.
+const DEN_ADMIN_MCP_VERSION = "0.4.0";
 
 const server = new McpServer({ name: "den-admin", version: DEN_ADMIN_MCP_VERSION });
 

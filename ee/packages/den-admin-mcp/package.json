@@ -1,6 +1,6 @@
 {
   "name": "@openwork-ee/den-admin-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Read-only admin analytics MCP server for the OpenWork Den database — growth, retention, company/user lookups",
   "private": true,
   "type": "module",

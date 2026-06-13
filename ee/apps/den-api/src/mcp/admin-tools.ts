@@ -1,7 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { eq, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { z } from "zod"
 import { db } from "../db.js"
+import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
+import { normalizeOrganizationMetadata } from "../organization-limits.js"
 import { denApiAppVersion } from "../version.js"
 
 /**
@@ -18,7 +21,7 @@ import { denApiAppVersion } from "../version.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.3.0"
+export const DEN_ADMIN_MCP_VERSION = "0.4.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -27,6 +30,7 @@ const MAX_ROW_LIMIT = 1000
 const SERVER_STARTED_AT = new Date().toISOString()
 
 type Row = Record<string, unknown>
+type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
 /**
  * `db` is drizzle over either mysql2 (returns `[rows, fields]`) or
@@ -77,6 +81,18 @@ function intLiteral(value: number): SQL {
 
 function idList(ids: string[]): SQL {
   return sql.join(ids.map((id) => sql`${id}`), sql`, `)
+}
+
+function isOrganizationId(value: string): value is OrganizationId {
+  return value.startsWith("org_")
+}
+
+function manualPlan(tier: PlanTier) {
+  return {
+    tier,
+    source: "manual" as const,
+    ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
+  }
 }
 
 function toTime(value: unknown): number | null {
@@ -343,6 +359,62 @@ export function registerAdminMcpTools(server: McpServer) {
             count: n(row.count),
           })),
           note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_update_org_plan",
+    {
+      description:
+        "Admin write tool: grant or remove organization plan access and set the member seat limit. Use tier='enterprise' to grant enterprise access.",
+      inputSchema: z.object({
+        organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
+        tier: z.enum(["free", "team", "enterprise"]).describe("Plan tier to set"),
+        seatLimit: z.number().int().min(1).max(100000).describe("Maximum active organization members/seats"),
+      }),
+    },
+    async ({ organizationId, tier, seatLimit }) =>
+      run(async () => {
+        if (!isOrganizationId(organizationId)) {
+          throw new Error("Invalid organization id")
+        }
+
+        const existing = await db
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug, metadata: OrganizationTable.metadata })
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId))
+          .limit(1)
+
+        const organization = existing[0]
+        if (!organization) {
+          throw new Error(`No organization found for ${organizationId}`)
+        }
+
+        const normalized = normalizeOrganizationMetadata(organization.metadata).metadata
+        const metadata = {
+          ...normalized,
+          plan: manualPlan(tier),
+          limits: {
+            ...normalized.limits,
+            members: seatLimit,
+          },
+        }
+
+        await db
+          .update(OrganizationTable)
+          .set({ metadata })
+          .where(eq(OrganizationTable.id, organizationId))
+
+        return {
+          ok: true,
+          organization: {
+            id: organization.id,
+            name: organization.name,
+            slug: organization.slug,
+            plan: parseOrganizationPlan(metadata),
+            seatLimit,
+          },
         }
       }),
   )
