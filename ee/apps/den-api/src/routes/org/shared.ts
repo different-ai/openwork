@@ -174,6 +174,10 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
   }
 }
 
+export function canManageIdentityConfiguration(payload: { currentMember: { isOwner: boolean; role?: string } } | null | undefined) {
+  return payload?.currentMember.isOwner === true
+}
+
 export function ensureScimManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
   const payload = c.get("organizationContext")
   if (!payload) {
@@ -185,7 +189,7 @@ export function ensureScimManager(c: { get: (key: "organizationContext") => OrgR
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (canManageIdentityConfiguration(payload)) {
     return { ok: true as const }
   }
 
@@ -193,7 +197,7 @@ export function ensureScimManager(c: { get: (key: "organizationContext") => OrgR
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage SCIM.",
+      message: "Only workspace owners can manage SCIM.",
     },
   }
 }
@@ -209,7 +213,7 @@ export function ensureSsoManager(c: { get: (key: "organizationContext") => OrgRo
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (canManageIdentityConfiguration(payload)) {
     return { ok: true as const }
   }
 
@@ -217,7 +221,7 @@ export function ensureSsoManager(c: { get: (key: "organizationContext") => OrgRo
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage SSO.",
+      message: "Only workspace owners can manage SSO.",
     },
   }
 }

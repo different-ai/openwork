@@ -422,9 +422,9 @@ export const auth = betterAuth({
           });
         }
 
-        if (!hasRole(member.role, "owner") && !hasRole(member.role, "admin")) {
+        if (!hasRole(member.role, "owner")) {
           throw new APIError("FORBIDDEN", {
-            message: "Only workspace owners and admins can manage SCIM.",
+            message: "Only workspace owners can manage SCIM.",
           });
         }
       },

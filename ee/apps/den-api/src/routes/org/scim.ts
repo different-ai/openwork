@@ -91,7 +91,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -160,7 +160,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -237,7 +237,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
