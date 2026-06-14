@@ -26,10 +26,27 @@ const principal = {
   payload: {},
 }
 
+function createPrincipal(scopes: string[]) {
+  return {
+    userId: createDenTypeId("user"),
+    organizationId: createDenTypeId("organization"),
+    scopes: new Set(scopes),
+    payload: {},
+  }
+}
+
 const inviteOperation = {
   name: "postV1Invitations",
   method: "POST",
   path: "/v1/invitations",
+  operation: {},
+  inputSchema: z.object({}),
+}
+
+const listMembersOperation = {
+  name: "getV1Members",
+  method: "GET",
+  path: "/v1/members",
   operation: {},
   inputSchema: z.object({}),
 }
@@ -42,6 +59,14 @@ function createInviteApp() {
   const app = new Hono()
   app.post("/v1/invitations", validationModule.jsonValidator(inviteMemberSchema), (c) => {
     return c.json({ received: c.req.valid("json") }, 200)
+  })
+  return app
+}
+
+function createMembersApp() {
+  const app = new Hono()
+  app.get("/v1/members", (c) => {
+    return c.json({ members: [{ id: "member_1", role: "member" }] }, 200)
   })
   return app
 }
@@ -76,6 +101,63 @@ test("invitation POST forwarded with an object body passes route validation", as
   expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({
     received: { email: "ben+demogods@openworklabs.com", role: "member" },
   })
+})
+
+test("read-only MCP principals can invoke read operations", async () => {
+  const result = await invokeModule.invokeMcpOperation({
+    app: createMembersApp(),
+    env: {},
+    operation: listMembersOperation,
+    principal: createPrincipal(["mcp:read"]),
+    toolInput: {},
+  })
+
+  expect(result.isError).toBe(false)
+  expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({
+    members: [{ id: "member_1", role: "member" }],
+  })
+})
+
+test("read-only MCP principals cannot invoke write operations", async () => {
+  let routeWasInvoked = false
+  const app = new Hono()
+  app.post("/v1/invitations", (c) => {
+    routeWasInvoked = true
+    return c.json({ ok: true }, 200)
+  })
+
+  const result = await invokeModule.invokeMcpOperation({
+    app,
+    env: {},
+    operation: inviteOperation,
+    principal: createPrincipal(["mcp:read"]),
+    toolInput: { body: { email: "ben+demogods@openworklabs.com", role: "member" } },
+  })
+
+  expect(result.isError).toBe(true)
+  expect(result.content[0]?.text).toBe('{"error":"insufficient_mcp_scope","requiredScope":"mcp:write"}')
+  expect(routeWasInvoked).toBe(false)
+})
+
+test("write-only MCP principals cannot invoke read operations", async () => {
+  let routeWasInvoked = false
+  const app = new Hono()
+  app.get("/v1/members", (c) => {
+    routeWasInvoked = true
+    return c.json({ members: [] }, 200)
+  })
+
+  const result = await invokeModule.invokeMcpOperation({
+    app,
+    env: {},
+    operation: listMembersOperation,
+    principal: createPrincipal(["mcp:write"]),
+    toolInput: {},
+  })
+
+  expect(result.isError).toBe(true)
+  expect(result.content[0]?.text).toBe('{"error":"insufficient_mcp_scope","requiredScope":"mcp:read"}')
+  expect(routeWasInvoked).toBe(false)
 })
 
 test("invitation POST forwarded with a JSON-encoded string body no longer fails with 'expected object, received string'", async () => {
