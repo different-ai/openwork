@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -105,6 +106,18 @@ const updatePackageJson = async (nextVersion) => {
   }
 };
 
+// apps/orchestrator pins exact versions of workspace packages, so the lockfile
+// must be resynced after a bump or CI's --frozen-lockfile install fails.
+const syncLockfile = () => {
+  const result = spawnSync("pnpm", ["install", "--lockfile-only"], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error("pnpm install --lockfile-only failed");
+  }
+};
+
 const main = async () => {
   if (explicit && !semverPattern.test(explicit)) {
     throw new Error(`Invalid explicit version: ${explicit}`);
@@ -115,6 +128,7 @@ const main = async () => {
 
   const nextVersion = await targetVersion();
   await updatePackageJson(nextVersion);
+  if (!isDryRun) syncLockfile();
 
   console.log(
     JSON.stringify(
@@ -128,6 +142,7 @@ const main = async () => {
           "apps/orchestrator/package.json",
           "apps/server/package.json",
           "apps/opencode-router/package.json",
+          "pnpm-lock.yaml",
         ],
       },
       null,

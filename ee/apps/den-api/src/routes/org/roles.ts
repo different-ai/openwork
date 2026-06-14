@@ -4,9 +4,12 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
+import { validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
+import { revokeCredentialsForOrganizationRoleMembers } from "../../organization-role-credential-revocation.js"
 import { serializePermissionRecord } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { createRoleId, ensureOwner, idParamSchema, normalizeRoleName, replaceRoleValue, splitRoles } from "./shared.js"
@@ -53,6 +56,15 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     const payload = c.get("organizationContext")
     const input = c.req.valid("json")
 
+    const validPermission = validateAssignableOrganizationPermissionRecord({
+      permission: input.permission,
+      roleValue: payload.currentMember.role,
+      roles: payload.roles,
+    })
+    if (!validPermission.ok) {
+      return c.json({ error: validPermission.error, message: validPermission.message }, 400)
+    }
+
     const roleName = normalizeRoleName(input.roleName)
     if (roleName === "owner") {
       return c.json({ error: "invalid_role", message: "Owner is managed by the system." }, 400)
@@ -68,11 +80,22 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "role_exists", message: "That role already exists in this organization." }, 409)
     }
 
+    const roleId = createRoleId()
     await db.insert(OrganizationRoleTable).values({
-      id: createRoleId(),
+      id: roleId,
       organizationId: payload.organization.id,
       role: roleName,
       permission: serializePermissionRecord(input.permission),
+    })
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.roleCreated,
+      payload: {
+        organizationRoleId: roleId,
+        role: roleName,
+      },
     })
 
     return c.json({ success: true }, 201)
@@ -141,7 +164,19 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       }
     }
 
-    const nextPermission = input.permission ? serializePermissionRecord(input.permission) : roleRow.permission
+    let nextPermission = roleRow.permission
+    if (input.permission !== undefined) {
+      const validPermission = validateAssignableOrganizationPermissionRecord({
+        permission: input.permission,
+        roleValue: payload.currentMember.role,
+        roles: payload.roles,
+      })
+      if (!validPermission.ok) {
+        return c.json({ error: validPermission.error, message: validPermission.message }, 400)
+      }
+      nextPermission = serializePermissionRecord(input.permission)
+    }
+    const permissionChanged = nextPermission !== roleRow.permission
 
     await db
       .update(OrganizationRoleTable)
@@ -181,6 +216,26 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
           .where(eq(InvitationTable.id, invitation.id))
       }
     }
+
+    if (permissionChanged) {
+      await revokeCredentialsForOrganizationRoleMembers({
+        organizationId: payload.organization.id,
+        role: nextRoleName,
+      })
+    }
+
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.roleUpdated,
+      payload: {
+        organizationRoleId: roleRow.id,
+        previousRole: roleRow.role,
+        nextRole: nextRoleName,
+        roleRenamed: nextRoleName !== roleRow.role,
+        permissionChanged,
+      },
+    })
 
     return c.json({ success: true })
     },
@@ -251,6 +306,15 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     await db.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id))
+    await recordOrganizationAuditEvent({
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.roleDeleted,
+      payload: {
+        organizationRoleId: roleRow.id,
+        role: roleRow.role,
+      },
+    })
     return c.body(null, 204)
     },
   )

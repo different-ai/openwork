@@ -7,6 +7,7 @@ import { z } from "zod"
 import { DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX, DEN_MCP_RESOURCE } from "../../auth.js"
 import { db } from "../../db.js"
 import { hashOpaqueMcpSecret } from "../../mcp/auth.js"
+import { DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS } from "../../mcp/token-lifetime.js"
 import {
   jsonValidator,
   requireUserMiddleware,
@@ -32,7 +33,6 @@ import type { AuthContextVariables } from "../../session.js"
  */
 
 const FIRST_PARTY_MCP_CLIENT_ID = "openwork-desktop"
-const MCP_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 const mintMcpTokenSchema = z.object({
   scopes: z.array(z.enum(["mcp:read", "mcp:write"])).min(1).optional(),
@@ -86,7 +86,7 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
 
       const scopes = input.scopes ?? ["mcp:read", "mcp:write"]
       const secret = crypto.randomBytes(32).toString("base64url")
-      const expiresAt = new Date(Date.now() + MCP_TOKEN_TTL_MS)
+      const expiresAt = new Date(Date.now() + DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS)
 
       let sessionId = null
       try {

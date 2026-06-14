@@ -134,6 +134,9 @@ jobs:
               "- Electron builds use the attached latest-mac.yml updater feed."
           fi
 
+          SIGNPATH_RELEASE_NOTE='*Windows Build free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)*'
+          printf -v RELEASE_BODY '%s\n\n%s' "$RELEASE_BODY" "$SIGNPATH_RELEASE_NOTE"
+
           draft="${INPUT_DRAFT:-}"
           if [ -z "$draft" ]; then
             if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
@@ -795,7 +798,6 @@ jobs:
       - publish-daytona-snapshot
     if: |
       always() &&
-      needs.resolve-release.outputs.draft == 'true' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
@@ -813,6 +815,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          # Dispatch-based recovery runs default draft=false but may target a
+          # draft release created by an earlier tag push; always flip drafts
+          # here so AUR and updater feeds see public download URLs.
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
+          if [ "$is_draft" != "true" ]; then
+            echo "Release $RELEASE_TAG is already published; nothing to do."
+            exit 0
+          fi
 
           if [ "${RELEASE_PRERELEASE}" = "true" ]; then
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

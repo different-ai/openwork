@@ -20,7 +20,7 @@ import {
   setDesktopBootstrapConfig as setDesktopBootstrapConfigInShell,
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
-import { isDesktopRuntime } from "../utils";
+import { isDesktopRuntime } from "./runtime-env";
 import type { DenOrgSkillCard, ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
@@ -60,14 +60,25 @@ const BUILD_DEN_REQUIRE_SIGNIN =
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
-export type DenSettings = {
-  baseUrl: string;
-  apiBaseUrl?: string;
-  authToken?: string | null;
-  activeOrgId?: string | null;
-  activeOrgSlug?: string | null;
-  activeOrgName?: string | null;
-};
+// Den wire types moved to den-types.ts (leaf module); re-exported here so
+// the many existing den.ts importers keep working.
+export type * from "./den-types";
+import type {
+  DenOrgExtensionProjection,
+  DenOrgMarketplace,
+  DenOrgPlugin,
+  DenOrgPluginResolved,
+  DenPluginConfigObject,
+  DenPluginConfigObjectType,
+  DenPluginConfigObjectVersion,
+  DenPluginMembership,
+  DenResourceSnapshot,
+  DenResourceSnapshotConfigItem,
+  DenResourceSnapshotMarketplace,
+  DenResourceSnapshotPlugin,
+  DenSettings,
+  DenUser,
+} from "./den-types";
 
 type DenBaseUrls = {
   baseUrl: string;
@@ -79,12 +90,6 @@ export type DenBootstrapConfig = DenBaseUrls & {
 };
 
 export type DenDesktopConfig = SharedDesktopConfig;
-
-export type DenUser = {
-  id: string;
-  email: string;
-  name: string | null;
-};
 
 export type DenOrgSummary = {
   id: string;
@@ -168,75 +173,9 @@ export type DenManagedProviderSyncResult = {
   reason?: string;
 };
 
-export type DenPluginConfigObjectType = "skill" | "agent" | "command" | "tool" | "mcp" | "hook" | "context" | "custom";
-
-export type DenPluginConfigObjectVersion = {
-  id: string;
-  rawSourceText: string | null;
-  normalizedPayloadJson: Record<string, unknown> | null;
-  sourceRevisionRef: string | null;
-  createdAt: string | null;
-};
-
-export type DenPluginConfigObject = {
-  id: string;
-  objectType: DenPluginConfigObjectType;
-  title: string;
-  description: string | null;
-  currentFileName: string | null;
-  currentFileExtension: string | null;
-  currentRelativePath: string | null;
-  status: string;
-  updatedAt: string | null;
-  latestVersion: DenPluginConfigObjectVersion | null;
-};
-
-export type DenPluginMembership = {
-  id: string;
-  pluginId: string;
-  configObjectId: string;
-  configObject?: DenPluginConfigObject;
-};
-
-export type DenOrgExtensionProjection = {
-  id: string;
-  name: string;
-  description: string | null;
-  sourceFormat: OpenWorkExtensionSourceFormat;
-  manifest: OpenWorkExtensionManifest | null;
-};
-
-export type DenOrgPlugin = {
-  id: string;
-  name: string;
-  description: string | null;
-  status: string;
-  memberCount: number;
-  updatedAt: string | null;
-  componentCounts: Record<string, number>;
-  /** Preferred Den surface: plugins are normalized into OpenWork extensions. */
-  extension?: DenOrgExtensionProjection | null;
-};
-
-export type DenOrgMarketplace = {
-  id: string;
-  name: string;
-  description: string | null;
-  status: string;
-  pluginCount: number;
-  updatedAt: string | null;
-};
-
 export type DenOrgMarketplaceResolved = {
   marketplace: DenOrgMarketplace;
   plugins: DenOrgPlugin[];
-};
-
-export type DenOrgPluginResolved = {
-  plugin: DenOrgPlugin;
-  memberships: DenPluginMembership[];
-  /** Future Den extension manifest; absent while Claude plugin imports are resource-only. */
-  extension?: DenOrgExtensionProjection | null;
 };
 
 export type DenBillingPrice = {
@@ -281,32 +220,6 @@ export type DenBillingSummary = {
   invoices: DenBillingInvoice[];
   productId: string | null;
   benefitId: string | null;
-};
-
-export type DenResourceSnapshotConfigItem = {
-  configItemId: string;
-  lastUpdatedAt: string;
-};
-
-export type DenResourceSnapshotPlugin = {
-  pluginId: string;
-  lastUpdatedAt: string;
-  configItems: DenResourceSnapshotConfigItem[];
-};
-
-export type DenResourceSnapshotMarketplace = {
-  lastUpdatedAt: string;
-  plugins: DenResourceSnapshotPlugin[];
-};
-
-export type DenResourceSnapshot = {
-  organizationId: string;
-  orgMemberId: string;
-  teamIds: string[];
-  resources: {
-    llmProviders: Record<string, string>;
-    marketplaces: Record<string, DenResourceSnapshotMarketplace>;
-  };
 };
 
 type DenAuthResult = {
@@ -1142,7 +1055,7 @@ function getMcpToken(payload: unknown): DenMcpToken | null {
   };
 }
 
-function parseDenOrgSkillRow(record: Record<string, unknown>, hubName: string | null): DenOrgSkillCard | null {
+function parseDenOrgSkillRow(record: Record<string, unknown>): DenOrgSkillCard | null {
   if (typeof record.id !== "string" || typeof record.title !== "string" || typeof record.skillText !== "string") {
     return null;
   }
@@ -1153,7 +1066,6 @@ function parseDenOrgSkillRow(record: Record<string, unknown>, hubName: string | 
     title: record.title,
     description,
     skillText: record.skillText,
-    hubName,
     shared,
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : null,
   };
@@ -1164,34 +1076,8 @@ function getDenOrgSkillsFromPayload(payload: unknown): DenOrgSkillCard[] {
     return [];
   }
   return payload.skills.flatMap((entry) => {
-    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry, null) : null;
+    const skill = isRecord(entry) ? parseDenOrgSkillRow(entry) : null;
     return skill ? [skill] : [];
-  });
-}
-
-export type DenOrgSkillHub = { id: string; name: string; skills: DenOrgSkillCard[] };
-
-function parseOrgSkillHubEntry(hub: Record<string, unknown>): DenOrgSkillHub | null {
-  const hubId = hub.id;
-  const hubName = hub.name;
-  const hubSkills = hub.skills;
-  if (typeof hubId !== "string" || typeof hubName !== "string" || !Array.isArray(hubSkills)) {
-    return null;
-  }
-  const skills = hubSkills.flatMap((s) => {
-    const skill = isRecord(s) ? parseDenOrgSkillRow(s, hubName) : null;
-    return skill ? [skill] : [];
-  });
-  return { id: hubId, name: hubName, skills };
-}
-
-function getDenOrgSkillHubsFromPayload(payload: unknown): DenOrgSkillHub[] {
-  if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
-    return [];
-  }
-  return payload.skillHubs.flatMap((entry) => {
-    const hub = isRecord(entry) ? parseOrgSkillHubEntry(entry) : null;
-    return hub ? [hub] : [];
   });
 }
 
@@ -1733,26 +1619,6 @@ function getBillingInvoice(value: unknown): DenBillingInvoice | null {
   };
 }
 
-export type DenOrgSkillHubSummary = {
-  id: string;
-  name: string;
-  canManage: boolean;
-};
-
-function getOrgSkillHubSummaries(payload: unknown): DenOrgSkillHubSummary[] {
-  if (!isRecord(payload) || !Array.isArray(payload.skillHubs)) {
-    return [];
-  }
-
-  return payload.skillHubs.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    if (typeof entry.id !== "string" || typeof entry.name !== "string" || typeof entry.canManage !== "boolean") {
-      return [];
-    }
-    return [{ id: entry.id, name: entry.name, canManage: entry.canManage }];
-  });
-}
-
 function getCreatedOrgSkillId(payload: unknown): string | null {
   if (!isRecord(payload) || !isRecord(payload.skill)) return null;
   return typeof payload.skill.id === "string" ? payload.skill.id : null;
@@ -2132,24 +1998,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getDenOrgSkillsFromPayload(payload);
     },
 
-    async listOrgSkillHubs(orgId: string): Promise<DenOrgSkillHub[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getDenOrgSkillHubsFromPayload(payload);
-    },
-
-    async listOrgSkillHubSummaries(orgId: string): Promise<DenOrgSkillHubSummary[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/skill-hubs", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getOrgSkillHubSummaries(payload);
-    },
-
     async createOrgSkill(
       orgId: string,
       input: { skillText: string; shared?: "org" | "public" | null },
@@ -2169,19 +2017,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_skill_payload", "Skill response was missing id.");
       }
       return { id };
-    },
-
-    async addOrgSkillToHub(orgId: string, skillHubId: string, skillId: string): Promise<void> {
-      await requestJson<unknown>(
-        baseUrls,
-        `/v1/skill-hubs/${encodeURIComponent(skillHubId)}/skills`,
-        {
-          method: "POST",
-          token,
-          organizationId: orgId,
-          body: { skillId },
-        },
-      );
     },
 
     async listOrgLlmProviders(orgId: string): Promise<DenOrgLlmProvider[]> {
@@ -2315,21 +2150,10 @@ export async function fetchDenOrgSkillsCatalog(
   client: ReturnType<typeof createDenClient>,
   orgId: string,
 ): Promise<DenOrgSkillCard[]> {
-  const [hubs, flatSkills] = await Promise.all([client.listOrgSkillHubs(orgId), client.listOrgSkills(orgId)]);
-  const hubNameBySkillId = new Map<string, string>();
-  for (const hub of hubs) {
-    for (const skill of hub.skills) {
-      if (!hubNameBySkillId.has(skill.id)) {
-        hubNameBySkillId.set(skill.id, hub.name);
-      }
-    }
-  }
+  const skills = await client.listOrgSkills(orgId);
   const byId = new Map<string, DenOrgSkillCard>();
-  for (const skill of flatSkills) {
-    byId.set(skill.id, {
-      ...skill,
-      hubName: hubNameBySkillId.get(skill.id) ?? null,
-    });
+  for (const skill of skills) {
+    byId.set(skill.id, skill);
   }
   return Array.from(byId.values()).toSorted((a, b) => a.title.localeCompare(b.title));
 }

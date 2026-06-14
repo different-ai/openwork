@@ -7,16 +7,8 @@ export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
 export type PanelTabType = "artifact" | "browser";
 
-export type BrowserPanelTab = {
-  id: string;
-  type: "browser";
-  label: string;
-  url: string;
-  favicon: string | null;
-  status: "loading" | "ready";
-  canGoBack: boolean;
-  canGoForward: boolean;
-}
+export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
+import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 
 export type ArtifactPanelTab = {
   id: string;

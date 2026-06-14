@@ -13,7 +13,7 @@ import {
   fetchProviderList,
   getConnectedProviderItems,
   normalizeProviderListResponse,
-} from "../src/react-app/domains/connections/provider-list-query";
+} from "../src/react-app/infra/provider-list-query";
 
 function importedProvider(input: Pick<CloudImportedProvider, "cloudProviderId" | "providerId" | "sourceProviderId" | "name" | "modelIds">): CloudImportedProvider {
   return {
@@ -134,6 +134,33 @@ describe("managed cloud provider model allowlists", () => {
 
       expect(requests).toEqual(["/config/providers"]);
       expect(getConnectedProviderItems(response).flatMap((item) => Object.keys(item.models))).toEqual(["gpt-5.4", "gpt-5.5"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("does not fallback to the full available catalog when configured providers are unavailable", async () => {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/provider") {
+          return Response.json({
+            all: [provider("openai", "openAI_2", staleOpenAiModelIds())],
+            connected: ["openai", "opencode"],
+            default: {},
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      await expect(fetchProviderList({ client: createClient(server.url.toString()) })).rejects.toThrow();
+      expect(requests).toEqual(["/config/providers"]);
     } finally {
       server.stop(true);
     }

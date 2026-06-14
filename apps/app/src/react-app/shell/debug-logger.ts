@@ -10,7 +10,7 @@
  * Everything here is a no-op in prod builds (checked via `import.meta.env`).
  */
 
-import { publishInspectorSlice, recordInspectorEvent } from "./app-inspector";
+import { publishInspectorSlice, recordInspectorEvent } from "../../app/lib/app-inspector";
 
 type LogLevel = "log" | "info" | "warn" | "error" | "debug";
 

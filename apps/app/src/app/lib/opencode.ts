@@ -2,7 +2,7 @@ import { createOpencodeClient, type Message, type Part, type Session, type Todo 
 
 import { desktopFetch } from "./desktop";
 import { createOpenworkServerClient, OpenworkServerError } from "./openwork-server";
-import { isDesktopRuntime } from "../utils";
+import { isDesktopRuntime } from "./runtime-env";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })

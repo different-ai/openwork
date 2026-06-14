@@ -1,0 +1,106 @@
+---
+title: "Security and operations"
+description: "Review OpenWork Cloud security posture, access governance, and availability expectations"
+---
+
+This page summarizes the security and operational controls that matter when a team runs OpenWork Cloud or a private OpenWork deployment.
+
+OpenWork is local-first, but Cloud adds shared identity, members, RBAC, hosted workers, shared providers, and organization policy. Treat Cloud as the control plane for team access and shared runtime state.
+
+## Encryption and transport
+
+Production deployments should enforce encrypted transport and encrypted storage:
+
+- Use HTTPS for the Cloud app, Den API, OAuth callbacks, webhook ingress, and worker-control traffic.
+- Terminate TLS at the edge or load balancer and forward only through trusted private networking.
+- Enable encryption at rest for the production database, object storage, backups, and logs that may contain operational metadata.
+- Keep local development defaults local-only. Example development database URLs and local secrets in repository scripts are not production settings.
+
+For private or self-hosted deployments, the operator is responsible for enabling TLS certificates, database storage encryption, backup encryption, and private network policy in the target environment.
+
+## Secrets and keys
+
+Production secrets should live in a managed secrets system or KMS-backed environment, not in committed files or shared shell history.
+
+Use separate secrets per environment for:
+
+- Better Auth signing and session secrets
+- database encryption material
+- OAuth, SSO, SCIM, and webhook secrets
+- provider API keys and worker provisioning tokens
+
+OpenWork stores organization API keys and SCIM bearer tokens as hashes. SSO provider configuration is stored encrypted. Rotate production secrets on a defined schedule and immediately after suspected exposure or emergency access use.
+
+## Identity and access governance
+
+Use the Cloud member model as the source of truth for organization access:
+
+- Keep at least two `Owner` members.
+- Use `Admin` for day-to-day operators.
+- Keep most people as `Member`.
+- Use custom roles only when the built-in roles are too broad.
+- Use teams for resource access to marketplaces and providers.
+
+For access reviews, export the current member list, roles, teams, pending invitations, API keys, SSO configuration, and SCIM configuration on a regular cadence. Reconfirm that each member still needs their current role and team access.
+
+## MFA and step-up controls
+
+For production organizations, use SSO with identity-provider MFA as the primary step-up control:
+
+- Enable enforced SSO for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers.
+- Require MFA, phishing-resistant factors where available, and conditional-access policy in the identity provider before users reach OpenWork Cloud.
+- Keep SSO, SCIM, and API-key management behind the `security_configuration.manage` permission. Owners receive that permission by default and can delegate it through a custom role; default admins do not receive it automatically.
+- Invitation role assignment is bounded by the inviter's own permissions, so default admins can invite standard admins or members but cannot grant delegated security-configuration access unless they already hold that permission.
+- The server requires a session created in the last 15 minutes before privileged routes can change SSO, SCIM, API keys, organization settings, custom roles, member roles, billing, or inference settings.
+- Do not rely on standalone email/password accounts for production owner access unless the deployment has an equivalent MFA and recovery control outside OpenWork.
+
+Native factor enrollment and in-product reauthentication should be treated as product work before replacing SSO-enforced MFA as the production control.
+
+For mover and leaver handling:
+
+- Change roles when responsibilities change.
+- Remove members when access is no longer needed.
+- Cancel stale invitations.
+- Rotate or revoke organization API keys that were issued for the affected member.
+- Prefer SCIM deprovisioning where an identity provider is the system of record.
+
+## Emergency access
+
+Plan emergency access before it is needed.
+
+Recommended pattern:
+
+- Maintain a break-glass `Owner` account or equivalent recovery path.
+- Protect it with the strongest authentication available in the deployment.
+- Store credentials in a controlled emergency vault.
+- Alert on any use.
+- Review the audit trail after use.
+- Rotate credentials or signing material if emergency access exposed them.
+
+Do not use break-glass accounts for routine administration.
+
+## Audit events
+
+OpenWork records structured organization audit events for privileged Cloud actions, including:
+
+- API key creation and deletion
+- member role changes and removals
+- invitation creation, refresh, and cancellation
+- custom role creation, updates, and deletion
+- SCIM token rotation and connection deletion
+- SSO registration and deletion
+
+Audit payloads avoid bearer tokens, API key secrets, SCIM tokens, SAML certificates, and OIDC client secrets. For private deployments, export audit data through the deployment's database or logging pipeline into the organization's retention and SIEM process.
+
+## Availability and failover
+
+Production deployments should avoid a single-node control plane:
+
+- Run the Cloud app and Den API behind health checks.
+- Run more than one API instance where the platform supports it.
+- Use a managed database with automated backups and failover.
+- Monitor API health, worker provisioning, queue depth, webhook failures, sign-in failures, and database connectivity.
+- Define recovery objectives for the database, object storage, and worker state.
+- Test restore and failover procedures before an incident.
+
+For self-hosted deployments, document the exact topology: ingress, app, API, worker provisioning, database, backups, and the person or team responsible for each part.

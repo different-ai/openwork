@@ -38,7 +38,7 @@ That's it. HandsFree can now list your sessions, read transcripts, type into the
 
 OpenWork's cross-session memory currently comes from saved session history exposed through the UI control surface. It is not a separate long-term memory database.
 
-For requests like `What did I say in the Blue Yonder session?` or `Remind me what we decided in session ses_abc123`, an MCP client can:
+For requests like `What did I say in the customer migration session?` or `Remind me what we decided in session ses_abc123`, an MCP client can:
 
 1. Run `session.list_sessions` to find a matching session by ID, title, workspace, or topic words.
 2. Run `session.open` with the selected `sessionId`.

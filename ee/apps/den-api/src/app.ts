@@ -9,6 +9,7 @@ import { requestId } from "hono/request-id"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
 import { z } from "zod"
 import { env } from "./env.js"
+import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
@@ -125,6 +126,7 @@ registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
+registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
 app.get(

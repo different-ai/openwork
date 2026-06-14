@@ -9,7 +9,7 @@ import { denSettingsChangedEvent, denSessionUpdatedEvent } from "../../app/lib/d
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
-import { NewProvidersToast } from "./new-providers-toast";
+import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
 import { LoadingOverlay } from "./loading-overlay";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
@@ -237,7 +237,7 @@ export function AppRoot() {
         self-renders for every real user-visible commit, masking the
         true app-level signal.
       */}
-      <NewProvidersToast />
+      <NewProvidersListener />
       <DevProfilerOverlay />
       <ReactRenderWatchdogOverlay />
     </>

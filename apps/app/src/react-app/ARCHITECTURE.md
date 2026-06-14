@@ -1,96 +1,84 @@
-# React App Architecture (`src/react-app/`)
+# App Architecture (`src/react-app/` + `src/app/`)
 
-This document captures the domain-based layout for the React runtime being migrated into
-`apps/app`. The Solid runtime still ships by default; the React tree is being built up domain by
-domain so it can take over in a single hard cut.
+`apps/app` is a React 19 + Vite app. It is the UI for every OpenWork
+deployment: the Electron desktop shell loads it, plain web serves it, and it
+talks to openwork-server / opencode / Den over HTTP. (The Solid runtime it
+replaced is fully removed; `src/index.react.tsx` is the only entry.)
 
-## Top-level layout
+## Layers
 
 ```text
-src/react-app/
-├── shell/                     App bootstrap, providers composition, startup effects
-├── kernel/                    App-wide state + provider contracts (replaces app/context/*)
-├── infra/                     React-only runtime infra
-├── design-system/             Reusable presentational primitives + small modal primitives
-└── domains/                   Feature-scoped code, one folder per product domain
-    ├── session/
-    │   ├── chat/              Route frame (status bar, question/permission surfaces)
-    │   ├── surface/           Transcript, composer, markdown, tool-call, debug panel
-    │   ├── sync/              Session state plumbing (store, runtime, chat adapter)
-    │   └── modals/            Model picker, question, rename-session
-    ├── workspace/             Create + share + rename workspace flows
-    ├── settings/
-    │   ├── state/             Settings-scoped hooks/providers
-    │   ├── pages/             Plugins, extensions, config, ... (tab bodies)
-    │   └── modals/            Reset modal, ...
-    └── connections/
-        └── modals/            Add-MCP, provider auth, ...
+src/
+├── app/                       Framework-agnostic layer (no React imports — enforced invariant)
+│   ├── lib/                   Clients + bridges: opencode, openwork-server, den, desktop (IPC),
+│   │   │                      analytics, app-inspector
+│   │   ├── runtime-env.ts     Leaf: isElectronRuntime/isDesktopRuntime
+│   │   ├── desktop-types.ts   Leaf: desktop IPC wire types (WorkspaceInfo = shared WorkspaceWire)
+│   │   └── den-types.ts       Leaf: Den wire types (den.ts re-exports)
+│   ├── extensions.ts          Leaf: extension manifest contract (owns ReloadReason)
+│   ├── types.ts               Shared app types (type-only imports of leaves)
+│   ├── constants.ts, utils/   Shared constants/helpers
+│   └── cloud/, session/, …    Framework-free feature helpers
+├── i18n/                      Locales + t(); owns LANGUAGE_PREF_KEY; imports nothing from app/
+└── react-app/
+    ├── shell/                 Bootstrap, providers composition, routes (session-route,
+    │                          settings-route), command palette, menus, boot/loading states
+    ├── kernel/                App-wide state + provider stack (server → global-sdk →
+    │                          global-sync → local), zustand store, platform
+    ├── infra/                 React-only runtime infra (query-client, provider-list-query)
+    ├── design-system/         Reusable presentational primitives
+    └── domains/               Feature-scoped code, one folder per product domain
+        ├── session/           chat/ surface/ sync/ composer, sidebar/, panel/, terminal/,
+        │                      voice/, artifacts/, modals/, …
+        ├── workspace/         Create/rename/share workspace flows
+        ├── settings/          state/ + pages/ + modals/ (settings shell)
+        ├── connections/       MCP + provider auth UI
+        ├── cloud/             Den sign-in and cloud surfaces
+        └── onboarding/        Welcome + first-run flows
 ```
 
-Toasts and shell notifications are rendered with `sonner` (`@/components/ui/sonner`),
-mounted once via `<Toaster />` in `shell/providers.tsx` and driven imperatively with
-`toast()` from anywhere.
+## Dependency rules (enforced, all verified by `madge --circular`: zero cycles)
 
-## Why domains
+1. `src/app/` and `src/i18n/` never import from `src/react-app/` or
+   `src/components/`. If something in the agnostic layer needs UI behavior,
+   invert it (callback registration) or move the primitive down.
+2. Leaf modules (`runtime-env`, `desktop-types`, `den-types`, `extensions`)
+   import nothing (or types-only from other leaves). Low-level clients
+   (`opencode`, `openwork-server`, `den`) import leaves — never the `utils/`
+   barrel (it drags in i18n).
+3. `kernel/` and `infra/` sit below `domains/`: they must not import domain
+   code. Shared query/state infrastructure lives in `infra/`.
+4. `shell/` sits on top and may import everything.
+5. Wire contracts shared with other processes live in `packages/types`
+   (e.g. `WorkspaceWire`); producer types assert assignability against them.
 
-The Solid tree grew pseudo-flat (`app/components/*`, `app/context/*`, `app/pages/*`).
-The React tree uses explicit domain ownership so every feature has one obvious home.
-
-- `session/` owns everything the session route renders, including the state layer under `sync/`.
-- `workspace/` owns every workspace-modal flow, so create/share/rename live together.
-- `settings/` owns settings state, the full settings shell once it lands, and each tab body as a
-  stateless page under `pages/`.
-- `connections/` owns MCP and provider auth UI.
-
-Cross-domain imports go through module boundaries, not a shared blob.
+Toasts are rendered with `sonner` (`@/components/ui/sonner`), mounted once via
+`<Toaster />` in `shell/providers.tsx`, driven imperatively with `toast()`.
 
 ## Data flow
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                     src/index.react.tsx                    │  React entry
-└────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────┐
-│  react-app/shell/providers.tsx (AppProviders composition)  │
-│   ServerProvider                                           │
-│   └─ GlobalSDKProvider                                     │
-│      └─ GlobalSyncProvider                                 │
-│         └─ LocalProvider                                   │
-│            └─ (QueryClientProvider + PlatformProvider      │
-│               wrap AppProviders in index.react.tsx)        │
-└────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────┐
-│               react-app/shell/app-root.tsx                 │  Route root (placeholder today)
-└────────────────────────────────────────────────────────────┘
-                              │
-           ┌──────────────────┼──────────────────┐
-           ▼                  ▼                  ▼
-   domains/session     domains/workspace   domains/settings
-           │                  │                  │
-           ▼                  ▼                  ▼
-  surface/, sync/,    create-/share-/     pages/ (plugins,
-   chat/, modals/     rename-*.tsx        config, ...),
-                                           modals/, state/
+src/index.react.tsx                       React entry
+  └─ QueryClientProvider + PlatformProvider
+     └─ react-app/shell/providers.tsx     (AppProviders composition)
+        ServerProvider
+        └─ GlobalSDKProvider
+           └─ GlobalSyncProvider
+              └─ LocalProvider
+                 └─ react-app/shell/app-root.tsx → routes
+                    ├─ shell/session-route.tsx   → domains/session
+                    ├─ shell/settings-route.tsx  → domains/settings, connections
+                    └─ domains/{workspace,cloud,onboarding} flows
 ```
 
 ## State ownership
 
-- `react-app/kernel/store.ts`: Zustand store, the React replacement for the Solid context bag.
-  Domain selectors in `kernel/selectors.ts`.
-- `react-app/kernel/{server,global-sdk,global-sync,local}-provider.tsx`: the Solid provider stack
-  re-expressed in React context. Same composition order as `app/entry.tsx`.
-- `react-app/kernel/platform.tsx`: `PlatformProvider` + `createDefaultPlatform()` helper
-  (Tauri-vs-web).
-- `react-app/kernel/system-state.ts`: `useSystemState()` for reload + reset modal state.
-- `react-app/kernel/model-config.ts`: framework-agnostic model parse/serialize helpers plus
-  `useDefaultModel()` (the heavier workspace overrides and auto-compact logic still live in
-  Solid and will be ported with the settings shell).
+- `react-app/kernel/store.ts`: app-wide Zustand store; domain selectors in
+  `kernel/selectors.ts`.
 - `react-app/infra/query-client.ts`: TanStack Query singleton.
-- Feature-specific state that is tightly coupled to one domain lives inside that domain
+  `react-app/infra/provider-list-query.ts`: shared provider-list cache used by
+  kernel, shell, and connections.
+- Feature state tightly coupled to one domain lives inside that domain
   (`domains/session/sync/`, `domains/settings/state/`).
 
 ## Active workspace and session
@@ -104,57 +92,40 @@ Canonical workspace-scoped routes:
 - `/workspace/:workspaceId/settings/:tab`
 - `/workspace/:workspaceId/settings/extensions/:section`
 
-Use `react-app/shell/workspace-routes.ts` to build these paths. Do not hand-build `/session/...`
-or `/settings/...` URLs for workspace-scoped flows.
+Use `react-app/shell/workspace-routes.ts` to build these paths. Do not
+hand-build `/session/...` or `/settings/...` URLs for workspace-scoped flows.
 
 Rules for agents and future code:
 
-- In session or workspace-scoped settings routes, read the active workspace from the URL
-  `workspaceId` param first.
-- Read the active session from the URL `sessionId` param. A selected session should never imply a
-  different workspace than the URL workspace.
-- The legacy `openwork.react.activeWorkspace` and `openwork.react.sessionByWorkspace` values are
-  only restore/fallback memory. They are not authoritative while a workspace-scoped URL is active.
-- `/session`, `/session/:sessionId`, and `/settings/*` are compatibility entry points. They should
-  redirect to workspace-scoped URLs when the workspace can be resolved.
-- Missing URL resources should not silently fall back to the first workspace. Show a not-found state
-  and let the user pick a workspace/session from the sidebar.
-- Workspace-scoped actions (rename workspace, create session, open MCP/settings tabs, quick actions,
-  commands, delete session) should use the URL-derived workspace/session context or receive explicit
-  workspace/session ids from the caller.
+- In session or workspace-scoped settings routes, read the active workspace
+  from the URL `workspaceId` param first.
+- Read the active session from the URL `sessionId` param. A selected session
+  should never imply a different workspace than the URL workspace.
+- The legacy `openwork.react.activeWorkspace` and
+  `openwork.react.sessionByWorkspace` values are only restore/fallback memory.
+  They are not authoritative while a workspace-scoped URL is active.
+- `/session`, `/session/:sessionId`, and `/settings/*` are compatibility entry
+  points. They should redirect to workspace-scoped URLs when the workspace can
+  be resolved.
+- Missing URL resources should not silently fall back to the first workspace.
+  Show a not-found state and let the user pick from the sidebar.
+- Workspace-scoped actions (rename workspace, create session, open
+  MCP/settings tabs, quick actions, commands, delete session) should use the
+  URL-derived workspace/session context or receive explicit ids from the
+  caller.
 
 Practical examples:
 
-- From session B in workspace B, opening settings should navigate to
+- From session B in workspace B, opening settings navigates to
   `/workspace/B/settings/general`.
-- Opening a session from the command palette should navigate to
-  `/workspace/<owner-workspace-id>/session/<session-id>`, where the owner is found from the session
-  list.
-- Creating a new task in a workspace should navigate to
+- Opening a session from the command palette navigates to
+  `/workspace/<owner-workspace-id>/session/<session-id>`, owner found from the
+  session list.
+- Creating a new task in a workspace navigates to
   `/workspace/<workspace-id>/session/<new-session-id>`.
 
-## Framework-agnostic boundary
+## Testing
 
-Anything that is already Solid-free stays under `src/app/` and is re-exported from the React
-tree when a domain-scoped import path is clearer. Examples:
-
-- `app/lib/*` (opencode, tauri, den, openwork-server, ...) — consumed directly by React.
-- `app/types.ts`, `app/constants.ts`, `app/theme.ts`, `app/utils/*` — shared across both runtimes.
-- `app/session/composer-tools.ts` — shared session helpers.
-
-## Porting pattern
-
-1. **Move, don't rewrite, for framework-free files.** Re-export from the React domain folder so
-   Solid can keep importing through the old path during the transition.
-2. **Invert contexts to props** when porting pages that depended on Solid context. The React
-   version takes the data/actions it needs as props; the parent wires it up. This lets domain
-   pages land before their provider layer is fully ported.
-3. **Each port is its own commit.** The Solid runtime stays green the entire time; the React
-   entry (`src/index.react.tsx`) builds and typechecks after every commit.
-
-## Active shims
-
-During the transition, files under `src/react/**` are thin re-exports pointing at the new
-`react-app/**` locations. They exist so the Solid runtime (which imports from the old paths via
-`ReactIsland`) keeps compiling. All `src/react/**` files are deleted in the final Phase 8 cutover
-along with the Solid tree under `src/app/**`.
+- Unit: `bun test tests/` (CI-gated). Pure logic and parsers belong here.
+- Smoke/e2e: `pnpm test:e2e` and `scripts/*.mjs` (health, sessions, events).
+- UI evals: `pnpm evals` from the repo root drives the real app.

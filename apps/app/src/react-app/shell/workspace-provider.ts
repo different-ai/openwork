@@ -5,6 +5,7 @@ import type { Client } from "@/app/types";
 type WorkspaceContextValue = {
   client: Client | null;
   opencodeBaseUrl: string;
+  openworkToken: string;
   selectedWorkspaceRoot: string;
   cloudManagedModelIdsByProvider: Map<string, Set<string>>;
 };
@@ -14,6 +15,7 @@ const WorkspaceContext = React.createContext<WorkspaceContextValue | null>(null)
 type WorkspaceProviderProps = {
   client: Client | null;
   opencodeBaseUrl?: string;
+  openworkToken?: string;
   selectedWorkspaceRoot: string;
   cloudManagedModelIdsByProvider?: Map<string, Set<string>>;
   children: React.ReactNode;
@@ -22,6 +24,7 @@ type WorkspaceProviderProps = {
 export function WorkspaceProvider({
   client,
   opencodeBaseUrl = "",
+  openworkToken = "",
   selectedWorkspaceRoot,
   cloudManagedModelIdsByProvider,
   children,
@@ -30,10 +33,11 @@ export function WorkspaceProvider({
     () => ({
       client,
       opencodeBaseUrl,
+      openworkToken,
       selectedWorkspaceRoot,
       cloudManagedModelIdsByProvider: cloudManagedModelIdsByProvider ?? new Map<string, Set<string>>(),
     }),
-    [client, cloudManagedModelIdsByProvider, opencodeBaseUrl, selectedWorkspaceRoot],
+    [client, cloudManagedModelIdsByProvider, opencodeBaseUrl, openworkToken, selectedWorkspaceRoot],
   );
 
   return React.createElement(WorkspaceContext.Provider, { value }, children);

@@ -494,6 +494,7 @@ async function ensureInvitation(input: {
 async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; organizationId: OrganizationId }): Promise<MarketplaceId> {
   const name = "Anthropic Knowledge Work Plugins"
   const description = `Demo marketplace seeded from ${GITHUB_REPO}. Plugins are imported into Den DB for local demos; no external integrations are connected.`
+  const logoUrl = "https://cdn.simpleicons.org/anthropic"
   const existing = await db
     .select()
     .from(MarketplaceTable)
@@ -503,7 +504,7 @@ async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; or
   if (existing[0]) {
     await db
       .update(MarketplaceTable)
-      .set({ createdByOrgMembershipId: input.createdByOrgMembershipId, deletedAt: null, description, status: "active", updatedAt: new Date() })
+      .set({ createdByOrgMembershipId: input.createdByOrgMembershipId, deletedAt: null, description, logoUrl, status: "active", updatedAt: new Date() })
       .where(eq(MarketplaceTable.id, existing[0].id))
     await ensureMarketplaceAccessGrant({ ...input, marketplaceId: existing[0].id, role: "viewer" })
     return existing[0].id
@@ -515,6 +516,7 @@ async function ensureMarketplace(input: { createdByOrgMembershipId: MemberId; or
     deletedAt: null,
     description,
     id,
+    logoUrl,
     name,
     organizationId: input.organizationId,
     status: "active",

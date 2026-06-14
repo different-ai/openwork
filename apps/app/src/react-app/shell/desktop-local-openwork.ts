@@ -7,7 +7,7 @@ import {
 } from "../../app/lib/desktop";
 import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
 import { safeStringify } from "../../app/utils";
-import { recordInspectorEvent } from "./app-inspector";
+import { recordInspectorEvent } from "../../app/lib/app-inspector";
 
 type LocalWorkspaceLike = {
   id: string;

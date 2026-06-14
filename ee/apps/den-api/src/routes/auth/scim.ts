@@ -27,40 +27,83 @@ function logScimSyncWarning(action: string, error: unknown) {
   console.warn(`[scim][external_identity_sync_failed] action=${action} reason=${message}`)
 }
 
-async function syncScimMutationFromResponse(input: {
+export type ScimSyncAction = "sync_resource" | "sync_user_id"
+export type ScimSyncResult =
+  | { ok: true; required: boolean }
+  | { ok: false; action: ScimSyncAction; message: string }
+
+function failedScimSync(action: ScimSyncAction, error: unknown): ScimSyncResult {
+  const message = error instanceof Error ? error.message : String(error)
+  logScimSyncWarning(action, error)
+  return { ok: false, action, message }
+}
+
+function isScimResource(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+export function createScimSyncFailureResponse(result: Extract<ScimSyncResult, { ok: false }>) {
+  return new Response(JSON.stringify({
+    schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
+    detail: "SCIM user mutation completed, but external identity sync failed; retry later.",
+    status: "503",
+    action: result.action,
+  }), {
+    status: 503,
+    headers: {
+      "content-type": "application/scim+json",
+      "retry-after": "60",
+    },
+  })
+}
+
+export async function syncScimMutationFromResponse(input: {
   bearerToken: string
   response: Response
   fallbackUserId?: string
-}) {
+  syncResource?: typeof syncExternalIdentityFromScimResource
+  syncUserId?: typeof syncExternalIdentityFromScimUserId
+}): Promise<ScimSyncResult> {
   if (!input.response.ok) {
-    return
+    return { ok: true, required: false }
   }
+
+  const syncResource = input.syncResource ?? syncExternalIdentityFromScimResource
+  const syncUserId = input.syncUserId ?? syncExternalIdentityFromScimUserId
 
   if (input.response.status === 204 && input.fallbackUserId) {
     try {
-      await syncExternalIdentityFromScimUserId({
+      const synced = await syncUserId({
         bearerToken: input.bearerToken,
         userId: normalizeDenTypeId("user", input.fallbackUserId),
       })
+      if (!synced) {
+        return failedScimSync("sync_user_id", "external identity sync returned false")
+      }
     } catch (error) {
-      logScimSyncWarning("sync_user_id", error)
+      return failedScimSync("sync_user_id", error)
     }
-    return
+    return { ok: true, required: true }
   }
 
-  const payload = await input.response.clone().json().catch(() => null) as Record<string, unknown> | null
-  if (!payload) {
-    return
+  const payload: unknown = await input.response.clone().json().catch(() => null)
+  if (!isScimResource(payload)) {
+    return failedScimSync("sync_resource", "SCIM response body was not a JSON object")
   }
 
   try {
-    await syncExternalIdentityFromScimResource({
+    const synced = await syncResource({
       bearerToken: input.bearerToken,
       resource: payload,
     })
+    if (!synced) {
+      return failedScimSync("sync_resource", "external identity sync returned false")
+    }
   } catch (error) {
-    logScimSyncWarning("sync_resource", error)
+    return failedScimSync("sync_resource", error)
   }
+
+  return { ok: true, required: true }
 }
 
 export function registerScimAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
@@ -240,11 +283,14 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       return response
     }
 
-    await syncScimMutationFromResponse({
+    const syncResult = await syncScimMutationFromResponse({
       bearerToken,
       response,
       fallbackUserId: c.req.param("userId") || undefined,
     })
+    if (!syncResult.ok) {
+      return createScimSyncFailureResponse(syncResult)
+    }
     return response
   }
 

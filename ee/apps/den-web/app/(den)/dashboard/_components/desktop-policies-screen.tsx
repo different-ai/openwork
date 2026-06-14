@@ -12,6 +12,7 @@ import {
   useOrgDesktopPolicies,
   type DenDesktopPolicy,
 } from "./desktop-policy-data";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatPolicyTimestamp(value: string | null) {
   if (!value) return "—";
@@ -76,6 +77,7 @@ export function DesktopPoliciesScreen() {
         ) : null}
       </div>
 
+      {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
       {pageError ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div> : null}
       {pageSuccess ? <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">{pageSuccess}</div> : null}
       {error ? <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{error}</div> : null}

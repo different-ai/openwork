@@ -28,6 +28,8 @@ export type ShellConfig = {
   browser: boolean;
   /** Show the "Add workspace" button. */
   addWorkspace: boolean;
+  /** Show the notification bell in the header. */
+  notifications: boolean;
 };
 
 /* ------------------------------------------------------------------ */
@@ -46,6 +48,7 @@ export const DEFAULT_SHELL_CONFIG: ShellConfig = {
   modelPicker: true,
   browser: true,
   addWorkspace: true,
+  notifications: true,
 };
 
 /* ------------------------------------------------------------------ */

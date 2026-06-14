@@ -177,6 +177,14 @@ export type DenOrgContext = {
   roles: DenOrgRole[];
   teams: DenOrgTeam[];
   currentMemberTeams: DenCurrentMemberTeam[];
+  entitlements: DenOrgEntitlements;
+};
+
+export type DenOrgEntitlements = {
+  sso: boolean;
+  desktopPolicies: boolean;
+  orgControls: boolean;
+  analytics: boolean;
 };
 
 export type DenOrganizationMetadata = {
@@ -315,6 +323,10 @@ export function getJoinOrgRoute(invitationId: string): string {
   return `/join-org?invite=${encodeURIComponent(invitationId)}`;
 }
 
+export function getAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/analytics`;
+}
+
 export function getManageMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
 }
@@ -381,34 +393,6 @@ export function getScimRoute(orgSlug?: string | null): string {
 
 export function getSsoRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/sso`;
-}
-
-export function getSkillHubsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/skill-hubs`;
-}
-
-export function getSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
-  return `${getSkillHubsRoute(orgSlug)}/${encodeURIComponent(skillHubId)}`;
-}
-
-export function getEditSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
-  return `${getSkillHubRoute(orgSlug, skillHubId)}/edit`;
-}
-
-export function getNewSkillHubRoute(orgSlug?: string | null): string {
-  return `${getSkillHubsRoute(orgSlug)}/new`;
-}
-
-export function getSkillDetailRoute(orgSlug: string | null | undefined, skillId: string): string {
-  return `${getSkillHubsRoute(orgSlug)}/skills/${encodeURIComponent(skillId)}`;
-}
-
-export function getEditSkillRoute(orgSlug: string | null | undefined, skillId: string): string {
-  return `${getSkillDetailRoute(orgSlug, skillId)}/edit`;
-}
-
-export function getNewSkillRoute(orgSlug?: string | null): string {
-  return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
 export function getPluginsRoute(orgSlug?: string | null): string {
@@ -687,6 +671,22 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     roles,
     teams,
     currentMemberTeams,
+    entitlements: parseOrgEntitlements(payload.entitlements),
+  };
+}
+
+function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
+  // Older servers do not return entitlements; treat everything as available
+  // so gating only applies when the API explicitly reports it.
+  if (!isRecord(value)) {
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true };
+  }
+
+  return {
+    sso: value.sso !== false,
+    desktopPolicies: value.desktopPolicies !== false,
+    orgControls: value.orgControls !== false,
+    analytics: value.analytics !== false,
   };
 }
 

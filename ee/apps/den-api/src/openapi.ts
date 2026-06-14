@@ -61,9 +61,15 @@ export const unauthorizedSchema = z.object({
 }).meta({ ref: "UnauthorizedError" })
 
 export const forbiddenSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "fresh_auth_required"]),
   message: z.string().optional(),
 }).meta({ ref: "ForbiddenError" })
+
+export const enterprisePlanRequiredSchema = z.object({
+  error: z.literal("enterprise_plan_required"),
+  feature: z.string(),
+  message: z.string(),
+}).meta({ ref: "EnterprisePlanRequiredError" })
 
 export const notFoundSchema = z.object({
   error: z.string(),

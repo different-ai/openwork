@@ -12,7 +12,6 @@ import {
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
-  shouldDeferInProgressTool,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 
 afterEach(() => {
@@ -86,9 +85,11 @@ function writeToolPart(
 
 describe("tool part mapper", () => {
   test("defers in-progress tools with empty input", () => {
-    expect(shouldDeferInProgressTool(writeToolPart("pending", {}))).toBe(true);
-    expect(shouldDeferInProgressTool(writeToolPart("running", {}))).toBe(true);
+    // shouldDeferInProgressTool left with the legacy message list (#2016);
+    // the deferral behavior itself is still pinned here via the parser and
+    // end-to-end below via session sync.
     expect(parseDynamicToolUIPart(writeToolPart("pending", {}))).toBeNull();
+    expect(parseDynamicToolUIPart(writeToolPart("running", {}))).toBeNull();
   });
 
   test("maps in-progress tools with partial input as input-streaming", () => {

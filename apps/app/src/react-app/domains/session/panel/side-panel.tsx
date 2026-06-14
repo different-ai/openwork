@@ -392,6 +392,26 @@ export function SidePanel({
 
   const { createTab, closeTab, selectTab, reorderTabs } = useSidePanelTabs(sessionId);
 
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.key !== "Tab" || tabs.length < 2) {
+        return;
+      }
+
+      const activeIndex = activeTab ? tabs.findIndex((tab) => tab.id === activeTab.id) : -1;
+      if (activeIndex === -1) {
+        return;
+      }
+
+      event.preventDefault();
+      const offset = event.shiftKey ? -1 : 1;
+      selectTab(tabs[(activeIndex + offset + tabs.length) % tabs.length].id);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTab, selectTab, tabs]);
+
   return (
     <TooltipProvider delay={1000}>
       <div className="flex h-full flex-col">

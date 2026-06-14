@@ -492,8 +492,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   // invocations of engineStart/engineStop/engineRestart race: each call's
   // stopAllRuntimeChildren kills the previous call's freshly-spawned
   // orchestrator daemon, and the prior call then times out its /health probe.
+  /** @type {Promise<unknown>} */
   let runtimeLifecycleQueue = Promise.resolve();
   let lifecycleState = "idle";
+  /**
+   * Serialize engine lifecycle operations; preserves the wrapped function's
+   * return type (untyped, this collapsed runtime-manager inference to
+   * Promise<void> and blocked tightening the DesktopCommandMap results).
+   * @template T
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
   function withRuntimeLifecycle(fn) {
     const next = runtimeLifecycleQueue.then(fn, fn);
     runtimeLifecycleQueue = next.catch(() => {});

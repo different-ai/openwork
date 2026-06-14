@@ -937,7 +937,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const context = actorContext(c)
         await requirePluginArchCapability(context, "marketplace.create")
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await createMarketplace({ context, description: body.description, name: body.name }) }, 201)
+        return c.json({ ok: true, item: await createMarketplace({ context, description: body.description, logoUrl: body.logoUrl, name: body.name }) }, 201)
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -984,7 +984,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await updateMarketplace({ context: actorContext(c), description: body.description, marketplaceId: params.marketplaceId, name: body.name }) })
+        return c.json({ ok: true, item: await updateMarketplace({ context: actorContext(c), description: body.description, logoUrl: body.logoUrl, marketplaceId: params.marketplaceId, name: body.name }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
