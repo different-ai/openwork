@@ -49,7 +49,7 @@ For production organizations, use SSO with identity-provider MFA as the primary 
 
 - Enable enforced SSO for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers.
 - Require MFA, phishing-resistant factors where available, and conditional-access policy in the identity provider before users reach OpenWork Cloud.
-- Keep SSO and SCIM configuration owner-only. Treat owner-only changes, custom-role changes, member role changes, API-key creation, and emergency access as privileged actions that require a fresh IdP-authenticated session.
+- Keep SSO, SCIM, and API-key management owner-only. Treat owner-only changes, custom-role changes, member role changes, API-key creation, and emergency access as privileged actions that require a fresh IdP-authenticated session.
 - Do not rely on standalone email/password accounts for production owner access unless the deployment has an equivalent MFA and recovery control outside OpenWork.
 
 Native factor enrollment and in-product reauthentication should be treated as product work before replacing SSO-enforced MFA as the production control.

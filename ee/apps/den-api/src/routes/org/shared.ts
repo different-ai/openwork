@@ -161,7 +161,7 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+  if (canManageApiKeys(payload)) {
     return { ok: true as const }
   }
 
@@ -169,9 +169,13 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage API keys.",
+      message: "Only workspace owners can manage API keys.",
     },
   }
+}
+
+export function canManageApiKeys(payload: { currentMember: { isOwner: boolean; role?: string } } | null | undefined) {
+  return payload?.currentMember.isOwner === true
 }
 
 export function canManageIdentityConfiguration(payload: { currentMember: { isOwner: boolean; role?: string } } | null | undefined) {

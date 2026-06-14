@@ -29,3 +29,19 @@ test("identity configuration management is owner-only", () => {
 
   expect(sharedModule.canManageIdentityConfiguration(null)).toBe(false)
 })
+
+test("api key management is owner-only", () => {
+  expect(sharedModule.canManageApiKeys({
+    currentMember: { isOwner: true, role: "owner" },
+  })).toBe(true)
+
+  expect(sharedModule.canManageApiKeys({
+    currentMember: { isOwner: false, role: "admin" },
+  })).toBe(false)
+
+  expect(sharedModule.canManageApiKeys({
+    currentMember: { isOwner: false, role: "member" },
+  })).toBe(false)
+
+  expect(sharedModule.canManageApiKeys(null)).toBe(false)
+})

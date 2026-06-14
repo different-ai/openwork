@@ -131,7 +131,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can list API keys.",
+          description: "Only workspace owners can list API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -196,7 +196,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can create API keys.",
+          description: "Only workspace owners can create API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -300,7 +300,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can delete API keys.",
+          description: "Only workspace owners can delete API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
