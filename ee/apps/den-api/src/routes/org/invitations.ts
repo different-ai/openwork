@@ -9,6 +9,7 @@ import { db } from "../../db.js"
 import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
+import { resolveOrganizationPermissionRecord, validateAssignableOrganizationPermissionRecord } from "../../organization-access.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
@@ -68,7 +69,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
         402: jsonResponse("A seat subscription is required before inviting more members.", invitePaymentRequiredSchema),
-        403: jsonResponse("Only workspace owners and admins can create or resend invitations.", forbiddenSchema),
+        403: jsonResponse("Only workspace owners and admins can create invitations, and invitees can only receive roles whose permissions the inviter already has.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
         502: jsonResponse("The invitation was saved but the email provider rejected or failed to deliver it. Retry by submitting the same email again.", invitationEmailFailedSchema),
@@ -105,6 +106,18 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     const role = normalizeRoleName(input.role)
     if (!availableRoles.has(role)) {
       return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
+    }
+
+    const assignableRole = validateAssignableOrganizationPermissionRecord({
+      permission: resolveOrganizationPermissionRecord(role, payload.roles),
+      roleValue: payload.currentMember.role,
+      roles: payload.roles,
+    })
+    if (!assignableRole.ok) {
+      return c.json({
+        error: "forbidden",
+        message: "You can only invite members into roles with permissions you already have.",
+      }, 403)
     }
 
     const existingMembers = await db

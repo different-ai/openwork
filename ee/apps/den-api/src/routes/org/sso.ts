@@ -18,7 +18,7 @@ import {
 } from "../../sso.js"
 import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureSsoManager } from "./shared.js"
+import { ensureSsoManager, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -37,7 +37,7 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "SsoOrganizationNotFoundError" })
 
 const forbiddenSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "fresh_auth_required"]),
   message: z.string(),
 }).meta({ ref: "SsoForbiddenError" })
 
@@ -235,7 +235,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: { description: "Organization SSO configuration", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -244,7 +244,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -271,7 +271,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -280,7 +280,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
@@ -335,7 +335,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -344,7 +344,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
@@ -398,7 +398,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         204: { description: "Organization SSO connection deleted" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -407,7 +407,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -442,7 +442,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: { description: "SAML metadata document" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -451,7 +451,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const parsed = metadataQuerySchema.safeParse(c.req.query())
@@ -491,7 +491,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -500,7 +500,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -550,7 +550,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
         402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "Only workspace owners or members with security configuration permission can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
@@ -559,7 +559,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     async (c) => {
       const access = ensureSsoManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")

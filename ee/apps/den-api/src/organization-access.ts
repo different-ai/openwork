@@ -1,13 +1,29 @@
 import { createAccessControl } from "better-auth/plugins/access"
 import { defaultRoles, defaultStatements } from "better-auth/plugins/organization/access"
 
-export const denOrganizationAccess = createAccessControl(defaultStatements)
+export const SECURITY_CONFIGURATION_PERMISSION_RESOURCE = "security_configuration"
+export const SECURITY_CONFIGURATION_PERMISSION_ACTION = "manage"
+
+const denOrganizationStatements = {
+  ...defaultStatements,
+  [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
+} as const
+
+export const denOrganizationAccess = createAccessControl(denOrganizationStatements)
 
 export type OrganizationPermissionRecord = Record<string, string[]>
 
 export type OrganizationRolePermission = {
   role: string
   permission: OrganizationPermissionRecord
+}
+
+export type SecurityConfigurationPermissionPayload = {
+  currentMember: {
+    isOwner: boolean
+    role: string
+  }
+  roles: readonly OrganizationRolePermission[]
 }
 
 type PermissionValidationResult = {
@@ -18,12 +34,19 @@ type PermissionValidationResult = {
   message: string
 }
 
-const denOrganizationPermissionCatalogEntries = Object.entries(defaultStatements)
+const denOwnerRole = denOrganizationAccess.newRole({
+  ...defaultRoles.owner.statements,
+  [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
+})
+const denAdminRole = denOrganizationAccess.newRole(defaultRoles.admin.statements)
+const denMemberRole = denOrganizationAccess.newRole(defaultRoles.member.statements)
+
+const denOrganizationPermissionCatalogEntries = Object.entries(denOrganizationStatements)
 
 export const denOrganizationStaticRoles = {
-  owner: defaultRoles.owner,
-  admin: defaultRoles.admin,
-  member: defaultRoles.member,
+  owner: denOwnerRole,
+  admin: denAdminRole,
+  member: denMemberRole,
 } as const
 
 export const denDefaultDynamicOrganizationRoles = {
@@ -144,4 +167,17 @@ export function validateAssignableOrganizationPermissionRecord(input: {
   }
 
   return { ok: true }
+}
+
+export function canManageSecurityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
+  if (!payload) {
+    return false
+  }
+
+  if (payload.currentMember.isOwner) {
+    return true
+  }
+
+  const permissions = resolveOrganizationPermissionRecord(payload.currentMember.role, payload.roles)
+  return permissions[SECURITY_CONFIGURATION_PERMISSION_RESOURCE]?.includes(SECURITY_CONFIGURATION_PERMISSION_ACTION) ?? false
 }

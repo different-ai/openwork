@@ -13,7 +13,7 @@ import { jsonValidator, paramValidator, requireUserMiddleware, resolveOrganizati
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, idParamSchema } from "./shared.js"
+import { ensureApiKeyManager, idParamSchema, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -38,7 +38,7 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "OrganizationNotFoundError" })
 
 const forbiddenApiKeyManagerSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "fresh_auth_required"]),
   message: z.string(),
 }).meta({ ref: "OrganizationApiKeyForbiddenError" })
 
@@ -131,7 +131,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners can list API keys.",
+          description: "Only workspace owners or members with security configuration permission can list API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -153,7 +153,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -196,7 +196,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners can create API keys.",
+          description: "Only workspace owners or members with security configuration permission can create API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -219,7 +219,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -300,7 +300,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners can delete API keys.",
+          description: "Only workspace owners or members with security configuration permission can delete API keys.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -323,7 +323,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
     async (c) => {
       const access = ensureApiKeyManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")

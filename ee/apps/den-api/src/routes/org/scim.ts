@@ -5,7 +5,7 @@ import { deleteOrganizationScimConnection, getOrganizationScimConnection, getSci
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureScimManager } from "./shared.js"
+import { ensureScimManager, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -24,7 +24,7 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "ScimOrganizationNotFoundError" })
 
 const forbiddenSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "fresh_auth_required"]),
   message: z.string(),
 }).meta({ ref: "ScimForbiddenError" })
 
@@ -91,7 +91,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -113,7 +113,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -160,7 +160,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -182,7 +182,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -237,7 +237,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -259,7 +259,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")

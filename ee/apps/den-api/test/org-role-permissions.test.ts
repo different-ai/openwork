@@ -2,6 +2,9 @@ import { expect, test } from "bun:test"
 import {
   cloneOrganizationPermissionCatalog,
   filterOrganizationPermissionRecord,
+  resolveOrganizationPermissionRecord,
+  SECURITY_CONFIGURATION_PERMISSION_ACTION,
+  SECURITY_CONFIGURATION_PERMISSION_RESOURCE,
   validateAssignableOrganizationPermissionRecord,
   validateOrganizationPermissionRecord,
   type OrganizationPermissionRecord,
@@ -39,6 +42,7 @@ test("organization role permissions allow catalog permissions", () => {
   expect(validateOrganizationPermissionRecord({
     ac: ["read"],
     invitation: ["create", "cancel"],
+    [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
   })).toEqual({ ok: true })
 })
 
@@ -57,6 +61,16 @@ test("organization role permissions cannot exceed the assigner permission set", 
     error: "invalid_permission",
     message: 'Cannot assign permission "ac.delete".',
   })
+
+  expect(validateAssignableOrganizationPermissionRecord({
+    permission: { [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION] },
+    roleValue: "limited",
+    roles,
+  })).toEqual({
+    ok: false,
+    error: "invalid_permission",
+    message: `Cannot assign permission "${SECURITY_CONFIGURATION_PERMISSION_RESOURCE}.${SECURITY_CONFIGURATION_PERMISSION_ACTION}".`,
+  })
 })
 
 test("organization owners can assign permissions from the fixed catalog", () => {
@@ -72,11 +86,38 @@ test("organization owners can assign permissions from the fixed catalog", () => 
   })).toEqual({ ok: true })
 })
 
+test("default admins cannot assign delegated security configuration roles", () => {
+  const roles = [
+    role("admin", {
+      organization: ["update"],
+      invitation: ["create", "cancel"],
+      member: ["create", "update", "delete"],
+      team: ["create", "update", "delete"],
+      ac: ["create", "read", "update", "delete"],
+    }),
+    role("security-admin", {
+      [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
+    }),
+  ]
+
+  expect(validateAssignableOrganizationPermissionRecord({
+    permission: resolveOrganizationPermissionRecord("security-admin", roles),
+    roleValue: "admin",
+    roles,
+  })).toEqual({
+    ok: false,
+    error: "invalid_permission",
+    message: `Cannot assign permission "${SECURITY_CONFIGURATION_PERMISSION_RESOURCE}.${SECURITY_CONFIGURATION_PERMISSION_ACTION}".`,
+  })
+})
+
 test("legacy stored permissions are filtered to the catalog when read", () => {
   expect(filterOrganizationPermissionRecord({
     ac: ["read", "delete", "unknown"],
     billing: ["delete"],
+    [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
   })).toEqual({
     ac: ["read", "delete"],
+    [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
   })
 })
