@@ -7,6 +7,7 @@ export type DenMarketplace = {
   id: string;
   name: string;
   description: string | null;
+  logoUrl: string | null;
   pluginCount: number;
   createdAt: string;
   updatedAt: string;
@@ -46,6 +47,7 @@ export type MarketplacePluginSummary = {
   description: string | null;
   memberCount: number;
   componentCounts: Record<string, number>;
+  sourceFormat: string | null;
 };
 
 export type MarketplaceResolved = {
@@ -73,6 +75,7 @@ function parseMarketplace(entry: unknown): DenMarketplace | null {
     id,
     name,
     description: asString(entry.description),
+    logoUrl: asString(entry.logoUrl),
     pluginCount: typeof entry.pluginCount === "number" ? entry.pluginCount : 0,
     createdAt,
     updatedAt,
@@ -119,6 +122,7 @@ export function useMarketplace(marketplaceId: string | null) {
               description: asString(entry.description),
               memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
               componentCounts,
+              sourceFormat: isRecord(entry.extension) ? asString(entry.extension.sourceFormat) : null,
             } satisfies MarketplacePluginSummary];
           })
         : [];

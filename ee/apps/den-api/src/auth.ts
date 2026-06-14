@@ -3,18 +3,39 @@ import { db } from "./db.js";
 import { isEntraSsoEnabled, mapEntraProfileToUser, normalizeEntraTenantId } from "./entra-sso.js";
 import { env } from "./env.js";
 import { deriveDenMcpResource } from "./mcp/resource.js";
+import {
+  DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+  DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
+} from "./mcp/token-lifetime.js";
+import {
+  DEN_SESSION_EXPIRES_IN_SECONDS,
+  DEN_SESSION_UPDATE_AGE_IN_SECONDS,
+} from "./session-lifetime.js";
+import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
+  DEN_API_KEY_EXPIRES_IN_DAYS,
+  DEN_API_KEY_EXPIRES_IN_SECONDS,
   DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
 } from "./api-keys.js";
 import {
+  canManageSecurityConfiguration,
   denOrganizationAccess,
   denOrganizationStaticRoles,
 } from "./organization-access.js";
-import { ensureEntraSsoMembershipForAccount, seedDefaultOrganizationRoles } from "./orgs.js";
+import {
+  getOrganizationSsoJitRole,
+  ORGANIZATION_SSO_JIT_ROLE,
+} from "./sso-jit.js";
+import {
+  ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
+  ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
+  ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
+} from "./sso-saml-policy.js";
+import { ensureEntraSsoMembershipForAccount, getOrganizationContextForUser, seedDefaultOrganizationRoles } from "./orgs.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -149,6 +170,10 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  session: {
+    expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
+    updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
+  },
   databaseHooks: {
     account: {
       create: {
@@ -374,6 +399,9 @@ export const auth = betterAuth({
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
+      accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
       clientRegistrationDefaultScopes: ["openid", "profile", "email", "mcp:read", "mcp:write"],
       clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
       advertisedMetadata: {
@@ -428,16 +456,22 @@ export const auth = betterAuth({
       },
     }),
     scim({
+      storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
       beforeSCIMTokenGenerated: async ({ member }) => {
-        if (!member?.organizationId) {
+        if (!member?.organizationId || !member.userId) {
           throw new APIError("FORBIDDEN", {
             message: "SCIM connections must belong to an organization.",
           });
         }
 
-        if (!hasRole(member.role, "owner") && !hasRole(member.role, "admin")) {
+        const organizationContext = await getOrganizationContextForUser({
+          organizationId: normalizeDenTypeId("organization", member.organizationId),
+          userId: normalizeDenTypeId("user", member.userId),
+        });
+
+        if (!canManageSecurityConfiguration(organizationContext)) {
           throw new APIError("FORBIDDEN", {
-            message: "Only workspace owners and admins can manage SCIM.",
+            message: "Only workspace owners or members with security configuration permission can manage SCIM.",
           });
         }
       },
@@ -450,13 +484,15 @@ export const auth = betterAuth({
       },
       organizationProvisioning: {
         disabled: false,
-        defaultRole: "member",
+        defaultRole: ORGANIZATION_SSO_JIT_ROLE,
+        getRole: getOrganizationSsoJitRole,
       },
       saml: {
         enableInResponseToValidation: true,
-        allowIdpInitiated: true,
+        allowIdpInitiated: ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
+        requireTimestamps: ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
         algorithms: {
-          onDeprecated: "warn",
+          onDeprecated: ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
         },
       },
       provisionUser: async ({ user, userInfo, provider }) => {
@@ -509,7 +545,14 @@ export const auth = betterAuth({
       enableSessionForAPIKeys: true,
       maximumNameLength: 64,
       requireName: true,
+      disableKeyHashing: false,
       storage: "database",
+      keyExpiration: {
+        defaultExpiresIn: DEN_API_KEY_EXPIRES_IN_SECONDS,
+        disableCustomExpiresTime: true,
+        minExpiresIn: 1,
+        maxExpiresIn: DEN_API_KEY_EXPIRES_IN_DAYS,
+      },
       rateLimit: {
         enabled: true,
         maxRequests: DEN_API_KEY_RATE_LIMIT_MAX,

@@ -1,5 +1,4 @@
 import { Buffer } from "node:buffer"
-import { timingSafeEqual } from "node:crypto"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimProviderTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -7,6 +6,7 @@ import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { removeOrganizationMember } from "./orgs.js"
+import { verifyStoredScimToken } from "./scim-token-storage.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -43,12 +43,6 @@ function asArray(value: unknown): unknown[] | null {
   return Array.isArray(value) ? value : null
 }
 
-function safeEqualSecret(left: string, right: string) {
-  const leftBytes = Uint8Array.from(Buffer.from(left))
-  const rightBytes = Uint8Array.from(Buffer.from(right))
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes)
-}
-
 async function resolveScimProviderFromBearerToken(bearerToken: string) {
   let decoded: string
   try {
@@ -70,7 +64,7 @@ async function resolveScimProviderFromBearerToken(bearerToken: string) {
     .limit(1)
 
   const provider = providerRows[0] ?? null
-  if (!provider || !safeEqualSecret(provider.scimToken, rawToken)) {
+  if (!provider || !verifyStoredScimToken({ storedToken: provider.scimToken, rawToken })) {
     return null
   }
 
@@ -331,10 +325,13 @@ export async function deleteScimProvisionedAccess(input: {
     return { ok: false as const, status: 404, body: { detail: "User not found" } }
   }
 
-  await removeOrganizationMember({
+  const removed = await removeOrganizationMember({
     organizationId: provider.organizationId,
     memberId: member.id,
   })
+  if (!removed.ok) {
+    return { ok: false as const, status: 409, body: { detail: removed.message } }
+  }
 
   await db.delete(AuthAccountTable).where(eq(AuthAccountTable.id, account.id))
   await deactivateExternalIdentityForScimUser({ bearerToken: input.bearerToken, userId: input.userId })

@@ -30,7 +30,7 @@ import {
   OPENWORK_MODELS_PROVIDER_NAME,
   openWorkModelsPromoChangedEvent,
 } from "@/react-app/domains/cloud/openwork-models-promo";
-import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/domains/connections/provider-list-query";
+import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import {
   Command,
   CommandCollection,
@@ -43,7 +43,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { openModelPickerEvent } from "@/react-app/shell/new-providers-toast";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 
 function getProviderDisplayName(providerId: string) {

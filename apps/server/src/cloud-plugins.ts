@@ -67,7 +67,6 @@ export type CloudImportedPlugin = {
 };
 
 type WorkspaceCloudImports = {
-  skillHubs: Record<string, unknown>;
   skills: Record<string, unknown>;
   providers: Record<string, unknown>;
   marketplaces: Record<string, { marketplaceId: string; name: string; updatedAt: string | null; pluginIds: string[]; importedAt: number | null }>;
@@ -467,7 +466,6 @@ function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImport
     }]];
   })) : {};
   return {
-    skillHubs: isRecord(root.skillHubs) ? root.skillHubs : {},
     skills: isRecord(root.skills) ? root.skills : {},
     providers: isRecord(root.providers) ? root.providers : {},
     marketplaces,

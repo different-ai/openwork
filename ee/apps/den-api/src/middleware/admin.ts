@@ -9,6 +9,24 @@ function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
 }
 
+/** Whether an email is on the platform-admin allowlist. Shared by the admin routes middleware and the den-admin MCP endpoint. */
+export async function isAdminEmailAllowed(email: string | null | undefined): Promise<boolean> {
+  const normalized = normalizeEmail(email)
+  if (!normalized) {
+    return false
+  }
+
+  await ensureAdminAllowlistSeeded()
+
+  const allowed = await db
+    .select({ id: AdminAllowlistTable.id })
+    .from(AdminAllowlistTable)
+    .where(eq(AdminAllowlistTable.email, normalized))
+    .limit(1)
+
+  return allowed.length > 0
+}
+
 export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
   const user = c.get("user")
   if (!user?.id) {
@@ -20,15 +38,7 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "admin_email_required" }, 403) as never
   }
 
-  await ensureAdminAllowlistSeeded()
-
-  const allowed = await db
-    .select({ id: AdminAllowlistTable.id })
-    .from(AdminAllowlistTable)
-    .where(eq(AdminAllowlistTable.email, email))
-    .limit(1)
-
-  if (allowed.length === 0) {
+  if (!(await isAdminEmailAllowed(email))) {
     return c.json({ error: "forbidden" }, 403) as never
   }
 

@@ -35,6 +35,14 @@ Download the desktop app from [openworklabs.com/download](https://openworklabs.c
 - Windows access is currently handled through the paid support plan on [openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support).
 - Hosted OpenWork Cloud workers are launched from the web app after checkout, then connected from the desktop app via `Add a worker` -> `Connect remote`.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: OpenWork repository collaborators with write access and approved maintainers in the [Different AI organization](https://github.com/orgs/different-ai/people).
+- Approvers: [Different AI organization owners](https://github.com/orgs/different-ai/people?query=role%3Aowner).
+- Privacy policy: [OpenWork Privacy Policy](https://openworklabs.com/privacy).
+
 ## Why
 
 Current CLI and GUIs for opencode are anchored around developers. That means a focus on file diffs, tool names, and hard to extend capabilities without relying on exposing some form of cli.

@@ -29,7 +29,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { publishInspectorSlice } from "./app-inspector";
+import { publishInspectorSlice } from "../../app/lib/app-inspector";
 
 type CommitRecord = {
   id: string;

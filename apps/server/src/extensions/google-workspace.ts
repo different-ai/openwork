@@ -26,6 +26,24 @@ const GOOGLE_WORKSPACE_SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
 ];
 const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive";
+const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const CHAT_SPACES_SCOPE = "https://www.googleapis.com/auth/chat.spaces.readonly";
+const CHAT_MESSAGES_READ_SCOPE = "https://www.googleapis.com/auth/chat.messages.readonly";
+const CHAT_MESSAGES_CREATE_SCOPE = "https://www.googleapis.com/auth/chat.messages.create";
+
+export const GOOGLE_WORKSPACE_OPTIONAL_FEATURES = {
+  gmailRead: [GMAIL_READONLY_SCOPE],
+  driveFull: [DRIVE_FULL_SCOPE],
+  calendarWrite: [CALENDAR_EVENTS_SCOPE],
+  chat: [CHAT_SPACES_SCOPE, CHAT_MESSAGES_READ_SCOPE, CHAT_MESSAGES_CREATE_SCOPE],
+} satisfies Record<string, string[]>;
+
+export type GoogleWorkspaceOptionalFeature = keyof typeof GOOGLE_WORKSPACE_OPTIONAL_FEATURES;
+
+function isGoogleWorkspaceOptionalFeature(value: string): value is GoogleWorkspaceOptionalFeature {
+  return Object.hasOwn(GOOGLE_WORKSPACE_OPTIONAL_FEATURES, value);
+}
 
 export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
   {
@@ -101,7 +119,7 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
     action: "drive_search_files",
     title: "Search Drive files",
-    description: "Search files available to OpenWork through the connected Google Drive scope.",
+    description: "Search files available to OpenWork through the connected Google Drive scope. With full Drive access enabled, this searches the entire Drive.",
     inputSchema: {
       type: "object",
       properties: {
@@ -123,6 +141,84 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
         fileId: { type: "string", description: "Google Drive file id." },
       },
       required: ["fileId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
+    action: "drive_update_file",
+    title: "Update Drive file",
+    description: "Replace the plain text content of a Drive file available to OpenWork by file id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: { type: "string", description: "Google Drive file id." },
+        content: { type: "string", description: "New plain text content for the file." },
+      },
+      required: ["fileId", "content"],
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
+    action: "calendar_create_event",
+    title: "Create calendar event",
+    description: "Create an event on the connected Google Calendar. Requires calendar editing access (calendar.events scope).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Event title." },
+        description: { type: "string", description: "Optional event description." },
+        location: { type: "string", description: "Optional event location." },
+        start: { type: "string", description: "Event start as ISO datetime." },
+        end: { type: "string", description: "Event end as ISO datetime." },
+        timeZone: { type: "string", description: "Optional IANA time zone, e.g. 'Europe/Paris'." },
+        attendees: { type: "array", items: { type: "string" }, description: "Optional attendee email addresses." },
+      },
+      required: ["summary", "start", "end"],
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
+    action: "chat_list_spaces",
+    title: "List Google Chat spaces",
+    description: "List Google Chat spaces for the connected account. Requires Google Chat access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        maxResults: { type: "number", description: "Maximum spaces to return." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
+    action: "chat_list_messages",
+    title: "List Google Chat messages",
+    description: "List recent messages in a Google Chat space. Requires Google Chat access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spaceId: { type: "string", description: "Chat space id or resource name, e.g. 'spaces/AAAA1234'." },
+        maxResults: { type: "number", description: "Maximum messages to return." },
+      },
+      required: ["spaceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
+    action: "chat_send_message",
+    title: "Send Google Chat message",
+    description: "Send a text message to a Google Chat space. Requires Google Chat access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        spaceId: { type: "string", description: "Chat space id or resource name, e.g. 'spaces/AAAA1234'." },
+        text: { type: "string", description: "Message text." },
+      },
+      required: ["spaceId", "text"],
       additionalProperties: false,
     },
   },
@@ -501,11 +597,21 @@ function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; s
   ].filter((line): line is string => typeof line === "string").join("\r\n");
 }
 
-function requireGmailReadScope(record: Record<string, unknown>) {
+function requireScope(record: Record<string, unknown>, scope: string, code: string, message: string) {
   const scopes = Array.isArray(record.scopes) ? record.scopes : [];
-  if (!scopes.includes(GMAIL_READONLY_SCOPE)) {
-    throw new ApiError(403, "google_gmail_read_not_granted", "Gmail read access is not granted for this account. Reconnect Google Workspace with Gmail read access enabled.");
-  }
+  if (!scopes.includes(scope)) throw new ApiError(403, code, message);
+}
+
+function requireGmailReadScope(record: Record<string, unknown>) {
+  requireScope(record, GMAIL_READONLY_SCOPE, "google_gmail_read_not_granted", "Gmail read access is not granted for this account. Reconnect Google Workspace with Gmail read access enabled.");
+}
+
+function requireCalendarWriteScope(record: Record<string, unknown>) {
+  requireScope(record, CALENDAR_EVENTS_SCOPE, "google_calendar_write_not_granted", "Calendar editing access is not granted for this account. Reconnect Google Workspace with calendar editing enabled.");
+}
+
+function requireChatScope(record: Record<string, unknown>, scope: string) {
+  requireScope(record, scope, "google_chat_not_granted", "Google Chat access is not granted for this account. Reconnect Google Workspace with Google Chat enabled.");
 }
 
 function gmailHeader(payload: unknown, name: string): string {
@@ -641,6 +747,82 @@ async function googleWorkspaceReadFile(config: ServerConfig, args: Record<string
   return { metadata, content };
 }
 
+async function googleWorkspaceUpdateFile(config: ServerConfig, args: Record<string, unknown>) {
+  const fileId = readStringField(args, "fileId");
+  const content = typeof args.content === "string" ? args.content : "";
+  if (!fileId || !content) throw new ApiError(400, "invalid_payload", "fileId and content are required");
+  const { accessToken } = await googleWorkspaceAccessToken(config);
+  return fetchGoogleJson(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,mimeType,webViewLink,modifiedTime`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "text/plain; charset=UTF-8" },
+    body: content,
+  });
+}
+
+async function googleWorkspaceCreateEvent(config: ServerConfig, args: Record<string, unknown>) {
+  const summary = readStringField(args, "summary");
+  const start = readStringField(args, "start");
+  const end = readStringField(args, "end");
+  if (!summary || !start || !end) throw new ApiError(400, "invalid_payload", "summary, start, and end are required");
+  const description = readStringField(args, "description");
+  const location = readStringField(args, "location");
+  const timeZone = readStringField(args, "timeZone");
+  const attendees = stringArrayField(args.attendees);
+  const { record, accessToken } = await googleWorkspaceAccessToken(config);
+  requireCalendarWriteScope(record);
+  return fetchGoogleJson("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      summary,
+      ...(description ? { description } : {}),
+      ...(location ? { location } : {}),
+      start: { dateTime: start, ...(timeZone ? { timeZone } : {}) },
+      end: { dateTime: end, ...(timeZone ? { timeZone } : {}) },
+      ...(attendees.length ? { attendees: attendees.map((email) => ({ email })) } : {}),
+    }),
+  });
+}
+
+function chatSpaceName(args: Record<string, unknown>): string {
+  const spaceId = readStringField(args, "spaceId");
+  if (!spaceId) throw new ApiError(400, "invalid_payload", "spaceId is required");
+  return spaceId.startsWith("spaces/") ? spaceId : `spaces/${spaceId}`;
+}
+
+async function googleWorkspaceListChatSpaces(config: ServerConfig, args: Record<string, unknown>) {
+  const maxResults = Math.min(Math.max(Number(args.maxResults ?? 25), 1), 100);
+  const { record, accessToken } = await googleWorkspaceAccessToken(config);
+  requireChatScope(record, CHAT_SPACES_SCOPE);
+  const url = new URL("https://chat.googleapis.com/v1/spaces");
+  url.searchParams.set("pageSize", String(maxResults));
+  return fetchGoogleJson(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+}
+
+async function googleWorkspaceListChatMessages(config: ServerConfig, args: Record<string, unknown>) {
+  const space = chatSpaceName(args);
+  const maxResults = Math.min(Math.max(Number(args.maxResults ?? 25), 1), 100);
+  const { record, accessToken } = await googleWorkspaceAccessToken(config);
+  requireChatScope(record, CHAT_MESSAGES_READ_SCOPE);
+  const url = new URL(`https://chat.googleapis.com/v1/${space}/messages`);
+  url.searchParams.set("pageSize", String(maxResults));
+  url.searchParams.set("orderBy", "createTime desc");
+  return fetchGoogleJson(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+}
+
+async function googleWorkspaceSendChatMessage(config: ServerConfig, args: Record<string, unknown>) {
+  const space = chatSpaceName(args);
+  const text = typeof args.text === "string" ? args.text.trim() : "";
+  if (!text) throw new ApiError(400, "invalid_payload", "text is required");
+  const { record, accessToken } = await googleWorkspaceAccessToken(config);
+  requireChatScope(record, CHAT_MESSAGES_CREATE_SCOPE);
+  return fetchGoogleJson(`https://chat.googleapis.com/v1/${space}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+}
+
 export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, action: string, args: Record<string, unknown>, context: Record<string, unknown>) {
   if (action === "status") {
     return {
@@ -657,6 +839,11 @@ export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, a
   if (action === "gmail_get_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceGetMessage(config, args), context };
   if (action === "drive_search_files") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceSearchFiles(config, args), context };
   if (action === "drive_read_file") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceReadFile(config, args), context };
+  if (action === "drive_update_file") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceUpdateFile(config, args), context };
+  if (action === "calendar_create_event") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateEvent(config, args), context };
+  if (action === "chat_list_spaces") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListChatSpaces(config, args), context };
+  if (action === "chat_list_messages") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListChatMessages(config, args), context };
+  if (action === "chat_send_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceSendChatMessage(config, args), context };
   return null;
 }
 
@@ -770,15 +957,17 @@ export function createGoogleWorkspaceConnectFlowManager(config: ServerConfig) {
     flows.delete(flowId);
   };
 
-  const start = async (options: { gmailRead?: boolean } = {}) => {
+  const start = async (options: { gmailRead?: boolean; features?: string[] } = {}) => {
     const credentials = googleWorkspaceCredentials();
     if (credentials.missing.length > 0) {
       throw new ApiError(400, "google_oauth_not_configured", `Missing Google OAuth configuration: ${credentials.missing.join(", ")}`);
     }
-    if (options.gmailRead && !credentials.customClient) {
-      throw new ApiError(400, "google_gmail_read_requires_custom_client", "Gmail read access is only available when using your own Google OAuth client.");
+    const features = new Set((options.features ?? []).filter(isGoogleWorkspaceOptionalFeature));
+    if (options.gmailRead) features.add("gmailRead");
+    if (features.size > 0 && !credentials.customClient) {
+      throw new ApiError(400, "google_extra_scopes_require_custom_client", "Extra Google permissions (Gmail read, full Drive, calendar editing, Google Chat) are only available when using your own Google OAuth client.");
     }
-    const scopes = options.gmailRead ? [...GOOGLE_WORKSPACE_SCOPES, GMAIL_READONLY_SCOPE] : GOOGLE_WORKSPACE_SCOPES;
+    const scopes = [...GOOGLE_WORKSPACE_SCOPES, ...[...features].flatMap((feature) => GOOGLE_WORKSPACE_OPTIONAL_FEATURES[feature])];
     const flowId = base64Url(randomBytes(18));
     const state = base64Url(randomBytes(24));
     const pkce = createGoogleWorkspacePkce();

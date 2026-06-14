@@ -3,8 +3,8 @@
  * workspace — regardless of whether they came from cloud sync, local
  * config changes, or manual setup.
  *
- * Listeners (e.g. the global NewProvidersToast) should use this to
- * show a notification.
+ * Listeners (e.g. the global NewProvidersListener) should use this to
+ * surface a notification-center entry.
  */
 export const newProvidersEvent = "openwork-new-providers-available";
 

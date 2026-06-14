@@ -29,7 +29,7 @@ import type { McpStatusMap, TodoItem } from "../../app/types";
 import { safeStringify } from "../../app/utils";
 import { filterProviderList } from "../../app/utils/providers";
 import { getReactQueryClient } from "../infra/query-client";
-import { ensureProviderListQuery } from "../domains/connections/provider-list-query";
+import { ensureProviderListQuery } from "../infra/provider-list-query";
 
 import { useGlobalSDK } from "./global-sdk-provider";
 

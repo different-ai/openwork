@@ -148,7 +148,9 @@ Daytona cloud demo is running and seeded.
 
 ## Troubleshooting
 
-If `.devcontainer/test-on-daytona.sh --server-only` appears in older docs, do not use it unless this checkout supports that flag. Use `.devcontainer/test-server-on-daytona.sh` for server-only cloud demos.
+If older docs suggest running the Electron helper in a server-only mode, do not
+use that path unless this checkout supports it. Use
+`.devcontainer/test-server-on-daytona.sh` for server-only cloud demos.
 
 If sign-in returns `403` for email verification, Den API is not running with `OPENWORK_DEV_MODE=1` or did not restart after env changes. Restart the Den stack and rerun the seed.
 

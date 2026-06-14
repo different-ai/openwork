@@ -21,6 +21,14 @@ import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionRuntime } from "./extension-registry";
 
 type BusyAction = "status" | "connect" | "disconnect" | "set-active" | "test" | "smoke-test" | "save-secret";
+type OptionalFeature = "gmailRead" | "driveFull" | "calendarWrite" | "chat";
+
+const OPTIONAL_FEATURES: { id: OptionalFeature; label: string; description: string }[] = [
+  { id: "gmailRead", label: "Read Gmail", description: "Read your Gmail messages and threads." },
+  { id: "driveFull", label: "Full Google Drive access", description: "Search, read, and edit all files in your Drive, not just files created through OpenWork." },
+  { id: "calendarWrite", label: "Create calendar events", description: "Create events on your Google Calendar." },
+  { id: "chat", label: "Google Chat", description: "List spaces, read messages, and send messages in Google Chat." },
+];
 type GoogleWorkspaceCommand = () => Promise<unknown>;
 const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
 const CONNECT_POLL_INTERVAL_MS = 1_000;
@@ -107,7 +115,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   const [clientSecret, setClientSecret] = useState("");
   const [customClientId, setCustomClientId] = useState("");
   const [customClientSecret, setCustomClientSecret] = useState("");
-  const [gmailRead, setGmailRead] = useState(false);
+  const [optionalFeatures, setOptionalFeatures] = useState<Record<OptionalFeature, boolean>>({ gmailRead: false, driveFull: false, calendarWrite: false, chat: false });
   const serverAvailable = Boolean(openworkServerClient);
   const hostServerAvailable = Boolean(hostOpenworkServerClient);
   const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
@@ -156,7 +164,8 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
   const connectGoogleWorkspace = async () => {
     if (!openworkServerClient) return null;
-    const flow = await openworkServerClient.googleWorkspaceConnectStart({ gmailRead: status?.customClient === true && gmailRead });
+    const features = status?.customClient === true ? OPTIONAL_FEATURES.filter((feature) => optionalFeatures[feature.id]).map((feature) => feature.id) : [];
+    const flow = await openworkServerClient.googleWorkspaceConnectStart({ features });
     platform.openLink(flow.authUrl);
     return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
   };
@@ -393,7 +402,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
           <AccordionTrigger>Advanced</AccordionTrigger>
           <AccordionContent className="space-y-4">
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Use your own Google OAuth client to unlock extra permissions, like reading Gmail.
+              Use your own Google OAuth client to unlock extra permissions, like reading Gmail, full Drive access, creating calendar events, and Google Chat.
             </p>
             {status?.customClient ? (
               <Alert>
@@ -425,22 +434,27 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
                 </Button>
               </div>
             )}
-            <label className="flex items-start gap-2.5">
-              <Checkbox
-                checked={gmailRead}
-                onCheckedChange={(checked) => setGmailRead(checked === true)}
-                disabled={Boolean(busyAction) || status?.customClient !== true}
-                className="mt-0.5"
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-card-foreground">Grant read on Gmail</span>
-                <span className="block text-xs leading-relaxed text-muted-foreground">
-                  {status?.customClient
-                    ? "Requests read access to your Gmail messages the next time you connect a Google account. Already connected? Disconnect and connect again to grant it."
-                    : "Add your own Google OAuth client above to enable this option."}
-                </span>
-              </span>
-            </label>
+            <div className="space-y-3">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {status?.customClient
+                  ? "Allow or deny each extra permission below. They are requested the next time you connect a Google account. Already connected? Disconnect and connect again to change them."
+                  : "Add your own Google OAuth client above to enable these options."}
+              </p>
+              {OPTIONAL_FEATURES.map((feature) => (
+                <label key={feature.id} className="flex items-start gap-2.5">
+                  <Checkbox
+                    checked={optionalFeatures[feature.id]}
+                    onCheckedChange={(checked) => setOptionalFeatures((current) => ({ ...current, [feature.id]: checked === true }))}
+                    disabled={Boolean(busyAction) || status?.customClient !== true}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-card-foreground">{feature.label}</span>
+                    <span className="block text-xs leading-relaxed text-muted-foreground">{feature.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
           </AccordionContent>
         </AccordionItem>
       </Accordion>

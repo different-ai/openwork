@@ -1,0 +1,214 @@
+name: Den DB Migrate
+
+# Applies Drizzle migrations to the production PlanetScale database.
+#
+# Required GitHub Actions secrets (Settings -> Secrets and variables -> Actions):
+#   DATABASE_HOST                  PlanetScale host (e.g. aws.connect.psdb.cloud)
+#   DATABASE_USERNAME              PlanetScale branch password username
+#   DATABASE_PASSWORD              PlanetScale branch password
+#   DATABASE_NAME                  PlanetScale database name (drizzle-kit migrate connects over the MySQL protocol and needs it)
+#   PLANETSCALE_SERVICE_TOKEN_ID   PlanetScale service token id (used to toggle safe migrations)
+#   PLANETSCALE_SERVICE_TOKEN      PlanetScale service token secret
+#
+# Safe migrations stays enabled on the production branch at all times. This
+# workflow briefly disables it (direct DDL) while applying reviewed migration
+# files, then re-enables it in an always() step — so ad-hoc manual DDL stays
+# blocked outside CI runs.
+#
+# Runs automatically when migration files land on dev, and manually via
+# workflow_dispatch. For a database previously managed with db:push (no
+# __drizzle_migrations table yet), run once manually with baseline=true
+# to record existing migrations as applied without executing them.
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "ee/packages/den-db/drizzle/**"
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "One-time: mark existing migrations as applied without executing them (for a db previously managed via db:push)"
+        type: boolean
+        default: false
+      baseline_through:
+        description: "Baseline through this migration tag (default: latest, e.g. 0020_breezy_siren)"
+        type: string
+        required: false
+      dry_run:
+        description: "Print what would happen without applying migrations"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-db-migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Apply migrations
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+
+    env:
+      DATABASE_HOST: ${{ secrets.DATABASE_HOST }}
+      DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
+      DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+      DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
+      PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_SERVICE_TOKEN_ID }}
+      PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_SERVICE_TOKEN }}
+      PLANETSCALE_ORG: ben-prologe
+      PLANETSCALE_BRANCH: main
+
+    steps:
+      - name: Verify database secrets are configured
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -z "$DATABASE_HOST" ] && missing="$missing DATABASE_HOST"
+          [ -z "$DATABASE_USERNAME" ] && missing="$missing DATABASE_USERNAME"
+          [ -z "$DATABASE_PASSWORD" ] && missing="$missing DATABASE_PASSWORD"
+          [ -z "$DATABASE_NAME" ] && missing="$missing DATABASE_NAME"
+          [ -z "$PLANETSCALE_SERVICE_TOKEN_ID" ] && missing="$missing PLANETSCALE_SERVICE_TOKEN_ID"
+          [ -z "$PLANETSCALE_SERVICE_TOKEN" ] && missing="$missing PLANETSCALE_SERVICE_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub Actions secrets:$missing. Add them under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "Database secrets present."
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --filter "@openwork-ee/den-db..."
+
+      - name: Setup pscale CLI
+        id: setup-pscale
+        uses: planetscale/setup-pscale-action@v1
+
+      - name: Disable safe migrations (allow DDL for this run only)
+        run: |
+          set -euo pipefail
+          state="$(pscale branch show "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json | jq -r '.safe_migrations')"
+          echo "safe_migrations before run: $state"
+          if [ "$state" = "true" ]; then
+            pscale branch safe-migrations disable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"
+            echo "Safe migrations disabled for the duration of this run."
+          elif [ "$state" = "false" ]; then
+            echo "Safe migrations already disabled; will re-enable at the end of this run."
+          else
+            echo "::error::Could not read safe_migrations state for $DATABASE_NAME/$PLANETSCALE_BRANCH."
+            exit 1
+          fi
+
+          # The toggle propagates to the connection gateways asynchronously and
+          # per edge node, so require several consecutive successful DDL probes
+          # before proceeding (a single success can still hit a stale node).
+          consecutive=0
+          for attempt in $(seq 1 36); do
+            if (cd ee/packages/den-db && node --input-type=module -e "
+              const { Client } = await import('@planetscale/database');
+              const client = new Client({ host: process.env.DATABASE_HOST, username: process.env.DATABASE_USERNAME, password: process.env.DATABASE_PASSWORD });
+              await client.execute('CREATE TABLE IF NOT EXISTS __ddl_probe (id int)');
+              await client.execute('DROP TABLE IF EXISTS __ddl_probe');
+            " 2>/tmp/ddl-probe-err); then
+              consecutive=$((consecutive + 1))
+              echo "DDL probe ok (attempt $attempt, consecutive $consecutive)."
+              if [ "$consecutive" -ge 3 ]; then
+                break
+              fi
+              sleep 5
+            else
+              consecutive=0
+              echo "DDL still blocked (attempt $attempt): $(tail -1 /tmp/ddl-probe-err 2>/dev/null || true)"
+              sleep 10
+            fi
+          done
+          if [ "$consecutive" -lt 3 ]; then
+            echo "::error::DDL window did not open within the probe budget after disabling safe migrations."
+            exit 1
+          fi
+
+      - name: Baseline existing migrations (one-time)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        run: |
+          set -euo pipefail
+          # Retry only when a stale gateway node still reports DDL as disabled.
+          run_with_ddl_retry() {
+            local attempt output
+            for attempt in $(seq 1 8); do
+              if output="$("$@" 2>&1)"; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              printf '%s\n' "$output"
+              if ! printf '%s' "$output" | grep -q "direct DDL is disabled"; then
+                return 1
+              fi
+              echo "DDL window not propagated everywhere yet; retrying (attempt $attempt)..."
+              sleep 15
+            done
+            return 1
+          }
+          extra=""
+          if [ -n "${{ inputs.baseline_through }}" ]; then
+            extra="--through ${{ inputs.baseline_through }}"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- $extra
+          else
+            run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:baseline -- --yes $extra
+          fi
+
+      - name: Apply migrations
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: |
+          set -euo pipefail
+          run_with_ddl_retry() {
+            local attempt output
+            for attempt in $(seq 1 8); do
+              if output="$("$@" 2>&1)"; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              printf '%s\n' "$output"
+              if ! printf '%s' "$output" | grep -q "direct DDL is disabled"; then
+                return 1
+              fi
+              echo "DDL window not propagated everywhere yet; retrying (attempt $attempt)..."
+              sleep 15
+            done
+            return 1
+          }
+          run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:migrate
+
+      - name: Re-enable safe migrations
+        if: always() && steps.setup-pscale.conclusion == 'success'
+        run: |
+          set -euo pipefail
+          pscale branch safe-migrations enable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG"
+          state="$(pscale branch show "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json | jq -r '.safe_migrations')"
+          echo "safe_migrations after run: $state"
+          if [ "$state" != "true" ]; then
+            echo "::error::Safe migrations is NOT re-enabled on $DATABASE_NAME/$PLANETSCALE_BRANCH. Re-enable it manually: pscale branch safe-migrations enable $DATABASE_NAME $PLANETSCALE_BRANCH --org $PLANETSCALE_ORG"
+            exit 1
+          fi
+
+      - name: Dry run note
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: echo "Dry run requested -- skipped 'db:migrate'. Baseline output above (if enabled) shows the plan."

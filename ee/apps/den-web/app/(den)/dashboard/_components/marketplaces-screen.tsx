@@ -11,6 +11,7 @@ import { getIntegrationsRoute, getMarketplaceRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import { formatMarketplaceTimestamp, useMarketplaces } from "./marketplace-data";
+import { MarketplaceLogo } from "./marketplace-logo";
 
 export function MarketplacesScreen() {
   const { orgSlug } = useOrgDashboard();
@@ -85,7 +86,12 @@ export function MarketplacesScreen() {
                   </div>
                   <div className="relative flex h-full items-center justify-center">
                     <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-white/60 bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.3)]">
-                      <Store className="h-4 w-4 text-gray-700" aria-hidden />
+                      <MarketplaceLogo
+                        logoUrl={marketplace.logoUrl}
+                        name={marketplace.name}
+                        imgClassName="h-6 w-6"
+                        iconClassName="h-4 w-4"
+                      />
                     </div>
                   </div>
                 </div>

@@ -30,7 +30,7 @@ import type {
 import {
   publishInspectorSlice,
   recordInspectorEvent,
-} from "@/react-app/shell/app-inspector";
+} from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";

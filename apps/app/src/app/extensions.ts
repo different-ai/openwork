@@ -1,4 +1,6 @@
-import type { ReloadReason } from "./types";
+// Owned here: reload vocabulary is part of the extension manifest contract.
+// types.ts re-exports it for the rest of the app.
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
 export type OpenWorkExtensionSourceFormat =
   | "openwork-builtin"
@@ -312,6 +314,10 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "tool", id: "google-calendar-read", label: "Calendar", required: true },
       { type: "tool", id: "google-gmail-drafts", label: "Gmail drafts", required: true },
       { type: "tool", id: "google-drive-selected-files", label: "Selected Drive files", required: true },
+      { type: "tool", id: "google-gmail-read", label: "Gmail read (opt-in)", required: false },
+      { type: "tool", id: "google-drive-full", label: "Full Drive access (opt-in)", required: false },
+      { type: "tool", id: "google-calendar-events", label: "Calendar events (opt-in)", required: false },
+      { type: "tool", id: "google-chat", label: "Google Chat (opt-in)", required: false },
     ],
     contributions: [
       { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },

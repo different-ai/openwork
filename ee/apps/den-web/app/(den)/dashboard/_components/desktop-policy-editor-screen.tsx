@@ -21,6 +21,7 @@ import {
   type DenDesktopPolicy,
   type DesktopPolicyPayload,
 } from "./desktop-policy-data";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 type PolicyDraft = {
   policyName: string;
@@ -165,6 +166,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         </Link>
       </div>
 
+      {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
       {pageError ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div>
       ) : null}

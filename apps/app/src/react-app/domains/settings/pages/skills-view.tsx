@@ -36,10 +36,8 @@ import { t } from "@/i18n";
 import { saveInstalledSkillToOpenWorkOrg } from "@/app/lib/den-skills";
 import {
   buildDenAuthUrl,
-  createDenClient,
   DEFAULT_DEN_BASE_URL,
   readDenSettings,
-  type DenOrgSkillHubSummary,
 } from "@/app/lib/den";
 import type {
   DenOrgSkillCard,
@@ -145,9 +143,6 @@ type SkillsViewLocalState = {
   shareTeamError: string | null;
   shareTeamSuccess: string | null;
   sharePermissionChoice: string;
-  shareHubsLoading: boolean;
-  shareHubsError: string | null;
-  shareManageableHubs: DenOrgSkillHubSummary[];
   selectedSkill: SkillCard | null;
   selectedContent: string;
   selectedLoading: boolean;
@@ -162,10 +157,6 @@ type SkillsViewLocalState = {
 type SkillsViewLocalAction<K extends keyof SkillsViewLocalState = keyof SkillsViewLocalState> =
   | { type: "set"; key: K; value: SetStateAction<any> }
   | { type: "denSessionUpdated" }
-  | { type: "shareHubsStart" }
-  | { type: "shareHubsLoaded"; hubs: DenOrgSkillHubSummary[] }
-  | { type: "shareHubsFailed"; error: string }
-  | { type: "shareHubsDone" }
   | { type: "closeShare" }
   | { type: "openShare"; skill: SkillCard };
 
@@ -184,9 +175,6 @@ const initialSkillsViewLocalState: SkillsViewLocalState = {
   shareTeamError: null,
   shareTeamSuccess: null,
   sharePermissionChoice: "org",
-  shareHubsLoading: false,
-  shareHubsError: null,
-  shareManageableHubs: [],
   selectedSkill: null,
   selectedContent: "",
   selectedLoading: false,
@@ -218,14 +206,6 @@ function skillsViewLocalReducer(
         denUiTick: state.denUiTick + 1,
         cloudSessionNonce: state.cloudSessionNonce + 1,
       };
-    case "shareHubsStart":
-      return { ...state, shareHubsLoading: true, shareHubsError: null };
-    case "shareHubsLoaded":
-      return { ...state, shareManageableHubs: action.hubs };
-    case "shareHubsFailed":
-      return { ...state, shareHubsError: action.error, shareManageableHubs: [] };
-    case "shareHubsDone":
-      return { ...state, shareHubsLoading: false };
     case "closeShare":
       return {
         ...state,
@@ -234,8 +214,6 @@ function skillsViewLocalReducer(
         shareTeamError: null,
         shareTeamSuccess: null,
         sharePermissionChoice: "org",
-        shareHubsError: null,
-        shareManageableHubs: [],
       };
     case "openShare":
       return {
@@ -245,8 +223,6 @@ function skillsViewLocalReducer(
         shareTeamError: null,
         shareTeamSuccess: null,
         sharePermissionChoice: "org",
-        shareHubsError: null,
-        shareManageableHubs: [],
         cloudSessionNonce: state.cloudSessionNonce + 1,
       };
   }
@@ -273,9 +249,6 @@ export function SkillsView(props: SkillsViewProps) {
     shareTeamError,
     shareTeamSuccess,
     sharePermissionChoice,
-    shareHubsLoading,
-    shareHubsError,
-    shareManageableHubs,
     selectedSkill,
     selectedContent,
     selectedLoading,
@@ -359,42 +332,6 @@ export function SkillsView(props: SkillsViewProps) {
     return null;
   }, [shareCloudSignedIn]);
 
-  useEffect(() => {
-    if (!shareTarget || !shareCloudSignedIn) return;
-
-    let cancelled = false;
-    void (async () => {
-      dispatchLocal({ type: "shareHubsStart" });
-      try {
-        const settings = readDenSettings();
-        const token = settings.authToken?.trim() ?? "";
-        if (!token) return;
-
-        let orgId = settings.activeOrgId?.trim() ?? "";
-        const client = createDenClient({ baseUrl: settings.baseUrl, token });
-        if (!orgId) {
-          const result = await client.listOrgs();
-          orgId = result.orgs[0]?.id ?? "";
-        }
-        if (!orgId) {
-          throw new Error(t("skills.share_team_choose_org"));
-        }
-        const hubs = await client.listOrgSkillHubSummaries(orgId);
-        if (cancelled) return;
-        dispatchLocal({ type: "shareHubsLoaded", hubs: hubs.filter((hub) => hub.canManage) });
-      } catch (error) {
-        if (cancelled) return;
-        dispatchLocal({ type: "shareHubsFailed", error: maskError(error) });
-      } finally {
-        if (!cancelled) dispatchLocal({ type: "shareHubsDone" });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [maskError, shareCloudSignedIn, shareTarget]);
-
   const skills = extensions.skills();
   const hubSkills = extensions.hubSkills();
   const cloudOrgSkills = extensions.cloudOrgSkills();
@@ -441,11 +378,9 @@ export function SkillsView(props: SkillsViewProps) {
     if (!query) return cloudOrgSkills;
     return cloudOrgSkills.filter((skill) => {
       const description = skill.description ?? "";
-      const hub = skill.hubName ?? "";
       return (
         skill.title.toLowerCase().includes(query) ||
-        description.toLowerCase().includes(query) ||
-        hub.toLowerCase().includes(query)
+        description.toLowerCase().includes(query)
       );
     });
   }, [cloudOrgSkills, searchQuery]);
@@ -490,9 +425,8 @@ export function SkillsView(props: SkillsViewProps) {
     () => [
       { value: "private", label: t("skills.share_team_permission_private") },
       { value: "org", label: t("skills.share_team_permission_org") },
-      ...shareManageableHubs.map((hub) => ({ value: hub.id, label: hub.name })),
     ],
-    [shareManageableHubs],
+    [],
   );
 
   const shareModalSubtitle = t("skills.share_subtitle_team");
@@ -514,9 +448,8 @@ export function SkillsView(props: SkillsViewProps) {
 
   const resolveSharePermission = () => {
     const choice = sharePermissionChoice.trim();
-    if (!choice || choice === "org") return { shared: "org" as const, hubId: null as string | null };
-    if (choice === "private") return { shared: null, hubId: null as string | null };
-    return { shared: null, hubId: choice };
+    if (choice === "private") return { shared: null };
+    return { shared: "org" as const };
   };
 
   const closeShareLink = useCallback(() => {
@@ -640,7 +573,6 @@ export function SkillsView(props: SkillsViewProps) {
       const { orgName, orgId } = await saveInstalledSkillToOpenWorkOrg({
         skillText: skill.content,
         shared: sharing.shared,
-        skillHubId: sharing.hubId,
       });
       setShareTeamSuccess(t("skills.share_team_uploaded_success", undefined, { org: orgName }));
       window.dispatchEvent(
@@ -1010,10 +942,9 @@ export function SkillsView(props: SkillsViewProps) {
                                 <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">{skill.description}</p>
                               ) : null}
                               <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
-                                {skill.hubName ? <span className={tagClass}>{t("skills.cloud_hub_label", undefined, { name: skill.hubName })}</span> : null}
                                 {skill.shared === "org" ? <span className={tagClass}>{t("skills.cloud_shared_org")}</span> : null}
                                 {skill.shared === "public" ? <span className={tagClass}>{t("skills.cloud_shared_public")}</span> : null}
-                                {skill.shared === null && !skill.hubName ? <span className={tagClass}>{t("skills.cloud_shared_private")}</span> : null}
+                                {skill.shared === null ? <span className={tagClass}>{t("skills.cloud_shared_private")}</span> : null}
                                 {installedName ? <span className={tagClass}>{t("skills.cloud_installed_as", undefined, { name: installedName })}</span> : null}
                                 {state === "installed" ? <span className={tagClass}>{t("skills.cloud_status_installed")}</span> : null}
                                 {state === "update" ? <span className={tagClass}>{t("skills.cloud_status_update")}</span> : null}
@@ -1279,7 +1210,6 @@ export function SkillsView(props: SkillsViewProps) {
                 </div>
                 {shareTeamError?.trim() ? <div className={`mt-4 ${modalNoticeErrorClass}`}>{shareTeamError}</div> : null}
                 {shareTeamSuccess?.trim() ? <div className={`mt-4 ${modalNoticeSuccessClass}`}>{shareTeamSuccess}</div> : null}
-                {shareHubsError?.trim() ? <div className={`mt-4 ${modalNoticeErrorClass}`}>{shareHubsError}</div> : null}
                 {shareCloudSignedIn && shareTeamDisabledReason?.trim() ? (
                   <div className="mt-4 text-[12px] text-dls-secondary">{shareTeamDisabledReason}</div>
                 ) : null}
@@ -1295,12 +1225,6 @@ export function SkillsView(props: SkillsViewProps) {
                       onChange={setSharePermissionChoice}
                       disabled={shareTeamBusy || Boolean(shareTeamSuccess?.trim())}
                     />
-                  </div>
-                ) : null}
-                {shareCloudSignedIn && shareHubsLoading ? (
-                  <div className="mt-3 flex items-center gap-2 text-[12px] text-dls-secondary">
-                    <Loader2 size={14} className="animate-spin" />
-                    {t("skills.share_team_hubs_loading")}
                   </div>
                 ) : null}
                 <button

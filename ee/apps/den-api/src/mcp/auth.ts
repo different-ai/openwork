@@ -21,10 +21,22 @@ export type McpPrincipal = {
   payload: Record<string, unknown>
 }
 
+type McpJwtVerifyOptions = Parameters<typeof verifyJwsAccessToken>[1]["verifyOptions"]
+
+const MCP_JWT_SIGNING_ALGORITHMS = ["EdDSA"]
+
 export function getMcpResourceUrl(request: Request) {
   const url = new URL(request.url)
   const requestResource = `${url.origin}/mcp`
   return DEN_MCP_RESOURCES.includes(requestResource) ? requestResource : DEN_MCP_RESOURCE
+}
+
+export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {
+  return {
+    issuer: `${env.betterAuthUrl}/api/auth`,
+    audience: DEN_MCP_RESOURCES,
+    algorithms: MCP_JWT_SIGNING_ALGORITHMS,
+  }
 }
 
 function readBearerToken(headers: Headers) {
@@ -77,10 +89,7 @@ async function getJwks() {
 async function verifyJwtMcpToken(token: string) {
   const payload = await verifyJwsAccessToken(token, {
     jwksFetch: getJwks,
-    verifyOptions: {
-      issuer: `${env.betterAuthUrl}/api/auth`,
-      audience: DEN_MCP_RESOURCES,
-    },
+    verifyOptions: getMcpJwtVerifyOptions(),
   })
   return payload as Record<string, unknown>
 }

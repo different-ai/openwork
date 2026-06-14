@@ -459,7 +459,7 @@ test("member removal targets active members only and repeated removals emit no h
 
   const removed = await orgsModule.removeOrganizationMember({ organizationId, memberId })
 
-  expect(removed).toBeNull()
+  expect(removed).toMatchObject({ ok: false, error: "member_not_found" })
   expect(operations).toEqual([])
   expect(hookCalls).toEqual([])
   expect(whereInputs.some((input) => conditionReferencesRemovedAt(input))).toBe(true)

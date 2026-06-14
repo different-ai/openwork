@@ -6,9 +6,11 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
 import { db } from "../../db.js"
+import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { jsonValidator, queryValidator, requireUserMiddleware, resolveMemberTeamsMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -286,6 +288,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid or contained malformed email domains.", invalidEmailDomainSchema),
         401: jsonResponse("The caller must be signed in to update an organization.", unauthorizedSchema),
+        402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("Only workspace owners can update the organization.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
@@ -312,6 +315,16 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           message: "Enter valid email domains like company.com.",
           invalidDomains: normalizedDomains.invalidDomains,
         }, 400)
+      }
+
+      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
+      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
+      if (enablesRequireSso || enablesVersionPinning) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
       }
 
       const updated = await updateOrganizationSettings({
@@ -410,6 +423,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             : null,
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
+        plan: parseOrganizationPlan(payload.organization.metadata),
+        entitlements: getOrganizationEntitlements(payload.organization.metadata),
       })
     },
   )

@@ -108,6 +108,41 @@ function startWorkspaceReloadWatcher(input: {
     }
   };
 
+  // Best-known named trigger per reason. fs.watch event order and filename
+  // presence are platform-dependent (macOS often omits filenames or fires a
+  // named check before the write has flushed), so a triggerless path can be
+  // the one that finally observes the fingerprint change. Remember the most
+  // recent named trigger briefly and attach it to such records instead of
+  // emitting trigger-less reload events.
+  const NAMED_TRIGGER_TTL_MS = 5_000;
+  const lastNamedTrigger = new Map<ReloadReason, { trigger: ReloadTrigger; at: number }>();
+
+  const resolveTrigger = (reason: ReloadReason, trigger?: ReloadTrigger): ReloadTrigger | undefined => {
+    if (trigger) return trigger;
+    const recent = lastNamedTrigger.get(reason);
+    if (recent && Date.now() - recent.at <= NAMED_TRIGGER_TTL_MS) return recent.trigger;
+    // Last line of defense: macOS fs.watch can coalesce a config-file write
+    // into a single directory-level event (e.g. ".opencode") and never
+    // deliver a file-named event at all. If a config/agents fingerprint
+    // change is about to be recorded with no trigger, infer it from the
+    // files that can produce it — same inference the watch callbacks use.
+    if (reason === "config") {
+      const candidates = [
+        join(root, "opencode.jsonc"),
+        join(root, "opencode.json"),
+        join(opencodeRoot, "opencode.jsonc"),
+        join(opencodeRoot, "opencode.json"),
+      ];
+      const found = candidates.find((candidate) => existsSync(candidate));
+      if (found) return { type: "config", name: basename(found), action: "updated", path: found };
+    }
+    if (reason === "agents") {
+      const agentsPath = join(root, "AGENTS.md");
+      if (existsSync(agentsPath)) return { type: "agent", action: "updated", path: agentsPath };
+    }
+    return undefined;
+  };
+
   const checkReason = async (reason: ReloadReason, trigger?: ReloadTrigger) => {
     if (closed) return;
     if (!fingerprintedReloadReasons.includes(reason)) return;
@@ -117,12 +152,13 @@ function startWorkspaceReloadWatcher(input: {
     baselines.set(reason, current);
 
     if (previous === undefined || previous === current) return;
-    reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
+    reloadEvents.recordDebounced(workspace.id, reason, resolveTrigger(reason, trigger), debounceMs);
   };
 
   const scheduleReasonCheck = (reason: ReloadReason, trigger?: ReloadTrigger) => {
     if (closed) return;
     if (!fingerprintedReloadReasons.includes(reason)) return;
+    if (trigger) lastNamedTrigger.set(reason, { trigger, at: Date.now() });
 
     const existing = pendingChecks.get(reason);
     if (existing) {
@@ -134,7 +170,11 @@ function startWorkspaceReloadWatcher(input: {
       pendingChecks.delete(reason);
       void checkReason(reason, pending?.trigger ?? trigger);
     }, debounceMs);
-    pendingChecks.set(reason, { timer, trigger });
+    // Coalescing must not lose a named trigger: a triggerless directory-level
+    // event arriving inside the debounce window previously overwrote the
+    // pending file trigger with undefined (platform-dependent event order —
+    // surfaced as a macOS-only CI flake in reload-events.e2e.test.ts).
+    pendingChecks.set(reason, { timer, trigger: trigger ?? existing?.trigger });
   };
 
   const ensureOpencodeRootWatcher = () => {
@@ -206,8 +246,21 @@ function startWorkspaceReloadWatcher(input: {
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
-            scheduleReasonCheck("config");
-            scheduleReasonCheck("agents");
+            // macOS fs.watch may omit the filename for directory events.
+            // Infer the trigger like ensureOpencodeRootWatcher does so config
+            // reload events keep their trigger {name, path} on macOS.
+            const inferredConfigPath = existsSync(join(root, "opencode.jsonc"))
+              ? join(root, "opencode.jsonc")
+              : existsSync(join(root, "opencode.json"))
+                ? join(root, "opencode.json")
+                : null;
+            scheduleReasonCheck("config", inferredConfigPath
+              ? { type: "config", name: basename(inferredConfigPath), action: "updated", path: inferredConfigPath }
+              : undefined);
+            const agentsPath = join(root, "AGENTS.md");
+            scheduleReasonCheck("agents", existsSync(agentsPath)
+              ? { type: "agent", action: "updated", path: agentsPath }
+              : undefined);
             for (const tree of trees) tree.scheduleRescan();
             return;
           }

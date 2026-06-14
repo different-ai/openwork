@@ -580,7 +580,7 @@ export function LlmProviderEditorScreen({
                 ) : (
                     <div className="mt-8 grid gap-3">
                         <span className="text-[14px] font-medium text-gray-700">
-                            Custom provider JSON
+                            Custom provider JSON / JSONC
                         </span>
                         <DenTextarea
                             value={customConfigText}
@@ -590,11 +590,12 @@ export function LlmProviderEditorScreen({
                             rows={18}
                         />
                         <p className="text-[13px] text-gray-500">
-                            Use the models.dev-style schema and include a{" "}
+                            Paste a models.dev provider, a single provider block,
+                            or a full{" "}
                             <code className="rounded bg-gray-100 px-1 py-0.5">
-                                models
-                            </code>{" "}
-                            array.
+                                opencode.jsonc
+                            </code>
+                            . Model maps are imported automatically.
                         </p>
                     </div>
                 )}

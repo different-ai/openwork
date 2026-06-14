@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -8,7 +7,6 @@ import {
   mkdir,
   readFile,
   readdir,
-  realpath,
   rename,
   rm,
   stat,
@@ -19,25 +17,26 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, session, shell, systemPreferences } from "electron";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
-import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 import {
-  openworkWorkspaceDisplayName,
-  selectOpenworkWorkspaceForConnection,
-} from "./remote-workspace.mjs";
+  checkComputerUsePermissions,
+  getComputerUseMcpCommand,
+  listRunningApps,
+  openComputerUseSetupApp,
+} from "./computer-use.mjs";
+import { createUiControlServer } from "./ui-control-server.mjs";
+import { createApplicationMenu } from "./app-menu.mjs";
+import { createBrowserPanel } from "./browser-panel.mjs";
+import { createWorkspaceStore } from "./workspace-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
-const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
-const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
-const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
 const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
 const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
 const DESKTOP_PROTOCOL_SCHEME = "openwork";
@@ -47,8 +46,18 @@ const APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
-const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
-const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
+const applicationMenu = createApplicationMenu({
+  appName: APP_NAME,
+  docsUrl: DOCS_PAGE_URL,
+  getWindow: () => createMainWindow(),
+});
+
+const uiControlServer = createUiControlServer({
+  appName: APP_NAME,
+  appIdentifier: APP_IDENTIFIER,
+  getWindow: () => createMainWindow(),
+});
+
 const terminalProcesses = new Map();
 let nextTerminalId = 1;
 
@@ -82,148 +91,6 @@ function killTerminalsForWebContents(webContentsId) {
   for (const [terminalId, terminal] of terminalProcesses.entries()) {
     if (terminal.webContentsId === webContentsId) killTerminal(terminalId);
   }
-}
-
-function computerUseHelperExecutablePath() {
-  const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
-  const candidates = [
-    explicitBinary,
-    appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-function computerUseHelperAppPath() {
-  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
-  const candidates = [
-    explicitApp,
-    process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
-    path.resolve(__dirname, "..", "resources", "helpers", COMPUTER_USE_HELPER_APP_NAME),
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-function getComputerUseMcpCommand() {
-  const helperExecutable = computerUseHelperExecutablePath();
-  if (helperExecutable) return [helperExecutable, "mcp"];
-
-  if (app.isPackaged) {
-    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
-  }
-
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
-  }
-  return ["npx", "-y", "@openwork/handsfree", "mcp"];
-}
-
-// ---------------------------------------------------------------------------
-// Permission checks — spawn the binary with --check, read stdout, done.
-// Fresh process = fresh TCC read = always accurate. No HTTP server needed.
-// ---------------------------------------------------------------------------
-
-function resolveComputerUseExecutable() {
-  // 1. Explicit env override.
-  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
-  if (explicit && existsSync(explicit)) return explicit;
-
-  // 2. .app bundle (packaged builds + pnpm dev).
-  const appPath = computerUseHelperAppPath();
-  if (appPath) {
-    const bin = path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE);
-    if (existsSync(bin)) return bin;
-  }
-
-  // 3. Dev fallback — raw Swift build output.
-  if (!app.isPackaged) {
-    const swiftPkg = path.resolve(__dirname, "../../..", "packages/handsfree/native/HandsFree");
-    const devCandidates = [
-      path.join(swiftPkg, ".build", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "debug", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "HandsFreeComputerUse"),
-    ];
-    for (const c of devCandidates) {
-      if (existsSync(c)) return c;
-    }
-  }
-
-  return null;
-}
-
-async function checkComputerUsePermissions() {
-  // Spawn binary --check → read JSON from stdout → exit. Always fresh.
-  const bin = resolveComputerUseExecutable();
-  if (!bin) {
-    return { ok: false, accessibility: false, screenRecording: false, error: "Helper binary not found. Run pnpm dev to build it." };
-  }
-  return spawnCheckPermissions(bin);
-}
-
-function spawnCheckPermissions(bin) {
-  return new Promise((resolve) => {
-    let stdout = "";
-    const child = spawn(bin, ["--check"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 });
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.on("error", () => resolve({ ok: false, accessibility: false, screenRecording: false, error: "Failed to run permission check." }));
-    child.on("close", () => {
-      try {
-        const parsed = JSON.parse(stdout.trim());
-        resolve({
-          ok: parsed?.ok === true,
-          accessibility: parsed?.accessibility === true,
-          screenRecording: parsed?.screenRecording === true,
-        });
-      } catch {
-        resolve({ ok: false, accessibility: false, screenRecording: false, error: "Permission check returned invalid output." });
-      }
-    });
-  });
-}
-
-async function listRunningApps() {
-  // Spawn binary --list-apps → read JSON from stdout → exit. Needs no TCC
-  // permissions, so this works before Computer Use setup is complete.
-  if (process.platform !== "darwin") return { ok: false, apps: [] };
-  const bin = resolveComputerUseExecutable();
-  if (!bin) return { ok: false, apps: [] };
-  return new Promise((resolve) => {
-    let stdout = "";
-    const child = spawn(bin, ["--list-apps"], { stdio: ["ignore", "pipe", "ignore"], timeout: 5_000 });
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.on("error", () => resolve({ ok: false, apps: [] }));
-    child.on("close", () => {
-      try {
-        const parsed = JSON.parse(stdout.trim());
-        const apps = Array.isArray(parsed?.apps) ? parsed.apps.filter((name) => typeof name === "string" && name.trim()) : [];
-        resolve({ ok: parsed?.ok === true, apps });
-      } catch {
-        resolve({ ok: false, apps: [] });
-      }
-    });
-  });
-}
-
-async function openComputerUseSetupApp() {
-  // Open the GUI. Use the .app bundle if available so macOS shows it as
-  // a real app with its own dock icon and permission identity.
-  const appPath = computerUseHelperAppPath();
-  if (appPath) {
-    const result = await shell.openPath(appPath);
-    if (result) console.error("[ComputerUse] shell.openPath error:", result);
-    return;
-  }
-
-  // Fallback: spawn the raw binary (opens the same GUI).
-  const bin = resolveComputerUseExecutable();
-  if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
-  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
-  child.unref();
 }
 
 // Production Electron shares the same on-disk state folder as the Tauri shell
@@ -464,19 +331,11 @@ const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
-let applicationMenuVisible = process.platform === "darwin";
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
-
-const EMPTY_WORKSPACE_LIST = Object.freeze({
-  selectedId: "",
-  watchedId: null,
-  activeId: null,
-  workspaces: [],
-});
 
 const IDLE_ENGINE_INFO = Object.freeze({
   running: false,
@@ -526,938 +385,18 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
-let uiControlServer = null;
-let uiControlDiscoveryPath = null;
-const uiControlToken = randomBytes(32).toString("hex");
 
-// ── Embedded browser panel ─────────────────────────────────────────────
-const browserTabs = new Map();
-let browserTabOrder = [];
-let activeBrowserTabId = null;
-let browserViewVisible = false;
-// Last browser panel bounds reported by the renderer, in renderer CSS pixels.
-// Converted to window device-independent pixels at every setBounds call.
-let lastBrowserBounds = null;
-let browserTabCounter = 0;
-const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
-// Active proxy for the built-in browser session: { rules, username, password }.
-let browserProxy = null;
-const BROWSER_DEFAULT_URL = "about:blank";
-// URL a user-initiated new tab (the "+" button / opening the browser panel)
-// lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
-const BROWSER_NEW_TAB_URL = "https://www.google.com";
-const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
-const BROWSER_TARGET_RESOLVE_INTERVAL_MS = 80;
-const MENU_OVERLAY_HTML = "overlay.html";
-const MENU_OVERLAY_WIDTH = 196;
-const MENU_OVERLAY_HEIGHT = 176;
-const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
-let menuOverlayView = null;
-let menuOverlayRequest = null;
-let menuOverlayReady = false;
-let menuOverlayReadyResolvers = [];
-let menuOverlayShowSerial = 0;
-
-function resetMenuOverlayReady({ resolvePending = false } = {}) {
-  menuOverlayReady = false;
-  if (resolvePending) {
-    const resolvers = menuOverlayReadyResolvers.splice(0);
-    for (const resolve of resolvers) resolve(false);
-  }
-}
-
-function markMenuOverlayReady(view) {
-  if (!view || view.webContents.isDestroyed()) return;
-  menuOverlayReady = true;
-  const resolvers = menuOverlayReadyResolvers.splice(0);
-  for (const resolve of resolvers) resolve(true);
-}
-
-function waitForMenuOverlayReady(view) {
-  if (menuOverlayReady) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let timer = null;
-    const done = (ready) => {
-      if (timer) clearTimeout(timer);
-      menuOverlayReadyResolvers = menuOverlayReadyResolvers.filter((candidate) => candidate !== done);
-      resolve(ready);
-    };
-    timer = setTimeout(() => done(false), MENU_OVERLAY_READY_TIMEOUT_MS);
-    menuOverlayReadyResolvers.push(done);
-    if (!view || view.webContents.isDestroyed()) done(false);
-  });
-}
-
-/** Send an IPC message to the main renderer, guarding against disposed frames. */
-function sendToRenderer(channel, payload) {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
-  try { mainWindow.webContents.send(channel, payload); } catch { /* window closing */ }
-}
-
-async function openSettingsFromNativeMenu() {
-  const win = await createMainWindow();
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
-}
-
-async function checkForUpdatesFromNativeMenu() {
-  const win = await createMainWindow();
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
-  win.webContents.send(NATIVE_MENU_CHECK_UPDATES_EVENT);
-}
-
-async function toggleSidebarFromNativeMenu() {
-  const win = await createMainWindow();
-  win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
-}
-
-// Zoom must flow through the renderer's font-zoom pathway so the persisted
-// preference and the applied webContents zoom factor never drift apart. The
-// built-in resetZoom/zoomIn/zoomOut roles bypass that pathway (and zoom
-// whichever webContents is focused, including the embedded browser view).
-async function zoomFromNativeMenu(action) {
-  const win = await createMainWindow();
-  win.webContents.send(NATIVE_MENU_ZOOM_EVENT, action);
-}
-
-function installApplicationMenu() {
-  const isMac = process.platform === "darwin";
-  const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
-    ...(isMac
-      ? [
-          {
-            label: APP_NAME,
-            submenu: [
-              { role: "about" },
-              {
-                label: "Check for Updates...",
-                click: () => {
-                  void checkForUpdatesFromNativeMenu();
-                },
-              },
-              { type: "separator" },
-              {
-                label: "Settings...",
-                accelerator: "Command+,",
-                click: () => {
-                  void openSettingsFromNativeMenu();
-                },
-              },
-              { type: "separator" },
-              { role: "services" },
-              { type: "separator" },
-              { role: "hide" },
-              { role: "hideOthers" },
-              { role: "unhide" },
-              { type: "separator" },
-              { role: "quit" },
-            ],
-          },
-        ]
-      : []),
-    {
-      label: "File",
-      submenu: [
-        ...(isMac
-          ? []
-          : [
-              {
-                label: "Settings",
-                accelerator: "Control+,",
-                click: () => {
-                  void openSettingsFromNativeMenu();
-                },
-              },
-              { type: "separator" },
-            ]),
-        { role: "close" },
-      ],
-    },
-    {
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        ...(isMac
-          ? [
-              { role: "pasteAndMatchStyle" },
-              { role: "delete" },
-              { role: "selectAll" },
-              { type: "separator" },
-              {
-                label: "Speech",
-                submenu: [
-                  { role: "startSpeaking" },
-                  { role: "stopSpeaking" },
-                ],
-              },
-              { type: "separator" },
-              {
-                label: "Settings...",
-                click: () => {
-                  void openSettingsFromNativeMenu();
-                },
-              },
-            ]
-          : [
-              { role: "delete" },
-              { type: "separator" },
-              { role: "selectAll" },
-            ]),
-      ],
-    },
-    {
-      label: "View",
-      submenu: [
-        {
-          label: "Toggle Sidebar",
-          accelerator: "CommandOrControl+B",
-          click: () => {
-            void toggleSidebarFromNativeMenu();
-          },
-        },
-        { type: "separator" },
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        {
-          label: "Actual Size",
-          accelerator: "CommandOrControl+0",
-          click: () => {
-            void zoomFromNativeMenu("reset");
-          },
-        },
-        {
-          label: "Zoom In",
-          accelerator: "CommandOrControl+Plus",
-          click: () => {
-            void zoomFromNativeMenu("in");
-          },
-        },
-        {
-          label: "Zoom Out",
-          accelerator: "CommandOrControl+-",
-          click: () => {
-            void zoomFromNativeMenu("out");
-          },
-        },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-      ],
-    },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(isMac
-          ? [
-              { type: "separator" },
-              { role: "front" },
-              { type: "separator" },
-              { role: "window" },
-            ]
-          : [
-              { role: "close" },
-            ]),
-      ],
-    },
-    {
-      role: "help",
-      submenu: [
-        ...(isMac
-          ? []
-          : [
-              {
-                label: "Check for Updates...",
-                click: () => {
-                  void checkForUpdatesFromNativeMenu();
-                },
-              },
-              { type: "separator" },
-            ]),
-        {
-          label: "Docs",
-          click: async () => {
-            await shell.openExternal(DOCS_PAGE_URL);
-          },
-        },
-      ],
-    },
-  ]);
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function applyApplicationMenuVisibility(window) {
-  if (process.platform === "darwin") return;
-  window.setAutoHideMenuBar(false);
-  window.setMenuBarVisibility(applicationMenuVisible);
-}
-
-function setApplicationMenuVisible(visible) {
-  applicationMenuVisible = visible === true;
-  for (const window of BrowserWindow.getAllWindows()) {
-    applyApplicationMenuVisibility(window);
-  }
-  return applicationMenuVisible;
-}
-
-function createBrowserTabId() {
-  browserTabCounter += 1;
-  return `tab_${Date.now().toString(36)}_${browserTabCounter.toString(36)}`;
-}
-
-function normalizeBrowserUrl(url, fallback = BROWSER_DEFAULT_URL) {
-  const target = typeof url === "string" && url.trim() ? url.trim() : fallback;
-  if (!target || target === "about:blank") return "about:blank";
-  return /^https?:\/\//i.test(target) ? target : `https://${target}`;
-}
-
-function isMainWindowAllowedNavigation(url) {
-  if (!url) return true;
-  if (url.startsWith("file://") || url.startsWith("data:")) return true;
-  try {
-    const target = new URL(url);
-    if (target.hostname === "127.0.0.1" || target.hostname === "localhost") return true;
-    const currentUrl = mainWindow?.webContents.getURL();
-    if (!currentUrl || currentUrl === "about:blank") return true;
-    const current = new URL(currentUrl);
-    return target.origin === current.origin;
-  } catch {
-    return true;
-  }
-}
-
-function routeBlockedMainWindowNavigation(url) {
-  if (!/^https?:\/\//i.test(String(url ?? ""))) return;
-  void openBrowserUrlForAutomation(url).catch((error) => {
-    console.warn("[browser] failed to route blocked main-window navigation", error);
-  });
-}
-
-function cdpBrowserUrl() {
-  return `http://127.0.0.1:${remoteDebugPort}`;
-}
-
-function browserTargetMarkerUrl(tabId) {
-  const marker = `openwork-browser-tab:${tabId}`;
-  const html = `<!doctype html><title>${marker}</title><meta name="openwork-browser-tab" content="${tabId}"><body>${marker}</body>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-}
-
-async function listCdpTargets() {
-  if (!remoteDebugPort || remoteDebugPort <= 0) return [];
-  const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
-  if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
-  const targets = await response.json();
-  return Array.isArray(targets) ? targets : [];
-}
-
-async function resolveBrowserCdpTargetId(tabId) {
-  const marker = encodeURIComponent(`openwork-browser-tab:${tabId}`);
-  const deadline = Date.now() + BROWSER_TARGET_RESOLVE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const targets = await listCdpTargets().catch(() => []);
-    const target = targets.find((candidate) => (
-      candidate?.type === "page" &&
-      typeof candidate.id === "string" &&
-      typeof candidate.url === "string" &&
-      candidate.url.includes(marker)
-    ));
-    if (target?.id) return target.id;
-    await new Promise((resolve) => setTimeout(resolve, BROWSER_TARGET_RESOLVE_INTERVAL_MS));
-  }
-  throw new Error("Could not resolve built-in browser CDP target.");
-}
-
-async function openBrowserUrlForAutomation(rawUrl, provider = "auto") {
-  const requestedProvider = String(provider || "auto").trim().toLowerCase();
-  if (requestedProvider && requestedProvider !== "auto" && requestedProvider !== "builtin") {
-    throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
-  }
-  const url = normalizeBrowserUrl(rawUrl);
-  const tab = createBrowserTab("about:blank", { select: true });
-  await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
-  const targetId = await resolveBrowserCdpTargetId(tab.tabId);
-  await tab.view.webContents.loadURL(url);
-  return {
-    provider: "builtin",
-    browser_url: cdpBrowserUrl(),
-    target_id: targetId,
-    tab_id: tab.tabId,
-    url,
-  };
-}
-
-function getBrowserTab(tabId = activeBrowserTabId) {
-  return tabId ? browserTabs.get(tabId) ?? null : null;
-}
-
-function getActiveBrowserView() {
-  return getBrowserTab()?.view ?? null;
-}
-
-function getActiveWebContents() {
-  return getActiveBrowserView()?.webContents ?? null;
-}
-
-function getBrowserTabLabel(title, url) {
-  if (title) {
-    return title;
-  }
-
-  if (url && url !== "about:blank") {
-    return url;
-  }
-
-  return "New tab";
-}
-
-function browserTabToPanelTab(tabId, tab) {
-  const webContents = tab.view.webContents;
-  const url = webContents.getURL();
-  const title = webContents.getTitle();
-  const isLoading = webContents.isLoading();
-
-  return {
-    id: tabId,
-    type: "browser",
-    label: getBrowserTabLabel(title, url),
-    url,
-    favicon: tab.favicon ?? null,
-    status: isLoading ? "loading" : "ready",
-    canGoBack: webContents.canGoBack(),
-    canGoForward: webContents.canGoForward(),
-  };
-}
-
-function listBrowserTabs() {
-  return browserTabOrder
-    .map((tabId) => {
-      const tab = browserTabs.get(tabId);
-      if (!tab || tab.view.webContents.isDestroyed()) return null;
-      return browserTabToPanelTab(tabId, tab);
-    })
-    .filter(Boolean);
-}
-
-function browserStatePayload() {
-  return {
-    activeTabId: activeBrowserTabId,
-    tabs: listBrowserTabs(),
-  };
-}
-
-function browserTabUrl(tab) {
-  const url = tab?.view?.webContents?.getURL?.();
-  return typeof url === "string" && url && url !== "about:blank" ? url : null;
-}
-
-function isHttpUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function normalizeMenuOverlayPoint(point) {
-  if (!point || typeof point !== "object") {
-    return { x: 0, y: 0 };
-  }
-  const x = Number(point.x);
-  const y = Number(point.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return { x: 0, y: 0 };
-  }
-  return { x: Math.round(x), y: Math.round(y) };
-}
-
-function menuOverlayBounds(point) {
-  const [contentWidth, contentHeight] = mainWindow?.getContentSize?.() ?? [MENU_OVERLAY_WIDTH, MENU_OVERLAY_HEIGHT];
-  return {
-    x: Math.min(Math.max(point.x, 0), Math.max(contentWidth - MENU_OVERLAY_WIDTH - 4, 0)),
-    y: Math.min(Math.max(point.y, 0), Math.max(contentHeight - MENU_OVERLAY_HEIGHT - 4, 0)),
-    width: MENU_OVERLAY_WIDTH,
-    height: MENU_OVERLAY_HEIGHT,
-  };
-}
-
-function menuOverlayUrl() {
-  const currentUrl = mainWindow?.webContents?.getURL?.();
-  if (currentUrl && /^https?:\/\//i.test(currentUrl)) {
-    return new URL(MENU_OVERLAY_HTML, currentUrl).toString();
-  }
-  return null;
-}
-
-async function loadMenuOverlayRenderer(view) {
-  const devUrl = menuOverlayUrl();
-  if (devUrl) {
-    await view.webContents.loadURL(devUrl);
-    return;
-  }
-
-  const packagedOverlayPath = path.join(process.resourcesPath, "app-dist", MENU_OVERLAY_HTML);
-  const devOverlayPath = path.resolve(__dirname, "../../app/dist", MENU_OVERLAY_HTML);
-  await view.webContents.loadFile(app.isPackaged ? packagedOverlayPath : devOverlayPath);
-}
-
-async function ensureMenuOverlayView() {
-  if (menuOverlayView && !menuOverlayView.webContents.isDestroyed()) {
-    return menuOverlayView;
-  }
-
-  const view = new WebContentsView({
-    webPreferences: {
-      // Electron only runs ESM preload scripts reliably with sandbox disabled.
-      // Keep the bridge isolated and node-free for the React overlay document.
-      backgroundThrottling: false,
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, "menu-overlay-preload.mjs"),
-    },
-  });
-  view.setBackgroundColor?.("#00000000");
-  view.setVisible?.(false);
-  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  view.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) resetMenuOverlayReady();
-  });
-  view.webContents.once("destroyed", () => {
-    if (menuOverlayView === view) {
-      menuOverlayView = null;
-      menuOverlayRequest = null;
-      resetMenuOverlayReady({ resolvePending: true });
-    }
-  });
-
-  menuOverlayView = view;
-  resetMenuOverlayReady({ resolvePending: true });
-  await loadMenuOverlayRenderer(view);
-  return view;
-}
-
-function hideMenuOverlay() {
-  const view = menuOverlayView;
-  menuOverlayShowSerial += 1;
-  menuOverlayRequest = null;
-  if (!view || !mainWindow) return;
-  view.setVisible?.(false);
-  try {
-    if (mainWindow.contentView.children.includes(view)) {
-      mainWindow.contentView.removeChildView(view);
-    }
-  } catch {
-    // already removed
-  }
-}
-
-function bringMenuOverlayToTop(view) {
-  if (!mainWindow) return;
-  try {
-    if (mainWindow.contentView.children.includes(view)) {
-      mainWindow.contentView.removeChildView(view);
-    }
-  } catch {
-    // already removed
-  }
-  mainWindow.contentView.addChildView(view);
-}
-
-function tabMenuRequest(tab, point) {
-  const url = browserTabUrl(tab);
-  return {
-    id: `tab-menu:${tab.tabId}:${Date.now()}`,
-    source: "tab",
-    tabId: tab.tabId,
-    url,
-    bounds: menuOverlayBounds(normalizeMenuOverlayPoint(point)),
-    items: [
-      { id: "copy-url", label: "Copy URL", iconName: "copy", disabled: !url },
-      { id: "open-external", label: "Open in Browser", iconName: "external", disabled: !(url && isHttpUrl(url)) },
-      { id: "close-tab", label: "Close Tab", iconName: "close", separatorBefore: true },
-      { id: "close-all-tabs", label: "Close All Tabs", iconName: "close" },
-    ],
-  };
-}
-
-async function showBrowserTabContextMenu(tabId, point) {
-  const tab = getBrowserTab(String(tabId ?? ""));
-  if (!mainWindow || !tab || tab.view.webContents.isDestroyed()) return;
-
-  const showSerial = menuOverlayShowSerial + 1;
-  menuOverlayShowSerial = showSerial;
-  const request = tabMenuRequest(tab, point ? scaleRendererPoint(point) : point);
-  const view = await ensureMenuOverlayView();
-  if (showSerial !== menuOverlayShowSerial || menuOverlayView !== view) return;
-  menuOverlayRequest = request;
-  view.setBounds(request.bounds);
-  view.setVisible?.(true);
-  bringMenuOverlayToTop(view);
-  const ready = await waitForMenuOverlayReady(view);
-  if (showSerial !== menuOverlayShowSerial || menuOverlayRequest !== request || menuOverlayView !== view) return;
-  if (!ready) {
-    console.warn("[menu-overlay] renderer did not signal readiness before show");
-  }
-  view.webContents.send("openwork:menu-overlay:show", {
-    id: request.id,
-    source: request.source,
-    items: request.items,
-  });
-  view.webContents.focus();
-}
-
-function handleMenuOverlayChoice(payload) {
-  if (!payload || payload.requestId !== menuOverlayRequest?.id) return;
-  const request = menuOverlayRequest;
-  const tab = getBrowserTab(request.tabId);
-  hideMenuOverlay();
-
-  switch (payload.itemId) {
-    case "copy-url":
-      if (request.url) clipboard.writeText(request.url);
-      break;
-    case "open-external":
-      if (request.url && isHttpUrl(request.url)) void shell.openExternal(request.url);
-      break;
-    case "close-tab":
-      if (tab) closeBrowserTab(tab.tabId);
-      break;
-    case "close-all-tabs":
-      closeAllBrowserTabs();
-      break;
-  }
-}
-
-// ── Built-in browser proxy ──────────────────────────────────────────────
-// Proxying is session-scoped in Electron, and every built-in browser tab
-// shares BROWSER_SESSION_PARTITION, so one setProxy call covers all tabs
-// (agent CDP traffic included) without touching the rest of the app.
-
-function resolveBrowserProxyInput(input) {
-  const raw = String(input ?? "").trim();
-  const envMatch = raw.match(/^env:([A-Za-z0-9_]+)$/i);
-  if (!envMatch) return raw;
-  const key = `OPENWORK_BROWSER_PROXY_${envMatch[1].toUpperCase()}`;
-  const value = String(process.env[key] ?? "").trim();
-  if (!value) throw new Error(`No proxy configured: set the ${key} environment variable to a proxy URL.`);
-  return value;
-}
-
-function parseBrowserProxyInput(input) {
-  const raw = resolveBrowserProxyInput(input);
-  if (!raw) return null;
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
-  let url;
-  try {
-    url = new URL(withScheme);
-  } catch {
-    throw new Error(`Invalid proxy URL: ${raw}`);
-  }
-  if (!url.hostname || !url.port) {
-    throw new Error("Proxy must include host and port, e.g. http://user:pass@host:8080 or socks5://host:1080.");
-  }
-  const scheme = url.protocol.replace(/:$/, "").toLowerCase();
-  return {
-    rules: `${scheme}://${url.hostname}:${url.port}`,
-    username: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-  };
-}
-
-function browserProxyState() {
-  return {
-    proxy: browserProxy
-      ? { rules: browserProxy.rules, authenticated: Boolean(browserProxy.username) }
-      : null,
-  };
-}
-
-async function setBrowserProxy(proxyInput) {
-  const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
-  const parsed = parseBrowserProxyInput(proxyInput);
-  if (parsed) {
-    await browserSession.setProxy({ proxyRules: parsed.rules, proxyBypassRules: "<local>" });
-  } else {
-    await browserSession.setProxy({ mode: "system" });
-  }
-  browserProxy = parsed;
-  // Drop keep-alive connections so existing tabs cannot bypass the new proxy.
-  await browserSession.closeAllConnections();
-  return browserProxyState();
-}
-
-app.on("login", (event, _webContents, _details, authInfo, callback) => {
-  if (!authInfo?.isProxy || !browserProxy?.username) return;
-  event.preventDefault();
-  callback(browserProxy.username, browserProxy.password);
+const browserPanel = createBrowserPanel({
+  remoteDebugPort,
+  getWindow: () => mainWindow,
 });
 
-function createBrowserTab(url = "about:blank", { select = true } = {}) {
-  const tabId = createBrowserTabId();
-  const view = new WebContentsView({
-    webPreferences: {
-      backgroundThrottling: false,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, "browser-content-preload.cjs"),
-      partition: BROWSER_SESSION_PARTITION,
-    },
-  });
-  const tab = { tabId, view, favicon: null };
-  browserTabs.set(tabId, tab);
-  browserTabOrder.push(tabId);
-  // Load about:blank immediately to preempt persistent-session restore.
-  // Cookies live on the session object, not the document — they survive this.
-  view.webContents.loadURL("about:blank");
-  view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-    void shell.openExternal(targetUrl);
-    return { action: "deny" };
-  });
-  view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
-    if (!isMainFrame || isInPlace) return;
-    const target = String(targetUrl ?? "");
-    // data: loads are internal plumbing (CDP target-marker pages), not
-    // user-visible navigations — don't surface the panel for them.
-    if (target === "about:blank" || target.startsWith("data:")) return;
-    // Agent-driven CDP navigation can target a background tab whose view is
-    // detached. Bring that tab on screen, otherwise navigation "succeeds"
-    // while the visible tab stays on about:blank (#2015).
-    if (activeBrowserTabId !== tabId) {
-      try {
-        selectBrowserTab(tabId);
-      } catch {
-        // The tab may be mid-close; the panel-opened event below still fires.
-      }
-    }
-    sendToRenderer("openwork:browser:panel-opened");
-  });
-  view.webContents.on("did-navigate", () => sendBrowserState());
-  view.webContents.on("did-navigate-in-page", () => sendBrowserState());
-  view.webContents.on("page-title-updated", () => sendBrowserState());
-  view.webContents.on("page-favicon-updated", (_event, favicons) => {
-    tab.favicon = Array.isArray(favicons) ? favicons[0] ?? null : null;
-    sendBrowserState();
-  });
-  view.webContents.on("did-start-loading", () => sendBrowserState());
-  view.webContents.on("did-stop-loading", () => sendBrowserState());
-  view.webContents.once("destroyed", () => {
-    browserTabs.delete(tabId);
-    browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
-    if (activeBrowserTabId === tabId) activeBrowserTabId = browserTabOrder[0] ?? null;
-    sendBrowserState();
-  });
-  if (select || !activeBrowserTabId) {
-    selectBrowserTab(tabId);
-  } else {
-    sendBrowserState();
-  }
-  const finalUrl = normalizeBrowserUrl(url, "about:blank");
-  if (finalUrl !== "about:blank") {
-    view.webContents.loadURL(finalUrl);
-  }
-  return tab;
-}
-
-function detachBrowserView(view) {
-  if (!mainWindow || !view) return;
-  try {
-    if (mainWindow.contentView.children.includes(view)) {
-      mainWindow.contentView.removeChildView(view);
-    }
-  } catch {
-    // already removed
-  }
-}
-
-// The renderer reports bounds in CSS pixels, which Electron scales by the main
-// window's zoom factor. Read the factor from the webContents at apply time so
-// the conversion is always correct, no matter how the zoom was changed
-// (shortcuts, native menu, or Chromium's persisted per-origin zoom).
-function mainWindowZoomFactor() {
-  try {
-    const factor = mainWindow?.webContents.getZoomFactor();
-    return typeof factor === "number" && factor > 0 ? factor : 1;
-  } catch {
-    return 1;
-  }
-}
-
-function scaleRendererBounds(bounds) {
-  const zoom = mainWindowZoomFactor();
-  // Round edges (not width/height) so the far edge has no sub-pixel seam.
-  const x = Math.round(bounds.x * zoom);
-  const y = Math.round(bounds.y * zoom);
-  return {
-    x,
-    y,
-    width: Math.round((bounds.x + bounds.width) * zoom) - x,
-    height: Math.round((bounds.y + bounds.height) * zoom) - y,
-  };
-}
-
-function scaleRendererPoint(point) {
-  const zoom = mainWindowZoomFactor();
-  return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
-}
-
-function attachActiveBrowserView() {
-  if (!mainWindow || !browserViewVisible) return;
-  const view = getActiveBrowserView();
-  if (!view) return;
-  for (const tab of browserTabs.values()) {
-    if (tab.view !== view) detachBrowserView(tab.view);
-  }
-  if (!mainWindow.contentView.children.includes(view)) {
-    mainWindow.contentView.addChildView(view);
-  }
-  if (lastBrowserBounds && lastBrowserBounds.width > 0 && lastBrowserBounds.height > 0) {
-    view.setBounds(scaleRendererBounds(lastBrowserBounds));
-  }
-}
-
-function selectBrowserTab(tabId) {
-  if (!browserTabs.has(tabId)) throw new Error(`Unknown browser tab: ${tabId}`);
-  hideMenuOverlay();
-  const previousView = getActiveBrowserView();
-  activeBrowserTabId = tabId;
-  if (previousView && previousView !== getActiveBrowserView()) {
-    detachBrowserView(previousView);
-  }
-    attachActiveBrowserView();
-  sendBrowserState();
-  return getBrowserTab(tabId);
-}
-
-function closeBrowserTab(tabId = activeBrowserTabId) {
-  const tab = getBrowserTab(tabId);
-  if (!tab) return null;
-  if (menuOverlayRequest?.tabId === tabId) hideMenuOverlay();
-  const closingIndex = browserTabOrder.indexOf(tabId);
-  const wasActive = activeBrowserTabId === tabId;
-  detachBrowserView(tab.view);
-  browserTabs.delete(tabId);
-  browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
-  if (wasActive) {
-    const nextTabId =
-      browserTabOrder[Math.min(closingIndex, browserTabOrder.length - 1)] ??
-      browserTabOrder[closingIndex - 1] ??
-      null;
-    activeBrowserTabId = nextTabId;
-    if (nextTabId) {
-      attachActiveBrowserView();
-    } else {
-      hideBrowserView();
-      sendToRenderer("openwork:browser:panel-closed");
-    }
-  }
-  try { tab.view.webContents.close(); } catch { /* already destroyed */ }
-  sendBrowserState();
-  return tabId;
-}
-
-function closeAllBrowserTabs() {
-  const closedTabIds = [...browserTabOrder];
-  if (closedTabIds.length === 0) return [];
-  hideMenuOverlay();
-  const tabsToClose = closedTabIds
-    .map((tabId) => browserTabs.get(tabId))
-    .filter(Boolean);
-  hideBrowserView();
-  browserTabs.clear();
-  browserTabOrder = [];
-  activeBrowserTabId = null;
-  for (const tab of tabsToClose) {
-    try { tab.view.webContents.close(); } catch { /* already destroyed */ }
-  }
-  sendToRenderer("openwork:browser:panel-closed");
-  sendBrowserState();
-  return closedTabIds;
-}
-
-function reorderBrowserTabs(tabIds) {
-  const nextOrder = Array.isArray(tabIds) ? tabIds.map(String) : [];
-  if (nextOrder.length !== browserTabOrder.length) {
-    throw new Error("Tab order must include every open tab.");
-  }
-  if (new Set(nextOrder).size !== nextOrder.length) {
-    throw new Error("Tab order must not contain duplicate tabs.");
-  }
-  const current = new Set(browserTabOrder);
-  if (nextOrder.some((tabId) => !current.has(tabId))) {
-    throw new Error("Tab order contains an unknown tab.");
-  }
-  browserTabOrder = nextOrder;
-  sendBrowserState();
-  return listBrowserTabs();
-}
-
-function sendBrowserState() {
-  sendToRenderer("openwork:browser:state", browserStatePayload());
-}
-
-/**
- * Attach the browser view to the main window.
- * @param {object} bounds — { x, y, width, height }
- * @param {object} [opts]
- * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
- * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
- */
-function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false } = {}) {
-  if (!mainWindow) return;
-  lastBrowserBounds = bounds;
-  browserViewVisible = true;
-  if (ensureTab && !activeBrowserTabId) createBrowserTab("about:blank");
-  const view = getActiveBrowserView();
-  attachActiveBrowserView();
-  if (bounds.width > 0 && bounds.height > 0) {
-    view?.setBounds(scaleRendererBounds(bounds));
-  }
-  const url = view?.webContents.getURL();
-  if (preloadDefault && (!url || url === "about:blank")) {
-    view?.webContents.loadURL(BROWSER_DEFAULT_URL);
-  }
-  sendBrowserState();
-}
-
-function hideBrowserView() {
-  hideMenuOverlay();
-  browserViewVisible = false;
-  if (!mainWindow) return;
-  for (const tab of browserTabs.values()) {
-    detachBrowserView(tab.view);
-  }
-}
-
-function destroyBrowserView() {
-  hideBrowserView();
-  const overlayView = menuOverlayView;
-  menuOverlayView = null;
-  menuOverlayRequest = null;
-  try { overlayView?.webContents.close(); } catch { /* already destroyed */ }
-  for (const tab of browserTabs.values()) {
-    try { tab.view.webContents.close(); } catch { /* already destroyed */ }
-  }
-  browserTabs.clear();
-  browserTabOrder = [];
-  activeBrowserTabId = null;
-  lastBrowserBounds = null;
-  sendBrowserState();
-}
+const workspaceStore = createWorkspaceStore({
+  app,
+  defaultDenBaseUrl: DEFAULT_DEN_BASE_URL,
+  defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
+  forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
+});
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -1493,60 +432,6 @@ function flushPendingDeepLinks() {
   mainWindow.webContents.send(NATIVE_DEEP_LINK_EVENT, urls);
 }
 
-function desktopBootstrapPath() {
-  if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
-    return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH.trim();
-  }
-  // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
-  // through startup (runtime.mjs buildChildEnv → Object.assign(process.env)),
-  // which changes what os.homedir() returns. Resolve the dev-data home
-  // deterministically so early and late IPC reads target the same file —
-  // otherwise the renderer can bootstrap against the wrong control plane
-  // until a manual reload.
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return path.join(
-      app.getPath("userData"),
-      "openwork-dev-data",
-      "home",
-      ".config",
-      "openwork",
-      "desktop-bootstrap.json",
-    );
-  }
-  return path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
-}
-
-function workspaceStatePath() {
-  return path.join(app.getPath("userData"), "openwork-workspaces.json");
-}
-
-// Earlier Electron alpha builds copied Tauri's openwork-workspaces.json into an
-// Electron-only workspace-state.json. Keep importing that file when the shared
-// canonical file is missing, but write openwork-workspaces.json going forward so
-// Tauri rollback and Electron both read the same desktop workspace state.
-function legacyElectronWorkspaceStatePath() {
-  return path.join(app.getPath("userData"), "workspace-state.json");
-}
-
-async function migrateLegacyElectronWorkspaceStateIfNeeded() {
-  const current = workspaceStatePath();
-  const legacy = legacyElectronWorkspaceStatePath();
-  try {
-    if (existsSync(current)) return false;
-    if (!existsSync(legacy)) return false;
-    await mkdir(path.dirname(current), { recursive: true });
-    const raw = await readFile(legacy, "utf8");
-    await writeFile(current, raw, "utf8");
-    console.info(
-      "[migration] copied workspace-state.json → openwork-workspaces.json",
-    );
-    return true;
-  } catch (error) {
-    console.warn("[migration] legacy Electron workspace-state copy failed", error);
-    return false;
-  }
-}
-
 function configHomePath() {
   if (process.env.XDG_CONFIG_HOME?.trim()) {
     return process.env.XDG_CONFIG_HOME.trim();
@@ -1580,145 +465,6 @@ async function isDirectory(targetPath) {
   } catch {
     return false;
   }
-}
-
-async function readJsonFile(targetPath, fallback) {
-  try {
-    const raw = await readFile(targetPath, "utf8");
-    try {
-      return JSON.parse(raw);
-    } catch (error) {
-      const recovered = parseFirstJsonObject(raw);
-      if (recovered.ok) {
-        console.warn(`[json] recovered ${targetPath} from trailing invalid data`, error);
-        await writeJsonFileAtomic(targetPath, recovered.value);
-        return recovered.value;
-      }
-      throw error;
-    }
-  } catch {
-    return fallback;
-  }
-}
-
-function parseFirstJsonObject(raw) {
-  let inString = false;
-  let escaped = false;
-  let depth = 0;
-  let start = -1;
-
-  for (let index = 0; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === "{") {
-      if (depth === 0) start = index;
-      depth += 1;
-      continue;
-    }
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
-        try {
-          return { ok: true, value: JSON.parse(raw.slice(start, index + 1)) };
-        } catch {
-          return { ok: false, value: null };
-        }
-      }
-    }
-  }
-
-  return { ok: false, value: null };
-}
-
-async function writeJsonFileAtomic(outputPath, value) {
-  const content = `${JSON.stringify(value, null, 2)}\n`;
-  JSON.parse(content);
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  const tempPath = `${outputPath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  await writeFile(tempPath, content, "utf8");
-  await rename(tempPath, outputPath);
-}
-
-function normalizeDesktopBootstrapConfig(input) {
-  const baseUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
-  if (!baseUrl) {
-    throw new Error("baseUrl is required");
-  }
-
-  const apiBaseUrl =
-    typeof input?.apiBaseUrl === "string" && input.apiBaseUrl.trim().length > 0
-      ? input.apiBaseUrl.trim()
-      : null;
-  return {
-    baseUrl,
-    apiBaseUrl,
-    requireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN || input?.requireSignin === true,
-  };
-}
-
-async function getDesktopBootstrapConfig() {
-  const configPath = desktopBootstrapPath();
-  try {
-    const raw = await readFile(configPath, "utf8");
-    return normalizeDesktopBootstrapConfig(JSON.parse(raw));
-  } catch (error) {
-    console.warn("[desktop-bootstrap] falling back to defaults", {
-      path: configPath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {
-      baseUrl: DEFAULT_DEN_BASE_URL,
-      apiBaseUrl: null,
-      requireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
-    };
-  }
-}
-
-async function debugDesktopBootstrapConfig() {
-  const configPath = desktopBootstrapPath();
-  const result = {
-    path: configPath,
-    home: os.homedir(),
-    envHome: process.env.HOME ?? null,
-    envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
-    exists: existsSync(configPath),
-    raw: null,
-    parsed: null,
-    normalized: null,
-    error: null,
-  };
-
-  try {
-    result.raw = await readFile(configPath, "utf8");
-    result.parsed = JSON.parse(result.raw);
-    result.normalized = normalizeDesktopBootstrapConfig(result.parsed);
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
-  }
-
-  return result;
-}
-
-async function setDesktopBootstrapConfig(config) {
-  const normalized = normalizeDesktopBootstrapConfig(config);
-  const outputPath = desktopBootstrapPath();
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-  return normalized;
 }
 
 function sanitizeCommandName(raw) {
@@ -1765,257 +511,10 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
-function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
-  return {
-    version: 1,
-    workspace: workspacePath
-      ? {
-          name: path.basename(workspacePath) || "Workspace",
-          createdAt: Date.now(),
-          preset: preset || null,
-        }
-      : null,
-    authorizedRoots: workspacePath ? [workspacePath] : [],
-    reload: null,
-  };
-}
-
-async function normalizeLocalWorkspacePath(rawPath) {
-  const trimmed = String(rawPath ?? "").trim();
-  if (!trimmed) return "";
-  const expanded = trimmed === "~"
-    ? os.homedir()
-    : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
-      ? path.join(os.homedir(), trimmed.slice(2))
-      : trimmed;
-  const resolved = path.resolve(expanded);
-  return realpath(resolved).catch(() => resolved);
-}
-
-function normalizeWorkspacePathKey(value) {
-  const trimmed = String(value ?? "").trim();
-  return trimmed ? path.resolve(trimmed).replace(/\\/g, "/").toLowerCase() : "";
-}
-
-function stableWorkspaceId(value) {
-  return `ws_${createHash("sha256").update(String(value)).digest("hex").slice(0, 12)}`;
-}
-
-function localWorkspaceId(workspacePath) {
-  return stableWorkspaceId(workspacePath);
-}
-
-function remoteWorkspaceId(baseUrl, directory) {
-  const key = String(directory ?? "").trim()
-    ? `remote::${baseUrl}::${String(directory).trim()}`
-    : `remote::${baseUrl}`;
-  return stableWorkspaceId(key);
-}
-
-function parseOpenworkWorkspaceIdFromUrl(input) {
-  const raw = String(input ?? "").trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    const segments = url.pathname.split("/").filter(Boolean);
-    const workspaceIndex = segments.indexOf("workspace");
-    const legacyIndex = segments.indexOf("w");
-    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
-    return mountIndex >= 0 && segments[mountIndex + 1]
-      ? decodeURIComponent(segments[mountIndex + 1])
-      : null;
-  } catch {
-    const match = raw.match(/\/(?:workspace|w)\/([^/?#]+)/);
-    if (!match?.[1]) return null;
-    try {
-      return decodeURIComponent(match[1]);
-    } catch {
-      return match[1];
-    }
-  }
-}
-
-function stripOpenworkWorkspaceMount(input) {
-  const raw = String(input ?? "").trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    const segments = url.pathname.split("/").filter(Boolean);
-    const workspaceIndex = segments.indexOf("workspace");
-    const legacyIndex = segments.indexOf("w");
-    const mountIndex = workspaceIndex >= 0 ? workspaceIndex : legacyIndex;
-    if (mountIndex >= 0 && segments[mountIndex + 1]) {
-      const prefix = segments.slice(0, mountIndex).join("/");
-      url.pathname = prefix ? `/${prefix}` : "/";
-    }
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return raw.replace(/\/(?:workspace|w)\/[^/?#]+.*$/, "").replace(/\/+$/, "") || raw;
-  }
-}
-
-function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
-  const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
-  if (remoteWorkspaceId) return `rem_${remoteWorkspaceId}`;
-  return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
-}
-
-async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
-  const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
-  const headers = new Headers();
-  const bearerToken = String(token ?? "").trim();
-  const hostAuthToken = String(hostToken ?? "").trim();
-  if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
-  if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
-
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
-  const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
-  return selectOpenworkWorkspaceForConnection(list, directory);
-}
-
-async function readWorkspaceOpenworkConfig(workspacePath) {
-  const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-  if (!(await pathExists(openworkPath))) {
-    return defaultWorkspaceOpenworkConfig(workspacePath);
-  }
-  const raw = await readFile(openworkPath, "utf8");
-  return JSON.parse(raw);
-}
-
-async function writeWorkspaceOpenworkConfig(workspacePath, config) {
-  const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-  await mkdir(path.dirname(openworkPath), { recursive: true });
-  await writeFile(openworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  return execResult(true, `Wrote ${openworkPath}`);
-}
-
-async function readWorkspaceState() {
-  const state = await readJsonFile(workspaceStatePath(), EMPTY_WORKSPACE_LIST);
-  const selectedId =
-    typeof state?.selectedId === "string"
-      ? state.selectedId
-      : typeof state?.selectedWorkspaceId === "string"
-        ? state.selectedWorkspaceId
-        : typeof state?.activeId === "string"
-          ? state.activeId
-          : "";
-  const watchedId =
-    typeof state?.watchedId === "string"
-      ? state.watchedId
-      : typeof state?.watchedWorkspaceId === "string"
-        ? state.watchedWorkspaceId
-        : null;
-  const activeId = typeof state?.activeId === "string" ? state.activeId : null;
-  const workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
-  let changed = false;
-  const idMap = new Map();
-  const migratedWorkspaces = workspaces.map((entry) => {
-    const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});
-    if (workspace.workspaceType !== "remote" || workspace.remoteType !== "openwork") return workspace;
-
-    const remoteWorkspaceId = String(workspace.openworkWorkspaceId ?? "").trim()
-      || parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl)
-      || parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl);
-    if (!remoteWorkspaceId) return workspace;
-
-    const hostUrl = stripOpenworkWorkspaceMount(workspace.openworkHostUrl) || stripOpenworkWorkspaceMount(workspace.baseUrl);
-    const nextId = openworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
-    idMap.set(workspace.id, nextId);
-    const nextWorkspace = {
-      ...workspace,
-      id: nextId,
-      baseUrl: hostUrl,
-      openworkWorkspaceId: remoteWorkspaceId,
-      openworkHostUrl: hostUrl,
-    };
-    if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.openworkWorkspaceId !== nextWorkspace.openworkWorkspaceId || workspace.openworkHostUrl !== nextWorkspace.openworkHostUrl) {
-      changed = true;
-    }
-    return nextWorkspace;
-  });
-  // Older desktop state can contain multiple OpenWork remote entries that
-  // normalize to the same `rem_<workspaceId>` after stripping worker mounts.
-  // Collapse them here so React never receives duplicate workspace keys.
-  const workspaceIndexById = new Map();
-  const dedupedWorkspaces = [];
-  for (const workspace of migratedWorkspaces) {
-    const workspaceId = String(workspace?.id ?? "").trim();
-    if (!workspaceId) {
-      dedupedWorkspaces.push(workspace);
-      continue;
-    }
-    const existingIndex = workspaceIndexById.get(workspaceId);
-    if (existingIndex === undefined) {
-      workspaceIndexById.set(workspaceId, dedupedWorkspaces.length);
-      dedupedWorkspaces.push(workspace);
-      continue;
-    }
-    // Keep the later entry: normal mutations replace-then-push refreshed
-    // remote workspaces, and there is no persisted updatedAt to compare.
-    dedupedWorkspaces[existingIndex] = workspace;
-    changed = true;
-  }
-
-  const migratedSelectedId = idMap.get(selectedId) ?? selectedId;
-  const migratedWatchedId = watchedId ? idMap.get(watchedId) ?? watchedId : null;
-  const migratedActiveId = activeId ? idMap.get(activeId) ?? activeId : null;
-  if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
-
-  const nextState = {
-    selectedId:
-      migratedSelectedId,
-    watchedId: migratedWatchedId,
-    activeId: migratedActiveId,
-    workspaces: dedupedWorkspaces,
-  };
-
-  if (changed) {
-    return writeWorkspaceState(nextState);
-  }
-  return nextState;
-}
-
-async function writeWorkspaceState(nextState) {
-  const outputPath = workspaceStatePath();
-  const selectedId = String(nextState?.selectedId ?? nextState?.activeId ?? "");
-  const watchedId = typeof nextState?.watchedId === "string" ? nextState.watchedId : "";
-  const output = {
-    ...nextState,
-    // Tauri's Rust state uses selectedWorkspaceId/watchedWorkspaceId on disk
-    // (with activeId as a legacy alias). Keep Electron's selectedId/watchedId
-    // too so older Electron builds can still read the same file.
-    selectedId,
-    selectedWorkspaceId: selectedId,
-    watchedId: watchedId || null,
-    watchedWorkspaceId: watchedId,
-    activeId: selectedId || null,
-  };
-  await writeJsonFileAtomic(outputPath, output);
-  return output;
-}
-
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
-  listLocalWorkspacePaths: async () =>
-    (await readWorkspaceState())
-      .workspaces
-      .filter((entry) => entry?.workspaceType !== "remote")
-      .map((entry) => String(entry?.path ?? "").trim())
-      .filter(Boolean),
+  listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
 });
 
 let runtimeDisposedForQuit = false;
@@ -2079,7 +578,7 @@ function assertOpenworkServerReady(info) {
 }
 
 async function bootRuntimeForSelectedWorkspace() {
-  const list = await readWorkspaceState();
+  const list = await workspaceStore.readWorkspaceState();
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
     ? list.workspaces.find((entry) => entry?.id === selectedId)
@@ -2127,7 +626,7 @@ async function bootRuntimeForSelectedWorkspace() {
     });
     bootWorkspace = fallback;
     bootWorkspaceRoot = fallbackRoot;
-    await writeWorkspaceState({
+    await workspaceStore.writeWorkspaceState({
       ...list,
       selectedId: String(fallback.id ?? ""),
       watchedId: String(fallback.id ?? ""),
@@ -2149,35 +648,6 @@ function ensureRuntimeBootstrap() {
     }));
   }
   return runtimeBootstrapPromise;
-}
-
-function normalizeWorkspaceEntry(input) {
-  return {
-    id: String(input.id),
-    name: String(input.name ?? "Workspace"),
-    path: String(input.path ?? ""),
-    preset: String(input.preset ?? "starter"),
-    workspaceType: input.workspaceType === "remote" ? "remote" : "local",
-    remoteType: input.remoteType ?? null,
-    baseUrl: input.baseUrl ?? null,
-    directory: input.directory ?? null,
-    displayName: input.displayName ?? null,
-    openworkHostUrl: input.openworkHostUrl ?? null,
-    openworkToken: input.openworkToken ?? null,
-    openworkClientToken: input.openworkClientToken ?? null,
-    openworkHostToken: input.openworkHostToken ?? null,
-    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
-    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
-    sandboxBackend: input.sandboxBackend ?? null,
-    sandboxRunId: input.sandboxRunId ?? null,
-    sandboxContainerName: input.sandboxContainerName ?? null,
-  };
-}
-
-async function mutateWorkspaceState(mutator) {
-  const current = await readWorkspaceState();
-  const next = await mutator({ ...current, workspaces: [...current.workspaces] });
-  return writeWorkspaceState(next);
 }
 
 function resolveOpencodeConfigPath(scope, projectDir) {
@@ -2459,395 +929,197 @@ function applyNativeTheme(mode) {
   return true;
 }
 
-async function handleDesktopInvoke(event, command, ...args) {
-  switch (command) {
-    case "workspaceBootstrap":
-      return readWorkspaceState();
-    case "workspaceSetSelected":
-      return mutateWorkspaceState((state) => {
-        const workspaceId = typeof args[0] === "string" ? args[0] : "";
-        state.selectedId = workspaceId;
-        state.activeId = workspaceId || null;
-        return state;
-      });
-    case "workspaceSetRuntimeActive":
-      return mutateWorkspaceState((state) => {
-        state.watchedId = typeof args[0] === "string" && args[0].trim() ? args[0] : null;
-        return state;
-      });
-    case "workspaceCreate": {
-      const input = args[0] ?? {};
-      const rawFolderPath = String(input.folderPath ?? "").trim();
-      if (!rawFolderPath) throw new Error("folderPath is required");
-      const folderPath = await normalizeLocalWorkspacePath(rawFolderPath);
-      await mkdir(folderPath, { recursive: true });
-      const preset = String(input.preset ?? "starter");
-      const workspace = normalizeWorkspaceEntry({
-        id: localWorkspaceId(folderPath),
-        name: String(input.name ?? (path.basename(folderPath) || "Workspace")),
-        displayName: String(input.name ?? (path.basename(folderPath) || "Workspace")),
-        path: folderPath,
-        preset,
-        workspaceType: "local",
-      });
-      await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-      await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
-
-      return mutateWorkspaceState((state) => {
-        const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
-        state.workspaces = state.workspaces.filter(
-          (entry) => entry.id !== workspace.id && normalizeWorkspacePathKey(entry.path) !== workspacePathKey,
-        );
-        state.workspaces.push(workspace);
-        state.selectedId = workspace.id;
-        state.activeId = workspace.id;
-        state.watchedId = workspace.id;
-        return state;
-      });
-    }
-    case "workspaceCreateRemote": {
-      const input = args[0] ?? {};
-      const baseUrl = String(input.baseUrl ?? "").trim();
-      if (!baseUrl) throw new Error("baseUrl is required");
-      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-        throw new Error("baseUrl must start with http:// or https://");
-      }
-      const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
-      const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
-      const rawOpenworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
-        ? input.openworkHostUrl.trim()
-        : null;
-      const openworkHostUrl = remoteType === "openwork"
-        ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
-        : rawOpenworkHostUrl;
-      const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
-        ? input.openworkWorkspaceId.trim()
-        : remoteType === "openwork"
-          ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
-          : null;
-      let resolvedOpenworkWorkspaceId = openworkWorkspaceId;
-      let resolvedOpenworkWorkspaceName = input.openworkWorkspaceName ?? null;
-      if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
-        const discovered = await discoverOpenworkWorkspace({
-          hostUrl: openworkHostUrl ?? baseUrl,
-          token: input.openworkToken,
-          hostToken: input.openworkHostToken,
-          directory,
-        });
-        if (!discovered?.id) {
-          throw new Error(
-            directory
-              ? `OpenWork server has no workspace matching ${directory}.`
-              : "OpenWork server returned no workspaces.",
-          );
-        }
-        resolvedOpenworkWorkspaceId = String(discovered.id).trim();
-        resolvedOpenworkWorkspaceName = openworkWorkspaceDisplayName(discovered);
-      }
-      const id = remoteType === "openwork"
-        ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, resolvedOpenworkWorkspaceId)
-        : remoteWorkspaceId(baseUrl, directory);
-      const workspace = normalizeWorkspaceEntry({
-        id,
-        name: String(input.displayName ?? resolvedOpenworkWorkspaceName ?? "Remote workspace"),
-        displayName: input.displayName ?? null,
-        path: directory ?? "",
-        preset: "remote",
-        workspaceType: "remote",
-        remoteType,
-        baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
-        directory,
-        openworkHostUrl,
-        openworkToken: input.openworkToken ?? null,
-        openworkClientToken: input.openworkClientToken ?? null,
-        openworkHostToken: input.openworkHostToken ?? null,
-        openworkWorkspaceId: resolvedOpenworkWorkspaceId,
-        openworkWorkspaceName: resolvedOpenworkWorkspaceName,
-        sandboxBackend: input.sandboxBackend ?? null,
-        sandboxRunId: input.sandboxRunId ?? null,
-        sandboxContainerName: input.sandboxContainerName ?? null,
-      });
-      return mutateWorkspaceState((state) => {
-        state.workspaces = state.workspaces.filter((entry) => entry.id !== workspace.id);
-        state.workspaces.push(workspace);
-        state.selectedId = workspace.id;
-        state.activeId = workspace.id;
-        return state;
-      });
-    }
-    case "workspaceUpdateRemote": {
-      const input = args[0] ?? {};
-      const workspaceId = String(input.workspaceId ?? "").trim();
-      if (!workspaceId) throw new Error("workspaceId is required");
-      const { workspaceId: _workspaceId, ...patch } = input;
-      return mutateWorkspaceState(async (state) => {
-        const existing = state.workspaces.find((entry) => entry.id === workspaceId);
-        if (!existing) return state;
-
-        let nextWorkspace = { ...existing, ...patch };
-        const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "openwork";
-        if (nextRemoteType === "openwork") {
-          const rawHostUrl = typeof nextWorkspace.openworkHostUrl === "string" && nextWorkspace.openworkHostUrl.trim()
-            ? nextWorkspace.openworkHostUrl.trim()
-            : null;
-          const nextBaseUrl = String(nextWorkspace.baseUrl ?? "").trim();
-          const hostUrl = stripOpenworkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
-          const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
-            ? nextWorkspace.directory.trim()
-            : null;
-          const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
-          let remoteWorkspaceId = parsedWorkspaceId || (
-            typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
-              ? nextWorkspace.openworkWorkspaceId.trim()
-              : null
-          );
-          let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
-          if (!remoteWorkspaceId) {
-            const discovered = await discoverOpenworkWorkspace({
-              hostUrl: hostUrl ?? nextBaseUrl,
-              token: nextWorkspace.openworkToken,
-              hostToken: nextWorkspace.openworkHostToken,
-              directory,
-            });
-            if (!discovered?.id) {
-              throw new Error(
-                directory
-                  ? `OpenWork server has no workspace matching ${directory}.`
-                  : "OpenWork server returned no workspaces.",
-              );
-            }
-            remoteWorkspaceId = String(discovered.id).trim();
-            remoteWorkspaceName = openworkWorkspaceDisplayName(discovered);
-          }
-          const nextId = openworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
-          nextWorkspace = normalizeWorkspaceEntry({
-            ...nextWorkspace,
-            id: nextId,
-            baseUrl: hostUrl ?? nextBaseUrl,
-            openworkHostUrl: hostUrl,
-            directory,
-            remoteType: "openwork",
-            openworkWorkspaceId: remoteWorkspaceId,
-            openworkWorkspaceName: remoteWorkspaceName,
-          });
-          if (nextId !== workspaceId) {
-            if (state.selectedId === workspaceId) state.selectedId = nextId;
-            if (state.activeId === workspaceId) state.activeId = nextId;
-            if (state.watchedId === workspaceId) state.watchedId = nextId;
-          }
-        }
-
-        state.workspaces = state.workspaces.map((entry) =>
-          entry.id === workspaceId ? nextWorkspace : entry,
-        );
-        return state;
-      });
-    }
-    case "workspaceUpdateDisplayName": {
-      const input = args[0] ?? {};
-      const workspaceId = String(input.workspaceId ?? "").trim();
-      if (!workspaceId) throw new Error("workspaceId is required");
-      return mutateWorkspaceState((state) => {
-        state.workspaces = state.workspaces.map((entry) =>
-          entry.id === workspaceId ? { ...entry, displayName: input.displayName ?? null } : entry,
-        );
-        return state;
-      });
-    }
-    case "workspaceForget": {
-      const workspaceId = String(args[0] ?? "").trim();
-      if (!workspaceId) throw new Error("workspaceId is required");
-      return mutateWorkspaceState((state) => {
-        state.workspaces = state.workspaces.filter((entry) => entry.id !== workspaceId);
-        if (state.selectedId === workspaceId) state.selectedId = "";
-        if (state.activeId === workspaceId) state.activeId = null;
-        if (state.watchedId === workspaceId) state.watchedId = null;
-        return state;
-      });
-    }
-    case "workspaceAddAuthorizedRoot": {
-      const input = args[0] ?? {};
-      const workspacePath = String(input.workspacePath ?? "").trim();
-      const authorizedRoot = String(input.folderPath ?? input.authorizedRoot ?? "").trim();
-      if (!workspacePath || !authorizedRoot) {
-        throw new Error("workspacePath and folderPath are required");
-      }
-      const config = await readWorkspaceOpenworkConfig(workspacePath);
-      if (!Array.isArray(config.authorizedRoots)) {
-        config.authorizedRoots = [];
-      }
-      if (!config.authorizedRoots.includes(authorizedRoot)) {
-        config.authorizedRoots.push(authorizedRoot);
-      }
-      return writeWorkspaceOpenworkConfig(workspacePath, config);
-    }
-    case "workspaceOpenworkRead":
-      return readWorkspaceOpenworkConfig(String(args[0]?.workspacePath ?? "").trim());
-    case "workspaceOpenworkWrite":
-      return writeWorkspaceOpenworkConfig(
+// Desktop IPC command registry. Every command invokable from the renderer's
+// desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
+// entry here; handlers receive the ipcMain event followed by the renderer
+// arguments. The @type below asserts this registry against the shared
+// DesktopCommandMap contract (packages/types/src/desktop-ipc.ts): a missing,
+// extra, or renamed command fails `pnpm --filter @openwork/desktop
+// typecheck:electron`.
+/** @type {import("@openwork/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
+const desktopCommandHandlers = {
+  "workspaceBootstrap": async (event, ...args) => {
+      return workspaceStore.readWorkspaceState();
+  },
+  "workspaceSetSelected": async (event, ...args) => {
+      return workspaceStore.setSelectedWorkspace(typeof args[0] === "string" ? args[0] : "");
+  },
+  "workspaceSetRuntimeActive": async (event, ...args) => {
+      return workspaceStore.setRuntimeActiveWorkspace(typeof args[0] === "string" && args[0].trim() ? args[0] : null);
+  },
+  "workspaceCreate": async (event, ...args) => {
+      return workspaceStore.createWorkspace(args[0] ?? {});
+  },
+  "workspaceCreateRemote": async (event, ...args) => {
+      return workspaceStore.createRemoteWorkspace(args[0] ?? {});
+  },
+  "workspaceUpdateRemote": async (event, ...args) => {
+      return workspaceStore.updateRemoteWorkspace(args[0] ?? {});
+  },
+  "workspaceUpdateDisplayName": async (event, ...args) => {
+      return workspaceStore.updateWorkspaceDisplayName(args[0] ?? {});
+  },
+  "workspaceForget": async (event, ...args) => {
+      return workspaceStore.forgetWorkspace(String(args[0] ?? "").trim());
+  },
+  "workspaceAddAuthorizedRoot": async (event, ...args) => {
+      return workspaceStore.addAuthorizedRoot(args[0] ?? {});
+  },
+  "workspaceOpenworkRead": async (event, ...args) => {
+      return workspaceStore.readWorkspaceOpenworkConfig(String(args[0]?.workspacePath ?? "").trim());
+  },
+  "workspaceOpenworkWrite": async (event, ...args) => {
+      return workspaceStore.writeWorkspaceOpenworkConfig(
         String(args[0]?.workspacePath ?? "").trim(),
-        args[0]?.config ?? defaultWorkspaceOpenworkConfig(""),
+        args[0]?.config ?? workspaceStore.defaultWorkspaceOpenworkConfig(""),
       );
-    case "workspaceExportConfig": {
-      const input = args[0] ?? {};
-      const workspaceId = String(input.workspaceId ?? "").trim();
-      const outputPath = String(input.outputPath ?? "").trim();
-      if (!workspaceId) throw new Error("workspaceId is required");
-      if (!outputPath) throw new Error("outputPath is required");
-      const state = await readWorkspaceState();
-      const workspace = state.workspaces.find((entry) => entry.id === workspaceId);
-      if (!workspace) throw new Error("Unknown workspaceId");
-      return exportWorkspaceConfig({ workspace, outputPath });
-    }
-    case "workspaceImportConfig": {
-      const input = args[0] ?? {};
-      const archivePath = String(input.archivePath ?? "").trim();
-      const targetDirRaw = String(input.targetDir ?? "").trim();
-      if (!archivePath) throw new Error("archivePath is required");
-      if (!targetDirRaw) throw new Error("targetDir is required");
-      const targetDir = await normalizeLocalWorkspacePath(targetDirRaw);
-      const imported = await importWorkspaceConfig({
-        archivePath,
-        targetDir,
-        name: input.name ?? null,
-      });
-      const workspace = normalizeWorkspaceEntry({
-        id: localWorkspaceId(targetDir),
-        name: imported.workspaceName,
-        displayName: null,
-        path: targetDir,
-        preset: imported.preset,
-        workspaceType: "local",
-      });
-      return mutateWorkspaceState((state) => {
-        const workspacePathKey = normalizeWorkspacePathKey(workspace.path);
-        state.workspaces = state.workspaces.filter(
-          (entry) => entry.id !== workspace.id && normalizeWorkspacePathKey(entry.path) !== workspacePathKey,
-        );
-        state.workspaces.push(workspace);
-        state.selectedId = workspace.id;
-        state.activeId = workspace.id;
-        state.watchedId = workspace.id;
-        return state;
-      });
-    }
-    case "opencodeCommandList":
+  },
+  "workspaceExportConfig": async (event, ...args) => {
+      return workspaceStore.exportConfig(args[0] ?? {});
+  },
+  "workspaceImportConfig": async (event, ...args) => {
+      return workspaceStore.importConfig(args[0] ?? {});
+  },
+  "opencodeCommandList": async (event, ...args) => {
       return listCommandNames(String(args[0]?.scope ?? "").trim(), String(args[0]?.projectDir ?? "").trim());
-    case "opencodeCommandWrite":
+  },
+  "opencodeCommandWrite": async (event, ...args) => {
       return writeCommandFile(
         String(args[0]?.scope ?? "").trim(),
         String(args[0]?.projectDir ?? "").trim(),
         args[0]?.command ?? {},
       );
-    case "opencodeCommandDelete":
+  },
+  "opencodeCommandDelete": async (event, ...args) => {
       return deleteCommandFile(
         String(args[0]?.scope ?? "").trim(),
         String(args[0]?.projectDir ?? "").trim(),
         String(args[0]?.name ?? "").trim(),
       );
-    case "engineStart": {
+  },
+  "engineStart": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const options = args[1] ?? {};
       return runtimeManager.engineStart(projectDir, options);
-    }
-    case "prepareFreshRuntime":
+  },
+  "prepareFreshRuntime": async (event, ...args) => {
       return runtimeManager.prepareFreshRuntime();
-    case "runtimeBootstrap":
+  },
+  "runtimeBootstrap": async (event, ...args) => {
       return ensureRuntimeBootstrap();
-    case "runtimeStatus":
+  },
+  "runtimeStatus": async (event, ...args) => {
       return runtimeManager.runtimeStatus();
-    case "engineStop":
+  },
+  "engineStop": async (event, ...args) => {
       return runtimeManager.engineStop();
-    case "engineRestart":
+  },
+  "engineRestart": async (event, ...args) => {
       return runtimeManager.engineRestart(args[0] ?? {});
-    case "engineInfo":
+  },
+  "engineInfo": async (event, ...args) => {
       return runtimeManager.engineInfo();
-    case "engineDoctor":
+  },
+  "engineDoctor": async (event, ...args) => {
       return engineDoctor(args[0]);
-    case "engineInstall":
+  },
+  "engineInstall": async (event, ...args) => {
       return runtimeManager.engineInstall();
-    case "orchestratorStatus": {
+  },
+  "orchestratorStatus": async (event, ...args) => {
       return runtimeManager.orchestratorStatus();
-    }
-    case "orchestratorWorkspaceActivate": {
+  },
+  "orchestratorWorkspaceActivate": async (event, ...args) => {
       return runtimeManager.orchestratorWorkspaceActivate(args[0] ?? {});
-    }
-    case "orchestratorInstanceDispose":
+  },
+  "orchestratorInstanceDispose": async (event, ...args) => {
       return runtimeManager.orchestratorInstanceDispose(String(args[0] ?? "").trim());
-    case "appBuildInfo":
+  },
+  "appBuildInfo": async (event, ...args) => {
       return {
         version: app.getVersion(),
         gitSha: process.env.OPENWORK_GIT_SHA ?? null,
         buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
         openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
       };
-    case "getUiControlBridgeInfo":
+  },
+  "getUiControlBridgeInfo": async (event, ...args) => {
       try {
         const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
         return JSON.parse(raw);
       } catch {
         return null;
       }
-    case "getOpenworkUiMcpCommand": {
+  },
+  "getOpenworkUiMcpCommand": async (event, ...args) => {
       if (process.env.OPENWORK_DEV_MODE === "1") {
         return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
       }
       return ["npx", "-y", "openwork-ui-mcp"];
-    }
-    case "getComputerUseMcpCommand": {
+  },
+  "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
-    }
-    case "checkComputerUsePermissions": {
+  },
+  "checkComputerUsePermissions": async (event, ...args) => {
       // Spawn --check → fresh TCC read → always accurate.
       return checkComputerUsePermissions();
-    }
-    case "listRunningApps": {
+  },
+  "listRunningApps": async (event, ...args) => {
       // Running regular macOS apps for composer @App mentions.
       return listRunningApps();
-    }
-    case "openComputerUsePermissionSetup": {
+  },
+  "openComputerUsePermissionSetup": async (event, ...args) => {
       // Open the GUI app. Returns immediately — React shows "verify" CTA.
       await openComputerUseSetupApp();
       // Return a fresh check so the UI shows the current state.
       return checkComputerUsePermissions();
-    }
-    case "openComputerUsePermissionSettings": {
+  },
+  "openComputerUsePermissionSettings": async (event, ...args) => {
       // Legacy: open the setup app (same as above).
       await openComputerUseSetupApp();
       return checkComputerUsePermissions();
-    }
-    case "getOpenworkUiMcpEnvironment": {
+  },
+  "getOpenworkUiMcpEnvironment": async (event, ...args) => {
       return {
         OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
       };
-    }
-    case "getDesktopBootstrapConfig":
-      return getDesktopBootstrapConfig();
-    case "debugDesktopBootstrapConfig":
-      return debugDesktopBootstrapConfig();
-    case "setDesktopBootstrapConfig":
-      return setDesktopBootstrapConfig(args[0] ?? {});
-    case "nukeOpenworkAndOpencodeConfigAndExit": {
+  },
+  "getDesktopBootstrapConfig": async (event, ...args) => {
+      return workspaceStore.getDesktopBootstrapConfig();
+  },
+  "debugDesktopBootstrapConfig": async (event, ...args) => {
+      return workspaceStore.debugDesktopBootstrapConfig();
+  },
+  "setDesktopBootstrapConfig": async (event, ...args) => {
+      return workspaceStore.setDesktopBootstrapConfig(args[0] ?? {});
+  },
+  "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
       await rm(app.getPath("userData"), { recursive: true, force: true });
       app.exit(0);
       return undefined;
-    }
-    case "orchestratorStartDetached": {
+  },
+  "orchestratorStartDetached": async (event, ...args) => {
       return runtimeManager.orchestratorStartDetached(args[0] ?? {});
-    }
-    case "sandboxDoctor":
+  },
+  "sandboxDoctor": async (event, ...args) => {
       return runtimeManager.sandboxDoctor();
-    case "sandboxStop":
+  },
+  "sandboxStop": async (event, ...args) => {
       return runtimeManager.sandboxStop(String(args[0] ?? "").trim());
-    case "sandboxCleanupOpenworkContainers":
+  },
+  "sandboxCleanupOpenworkContainers": async (event, ...args) => {
       return runtimeManager.sandboxCleanupOpenworkContainers();
-    case "sandboxDebugProbe":
+  },
+  "sandboxDebugProbe": async (event, ...args) => {
       return runtimeManager.sandboxDebugProbe();
-    case "openworkServerInfo":
+  },
+  "openworkServerInfo": async (event, ...args) => {
       return runtimeManager.openworkServerInfo();
-    case "openworkServerRestart":
+  },
+  "openworkServerRestart": async (event, ...args) => {
       return runtimeManager.openworkServerRestart(args[0] ?? {});
-    case "pickDirectory": {
+  },
+  "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
       /** @type {import("electron").OpenDialogOptions["properties"]} */
       const properties = options.multiple
@@ -2860,8 +1132,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       });
       if (result.canceled) return null;
       return options.multiple ? result.filePaths : (result.filePaths[0] ?? null);
-    }
-    case "pickFile": {
+  },
+  "pickFile": async (event, ...args) => {
       const options = args[0] ?? {};
       /** @type {import("electron").OpenDialogOptions["properties"]} */
       const properties = options.multiple ? ["openFile", "multiSelections"] : ["openFile"];
@@ -2873,8 +1145,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       });
       if (result.canceled) return null;
       return options.multiple ? result.filePaths : (result.filePaths[0] ?? null);
-    }
-    case "saveFile": {
+  },
+  "saveFile": async (event, ...args) => {
       const options = args[0] ?? {};
       const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
         title: options.title,
@@ -2882,8 +1154,8 @@ async function handleDesktopInvoke(event, command, ...args) {
         filters: options.filters,
       });
       return result.canceled ? null : (result.filePath ?? null);
-    }
-    case "importSkill": {
+  },
+  "importSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const sourceDir = String(args[1] ?? "").trim();
       const overwrite = args[2]?.overwrite === true;
@@ -2901,8 +1173,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       await cp(sourceDir, destination, { recursive: true });
       return execResult(true, `Imported skill to ${destination}`);
-    }
-    case "installSkillTemplate": {
+  },
+  "installSkillTemplate": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const name = validateSkillName(args[1]);
       const content = String(args[2] ?? "");
@@ -2918,18 +1190,19 @@ async function handleDesktopInvoke(event, command, ...args) {
       await mkdir(destination, { recursive: true });
       await writeFile(path.join(destination, "SKILL.md"), content, "utf8");
       return execResult(true, `Installed skill to ${destination}`);
-    }
-    case "listLocalSkills":
+  },
+  "listLocalSkills": async (event, ...args) => {
       return listLocalSkills(String(args[0] ?? "").trim());
-    case "readLocalSkill": {
+  },
+  "readLocalSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const skillPath = await findSkillFile(projectDir, args[1]);
       if (!skillPath) {
         throw new Error("Skill not found");
       }
       return { path: skillPath, content: await readFile(skillPath, "utf8") };
-    }
-    case "writeLocalSkill": {
+  },
+  "writeLocalSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const skillPath = await findSkillFile(projectDir, args[1]);
       if (!skillPath) {
@@ -2939,8 +1212,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       const next = content.endsWith("\n") ? content : `${content}\n`;
       await writeFile(skillPath, next, "utf8");
       return execResult(true, `Saved skill ${path.basename(path.dirname(skillPath))}`);
-    }
-    case "uninstallSkill": {
+  },
+  "uninstallSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const skillPath = await findSkillFile(projectDir, args[1]);
       if (!skillPath) {
@@ -2948,8 +1221,8 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       await rm(path.dirname(skillPath), { recursive: true, force: true });
       return execResult(true, `Removed skill ${args[1]}`);
-    }
-    case "updaterEnvironment": {
+  },
+  "updaterEnvironment": async (event, ...args) => {
       const executablePath = app.isPackaged ? app.getPath("exe") : process.execPath;
       return {
         supported: true,
@@ -2960,38 +1233,41 @@ async function handleDesktopInvoke(event, command, ...args) {
             ? path.resolve(executablePath, "../../..")
             : path.dirname(executablePath),
       };
-    }
-    case "readOpencodeConfig":
+  },
+  "readOpencodeConfig": async (event, ...args) => {
       return readOpencodeConfig(String(args[0] ?? "").trim(), String(args[1] ?? "").trim());
-    case "writeOpencodeConfig":
+  },
+  "writeOpencodeConfig": async (event, ...args) => {
       return writeOpencodeConfig(
         String(args[0] ?? "").trim(),
         String(args[1] ?? "").trim(),
         String(args[2] ?? ""),
       );
-    case "resetOpenworkState": {
-      await rm(workspaceStatePath(), { force: true });
-      await rm(desktopBootstrapPath(), { force: true });
-      return undefined;
-    }
-    case "resetOpencodeCache":
+  },
+  "resetOpenworkState": async (event, ...args) => {
+      return workspaceStore.resetOpenworkState();
+  },
+  "resetOpencodeCache": async (event, ...args) => {
       return { removed: [], missing: [], errors: [] };
-    case "opencodeMcpAuth":
+  },
+  "opencodeMcpAuth": async (event, ...args) => {
       return runtimeManager.opencodeMcpAuth(String(args[0] ?? "").trim(), String(args[1] ?? "").trim());
-    case "setWindowDecorations":
+  },
+  "setWindowDecorations": async (event, ...args) => {
       return undefined;
-    case "__openPath": {
+  },
+  "__openPath": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return "Path is required.";
       return shell.openPath(target);
-    }
-    case "__revealItemInDir": {
+  },
+  "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return undefined;
       shell.showItemInFolder(target);
       return undefined;
-    }
-    case "__fetch": {
+  },
+  "__fetch": async (event, ...args) => {
       const url = String(args[0] ?? "").trim();
       const init = args[1] ?? {};
       if (!url) throw new Error("URL is required.");
@@ -3008,12 +1284,14 @@ async function handleDesktopInvoke(event, command, ...args) {
         headers: Array.from(response.headers.entries()),
         body: await response.text(),
       };
-    }
-    case "__homeDir":
+  },
+  "__homeDir": async (event, ...args) => {
       return os.homedir();
-    case "__joinPath":
+  },
+  "__joinPath": async (event, ...args) => {
       return path.join(...args.map((value) => String(value ?? "")));
-    case "__setZoomFactor": {
+  },
+  "__setZoomFactor": async (event, ...args) => {
       const factor = Number(args[0]);
       const window = activeWindowFromEvent(event);
       if (!window || !Number.isFinite(factor) || factor <= 0) {
@@ -3021,158 +1299,23 @@ async function handleDesktopInvoke(event, command, ...args) {
       }
       window.webContents.setZoomFactor(factor);
       return true;
-    }
-    case "__setNativeTheme":
+  },
+  "__setNativeTheme": async (event, ...args) => {
       return applyNativeTheme(String(args[0]));
-    case "__setApplicationMenuVisible":
-      return setApplicationMenuVisible(args[0]);
-    default:
-      throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
+  },
+  "__setApplicationMenuVisible": async (event, ...args) => {
+      return applicationMenu.setVisible(args[0]);
+  },
+};
+
+async function handleDesktopInvoke(event, command, ...args) {
+  const handler = desktopCommandHandlers[command];
+  if (!handler) {
+    throw new Error(`Electron desktop bridge method is not implemented yet: ${command}`);
   }
+  return handler(event, ...args);
 }
 
-function sendJsonResponse(response, statusCode, payload) {
-  response.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-  response.end(JSON.stringify(payload));
-}
-
-function readJsonRequestBody(request) {
-  return new Promise((resolve, reject) => {
-    let raw = "";
-    request.setEncoding("utf8");
-    request.on("data", (chunk) => {
-      raw += chunk;
-      if (raw.length > 128_000) {
-        reject(new Error("Request body too large"));
-        request.destroy();
-      }
-    });
-    request.on("end", () => {
-      if (!raw.trim()) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error("Request body must be JSON"));
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function authorizedUiControlRequest(request) {
-  const auth = request.headers.authorization ?? "";
-  return auth === `Bearer ${uiControlToken}`;
-}
-
-function jsonForJavaScript(value) {
-  return JSON.stringify(JSON.stringify(value ?? {}));
-}
-
-async function evaluateOpenworkControl(expression, options = {}) {
-  const win = await createMainWindow();
-  if (options.focus === true) {
-    win.show();
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  }
-  return win.webContents.executeJavaScript(expression, true);
-}
-
-async function runOpenworkControlCommand(command, args = {}) {
-  const argsJsonLiteral = jsonForJavaScript(args);
-  if (command === "snapshot") {
-    return evaluateOpenworkControl(`(async () => {
-      const control = window.__openworkControl;
-      if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
-      control.setEnabled?.(true);
-      return { ok: true, ...control.snapshot() };
-    })()`);
-  }
-  if (command === "actions") {
-    return evaluateOpenworkControl(`(async () => {
-      const control = window.__openworkControl;
-      if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
-      control.setEnabled?.(true);
-      return { ok: true, actions: control.listActions() };
-    })()`);
-  }
-  if (command === "execute") {
-    return evaluateOpenworkControl(`(async () => {
-      const control = window.__openworkControl;
-      const input = JSON.parse(${argsJsonLiteral});
-      if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
-      if (!input || typeof input.actionId !== "string" || !input.actionId.trim()) {
-        return { ok: false, error: "Missing OpenWork actionId." };
-      }
-      control.setEnabled?.(true);
-      return control.execute(input.actionId, input.args ?? {});
-    })()`, { focus: true });
-  }
-  return { ok: false, error: `Unknown OpenWork control command: ${command}` };
-}
-
-async function startUiControlServer() {
-  if (uiControlServer) return;
-  uiControlServer = createServer(async (request, response) => {
-    try {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method === "GET" && url.pathname === "/health") {
-        sendJsonResponse(response, 200, { ok: true, app: APP_NAME, version: 1 });
-        return;
-      }
-      if (!authorizedUiControlRequest(request)) {
-        sendJsonResponse(response, 401, { ok: false, error: "Unauthorized" });
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/snapshot") {
-        sendJsonResponse(response, 200, await runOpenworkControlCommand("snapshot"));
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/actions") {
-        sendJsonResponse(response, 200, await runOpenworkControlCommand("actions"));
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/execute") {
-        sendJsonResponse(response, 200, await runOpenworkControlCommand("execute", await readJsonRequestBody(request)));
-        return;
-      }
-      sendJsonResponse(response, 404, { ok: false, error: "Not found" });
-    } catch (error) {
-      sendJsonResponse(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-  await new Promise((resolve, reject) => {
-    uiControlServer.once("error", reject);
-    uiControlServer.listen(0, "127.0.0.1", () => resolve(undefined));
-  });
-  const address = uiControlServer.address();
-  const port = typeof address === "object" && address ? address.port : null;
-  if (!port) throw new Error("Could not start OpenWork UI control bridge.");
-  uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
-  await writeFile(
-    uiControlDiscoveryPath,
-    `${JSON.stringify({ version: 1, app: APP_NAME, identifier: APP_IDENTIFIER, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
-    "utf8",
-  );
-  // Make the discovery path available to child processes (server → managed OpenCode → plugin).
-  process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
-}
-
-async function stopUiControlServer() {
-  if (uiControlDiscoveryPath) {
-    await rm(uiControlDiscoveryPath, { force: true }).catch(() => undefined);
-    uiControlDiscoveryPath = null;
-  }
-  if (!uiControlServer) return;
-  await new Promise((resolve) => uiControlServer.close(() => resolve(undefined)));
-  uiControlServer = null;
-}
 
 async function createMainWindow() {
   if (mainWindow) return mainWindow;
@@ -3205,7 +1348,7 @@ async function createMainWindow() {
       sandbox: false,
     },
   });
-  applyApplicationMenuVisibility(mainWindow);
+  applicationMenu.applyVisibility(mainWindow);
 
   if (isDevMode) {
     mainWindow.on("page-title-updated", (event) => {
@@ -3224,7 +1367,7 @@ async function createMainWindow() {
   });
 
   mainWindow.on("closed", () => {
-    destroyBrowserView();
+    browserPanel.destroy();
     mainWindow = null;
   });
 
@@ -3241,9 +1384,9 @@ async function createMainWindow() {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isMainWindowAllowedNavigation(url)) return;
+    if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     event.preventDefault();
-    routeBlockedMainWindowNavigation(url);
+    browserPanel.routeBlockedMainWindowNavigation(url);
   });
 
   // `will-navigate` does NOT fire for CDP `Page.navigate` (it behaves like
@@ -3254,13 +1397,13 @@ async function createMainWindow() {
   // reroute the URL into a built-in browser tab instead.
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
-    if (isMainWindowAllowedNavigation(url)) return;
+    if (browserPanel.isMainWindowAllowedNavigation(url)) return;
     try {
       mainWindow?.webContents.stop();
     } catch {
       // best effort — routing below still gives the user a way back
     }
-    routeBlockedMainWindowNavigation(url);
+    browserPanel.routeBlockedMainWindowNavigation(url);
   });
 
   const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
@@ -3348,62 +1491,7 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
   killTerminal(String(terminalId));
 });
 
-// ── Embedded browser IPC ────────────────────────────────────────────────
-ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
-ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
-ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
-ipcMain.handle("openwork:browser:navigate", (_event, url) => {
-  const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
-  view.webContents.loadURL(normalizeBrowserUrl(url));
-});
-ipcMain.handle("openwork:browser:back", () => {
-  const webContents = getActiveWebContents();
-  if (webContents?.canGoBack()) webContents.goBack();
-});
-ipcMain.handle("openwork:browser:forward", () => {
-  const webContents = getActiveWebContents();
-  if (webContents?.canGoForward()) webContents.goForward();
-});
-ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
-ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-  lastBrowserBounds = bounds;
-  const view = getActiveBrowserView();
-  if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-    view.setBounds(scaleRendererBounds(bounds));
-  }
-});
-ipcMain.handle("openwork:browser:state", () => browserStatePayload());
-ipcMain.handle("openwork:browser:createTab", (_event, url) => {
-  const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
-  const tab = createBrowserTab(target, { select: true });
-  return { tabId: tab.tabId };
-});
-ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
-ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
-ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
-ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
-ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
-ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
-ipcMain.on("openwork:menu-overlay:ready", (event) => {
-  if (event.sender !== menuOverlayView?.webContents) return;
-  markMenuOverlayReady(menuOverlayView);
-});
-ipcMain.on("openwork:menu-overlay:choose", (event, payload) => {
-  if (event.sender !== menuOverlayView?.webContents) return;
-  handleMenuOverlayChoice(payload);
-});
-ipcMain.on("openwork:menu-overlay:close", (event, payload) => {
-  if (event.sender !== menuOverlayView?.webContents) return;
-  if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
-  hideMenuOverlay();
-});
-ipcMain.on("openwork:menu-overlay:dismiss", (event) => {
-  if (event.sender === menuOverlayView?.webContents) return;
-  hideMenuOverlay();
-});
+browserPanel.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
@@ -3416,7 +1504,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
-    void Promise.all([disposeRuntimeBeforeQuit(), stopUiControlServer()]).finally(() => app.quit());
+    void Promise.all([disposeRuntimeBeforeQuit(), uiControlServer.stop()]).finally(() => app.quit());
   });
 
   app.on("second-instance", async (_event, argv) => {
@@ -3437,14 +1525,14 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     installMediaPermissionHandlers(session, () => mainWindow);
-    installApplicationMenu();
+    applicationMenu.install();
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
     // Electron-only filename only when the shared file is missing.
-    await migrateLegacyElectronWorkspaceStateIfNeeded();
-    await startUiControlServer().catch((error) => {
+    await workspaceStore.migrateLegacyElectronWorkspaceStateIfNeeded();
+    await uiControlServer.start().catch((error) => {
       console.warn("[ui-control] failed to start", error);
     });
     runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
