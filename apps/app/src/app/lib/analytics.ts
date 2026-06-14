@@ -14,7 +14,7 @@
  *   assert instrumentation without any analytics backend.
  */
 import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
-import { recordInspectorEvent } from "../../react-app/shell/app-inspector";
+import { recordInspectorEvent } from "./app-inspector";
 
 const ENV_POSTHOG_KEY = String(import.meta.env.VITE_OPENWORK_POSTHOG_KEY ?? "").trim();
 const ENV_POSTHOG_HOST = String(import.meta.env.VITE_OPENWORK_POSTHOG_HOST ?? "").trim();

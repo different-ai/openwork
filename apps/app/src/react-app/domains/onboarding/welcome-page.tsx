@@ -95,10 +95,10 @@ function ShowcasePanel() {
             <ShareIcon className="size-4 shrink-0 text-muted-foreground" />
             <div className="flex flex-col gap-1.5">
               <div className="text-sm font-medium text-foreground">
-              Team skill hubs
+              Shared extensions
               </div>
               <div className="text-xs leading-snug text-muted-foreground">
-              Save approved skills for your organization.
+              Share approved skills, MCPs, and plugins with your organization.
               </div>
             </div>
           </div>

@@ -16,7 +16,7 @@ Run the OpenWork UI evaluation flows against a real Electron app. Prefer a fresh
 ## Prerequisites
 
 - `daytona` CLI installed and logged in (`daytona login`)
-- Using the "Different AI" org (`daytona organization use "Different AI"`)
+- Using the right Daytona organization for your workspace (`daytona organization use "<org-name>"`)
 - The `.devcontainer/` files exist in the repo
 - Optional provider coverage: reusable Daytona volume `openwork-eval-secrets`
   populated with `.env` files using `bash .devcontainer/setup-daytona-secrets-volume.sh .newtoken`
@@ -38,7 +38,7 @@ Use these Daytona skills when an eval touches a specific area:
 Use the repo helper unless you need to debug a specific Daytona step manually:
 
 ```bash
-daytona organization use "Different AI"
+daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh <branch-or-commit>
 ```
 

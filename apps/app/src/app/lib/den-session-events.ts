@@ -1,4 +1,4 @@
-import type { DenSettings, DenUser } from "./den";
+import type { DenSettings, DenUser } from "./den-types";
 
 export const denSessionUpdatedEvent = "openwork-den-session-updated";
 export const denSettingsChangedEvent = "openwork-den-settings-changed";

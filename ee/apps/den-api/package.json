@@ -35,6 +35,7 @@
     "dotenv": "^16.4.5",
     "hono": "^4.7.2",
     "hono-openapi": "^1.3.0",
+    "jsonc-parser": "^3.2.1",
     "nanoid": "^5.1.11",
     "openapi-types": "^12.1.3",
     "stripe": "^22.1.1",

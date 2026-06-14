@@ -3,6 +3,7 @@ import type { FilePart, Part, PermissionRequest, QuestionRequest, Session, Sessi
 
 import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
+import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
@@ -583,6 +584,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         captureAnalyticsEvent("task_run_errored", {
           duration_ms: Date.now() - runStartedAt,
         });
+        trackTaskFailed(sessionId, Date.now() - runStartedAt);
       }
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
       if (isTrackedSession(entry, sessionId)) {
@@ -831,6 +833,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       captureAnalyticsEvent("task_run_completed", {
         duration_ms: Date.now() - runStartedAt,
       });
+      trackTaskCompleted(props.sessionID, Date.now() - runStartedAt);
     }
     useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
     const tracked = isTrackedSession(entry, props.sessionID);

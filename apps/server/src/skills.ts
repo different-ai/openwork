@@ -1,6 +1,6 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
@@ -205,11 +205,20 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
   const trimmed = name.trim();
   validateSkillName(trimmed);
   const baseDir = projectSkillsDir(workspaceRoot);
-  const skillDir = join(baseDir, trimmed);
-  const skillPath = join(skillDir, "SKILL.md");
-  if (!(await exists(skillPath))) {
+  const flatDir = join(baseDir, trimmed);
+  if (await exists(join(flatDir, "SKILL.md"))) {
+    await rm(flatDir, { recursive: true, force: true });
+    return { path: flatDir };
+  }
+  // Nested layout: skills/<domain>/<name>/SKILL.md (e.g. skills installed by
+  // marketplace plugin bundles are namespaced under a plugin folder). Listing
+  // supports this layout, so deletion must resolve it the same way.
+  const items = await listSkills(workspaceRoot, false);
+  const item = items.find((skill) => skill.name === trimmed && skill.scope === "project");
+  if (!item) {
     throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
   }
+  const skillDir = dirname(item.path);
   await rm(skillDir, { recursive: true, force: true });
   return { path: skillDir };
 }

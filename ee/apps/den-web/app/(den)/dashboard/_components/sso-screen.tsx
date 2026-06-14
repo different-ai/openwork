@@ -7,6 +7,7 @@ import { DenButton } from "../../_components/ui/button";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not configured";
@@ -245,6 +246,7 @@ export function SsoScreen() {
         <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only organization owners and admins can manage SSO.</div>
       ) : (
         <>
+          {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
           {error ? <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">{error}</div> : null}
 
           <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">

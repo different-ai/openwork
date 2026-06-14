@@ -1,6 +1,6 @@
 {
   "name": "openwork-server",
-  "version": "0.16.2",
+  "version": "0.16.4",
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {
@@ -55,6 +55,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@openwork/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.2",

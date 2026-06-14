@@ -1,3 +1,5 @@
+import type { WorkspaceWire } from "@openwork/types/workspace";
+
 export type WorkspaceType = "local" | "remote";
 
 export type RemoteType = "opencode" | "openwork";
@@ -59,6 +61,14 @@ export interface WorkspaceInfo {
     password?: string;
   };
 }
+
+// Compile-time contract tripwires against the shared wire shape consumed by
+// apps/app (packages/types/src/workspace.ts). The first check rejects fields
+// whose values no longer fit the wire contract; the second rejects fields the
+// contract does not know about. Both are erased at build time.
+type Extends<A extends B, B> = A;
+type _WorkspaceInfoFitsWire = Extends<WorkspaceInfo, WorkspaceWire>;
+type _WorkspaceInfoKeysKnown = Extends<keyof WorkspaceInfo, keyof WorkspaceWire>;
 
 export interface OpencodeConfigFile {
   path: string;

@@ -13,6 +13,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
 import {
   jsonValidator,
   paramValidator,
@@ -27,7 +28,6 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema, memberHasRole } from "./shared.js"
 
-type JsonRecord = Record<string, unknown>
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -55,27 +55,13 @@ const llmProviderListQuerySchema = z.object({
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),
 })
 
-const customModelSchema = z.object({
-  id: z.string().trim().min(1).max(255),
-  name: z.string().trim().min(1).max(255),
-}).passthrough()
-
-const customProviderSchema = z.object({
-  id: z.string().trim().min(1).max(255),
-  name: z.string().trim().min(1).max(255),
-  npm: z.string().trim().min(1).max(255),
-  env: z.array(z.string().trim().min(1).max(255)).min(1),
-  doc: z.string().trim().min(1).max(2048),
-  api: z.string().trim().min(1).max(2048).optional(),
-  models: z.array(customModelSchema).min(1),
-}).passthrough()
-
 const llmProviderWriteSchema = z.object({
   name: z.string().trim().min(1).max(255),
   source: z.enum(["models_dev", "custom"]),
   providerId: z.string().trim().min(1).max(255).optional(),
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
   customConfigText: z.string().trim().min(1).optional(),
+  customConfig: z.unknown().optional(),
   apiKey: z.string().trim().max(65535).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
@@ -98,7 +84,7 @@ const llmProviderWriteSchema = z.object({
     }
   }
 
-  if (value.source === "custom" && !value.customConfigText) {
+  if (value.source === "custom" && !value.customConfigText && value.customConfig === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["customConfigText"],
@@ -306,35 +292,26 @@ async function normalizeLlmProviderInput(input: z.infer<typeof llmProviderWriteS
     }
   }
 
-  let parsed: unknown
   try {
-    parsed = JSON.parse(input.customConfigText ?? "")
-  } catch {
-    throw createFailure(400, "invalid_custom_provider_config", "Custom provider config must be valid JSON.")
-  }
+    const customProvider = normalizeCustomProviderConfig({
+      customConfigText: input.customConfigText,
+      customConfig: input.customConfig,
+    })
 
-  const customProvider = customProviderSchema.safeParse(parsed)
-  if (!customProvider.success) {
-    throw createFailure(
-      400,
-      "invalid_custom_provider_config",
-      customProvider.error.issues[0]?.message ?? "Custom provider config is invalid.",
-    )
-  }
+    return {
+      source: input.source,
+      providerId: customProvider.providerId,
+      name: input.name,
+      providerConfig: customProvider.providerConfig,
+      models: customProvider.models,
+      apiKey: input.apiKey?.trim() || null,
+    }
+  } catch (error) {
+    if (error instanceof CustomProviderConfigError) {
+      throw createFailure(400, "invalid_custom_provider_config", error.message)
+    }
 
-  const { models, ...providerConfig } = customProvider.data
-
-  return {
-    source: input.source,
-    providerId: customProvider.data.id,
-    name: input.name,
-    providerConfig: providerConfig as JsonRecord,
-    models: models.map((model) => ({
-      id: model.id,
-      name: model.name,
-      config: model as JsonRecord,
-    })),
-    apiKey: input.apiKey?.trim() || null,
+    throw error
   }
 }
 
@@ -696,7 +673,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Create organization LLM provider",
-      description: "Creates a new organization-scoped LLM provider from either a models.dev provider template or a pasted custom configuration.",
+      description: "Creates a new organization-scoped LLM provider from either a models.dev provider template, pasted JSON/JSONC custom configuration, or MCP-supplied customConfig object.",
       responses: {
         201: jsonResponse("Organization LLM provider created successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider creation request was invalid.", invalidRequestSchema),
@@ -807,7 +784,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Update organization LLM provider",
-      description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants.",
+      description: "Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants. Custom providers accept JSON/JSONC text or an MCP-supplied customConfig object.",
       responses: {
         200: jsonResponse("Organization LLM provider updated successfully.", llmProviderResponseSchema),
         400: jsonResponse("The provider update request was invalid.", invalidRequestSchema),

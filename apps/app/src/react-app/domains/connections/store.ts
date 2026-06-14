@@ -340,7 +340,7 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses, engineSync };
   };
 
-  const resolveDesktopCommand = async (commandName: string, fallbackOnError = true) => {
+  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getOpenworkUiMcpCommand", fallbackOnError = true) => {
     try {
       const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.(commandName);
       if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
@@ -373,7 +373,7 @@ export function createConnectionsStore(options: {
   const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
     if (entry.serverName !== "openwork-ui") return undefined;
     try {
-      const environment = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      const environment = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
       if (environment && typeof environment === "object" && !Array.isArray(environment)) {
         return Object.fromEntries(
           Object.entries(environment).filter((entry): entry is [string, string] =>
@@ -618,7 +618,7 @@ export function createConnectionsStore(options: {
       let resolvedHeaders: Record<string, string> | undefined;
       if (!resolvedUrl && entry.serverName === "openwork-ui") {
         try {
-          const bridgeInfo = await (window as any).__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          const bridgeInfo = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
           if (bridgeInfo?.baseUrl) {
             resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
             if (bridgeInfo.token) {
@@ -630,17 +630,22 @@ export function createConnectionsStore(options: {
         }
       }
 
-      // Signed-in cloud users connect the Den MCP with a first-party token —
+      // Signed-in cloud users connect the Den MCPs with a first-party token —
       // no browser OAuth round-trip. Signed-out users fall back to OAuth.
-      if (entry.serverName === "openwork-cloud") {
+      // The same minted token works for both /mcp (openwork-cloud) and
+      // /mcp/admin (openwork-admin); den-api enforces the platform-admin
+      // allowlist on the admin endpoint server-side.
+      if (entry.serverName === "openwork-cloud" || entry.serverName === "openwork-admin") {
         try {
           const minted = await mintCloudControlMcpToken();
           if (minted) {
-            // Never trust `minted.resource` verbatim: older den-api builds
-            // mint the bare web-app origin (https://app.openworklabs.com/mcp)
-            // where MCP 404s. Heal it, falling back to the entry's
-            // bootstrap-derived URL.
-            resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+            if (entry.serverName === "openwork-cloud") {
+              // Never trust `minted.resource` verbatim: older den-api builds
+              // mint the bare web-app origin (https://app.openworklabs.com/mcp)
+              // where MCP 404s. Heal it, falling back to the entry's
+              // bootstrap-derived URL.
+              resolvedUrl = resolveCloudMcpResourceUrl(minted.resource) ?? resolvedUrl;
+            }
             resolvedHeaders = { Authorization: `Bearer ${minted.token}` };
           }
         } catch {

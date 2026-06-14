@@ -16,8 +16,9 @@ function resolveDrizzleDbCredentials() {
   const host = process.env.DATABASE_HOST?.trim()
   const user = process.env.DATABASE_USERNAME?.trim()
   const password = process.env.DATABASE_PASSWORD ?? ""
+  const database = process.env.DATABASE_NAME?.trim()
 
-  if (!host || !user) {
+  if (!host || !user || !database) {
     if (isGenerateCommand()) {
       return {
         host: "127.0.0.1",
@@ -26,13 +27,16 @@ function resolveDrizzleDbCredentials() {
       }
     }
 
-    throw new Error("Provide DATABASE_URL for mysql or DATABASE_HOST/DATABASE_USERNAME/DATABASE_PASSWORD for planetscale")
+    throw new Error("Provide DATABASE_URL for mysql or DATABASE_HOST/DATABASE_USERNAME/DATABASE_PASSWORD/DATABASE_NAME for planetscale")
   }
 
   return {
     host,
     user,
     password,
+    database,
+    // PlanetScale requires TLS for MySQL-protocol connections.
+    ssl: { rejectUnauthorized: true },
   }
 }
 
