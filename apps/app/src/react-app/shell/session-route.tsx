@@ -102,6 +102,7 @@ import {
 import { firstLineLocalFileParts } from "@/react-app/domains/session/sync/prompt-file-parts";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
+import { formatComposerAgentLabel } from "@/react-app/domains/session/surface/composer/agent-label";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
@@ -855,7 +856,7 @@ export function SessionRoute() {
       onModelVariantChange: (value: string | null) => {
         local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
       },
-      agentLabel: selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : t("session.default_agent"),
+      agentLabel: selectedAgent ? formatComposerAgentLabel(selectedAgent) : t("session.default_agent"),
       selectedAgent,
       listAgents,
       onSelectAgent: (agent: string | null) => setSelectedAgent(agent),

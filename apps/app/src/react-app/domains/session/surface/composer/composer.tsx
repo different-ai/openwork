@@ -10,6 +10,7 @@ import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/i
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { formatBytes, isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
+import { formatComposerAgentLabel } from "./agent-label";
 import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
@@ -1392,7 +1393,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
+                                      <div className="truncate text-xs font-semibold">{formatComposerAgentLabel(agent.name)}</div>
                                       {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
                                     </div>
                                     {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
@@ -1595,7 +1596,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 applyAgentSelection(agent.name);
                               }}
                             >
-                              <span className="truncate">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</span>
+                              <span className="truncate">{formatComposerAgentLabel(agent.name)}</span>
                               {active ? <Check size={14} className="text-gray-10" /> : null}
                             </button>
                           );

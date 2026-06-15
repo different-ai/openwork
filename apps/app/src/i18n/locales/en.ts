@@ -77,6 +77,7 @@ export default {
   "common.something_went_wrong": "Something went wrong",
   "common.submit": "Submit",
   "common.unknown": "Unknown",
+  "composer.agent_general_purpose": "General purpose agent",
   "composer.agent_label": "Agent",
   "composer.agent_selected": "Agent set to {agent}.",
   "composer.agent_selected_default": "Agent reset to default.",
