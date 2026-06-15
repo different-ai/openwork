@@ -73,6 +73,8 @@ import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import { OpenTargetProvider } from "@/lib/target-provider";
 import type { ThreadStatus } from "@/lib/messages";
+import { SessionChatSearchBar } from "@/react-app/domains/session/search/session-chat-search-bar";
+import { useSessionChatSearch } from "@/react-app/domains/session/search/use-session-chat-search";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -134,6 +136,9 @@ export type SessionSurfaceProps = {
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onForkAtMessage?: (messageId: string | null, sessionId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: { auto?: boolean }, sessionId?: string) => void;
+  chatSearchOpen?: boolean;
+  onChatSearchOpenChange?: (open: boolean) => void;
+  enableChatSearchShortcuts?: boolean;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -1093,6 +1098,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const [internalChatSearchOpen, setInternalChatSearchOpen] = useState(false);
+  const chatSearchOpen = props.chatSearchOpen ?? internalChatSearchOpen;
+  const setChatSearchOpen = props.onChatSearchOpenChange ?? setInternalChatSearchOpen;
+  const chatSearch = useSessionChatSearch({
+    messages: renderedMessages,
+    contentRef,
+    open: chatSearchOpen,
+    onOpenChange: setChatSearchOpen,
+    enableShortcuts: props.enableChatSearchShortcuts ?? true,
+  });
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
     renderedMessages,
@@ -1206,6 +1221,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
   return (
     <DevProfiler id="SessionSurface">
     <div className="flex h-full min-h-0 flex-col">
+      {chatSearchOpen ? (
+        <SessionChatSearchBar
+          query={chatSearch.query}
+          onQueryChange={chatSearch.setQuery}
+          inputRef={chatSearch.inputRef}
+          statusLabel={chatSearch.statusLabel}
+          canNavigate={chatSearch.matchCount > 0}
+          onPrev={chatSearch.goPrev}
+          onNext={chatSearch.goNext}
+          onClose={chatSearch.close}
+        />
+      ) : null}
       {model.transitionState === "switching" && showDelayedLoading ? (
         <div className="flex justify-center px-6 pt-4">
           <div className="rounded-full border border-dls-border bg-dls-hover/80 px-3 py-1 text-xs text-dls-secondary">

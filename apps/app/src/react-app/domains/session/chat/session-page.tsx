@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { Columns2, FileText, Globe, Mic2, Settings2, X, Zap } from "lucide-react";
+import { Columns2, FileText, Globe, Mic2, SearchIcon, Settings2, X, Zap } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
@@ -317,6 +317,7 @@ export function SessionPage(props: SessionPageProps) {
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const [sessionTabs, setSessionTabs] = useState<OpenSessionTab[]>([]);
   const [splitSessionId, setSplitSessionId] = useState<string | null>(null);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [createGroupLabel, setCreateGroupLabel] = useState("");
   const [createGroupWorkspaceId, setCreateGroupWorkspaceId] = useState<string | null>(null);
@@ -667,6 +668,10 @@ export function SessionPage(props: SessionPageProps) {
   );
   const canRenderSplitSurface = Boolean(canRenderReactSurface && splitSessionId && splitSessionId !== props.selectedSessionId);
 
+  useEffect(() => {
+    setChatSearchOpen(false);
+  }, [props.selectedSessionId]);
+
   const openSessionTab = useCallback((workspaceId: string, sessionId: string) => {
     setSessionTabs((current) => {
       const next = current.filter((tab) => tab.workspaceId === workspaceId);
@@ -825,7 +830,17 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
-              {/* Revert/redo moved to per-message actions */}
+              {canRenderReactSurface ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setChatSearchOpen(true)}
+                  title="Search this chat (⌘F)"
+                  aria-label="Search this chat"
+                >
+                  <SearchIcon />
+                </Button>
+              ) : null}
               <NotificationBell />
               {props.developerMode ? (
                 <Button
@@ -966,6 +981,9 @@ export function SessionPage(props: SessionPageProps) {
                         respondQuestion={props.respondQuestion}
                         safeStringify={props.safeStringify}
                         onOpenTarget={openTarget}
+                        chatSearchOpen={chatSearchOpen}
+                        onChatSearchOpenChange={setChatSearchOpen}
+                        enableChatSearchShortcuts
                       />
                     </div>
                     {canRenderSplitSurface ? (
@@ -979,6 +997,7 @@ export function SessionPage(props: SessionPageProps) {
                           openworkToken={reactSessionToken}
                           todos={[]}
                           onOpenTarget={openTarget}
+                          enableChatSearchShortcuts={false}
                         />
                       </div>
                     ) : null}

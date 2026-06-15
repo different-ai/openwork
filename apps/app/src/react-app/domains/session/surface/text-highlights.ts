@@ -1,4 +1,5 @@
 const SEARCH_HIGHLIGHT_MARK_ATTR = "data-search-highlight";
+const SEARCH_HIGHLIGHT_ACTIVE_ATTR = "data-search-active";
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function clearTextHighlights(root: HTMLElement) {
@@ -11,7 +12,13 @@ export function clearTextHighlights(root: HTMLElement) {
   root.normalize();
 }
 
-export function applyTextHighlights(root: HTMLElement, query: string) {
+export function scrollActiveMatchIntoView(root: HTMLElement) {
+  const active = root.querySelector(`mark[${SEARCH_HIGHLIGHT_ACTIVE_ATTR}="true"]`);
+  const target = active ?? root.querySelector(`mark[${SEARCH_HIGHLIGHT_MARK_ATTR}="true"]`);
+  target?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+export function applyTextHighlights(root: HTMLElement, query: string, activeIndex = 0) {
   const needle = query.trim().toLowerCase();
   // Fast path: if search is inactive, avoid walking large message DOM trees.
   // We only need to clear existing marks if a previous search actually added
@@ -47,6 +54,8 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
     current = walker.nextNode();
   }
 
+  let matchCounter = 0;
+
   nodes.forEach((node) => {
     const text = node.nodeValue ?? "";
     const lower = text.toLowerCase();
@@ -62,7 +71,13 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
 
       const mark = document.createElement("mark");
       mark.setAttribute(SEARCH_HIGHLIGHT_MARK_ATTR, "true");
-      mark.className = "rounded px-0.5 bg-amber-4/70 text-current";
+      if (matchCounter === activeIndex) {
+        mark.setAttribute(SEARCH_HIGHLIGHT_ACTIVE_ATTR, "true");
+        mark.className = "rounded px-0.5 bg-primary/35 ring-1 ring-primary/50 text-current";
+      } else {
+        mark.className = "rounded px-0.5 bg-amber-4/70 text-current";
+      }
+      matchCounter += 1;
       mark.textContent = text.slice(matchIndex, matchIndex + needle.length);
       fragment.appendChild(mark);
       searchIndex = matchIndex + needle.length;
