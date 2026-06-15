@@ -15,7 +15,7 @@ import { TextInput } from "../../../design-system/text-input";
 const agentFilePath = ".opencode/agents/opencode-router.md";
 
 export type MessagingViewTab = "general" | "advanced";
-export type MessagingChannel = "telegram" | "slack";
+export type MessagingChannel = "telegram";
 export type MessagingViewExpandedChannel = MessagingChannel | null;
 
 export type MessagingViewProps = {
@@ -50,16 +50,6 @@ export type MessagingViewProps = {
     error: string | null;
     botUsername: string | null;
     pairingCode: string | null;
-  };
-  slack: {
-    identities: OpenworkOpenCodeRouterIdentityItem[];
-    identitiesError: string | null;
-    botToken: string;
-    appToken: string;
-    enabled: boolean;
-    saving: boolean;
-    status: string | null;
-    error: string | null;
   };
   agent: {
     loading: boolean;
@@ -109,11 +99,6 @@ export type MessagingViewProps = {
   onDeleteTelegram: (id: string) => void | Promise<void>;
   onCopyTelegramPairingCode: () => void | Promise<void>;
   onHideTelegramPairingCode: () => void;
-  onSlackBotTokenChange: (value: string) => void;
-  onSlackAppTokenChange: (value: string) => void;
-  onSlackEnabledChange: (value: boolean) => void;
-  onConnectSlack: () => void | Promise<void>;
-  onDeleteSlack: (id: string) => void | Promise<void>;
   onLoadAgentFile: () => void | Promise<void>;
   onCreateDefaultAgentFile: () => void | Promise<void>;
   onChangeAgentDraft: (value: string) => void;
@@ -132,21 +117,6 @@ function TelegramIcon({ size = 20 }: { size?: number }) {
       <circle cx="12" cy="12" r="10" fill="#229ED9" />
       <path d="M7 12.5l2.5 2L16 8.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M9.5 14.5l-.5 3 2-1.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function SlackIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M14.5 2a2 2 0 012 2v4.5h-2a2 2 0 010-4h0V2z" fill="#E01E5A" />
-      <path d="M2 9.5a2 2 0 012-2h4.5v2a2 2 0 01-4 0V9.5z" fill="#36C5F0" />
-      <path d="M9.5 22a2 2 0 01-2-2v-4.5h2a2 2 0 010 4v2.5z" fill="#2EB67D" />
-      <path d="M22 14.5a2 2 0 01-2 2h-4.5v-2a2 2 0 014 0h2.5z" fill="#ECB22E" />
-      <path d="M8.5 9.5h2v2h-2z" fill="#36C5F0" />
-      <path d="M13.5 9.5h2v2h-2z" fill="#ECB22E" />
-      <path d="M8.5 14.5h2v-2h-2z" fill="#2EB67D" />
-      <path d="M13.5 14.5h2v-2h-2z" fill="#E01E5A" />
     </svg>
   );
 }
@@ -185,8 +155,7 @@ export function MessagingView(props: MessagingViewProps) {
     : null;
   const agentDirty = props.agent.draft !== props.agent.content;
   const hasTelegramConnected = props.telegram.identities.some((item) => item.enabled);
-  const hasSlackConnected = props.slack.identities.some((item) => item.enabled);
-  const connectedChannelCount = Number(hasTelegramConnected) + Number(hasSlackConnected);
+  const connectedChannelCount = Number(hasTelegramConnected);
   const messagesToday = props.health?.activity
     ? (props.health.activity.inboundToday ?? 0) + (props.health.activity.outboundToday ?? 0)
     : null;
@@ -640,180 +609,6 @@ export function MessagingView(props: MessagingViewProps) {
                     ) : null}
                   </div>
 
-                  <div
-                    className={`overflow-hidden rounded-xl border transition-colors ${
-                      hasSlackConnected ? "border-emerald-7/30 bg-emerald-1/20" : "border-gray-4 bg-gray-1"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-3.5 px-4 py-3.5 text-left transition-colors hover:bg-gray-2/50"
-                      onClick={() => props.onToggleExpandedChannel("slack")}
-                    >
-                      <SlackIcon size={28} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[15px] font-semibold text-gray-12">Slack</span>
-                          {hasSlackConnected ? (
-                            <span className="rounded-full bg-emerald-1/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-11">
-                              {t("identities.connected_badge")}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="mt-0.5 text-[13px] leading-snug text-gray-9">{t("identities.slack_desc")}</div>
-                      </div>
-                      <ChevronRight
-                        size={16}
-                        className={`shrink-0 text-gray-8 transition-transform ${
-                          props.expandedChannel === "slack" ? "rotate-90" : ""
-                        }`}
-                      />
-                    </button>
-
-                    {props.expandedChannel === "slack" ? (
-                      <div className="space-y-3 border-t border-gray-4 p-4 animate-[fadeUp_0.2s_ease-out]">
-                        {props.slack.identitiesError ? (
-                          <div className="rounded-lg border border-amber-7/20 bg-amber-1/30 px-3 py-2 text-xs text-amber-12">
-                            {props.slack.identitiesError}
-                          </div>
-                        ) : null}
-
-                        {props.slack.identities.length > 0 ? (
-                          <>
-                            <div className="space-y-2">
-                              {props.slack.identities.map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="flex items-center justify-between gap-3 rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5"
-                                >
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className={`size-1.5 shrink-0 rounded-full ${item.running ? "bg-emerald-9" : "bg-gray-8"}`}
-                                      />
-                                      <span className="truncate text-[13px] font-semibold text-gray-12">
-                                        <span className="font-mono text-[12px]">{item.id}</span>
-                                      </span>
-                                    </div>
-                                    <div className="mt-0.5 pl-3.5 text-[11px] text-gray-9">
-                                      {item.enabled ? t("identities.enabled_label") : t("identities.disabled_label")} · {item.running ? t("identities.running_label") : t("identities.stopped_label")}
-                                    </div>
-                                  </div>
-                                  <Button
-                                    variant="outline"
-                                    size="xs" className="shrink-0"
-                                    disabled={props.slack.saving || item.id === "env" || !scopedWorkspaceReady}
-                                    onClick={() => void props.onDeleteSlack(item.id)}
-                                  >
-                                    {t("identities.disconnect")}
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="flex gap-2.5">
-                              <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.status_label")}</div>
-                                <div className="flex items-center gap-1.5">
-                                  <div
-                                    className={`size-1.5 rounded-full ${
-                                      props.slack.identities.some((item) => item.running) ? "bg-emerald-9" : "bg-gray-8"
-                                    }`}
-                                  />
-                                  <span
-                                    className={`text-[13px] font-semibold ${
-                                      props.slack.identities.some((item) => item.running)
-                                        ? "text-emerald-11"
-                                        : "text-gray-10"
-                                    }`}
-                                  >
-                                    {props.slack.identities.some((item) => item.running)
-                                      ? t("identities.status_active")
-                                      : t("identities.status_stopped")}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.identities_label")}</div>
-                                <div className="text-[13px] font-semibold text-gray-12">
-                                  {props.slack.identities.length} {t("identities.configured_suffix")}
-                                </div>
-                              </div>
-                              <div className="flex-1 rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2.5">
-                                <div className="mb-0.5 text-[11px] text-gray-9">{t("identities.channel_label")}</div>
-                                <div className="text-[13px] font-semibold text-gray-12">
-                                  {props.health?.channels.slack ? t("common.on") : t("common.off")}
-                                </div>
-                              </div>
-                            </div>
-
-                            {props.slack.status ? <div className="text-[11px] text-gray-9">{props.slack.status}</div> : null}
-                            {props.slack.error ? <div className="text-[11px] text-red-12">{props.slack.error}</div> : null}
-                          </>
-                        ) : null}
-
-                        <div className="space-y-2.5">
-                          {props.slack.identities.length === 0 ? (
-                            <p className="text-[13px] leading-relaxed text-gray-10">{t("identities.slack_intro")}</p>
-                          ) : null}
-
-                          <div className="space-y-2">
-                            <TextInput
-                              label={t("identities.bot_token_label")}
-                              placeholder="xoxb-..."
-                              type="password"
-                              value={props.slack.botToken}
-                              onChange={(event) => props.onSlackBotTokenChange(event.currentTarget.value)}
-                              className="rounded-lg border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
-                            />
-                            <TextInput
-                              label={t("identities.app_token_label")}
-                              placeholder="xapp-..."
-                              type="password"
-                              value={props.slack.appToken}
-                              onChange={(event) => props.onSlackAppTokenChange(event.currentTarget.value)}
-                              className="rounded-lg border-gray-4 bg-gray-1 px-3 py-2.5 text-sm text-gray-12 placeholder:text-gray-8"
-                            />
-                          </div>
-
-                          <label className="flex items-center gap-2 text-xs text-gray-11">
-                            <input
-                              type="checkbox"
-                              checked={props.slack.enabled}
-                              onChange={(event) => props.onSlackEnabledChange(event.currentTarget.checked)}
-                            />
-                            {t("identities.enabled_label")}
-                          </label>
-
-                          <button
-                            type="button"
-                            onClick={() => void props.onConnectSlack()}
-                            disabled={props.slack.saving || !scopedWorkspaceReady || !props.slack.botToken.trim() || !props.slack.appToken.trim()}
-                            className={`flex items-center gap-2 rounded-lg border-none px-4 py-2.5 text-sm font-semibold text-white transition-opacity ${
-                              props.slack.saving || !scopedWorkspaceReady || !props.slack.botToken.trim() || !props.slack.appToken.trim()
-                                ? "cursor-not-allowed opacity-50"
-                                : "cursor-pointer opacity-100 hover:opacity-90"
-                            }`}
-                            style={{ background: "#4A154B" }}
-                          >
-                            {props.slack.saving ? (
-                              <div className="size-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                            ) : (
-                              <Link size={15} />
-                            )}
-                            {props.slack.saving ? t("identities.connecting") : t("identities.connect_slack")}
-                          </button>
-
-                          {props.slack.identities.length === 0 && props.slack.status ? (
-                            <div className="text-[11px] text-gray-9">{props.slack.status}</div>
-                          ) : null}
-                          {props.slack.identities.length === 0 && props.slack.error ? (
-                            <div className="text-[11px] text-red-12">{props.slack.error}</div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
                 </div>
               </div>
             </>
@@ -932,19 +727,14 @@ export function MessagingView(props: MessagingViewProps) {
                     <select
                       className="w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12"
                       value={props.sendTest.channel}
-                      onChange={(event) => props.onChangeSendChannel(event.currentTarget.value === "slack" ? "slack" : "telegram")}
+                      onChange={() => props.onChangeSendChannel("telegram")}
                     >
                       <option value="telegram">Telegram</option>
-                      <option value="slack">Slack</option>
                     </select>
                   </div>
                   <TextInput
                     label={t("identities.peer_id_label")}
-                    placeholder={
-                      props.sendTest.channel === "telegram"
-                        ? t("identities.peer_id_placeholder_telegram")
-                        : t("identities.peer_id_placeholder_slack")
-                    }
+                    placeholder={t("identities.peer_id_placeholder_telegram")}
                     value={props.sendTest.peerId}
                     onChange={(event) => props.onChangeSendPeerId(event.currentTarget.value)}
                     className="rounded-lg border-gray-4 bg-gray-1 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-8"

@@ -22,7 +22,6 @@ Important docs to know:
 - General docs navigation: packages/docs/docs.json
 - Cloud MCP: packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx
 - Shared workspaces: packages/docs/cloud/run-in-the-cloud/shared-workspace.mdx
-- Cloud Slack: packages/docs/cloud/run-in-the-cloud/connect-slack.mdx
 - Team templates: packages/docs/cloud/share-with-your-team/team-templates.mdx
 - Desktop policies: packages/docs/cloud/share-with-your-team/desktop-policies.mdx
 - Local MCP setup: packages/docs/start-here/connect-your-stack/add-an-mcp-server.mdx
