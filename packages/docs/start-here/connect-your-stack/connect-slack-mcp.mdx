@@ -1,0 +1,75 @@
+---
+title: "Connect Slack MCP"
+description: "Connect Slack's MCP server with a pre-registered Slack OAuth app"
+---
+
+Slack's official MCP server does not support automatic OAuth client registration. To connect it in OpenWork, ask a Slack admin to create or approve a Slack app for MCP, then add the app's OAuth client credentials in OpenWork.
+
+You do not need the old Slack bot tokens (`xoxb-...` or `xapp-...`) for this flow.
+
+## Before you start
+
+You need:
+
+- A Slack workspace where you can install or request approval for Slack apps.
+- A Slack OAuth client ID and client secret for the Slack MCP app.
+- The Slack MCP server URL: `https://mcp.slack.com/mcp`.
+
+Keep the client secret out of chats and source control. Treat it like any other workspace secret.
+
+## Open Extensions
+
+In OpenWork, open your workspace and go to `Settings` > `Extensions`. Click `Add Custom App`.
+
+<Frame>
+  ![OpenWork Extensions page with Add Custom App button](/images/slack-mcp-extensions-page.png)
+</Frame>
+
+## Add the Slack MCP server
+
+In the Add Custom App dialog:
+
+1. Set `App name` to `slack`.
+2. Keep `Type` set to `Remote (URL)`.
+3. Set `Server URL` to `https://mcp.slack.com/mcp`.
+4. Open `Advanced OAuth`.
+5. Paste the Slack OAuth client ID.
+6. Paste the Slack OAuth client secret.
+7. Add scopes only if your Slack admin gave you explicit scopes to use.
+8. Click `Add App`.
+
+<Frame>
+  ![Add Custom App dialog with Advanced OAuth fields for Slack MCP](/images/slack-mcp-advanced-oauth.png)
+</Frame>
+
+OpenWork writes the MCP entry with the OAuth client credentials, similar to this:
+
+```json
+{
+  "mcp": {
+    "slack": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.slack.com/mcp",
+      "oauth": {
+        "clientId": "your-slack-client-id",
+        "clientSecret": "your-slack-client-secret"
+      }
+    }
+  }
+}
+```
+
+If you entered scopes, OpenWork also saves them as `oauth.scope`.
+
+## Sign in to Slack
+
+After the MCP app is added, reload the engine if OpenWork asks you to. Then start Slack MCP sign-in from the Slack app card or the MCP auth prompt.
+
+Slack opens in your browser. Approve the Slack app for the workspace you want OpenWork to use, then return to OpenWork when authorization finishes.
+
+## Troubleshooting
+
+If you see an error like `Incompatible auth server: does not support dynamic client registration`, the Slack MCP entry is missing a pre-registered OAuth client ID and client secret. Reopen the Slack MCP setup, add those values under `Advanced OAuth`, reload the engine, and try sign-in again.
+
+If your Slack workspace blocks app installation, ask a Slack admin to approve the app first. OpenWork cannot bypass Slack workspace approval policies.
