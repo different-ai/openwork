@@ -136,6 +136,7 @@ type SkillsViewLocalState = {
   customRepoOwner: string;
   customRepoName: string;
   customRepoRef: string;
+  customRepoToken: string;
   customRepoError: string | null;
   shareTarget: SkillCard | null;
   cloudSessionNonce: number;
@@ -168,6 +169,7 @@ const initialSkillsViewLocalState: SkillsViewLocalState = {
   customRepoOwner: "",
   customRepoName: "",
   customRepoRef: "main",
+  customRepoToken: "",
   customRepoError: null,
   shareTarget: null,
   cloudSessionNonce: 0,
@@ -242,6 +244,7 @@ export function SkillsView(props: SkillsViewProps) {
     customRepoOwner,
     customRepoName,
     customRepoRef,
+    customRepoToken,
     customRepoError,
     shareTarget,
     cloudSessionNonce,
@@ -270,6 +273,7 @@ export function SkillsView(props: SkillsViewProps) {
   const setCustomRepoOwner = (value: SetStateAction<string>) => setLocal("customRepoOwner", value);
   const setCustomRepoName = (value: SetStateAction<string>) => setLocal("customRepoName", value);
   const setCustomRepoRef = (value: SetStateAction<string>) => setLocal("customRepoRef", value);
+  const setCustomRepoToken = (value: SetStateAction<string>) => setLocal("customRepoToken", value);
   const setCustomRepoError = (value: SetStateAction<string | null>) => setLocal("customRepoError", value);
   const setShareTeamBusy = (value: SetStateAction<boolean>) => setLocal("shareTeamBusy", value);
   const setShareTeamError = (value: SetStateAction<string | null>) => setLocal("shareTeamError", value);
@@ -644,6 +648,7 @@ export function SkillsView(props: SkillsViewProps) {
     setCustomRepoOwner(hubRepo?.owner ?? "");
     setCustomRepoName(hubRepo?.repo ?? "");
     setCustomRepoRef(hubRepo?.ref || "main");
+    setCustomRepoToken(hubRepo?.accessToken ?? "");
     setCustomRepoError(null);
   }, [hubRepo, props.busy]);
 
@@ -656,15 +661,16 @@ export function SkillsView(props: SkillsViewProps) {
     const owner = customRepoOwner.trim();
     const repo = customRepoName.trim();
     const ref = customRepoRef.trim() || "main";
+    const accessToken = customRepoToken.trim();
     if (!owner || !repo) {
       setCustomRepoError(t("skills.owner_repo_required"));
       return;
     }
-    void Promise.resolve(extensions.addHubRepo({ owner, repo, ref })).then(() => {
+    void Promise.resolve(extensions.addHubRepo({ owner, repo, ref, accessToken })).then(() => {
       void extensions.refreshHubSkills({ force: true });
     });
     closeCustomRepoModal();
-  }, [closeCustomRepoModal, customRepoName, customRepoOwner, customRepoRef, extensions]);
+  }, [closeCustomRepoModal, customRepoName, customRepoOwner, customRepoRef, customRepoToken, extensions]);
 
   const isOpenworkInjectedSkill = (skill: SkillCard) => {
     const normalizedName = skill.name.trim().toLowerCase();
@@ -1302,6 +1308,18 @@ export function SkillsView(props: SkillsViewProps) {
                   value={customRepoRef}
                   onChange={(event) => setCustomRepoRef(event.currentTarget.value)}
                   placeholder="main"
+                  className="w-full rounded-lg border border-dls-border bg-dls-hover px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                  spellCheck={false}
+                />
+              </label>
+
+              <label className="space-y-1">
+                <div className="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{t("skills.token_label", "Personal Access Token (Optional)")}</div>
+                <input
+                  type="password"
+                  value={customRepoToken}
+                  onChange={(event) => setCustomRepoToken(event.currentTarget.value)}
+                  placeholder="ghp_..."
                   className="w-full rounded-lg border border-dls-border bg-dls-hover px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
                   spellCheck={false}
                 />

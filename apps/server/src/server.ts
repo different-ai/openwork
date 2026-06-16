@@ -1880,10 +1880,12 @@ function createRoutes(
     const owner = ctx.url.searchParams.get("owner")?.trim();
     const repo = ctx.url.searchParams.get("repo")?.trim();
     const ref = ctx.url.searchParams.get("ref")?.trim();
+    const token = ctx.url.searchParams.get("token")?.trim();
     const items = await listHubSkills({
       owner: owner || "different-ai",
       repo: repo || "openwork-hub",
       ref: ref || "main",
+      token,
     });
     return jsonResponse({ items });
   });
@@ -1911,6 +1913,7 @@ function createRoutes(
           owner: typeof repoPayload.owner === "string" ? repoPayload.owner : undefined,
           repo: typeof repoPayload.repo === "string" ? repoPayload.repo : undefined,
           ref: typeof repoPayload.ref === "string" ? repoPayload.ref : undefined,
+          token: typeof repoPayload.token === "string" ? repoPayload.token : undefined,
         }
       : undefined;
 

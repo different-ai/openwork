@@ -155,6 +155,7 @@ export type OpenworkHubRepo = {
   owner?: string;
   repo?: string;
   ref?: string;
+  token?: string;
 };
 
 export type OpenworkWorkspaceFileContent = {
@@ -1420,9 +1421,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const owner = options?.repo?.owner?.trim();
       const repo = options?.repo?.repo?.trim();
       const ref = options?.repo?.ref?.trim();
+      const repoToken = options?.repo?.token?.trim();
       if (owner) params.set("owner", owner);
       if (repo) params.set("repo", repo);
       if (ref) params.set("ref", ref);
+      if (repoToken) params.set("token", repoToken);
       const query = params.size ? `?${params.toString()}` : "";
       return requestJson<{ items: OpenworkHubSkillItem[] }>(baseUrl, `/hub/skills${query}`, {
         token,
@@ -1432,7 +1435,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     installHubSkill: (
       workspaceId: string,
       name: string,
-      options?: { overwrite?: boolean; repo?: { owner?: string; repo?: string; ref?: string } },
+      options?: { overwrite?: boolean; repo?: { owner?: string; repo?: string; ref?: string; token?: string } },
     ) =>
       requestJson<{ ok: boolean; name: string; path: string; action: "added" | "updated"; written: number; skipped: number }>(
         baseUrl,

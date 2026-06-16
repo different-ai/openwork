@@ -8,7 +8,7 @@ import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
 
-type HubRepo = { owner: string; repo: string; ref: string };
+type HubRepo = { owner: string; repo: string; ref: string; token?: string };
 
 const DEFAULT_HUB_REPO: HubRepo = {
   owner: "different-ai",
@@ -31,13 +31,14 @@ function hubRawBase(repo: HubRepo) {
   return `https://raw.githubusercontent.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/${encodeURIComponent(repo.ref)}`;
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "openwork-server",
-    },
-  });
+async function fetchJson(url: string, token?: string): Promise<any> {
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "openwork-server",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new ApiError(502, "hub_fetch_failed", `Failed to fetch hub data (${res.status}): ${text || url}`);
@@ -45,13 +46,14 @@ async function fetchJson(url: string): Promise<any> {
   return res.json();
 }
 
-async function fetchText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "text/plain",
-      "User-Agent": "openwork-server",
-    },
-  });
+async function fetchText(url: string, token?: string): Promise<string> {
+  const headers: Record<string, string> = {
+    Accept: "text/plain",
+    "User-Agent": "openwork-server",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new ApiError(502, "hub_fetch_failed", `Failed to fetch hub data (${res.status}): ${text || url}`);
@@ -108,7 +110,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
     return cachedCatalog.items;
   }
 
-  const listing = await fetchJson(`${hubApiBase(repo)}/contents/skills?ref=${encodeURIComponent(repo.ref)}`);
+  const listing = await fetchJson(`${hubApiBase(repo)}/contents/skills?ref=${encodeURIComponent(repo.ref)}`, repo.token);
   const dirs = Array.isArray(listing)
     ? listing
         .filter((entry) => entry && typeof entry === "object" && entry.type === "dir" && typeof entry.name === "string")
@@ -120,7 +122,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
     try {
       const skillName = dirName.trim();
       validateSkillName(skillName);
-      const skillMd = await fetchText(`${rawBase}/skills/${encodeURIComponent(skillName)}/SKILL.md`);
+      const skillMd = await fetchText(`${rawBase}/skills/${encodeURIComponent(skillName)}/SKILL.md`, repo.token);
       const { data, body } = parseFrontmatter(skillMd);
       const name = typeof data.name === "string" ? data.name : skillName;
       const descriptionRaw = typeof data.description === "string" ? data.description : "";
@@ -191,6 +193,7 @@ export async function installHubSkill(
     owner: input.repo?.owner?.trim() || DEFAULT_HUB_REPO.owner,
     repo: input.repo?.repo?.trim() || DEFAULT_HUB_REPO.repo,
     ref: input.repo?.ref?.trim() || DEFAULT_HUB_REPO.ref,
+    token: input.repo?.token?.trim(),
   };
 
   const prefix = `skills/${name}/`;
@@ -200,7 +203,7 @@ export async function installHubSkill(
 
   await mkdir(baseDir, { recursive: true });
 
-  const tree = await fetchJson(`${hubApiBase(repo)}/git/trees/${encodeURIComponent(repo.ref)}?recursive=1`);
+  const tree = await fetchJson(`${hubApiBase(repo)}/git/trees/${encodeURIComponent(repo.ref)}?recursive=1`, repo.token);
   const entries: HubTreeEntry[] = Array.isArray(tree?.tree) ? tree.tree : [];
   const files = entries
     .filter((entry) => entry && entry.type === "blob" && typeof entry.path === "string" && entry.path.startsWith(prefix))
@@ -230,9 +233,10 @@ export async function installHubSkill(
     }
 
     await mkdir(dirname(destPath), { recursive: true });
-    const res = await fetch(`${rawBase}/${file.path}`, {
-      headers: { "User-Agent": "openwork-server" },
-    });
+    const headers: Record<string, string> = { "User-Agent": "openwork-server" };
+    if (repo.token) headers["Authorization"] = `Bearer ${repo.token}`;
+
+    const res = await fetch(`${rawBase}/${file.path}`, { headers });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new ApiError(502, "hub_fetch_failed", `Failed to fetch hub file (${res.status}): ${text || file.path}`);

@@ -1292,6 +1292,7 @@ export function createExtensionsStore(options: {
             owner: repo.owner,
             repo: repo.repo,
             ref: repo.ref,
+            token: repo.accessToken,
           },
         });
         if (refreshHubSkillsAborted) return;
@@ -1314,9 +1315,11 @@ export function createExtensionsStore(options: {
         return;
       }
 
+      const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
+      if (repo.accessToken) headers["Authorization"] = `Bearer ${repo.accessToken}`;
       const listingRes = await fetch(
         `https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/contents/skills?ref=${encodeURIComponent(repo.ref)}`,
-        { headers: { Accept: "application/vnd.github+json" } },
+        { headers },
       );
       if (!listingRes.ok) {
         throw new Error(`Failed to fetch hub catalog (${listingRes.status})`);
@@ -1667,7 +1670,7 @@ export function createExtensionsStore(options: {
     setStateField("skillsStatus", null);
 
     try {
-      const repoOverride: OpenworkHubRepo = { owner: repo.owner, repo: repo.repo, ref: repo.ref };
+      const repoOverride: OpenworkHubRepo = { owner: repo.owner, repo: repo.repo, ref: repo.ref, token: repo.accessToken };
       if (!openworkClient || !openworkWorkspaceId) return { ok: false, message: "Hub install requires OpenWork server." };
       const result = await openworkClient.installHubSkill(openworkWorkspaceId, trimmed, { repo: repoOverride });
       await Promise.all([refreshSkills({ force: true }), refreshHubSkills({ force: true })]);

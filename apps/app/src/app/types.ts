@@ -287,6 +287,7 @@ export type HubSkillRepo = {
   owner: string;
   repo: string;
   ref: string;
+  accessToken?: string;
 };
 
 export type HubSkillCard = {
