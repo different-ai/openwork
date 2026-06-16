@@ -13,7 +13,7 @@ browser.
 
 - Daytona CLI installed: `brew install daytonaio/cli/daytona` or download from [GitHub releases](https://github.com/daytonaio/daytona/releases)
 - Logged in: `daytona login`
-- Using the "Different AI" org: `daytona organization use "Different AI"`
+- Using the right Daytona organization for your workspace: `daytona organization use "<org-name>"`
 
 ## Quick Start
 

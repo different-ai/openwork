@@ -1,11 +1,3 @@
-export type CloudImportedSkillHub = {
-  hubId: string;
-  name: string;
-  skillNames: string[];
-  skillIds: string[];
-  importedAt: number | null;
-};
-
 export type CloudImportedSkill = {
   cloudSkillId: string;
   installedName: string;
@@ -55,7 +47,6 @@ export type CloudImportedPlugin = {
 };
 
 export type WorkspaceCloudImports = {
-  skillHubs: Record<string, CloudImportedSkillHub>;
   skills: Record<string, CloudImportedSkill>;
   providers: Record<string, CloudImportedProvider>;
   marketplaces: Record<string, CloudImportedMarketplace>;
@@ -73,30 +64,10 @@ const readStringArray = (value: unknown) =>
 export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports {
   const root = isRecord(value) ? value : {};
   const cloudImports = isRecord(root.cloudImports) ? root.cloudImports : {};
-  const rawSkillHubs = isRecord(cloudImports.skillHubs) ? cloudImports.skillHubs : {};
   const rawSkills = isRecord(cloudImports.skills) ? cloudImports.skills : {};
   const rawProviders = isRecord(cloudImports.providers) ? cloudImports.providers : {};
   const rawMarketplaces = isRecord(cloudImports.marketplaces) ? cloudImports.marketplaces : {};
   const rawPlugins = isRecord(cloudImports.plugins) ? cloudImports.plugins : {};
-
-  const skillHubs = Object.fromEntries(
-    Object.entries(rawSkillHubs).flatMap(([key, entry]) => {
-      if (!isRecord(entry)) return [];
-      const hubId = typeof entry.hubId === "string" ? entry.hubId.trim() : key.trim();
-      const name = typeof entry.name === "string" ? entry.name.trim() : hubId;
-      if (!hubId || !name) return [];
-      const imported = {
-        hubId,
-        name,
-        skillNames: readStringArray(entry.skillNames),
-        skillIds: readStringArray(entry.skillIds),
-        importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
-          ? entry.importedAt
-          : null,
-      } satisfies CloudImportedSkillHub;
-      return [[hubId, imported] as const];
-    }),
-  );
 
   const providers = Object.fromEntries(
     Object.entries(rawProviders).flatMap(([key, entry]) => {
@@ -212,7 +183,7 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
     }),
   );
 
-  return { skillHubs, skills, providers, marketplaces, plugins };
+  return { skills, providers, marketplaces, plugins };
 }
 
 export function withWorkspaceCloudImports(
@@ -222,7 +193,6 @@ export function withWorkspaceCloudImports(
   return {
     ...config,
     cloudImports: {
-      skillHubs: cloudImports.skillHubs,
       skills: cloudImports.skills,
       providers: cloudImports.providers,
       marketplaces: cloudImports.marketplaces,

@@ -52,7 +52,6 @@ import {
   type DenOrgMarketplaceResolved,
   type DenOrgPlugin,
   type DenOrgPluginResolved,
-  type DenOrgSkillHub,
 } from "../../../../app/lib/den";
 import {
   readWorkspaceCloudImports,
@@ -61,7 +60,6 @@ import {
   type CloudImportedPlugin,
   type CloudImportedPluginFile,
   type CloudImportedSkill,
-  type CloudImportedSkillHub,
 } from "../../../../app/cloud/import-state";
 import {
   derivePendingCloudPluginChanges,
@@ -98,9 +96,6 @@ export type ExtensionsStoreSnapshot = {
   cloudOrgSkills: DenOrgSkillCard[];
   cloudOrgSkillsStatus: string | null;
   importedCloudSkills: Record<string, CloudImportedSkill>;
-  cloudOrgSkillHubs: DenOrgSkillHub[];
-  cloudOrgSkillHubsStatus: string | null;
-  importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
@@ -135,9 +130,6 @@ type MutableState = {
   cloudOrgSkills: DenOrgSkillCard[];
   cloudOrgSkillsStatus: string | null;
   importedCloudSkills: Record<string, CloudImportedSkill>;
-  cloudOrgSkillHubs: DenOrgSkillHub[];
-  cloudOrgSkillHubsStatus: string | null;
-  importedCloudSkillHubs: Record<string, CloudImportedSkillHub>;
   cloudOrgMarketplaces: DenOrgMarketplaceResolved[];
   cloudOrgMarketplacesStatus: string | null;
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
@@ -424,26 +416,21 @@ export function createExtensionsStore(options: {
   let refreshPluginsInFlight = false;
   let refreshHubSkillsInFlight = false;
   let refreshCloudOrgSkillsInFlight = false;
-  let refreshCloudOrgSkillHubsInFlight = false;
   let refreshCloudOrgMarketplacesInFlight = false;
   let refreshCloudOrgSkillsInFlightKey = "";
-  let refreshCloudOrgSkillHubsInFlightKey = "";
   let refreshCloudOrgMarketplacesInFlightKey = "";
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
   let refreshHubSkillsAborted = false;
   let refreshCloudOrgSkillsAborted = false;
-  let refreshCloudOrgSkillHubsAborted = false;
   let refreshCloudOrgMarketplacesAborted = false;
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let cloudOrgSkillsLoaded = false;
-  let cloudOrgSkillHubsLoaded = false;
   let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let hubSkillsLoadKey = "";
   let cloudOrgSkillsLoadKey = "";
-  let cloudOrgSkillHubsLoadKey = "";
   let cloudOrgMarketplacesLoadKey = "";
 
   let state: MutableState = {
@@ -458,9 +445,6 @@ export function createExtensionsStore(options: {
     cloudOrgSkills: [],
     cloudOrgSkillsStatus: null,
     importedCloudSkills: {},
-    cloudOrgSkillHubs: [],
-    cloudOrgSkillHubsStatus: null,
-    importedCloudSkillHubs: {},
     cloudOrgMarketplaces: [],
     cloudOrgMarketplacesStatus: null,
     importedCloudMarketplaces: {},
@@ -533,9 +517,6 @@ export function createExtensionsStore(options: {
       cloudOrgSkills: state.cloudOrgSkills,
       cloudOrgSkillsStatus: state.cloudOrgSkillsStatus,
       importedCloudSkills: state.importedCloudSkills,
-      cloudOrgSkillHubs: state.cloudOrgSkillHubs,
-      cloudOrgSkillHubsStatus: state.cloudOrgSkillHubsStatus,
-      importedCloudSkillHubs: state.importedCloudSkillHubs,
       cloudOrgMarketplaces: state.cloudOrgMarketplaces,
       cloudOrgMarketplacesStatus: state.cloudOrgMarketplacesStatus,
       importedCloudMarketplaces: state.importedCloudMarketplaces,
@@ -662,18 +643,6 @@ export function createExtensionsStore(options: {
     return false;
   };
 
-  const refreshImportedCloudSkillHubs = async () => {
-    try {
-      const config = await readWorkspaceOpenworkConfigRecord();
-      const cloudImports = readWorkspaceCloudImports(config);
-      setStateField("importedCloudSkillHubs", cloudImports.skillHubs);
-      return cloudImports.skillHubs;
-    } catch {
-      setStateField("importedCloudSkillHubs", {});
-      return {};
-    }
-  };
-
   const refreshImportedCloudSkills = async () => {
     try {
       const config = await readWorkspaceOpenworkConfigRecord();
@@ -749,20 +718,6 @@ export function createExtensionsStore(options: {
     }
     setStateField("importedCloudMarketplaces", nextMarketplaces);
     void refreshPendingCloudPluginChanges();
-  };
-
-  const persistImportedCloudSkillHubs = async (nextSkillHubs: Record<string, CloudImportedSkillHub>) => {
-    const config = await readWorkspaceOpenworkConfigRecord();
-    const cloudImports = readWorkspaceCloudImports(config);
-    const nextConfig = withWorkspaceCloudImports(config, {
-      ...cloudImports,
-      skillHubs: nextSkillHubs,
-    });
-    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
-    if (!persisted) {
-      throw new Error("OpenWork server unavailable. Connect to manage imported cloud skill hubs.");
-    }
-    setStateField("importedCloudSkillHubs", nextSkillHubs);
   };
 
   const persistImportedCloudSkills = async (nextSkills: Record<string, CloudImportedSkill>) => {
@@ -859,18 +814,6 @@ export function createExtensionsStore(options: {
     }
   };
 
-  const buildImportedSkillNameMap = (imported?: CloudImportedSkillHub | null) => {
-    const mapping = new Map<string, string>();
-    if (!imported) return mapping;
-    imported.skillIds.forEach((skillId, index) => {
-      const name = imported.skillNames[index]?.trim();
-      if (skillId.trim() && name) {
-        mapping.set(skillId.trim(), name);
-      }
-    });
-    return mapping;
-  };
-
   const findImportedCloudSkill = (cloudSkillId: string) => snapshot.importedCloudSkills[cloudSkillId] ?? null;
 
   const persistImportedCloudSkillRecord = async (skill: DenOrgSkillCard, installedName: string) => {
@@ -926,47 +869,6 @@ export function createExtensionsStore(options: {
     if (!result.ok) {
       throw new Error(result.stderr || result.stdout || t("skills.uninstall_failed"));
     }
-  };
-
-  const applyCloudOrgSkillHubImport = async (hub: DenOrgSkillHub, imported?: CloudImportedSkillHub | null) => {
-    const importedNameMap = buildImportedSkillNameMap(imported);
-    const taken = new Set(snapshot.skills.map((skill) => skill.name));
-    imported?.skillNames.forEach((name) => {
-      if (name.trim()) taken.delete(name.trim());
-    });
-
-    const nextSkillNames: string[] = [];
-    const nextSkillNameSet = new Set<string>();
-    const nextSkillIds: string[] = [];
-
-    const skillWrites = hub.skills.map((skill) => {
-      const preferredName = importedNameMap.get(skill.id)?.trim() ?? "";
-      const installName =
-        preferredName && !nextSkillNameSet.has(preferredName)
-          ? preferredName
-          : uniqueSkillInstallName(slugifyOpencodeSkillName(skill.title), taken, skill.id);
-      taken.add(installName);
-      nextSkillNames.push(installName);
-      nextSkillNameSet.add(installName);
-      nextSkillIds.push(skill.id);
-
-      const rawDesc = (skill.description?.trim() || skill.title).trim();
-      const description = rawDesc.slice(0, 1024) || skill.title.slice(0, 1024) || "Skill";
-      const body = extractSkillBodyMarkdown(skill.skillText);
-      const content = buildCloudSkillContent(installName, description, body);
-      return { installName, content, description, overwrite: Boolean(preferredName) };
-    });
-
-    await Promise.all(
-      skillWrites.map(({ installName, content, description, overwrite }) =>
-        upsertWorkspaceSkill(installName, content, description, { overwrite }),
-      ),
-    );
-
-    const removedSkillNames = (imported?.skillNames ?? []).filter((name) => !nextSkillNameSet.has(name));
-    await Promise.all(removedSkillNames.map((name) => deleteWorkspaceSkill(name)));
-
-    return { nextSkillNames, nextSkillIds, removedSkillNames };
   };
 
   const slugifyConfigObjectName = (title: string, fallback: string) => {
@@ -1332,12 +1234,10 @@ export function createExtensionsStore(options: {
     skillsLoaded = false;
     hubSkillsLoaded = false;
     cloudOrgSkillsLoaded = false;
-    cloudOrgSkillHubsLoaded = false;
     cloudOrgMarketplacesLoaded = false;
     skillsRoot = "";
     hubSkillsLoadKey = "";
     cloudOrgSkillsLoadKey = "";
-    cloudOrgSkillHubsLoadKey = "";
     cloudOrgMarketplacesLoadKey = "";
   };
 
@@ -1531,69 +1431,6 @@ export function createExtensionsStore(options: {
       if (refreshCloudOrgSkillsInFlightKey === loadKey) {
         refreshCloudOrgSkillsInFlight = false;
         refreshCloudOrgSkillsInFlightKey = "";
-      }
-    }
-  }
-
-  async function refreshCloudOrgSkillHubs(optionsOverride?: { force?: boolean }) {
-    const wk = getWorkspaceContextKey();
-    const settings = readDenSettings();
-    const token = settings.authToken?.trim() ?? "";
-    const orgId = settings.activeOrgId?.trim() ?? "";
-    const loadKey = `${wk}::${orgId}`;
-
-    if (loadKey !== cloudOrgSkillHubsLoadKey) {
-      cloudOrgSkillHubsLoaded = false;
-    }
-
-    if (!optionsOverride?.force && cloudOrgSkillHubsLoaded) {
-      await refreshImportedCloudSkillHubs();
-      return;
-    }
-    if (refreshCloudOrgSkillHubsInFlight && refreshCloudOrgSkillHubsInFlightKey === loadKey) return;
-
-    refreshCloudOrgSkillHubsInFlight = true;
-    refreshCloudOrgSkillHubsInFlightKey = loadKey;
-    refreshCloudOrgSkillHubsAborted = false;
-
-    try {
-      setStateField("cloudOrgSkillHubsStatus", null);
-
-      if (!token || !orgId) {
-        mutateState((current) => ({
-          ...current,
-          cloudOrgSkillHubs: [],
-          cloudOrgSkillHubsStatus: null,
-        }));
-        cloudOrgSkillHubsLoaded = true;
-        cloudOrgSkillHubsLoadKey = loadKey;
-        await refreshImportedCloudSkillHubs();
-        return;
-      }
-
-      const client = createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token });
-      const hubs = await client.listOrgSkillHubs(orgId);
-      if (refreshCloudOrgSkillHubsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
-      mutateState((current) => ({
-        ...current,
-        cloudOrgSkillHubs: hubs,
-        cloudOrgSkillHubsStatus: null,
-      }));
-      cloudOrgSkillHubsLoaded = true;
-      cloudOrgSkillHubsLoadKey = loadKey;
-      await refreshImportedCloudSkillHubs();
-    } catch (error) {
-      if (refreshCloudOrgSkillHubsAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
-      mutateState((current) => ({
-        ...current,
-        cloudOrgSkillHubs: [],
-        cloudOrgSkillHubsStatus:
-          error instanceof Error ? error.message : "Failed to load organization skill hubs.",
-      }));
-    } finally {
-      if (refreshCloudOrgSkillHubsInFlightKey === loadKey) {
-        refreshCloudOrgSkillHubsInFlight = false;
-        refreshCloudOrgSkillHubsInFlightKey = "";
       }
     }
   }
@@ -1802,121 +1639,6 @@ export function createExtensionsStore(options: {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
       return { ok: false, message };
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function importCloudOrgSkillHub(hub: DenOrgSkillHub): Promise<{ ok: boolean; message: string; importedNames: string[] }> {
-    const importedNames: string[] = [];
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-
-    try {
-      const applied = await applyCloudOrgSkillHubImport(hub, snapshot.importedCloudSkillHubs[hub.id]);
-      importedNames.push(...applied.nextSkillNames);
-      const nextImports = {
-        ...snapshot.importedCloudSkillHubs,
-        [hub.id]: {
-          hubId: hub.id,
-          name: hub.name,
-          skillNames: applied.nextSkillNames,
-          skillIds: applied.nextSkillIds,
-          importedAt: Date.now(),
-        },
-      };
-      await persistImportedCloudSkillHubs(nextImports);
-      options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await Promise.all([
-        refreshSkills({ force: true }),
-        refreshCloudOrgSkills({ force: true }),
-        refreshCloudOrgSkillHubs({ force: true }),
-      ]);
-      return {
-        ok: true,
-        message: `Imported ${hub.skills.length} skill${hub.skills.length === 1 ? "" : "s"} from ${hub.name}.`,
-        importedNames,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, importedNames };
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function syncCloudOrgSkillHub(hub: DenOrgSkillHub): Promise<{ ok: boolean; message: string; importedNames: string[] }> {
-    const imported = snapshot.importedCloudSkillHubs[hub.id];
-    if (!imported) return importCloudOrgSkillHub(hub);
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-
-    try {
-      const applied = await applyCloudOrgSkillHubImport(hub, imported);
-      const nextImports = {
-        ...snapshot.importedCloudSkillHubs,
-        [hub.id]: {
-          hubId: hub.id,
-          name: hub.name,
-          skillNames: applied.nextSkillNames,
-          skillIds: applied.nextSkillIds,
-          importedAt: imported.importedAt ?? Date.now(),
-        },
-      };
-      await persistImportedCloudSkillHubs(nextImports);
-      options.markReloadRequired?.("skills", { type: "skill", name: hub.name, action: "added" });
-      await Promise.all([
-        refreshSkills({ force: true }),
-        refreshCloudOrgSkills({ force: true }),
-        refreshCloudOrgSkillHubs({ force: true }),
-      ]);
-      return { ok: true, message: `Synced ${hub.name} from cloud.`, importedNames: applied.nextSkillNames };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, importedNames: [] };
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function removeCloudOrgSkillHub(hubId: string): Promise<{ ok: boolean; message: string; removedNames: string[] }> {
-    const imported = snapshot.importedCloudSkillHubs[hubId];
-    if (!imported) {
-      return { ok: false, message: "This skill hub has not been imported into the workspace.", removedNames: [] };
-    }
-
-    options.setBusy(true);
-    options.setError(null);
-    setStateField("skillsStatus", null);
-
-    try {
-      await Promise.all(imported.skillNames.map((name) => deleteWorkspaceSkill(name)));
-      for (const name of imported.skillNames) {
-        options.markReloadRequired?.("skills", { type: "skill", name, action: "removed" });
-      }
-
-      const nextImports = { ...snapshot.importedCloudSkillHubs };
-      delete nextImports[hubId];
-      await persistImportedCloudSkillHubs(nextImports);
-      await Promise.all([
-        refreshSkills({ force: true }),
-        refreshCloudOrgSkills({ force: true }),
-        refreshCloudOrgSkillHubs({ force: true }),
-      ]);
-      return {
-        ok: true,
-        message: `Removed ${imported.skillNames.length} imported skill${imported.skillNames.length === 1 ? "" : "s"} from ${imported.name}.`,
-        removedNames: imported.skillNames,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, removedNames: [] };
     } finally {
       options.setBusy(false);
     }
@@ -2895,7 +2617,6 @@ export function createExtensionsStore(options: {
     refreshPluginsAborted = true;
     refreshHubSkillsAborted = true;
     refreshCloudOrgSkillsAborted = true;
-    refreshCloudOrgSkillHubsAborted = true;
     refreshCloudOrgMarketplacesAborted = true;
   }
 
@@ -3004,7 +2725,6 @@ export function createExtensionsStore(options: {
 
       const onDenSessionUpdated = () => {
         cloudOrgSkillsLoaded = false;
-        cloudOrgSkillHubsLoaded = false;
         cloudOrgMarketplacesLoaded = false;
         mutateState((current) => ({ ...current, cloudOrgSkillsContextKey: "" }));
       };
@@ -3042,7 +2762,6 @@ export function createExtensionsStore(options: {
     void refreshSkills({ force: true });
     void refreshPlugins();
     void refreshImportedCloudSkills();
-    void refreshImportedCloudSkillHubs();
     void refreshImportedCloudPlugins();
   };
 
@@ -3070,9 +2789,6 @@ export function createExtensionsStore(options: {
     cloudOrgSkills: () => snapshot.cloudOrgSkills,
     cloudOrgSkillsStatus: () => snapshot.cloudOrgSkillsStatus,
     importedCloudSkills: () => snapshot.importedCloudSkills,
-    cloudOrgSkillHubs: () => snapshot.cloudOrgSkillHubs,
-    cloudOrgSkillHubsStatus: () => snapshot.cloudOrgSkillHubsStatus,
-    importedCloudSkillHubs: () => snapshot.importedCloudSkillHubs,
     cloudOrgMarketplaces: () => snapshot.cloudOrgMarketplaces,
     cloudOrgMarketplacesStatus: () => snapshot.cloudOrgMarketplacesStatus,
     importedCloudMarketplaces: () => snapshot.importedCloudMarketplaces,
@@ -3112,7 +2828,6 @@ export function createExtensionsStore(options: {
     refreshSkills,
     refreshHubSkills,
     refreshCloudOrgSkills,
-    refreshCloudOrgSkillHubs,
     refreshCloudOrgMarketplaces,
     setHubRepo,
     addHubRepo,
@@ -3126,9 +2841,6 @@ export function createExtensionsStore(options: {
     installCloudOrgSkill,
     syncCloudOrgSkill,
     removeCloudOrgSkill,
-    importCloudOrgSkillHub,
-    syncCloudOrgSkillHub,
-    removeCloudOrgSkillHub,
     importCloudOrgPlugin,
     removeCloudOrgPlugin,
     previewClaudePlugin,

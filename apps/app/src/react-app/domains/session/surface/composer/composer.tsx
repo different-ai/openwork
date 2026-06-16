@@ -110,6 +110,11 @@ const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const FILE_URL_RE = /^file:\/\//i;
 const HTTP_URL_RE = /^https?:\/\//i;
+const DEFAULT_AGENT_NAME = "openwork";
+
+function isNonDefaultAgent(agent: Agent) {
+  return agent.name !== DEFAULT_AGENT_NAME;
+}
 
 /**
  * Extract external file/URL drops from a clipboard. Only used when the user
@@ -383,6 +388,8 @@ export function ReactSessionComposer(props: ComposerProps) {
   const mentionMatch = props.draft.match(/@([^\s@]*)$/);
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
+  const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
+  const showAgentPicker = props.selectedAgent !== null || nonDefaultAgents.length > 0;
 
   useEffect(() => {
     setSlashOpen(slashOpenNext);
@@ -398,6 +405,22 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
   }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
+
+  useEffect(() => {
+    if (!showAgentPicker) setAgentMenuOpen(false);
+  }, [showAgentPicker]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void props.listAgents().then((next) => {
+      if (!cancelled) setAgents(next);
+    }).catch(() => {
+      if (!cancelled) setAgents([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.listAgents]);
 
   useEffect(() => {
     setSkills(props.skills ?? []);
@@ -852,7 +875,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       return;
     }
     if (agentMenuOpen) {
-      const total = agents.length + 1;
+      const total = nonDefaultAgents.length + 1;
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setAgentMenuIndex((current) => (current + 1) % total);
@@ -865,7 +888,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        const selected = agentMenuIndex === 0 ? null : agents[agentMenuIndex - 1]?.name ?? null;
+        const selected = agentMenuIndex === 0 ? null : nonDefaultAgents[agentMenuIndex - 1]?.name ?? null;
         props.onSelectAgent(selected);
         setAgentMenuOpen(false);
         return;
@@ -1358,7 +1381,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
                                 {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
                               </button>
-                              {agents.map((agent) => {
+                              {nonDefaultAgents.map((agent) => {
                                 const active = props.selectedAgent === agent.name;
                                 return (
                                   <button
@@ -1519,7 +1542,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     the user switch without leaving the composer. The same
                     selection is reachable from the plug menu, the command
                     palette ("Switch agent"), and @agent mentions. */}
-                <div ref={agentMenuRef} className="relative">
+                <div ref={agentMenuRef} className={showAgentPicker ? "relative" : "hidden"}>
                   <button
                     type="button"
                     className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
@@ -1556,7 +1579,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                           <span>{t("composer.default_agent")}</span>
                           {!props.selectedAgent ? <Check size={14} className="text-gray-10" /> : null}
                         </button>
-                        {agents.map((agent, index) => {
+                        {nonDefaultAgents.map((agent, index) => {
                           const active = props.selectedAgent === agent.name;
                           return (
                             <button

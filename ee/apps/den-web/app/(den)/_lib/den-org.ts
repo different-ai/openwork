@@ -113,6 +113,15 @@ export type DenOrgScimConnection = {
   updatedAt: string | null;
 };
 
+export type DenOrgScimHealth = {
+  unresolvedFailureCount: number;
+  lastFailureAt: string | null;
+  lastFailureAction: string | null;
+  lastFailureMessage: string | null;
+  nextRetryAt: string | null;
+  lastSuccessfulSyncAt: string | null;
+};
+
 export type DenOrgSsoConnection = {
   id: string;
   providerId: string;
@@ -177,6 +186,20 @@ export type DenOrgContext = {
   roles: DenOrgRole[];
   teams: DenOrgTeam[];
   currentMemberTeams: DenCurrentMemberTeam[];
+  entitlements: DenOrgEntitlements;
+  authMethods: DenOrgAuthMethods;
+};
+
+export type DenOrgAuthMethods = {
+  sso: boolean;
+  scim: boolean;
+};
+
+export type DenOrgEntitlements = {
+  sso: boolean;
+  desktopPolicies: boolean;
+  orgControls: boolean;
+  analytics: boolean;
 };
 
 export type DenOrganizationMetadata = {
@@ -315,6 +338,10 @@ export function getJoinOrgRoute(invitationId: string): string {
   return `/join-org?invite=${encodeURIComponent(invitationId)}`;
 }
 
+export function getAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/analytics`;
+}
+
 export function getManageMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
 }
@@ -381,34 +408,6 @@ export function getScimRoute(orgSlug?: string | null): string {
 
 export function getSsoRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/sso`;
-}
-
-export function getSkillHubsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/skill-hubs`;
-}
-
-export function getSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
-  return `${getSkillHubsRoute(orgSlug)}/${encodeURIComponent(skillHubId)}`;
-}
-
-export function getEditSkillHubRoute(orgSlug: string | null | undefined, skillHubId: string): string {
-  return `${getSkillHubRoute(orgSlug, skillHubId)}/edit`;
-}
-
-export function getNewSkillHubRoute(orgSlug?: string | null): string {
-  return `${getSkillHubsRoute(orgSlug)}/new`;
-}
-
-export function getSkillDetailRoute(orgSlug: string | null | undefined, skillId: string): string {
-  return `${getSkillHubsRoute(orgSlug)}/skills/${encodeURIComponent(skillId)}`;
-}
-
-export function getEditSkillRoute(orgSlug: string | null | undefined, skillId: string): string {
-  return `${getSkillDetailRoute(orgSlug, skillId)}/edit`;
-}
-
-export function getNewSkillRoute(orgSlug?: string | null): string {
-  return `${getSkillHubsRoute(orgSlug)}/skills/new`;
 }
 
 export function getPluginsRoute(orgSlug?: string | null): string {
@@ -687,6 +686,34 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     roles,
     teams,
     currentMemberTeams,
+    entitlements: parseOrgEntitlements(payload.entitlements),
+    authMethods: parseOrgAuthMethods(payload.authMethods),
+  };
+}
+
+function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
+  if (!isRecord(value)) {
+    return { sso: false, scim: false };
+  }
+
+  return {
+    sso: value.sso === true,
+    scim: value.scim === true,
+  };
+}
+
+function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
+  // Older servers do not return entitlements; treat everything as available
+  // so gating only applies when the API explicitly reports it.
+  if (!isRecord(value)) {
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true };
+  }
+
+  return {
+    sso: value.sso !== false,
+    desktopPolicies: value.desktopPolicies !== false,
+    orgControls: value.orgControls !== false,
+    analytics: value.analytics !== false,
   };
 }
 
@@ -793,10 +820,23 @@ export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {
 export function parseOrgScimPayload(payload: unknown): {
   baseUrl: string | null;
   connection: DenOrgScimConnection | null;
+  health: DenOrgScimHealth;
   scimToken: string | null;
 } {
   if (!isRecord(payload)) {
-    return { baseUrl: null, connection: null, scimToken: null };
+    return {
+      baseUrl: null,
+      connection: null,
+      health: {
+        unresolvedFailureCount: 0,
+        lastFailureAt: null,
+        lastFailureAction: null,
+        lastFailureMessage: null,
+        nextRetryAt: null,
+        lastSuccessfulSyncAt: null,
+      },
+      scimToken: null,
+    };
   }
 
   const rawConnection = isRecord(payload.connection) ? payload.connection : null;
@@ -820,9 +860,22 @@ export function parseOrgScimPayload(payload: unknown): {
       })()
     : null;
 
+  const rawHealth = isRecord(payload.health) ? payload.health : null;
+  const health = {
+    unresolvedFailureCount: typeof rawHealth?.unresolvedFailureCount === "number"
+      ? rawHealth.unresolvedFailureCount
+      : 0,
+    lastFailureAt: asIsoString(rawHealth?.lastFailureAt),
+    lastFailureAction: asString(rawHealth?.lastFailureAction),
+    lastFailureMessage: asString(rawHealth?.lastFailureMessage),
+    nextRetryAt: asIsoString(rawHealth?.nextRetryAt),
+    lastSuccessfulSyncAt: asIsoString(rawHealth?.lastSuccessfulSyncAt),
+  } satisfies DenOrgScimHealth;
+
   return {
     baseUrl: asString(payload.baseUrl),
     connection,
+    health,
     scimToken: asString(payload.scimToken),
   };
 }

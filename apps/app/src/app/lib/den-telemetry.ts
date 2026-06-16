@@ -10,15 +10,22 @@
  * The client never sends prompt contents, code, or file paths.
  */
 
-import { isDesktopRuntime } from "../utils";
+import { isDesktopRuntime } from "./runtime-env";
 import { type DenSettings, readDenSettings, resolveDenBaseUrls } from "./den";
 
 const INGEST_PATH = "/v1/telemetry/ingest";
 const INGEST_TIMEOUT_MS = 5_000;
 
-type TelemetryEvent = {
+type TelemetryEventFields = {
+  sessionId?: string;
+  durationMs?: number;
+  success?: boolean;
+};
+
+type TelemetryEvent = TelemetryEventFields & {
   type: string;
   timestamp: string;
+  source: "app";
 };
 
 let pendingEvents: TelemetryEvent[] = [];
@@ -89,13 +96,15 @@ function scheduleFlush(): void {
  * Track a telemetry event. The event is batched and flushed periodically.
  * If the user is not signed into Den, the event is silently dropped.
  */
-export function trackTelemetryEvent(type: string): void {
+export function trackTelemetryEvent(type: string, fields: TelemetryEventFields = {}): void {
   const settings = readDenSettings();
   if (!settings.authToken) return;
 
   pendingEvents.push({
     type,
     timestamp: new Date().toISOString(),
+    source: "app",
+    ...fields,
   });
 
   if (pendingEvents.length >= MAX_BATCH_SIZE) {
@@ -109,8 +118,30 @@ export function trackTelemetryEvent(type: string): void {
  * Track that the user started an OpenCode session.
  * This is the primary "are people actually using the app" signal.
  */
-export function trackSessionActive(): void {
-  trackTelemetryEvent("session.active");
+export function trackSessionActive(sessionId?: string): void {
+  trackTelemetryEvent("session.active", { sessionId });
+}
+
+/**
+ * Track that a task run started in a session.
+ * Carries only an opaque session id -- never prompt text or file paths.
+ */
+export function trackTaskStarted(sessionId: string): void {
+  trackTelemetryEvent("task.started", { sessionId });
+}
+
+/**
+ * Track that a task run finished successfully.
+ */
+export function trackTaskCompleted(sessionId: string, durationMs: number): void {
+  trackTelemetryEvent("task.completed", { sessionId, durationMs, success: true });
+}
+
+/**
+ * Track that a task run errored.
+ */
+export function trackTaskFailed(sessionId: string, durationMs: number): void {
+  trackTelemetryEvent("task.failed", { sessionId, durationMs, success: false });
 }
 
 /**

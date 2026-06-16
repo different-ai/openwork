@@ -75,6 +75,7 @@
   "scripts": {
     "build": "pnpm run build:utils && tsup",
     "build:utils": "pnpm --dir ../utils run build",
+    "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
     "db:generate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
     "db:migrate": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts",
     "db:push": "pnpm run build && node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts"

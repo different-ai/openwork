@@ -12,8 +12,9 @@ import type { ProviderListItem } from "../src/app/types";
 import {
   fetchProviderList,
   getConnectedProviderItems,
+  isModelAvailableInConnectedProviders,
   normalizeProviderListResponse,
-} from "../src/react-app/domains/connections/provider-list-query";
+} from "../src/react-app/infra/provider-list-query";
 
 function importedProvider(input: Pick<CloudImportedProvider, "cloudProviderId" | "providerId" | "sourceProviderId" | "name" | "modelIds">): CloudImportedProvider {
   return {
@@ -134,6 +135,63 @@ describe("managed cloud provider model allowlists", () => {
 
       expect(requests).toEqual(["/config/providers"]);
       expect(getConnectedProviderItems(response).flatMap((item) => Object.keys(item.models))).toEqual(["gpt-5.4", "gpt-5.5"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("does not mark configured providers connected when the worker omits connected ids", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/workspace/ws_test/opencode/config/providers") {
+          return Response.json({
+            providers: [provider("openai", "OpenAI", ["gpt-5.5"])],
+            default: {},
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      const response = await fetchProviderList({
+        client: createClient(server.url.toString()),
+        baseUrl: `${server.url}/workspace/ws_test/opencode`,
+        openworkToken: "worker-client-token",
+      });
+
+      expect(getConnectedProviderItems(response)).toEqual([]);
+      expect(isModelAvailableInConnectedProviders(response, { providerID: "openai", modelID: "gpt-5.5" })).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("does not fallback to the full available catalog when configured providers are unavailable", async () => {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/provider") {
+          return Response.json({
+            all: [provider("openai", "openAI_2", staleOpenAiModelIds())],
+            connected: ["openai", "opencode"],
+            default: {},
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      await expect(fetchProviderList({ client: createClient(server.url.toString()) })).rejects.toThrow();
+      expect(requests).toEqual(["/config/providers"]);
     } finally {
       server.stop(true);
     }

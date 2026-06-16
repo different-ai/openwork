@@ -7,6 +7,8 @@ export const DEN_API_KEY_HEADER = "x-api-key"
 export const DEN_API_KEY_DEFAULT_PREFIX = "den_"
 export const DEN_API_KEY_RATE_LIMIT_MAX = 600
 export const DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS = 60_000
+export const DEN_API_KEY_EXPIRES_IN_DAYS = 90
+export const DEN_API_KEY_EXPIRES_IN_SECONDS = DEN_API_KEY_EXPIRES_IN_DAYS * 24 * 60 * 60
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
@@ -100,6 +102,14 @@ export function buildOrganizationApiKeyMetadata(input: {
   }
 }
 
+export function apiKeyMetadataMatchesOrganizationMember(input: {
+  metadata: DenApiKeyMetadata | null
+  organizationId: OrganizationId
+  orgMembershipId: OrganizationMemberId
+}) {
+  return input.metadata?.organizationId === input.organizationId && input.metadata.orgMembershipId === input.orgMembershipId
+}
+
 export async function getApiKeySessionById(apiKeyId: string): Promise<DenApiKeySession | null> {
   const rows = await db
     .select({
@@ -157,7 +167,7 @@ export async function listOrganizationApiKeys(organizationId: OrganizationId): P
       const owner = memberByUserId.get(apiKey.referenceId as UserId)
       const metadata = parseApiKeyMetadata(apiKey.metadata)
 
-      if (!owner || !metadata || metadata.organizationId !== organizationId || metadata.orgMembershipId !== owner.memberId) {
+      if (!owner || !apiKeyMetadataMatchesOrganizationMember({ metadata, organizationId, orgMembershipId: owner.memberId })) {
         return null
       }
 
@@ -185,6 +195,43 @@ export async function listOrganizationApiKeys(organizationId: OrganizationId): P
       } satisfies OrganizationApiKeySummary
     })
     .filter((apiKey): apiKey is OrganizationApiKeySummary => apiKey !== null)
+}
+
+export async function revokeOrganizationApiKeysForMember(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrganizationMemberId
+  userId: UserId | null
+}) {
+  if (!input.userId) {
+    return 0
+  }
+
+  const apiKeys = await db
+    .select({
+      id: AuthApiKeyTable.id,
+      metadata: AuthApiKeyTable.metadata,
+    })
+    .from(AuthApiKeyTable)
+    .where(eq(AuthApiKeyTable.referenceId, input.userId))
+
+  const apiKeyIds = apiKeys
+    .filter((apiKey) => apiKeyMetadataMatchesOrganizationMember({
+      metadata: parseApiKeyMetadata(apiKey.metadata),
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+    }))
+    .map((apiKey) => apiKey.id)
+
+  if (apiKeyIds.length === 0) {
+    return 0
+  }
+
+  await db
+    .update(AuthApiKeyTable)
+    .set({ enabled: false })
+    .where(inArray(AuthApiKeyTable.id, apiKeyIds))
+
+  return apiKeyIds.length
 }
 
 export async function getOrganizationApiKeyById(input: {

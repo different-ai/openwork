@@ -1,10 +1,11 @@
 import type { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
-import { deleteOrganizationScimConnection, getOrganizationScimConnection, getScimBaseUrl, rotateOrganizationScimToken } from "../../scim.js"
-import { requireUserMiddleware, resolveOrganizationContextMiddleware } from "../../middleware/index.js"
+import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureScimManager } from "./shared.js"
+import { ensureScimManager, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -23,7 +24,8 @@ const organizationNotFoundSchema = z.object({
 }).meta({ ref: "ScimOrganizationNotFoundError" })
 
 const forbiddenSchema = z.object({
-  error: z.literal("forbidden"),
+  error: z.enum(["forbidden", "reauth"]),
+  reason: z.string().optional(),
   message: z.string(),
 }).meta({ ref: "ScimForbiddenError" })
 
@@ -35,16 +37,33 @@ const scimConnectionSchema = z.object({
   updatedAt: z.string().datetime(),
 }).meta({ ref: "OrganizationScimConnection" })
 
+const scimHealthSchema = z.object({
+  unresolvedFailureCount: z.number().int().nonnegative(),
+  lastFailureAt: z.string().datetime().nullable(),
+  lastFailureAction: z.string().nullable(),
+  lastFailureMessage: z.string().nullable(),
+  nextRetryAt: z.string().datetime().nullable(),
+  lastSuccessfulSyncAt: z.string().datetime().nullable(),
+}).meta({ ref: "OrganizationScimHealth" })
+
 const scimConnectionResponseSchema = z.object({
   baseUrl: z.string().url(),
   connection: scimConnectionSchema.nullable(),
+  health: scimHealthSchema,
 }).meta({ ref: "OrganizationScimConnectionResponse" })
 
 const rotateScimTokenResponseSchema = z.object({
   baseUrl: z.string().url(),
   connection: scimConnectionSchema,
   scimToken: z.string().min(1),
+  health: scimHealthSchema,
 }).meta({ ref: "RotateOrganizationScimTokenResponse" })
+
+const scimReconciliationResponseSchema = z.object({
+  checked: z.number().int().nonnegative(),
+  repaired: z.number().int().nonnegative(),
+  failures: z.number().int().nonnegative(),
+}).meta({ ref: "OrganizationScimReconciliationResponse" })
 
 function serializeConnection(connection: NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>) {
   return {
@@ -53,6 +72,17 @@ function serializeConnection(connection: NonNullable<Awaited<ReturnType<typeof g
     organizationId: connection.organizationId,
     createdAt: connection.createdAt.toISOString(),
     updatedAt: connection.updatedAt.toISOString(),
+  }
+}
+
+function serializeHealth(health: Awaited<ReturnType<typeof getOrganizationScimHealth>>) {
+  return {
+    unresolvedFailureCount: health.unresolvedFailureCount,
+    lastFailureAt: health.lastFailureAt?.toISOString() ?? null,
+    lastFailureAction: health.lastFailureAction,
+    lastFailureMessage: health.lastFailureMessage,
+    nextRetryAt: health.nextRetryAt?.toISOString() ?? null,
+    lastSuccessfulSyncAt: health.lastSuccessfulSyncAt?.toISOString() ?? null,
   }
 }
 
@@ -90,7 +120,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -107,20 +137,23 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
-      const connection = await getOrganizationScimConnection(payload.organization.id)
+      const [connection, health] = await Promise.all([
+        getOrganizationScimConnection(payload.organization.id),
+        getOrganizationScimHealth(payload.organization.id),
+      ])
 
       return c.json({
         baseUrl: getScimBaseUrl(),
         connection: connection ? serializeConnection(connection) : null,
+        health: serializeHealth(health),
       })
     },
   )
@@ -159,7 +192,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -176,12 +209,11 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
@@ -189,12 +221,85 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         organizationId: payload.organization.id,
         headers: c.req.raw.headers,
       })
+      const health = await getOrganizationScimHealth(payload.organization.id)
+
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated,
+        payload: {
+          scimProviderId: rotated.connection.id,
+          providerId: rotated.connection.providerId,
+        },
+      })
 
       return c.json({
         baseUrl: getScimBaseUrl(),
         connection: serializeConnection(rotated.connection),
         scimToken: rotated.scimToken,
+        health: serializeHealth(health),
       }, 201)
+    },
+  )
+
+  app.post(
+    "/v1/scim/reconcile",
+    describeRoute({
+      tags: ["SCIM"],
+      summary: "Run organization SCIM drift reconciliation",
+      description: "Checks local SCIM-managed identities for inconsistent organization membership or provider-account state and records unresolved drift for retry or manual review.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: {
+          description: "SCIM reconciliation completed.",
+          content: {
+            "application/json": {
+              schema: resolver(scimReconciliationResponseSchema),
+            },
+          },
+        },
+        401: {
+          description: "Unauthorized",
+          content: {
+            "application/json": {
+              schema: resolver(unauthorizedSchema),
+            },
+          },
+        },
+        403: {
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
+          content: {
+            "application/json": {
+              schema: resolver(forbiddenSchema),
+            },
+          },
+        },
+        404: {
+          description: "Organization not found",
+          content: {
+            "application/json": {
+              schema: resolver(organizationNotFoundSchema),
+            },
+          },
+        },
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const access = ensureScimManager(c)
+      if (!access.ok) {
+        return c.json(access.response, orgAccessFailureStatus(access.response))
+      }
+
+      const payload = c.get("organizationContext")
+      const result = await reconcileOrganizationScimDrift(payload.organization.id)
+      await recordOrganizationAuditEvent({
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun,
+        payload: result,
+      })
+      return c.json(result)
     },
   )
 
@@ -226,7 +331,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can manage SCIM.",
+          description: "Only workspace owners or members with security configuration permission can manage SCIM.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -243,16 +348,22 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    requireUserMiddleware,
-    resolveOrganizationContextMiddleware,
+    orgMemberRoute(),
     async (c) => {
       const access = ensureScimManager(c)
       if (!access.ok) {
-        return c.json(access.response, access.response.error === "forbidden" ? 403 : 404)
+        return c.json(access.response, orgAccessFailureStatus(access.response))
       }
 
       const payload = c.get("organizationContext")
-      await deleteOrganizationScimConnection(payload.organization.id)
+      const deleted = await deleteOrganizationScimConnection(payload.organization.id)
+      if (deleted) {
+        await recordOrganizationAuditEvent({
+          organizationId: payload.organization.id,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted,
+        })
+      }
       return c.body(null, 204)
     },
   )

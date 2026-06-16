@@ -13,7 +13,7 @@ export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
 export const THINKING_PREF_KEY = "openwork.showThinking";
 export const VARIANT_PREF_KEY = "openwork.modelVariant";
-export const LANGUAGE_PREF_KEY = "openwork.language";
+export { LANGUAGE_PREF_KEY } from "../i18n";
 export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
 
 export const DEFAULT_MODEL: ModelRef = {
@@ -36,6 +36,11 @@ export type McpDirectoryInfo = {
   type?: "remote" | "local";
   command?: string[];
   oauth: boolean;
+  oauthConfig?: {
+    clientId?: string;
+    clientSecret?: string;
+    scope?: string;
+  };
   /** Extension category for UI grouping. Defaults to "mcp". */
   kind?: ExtensionKind;
   /** Simple Icons slug for brand icon (e.g. "notion", "stripe", "figma"). */
@@ -163,6 +168,26 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: true,
     kind: "mcp",
     iconSrc: "/openwork-mark.svg",
+  },
+  {
+    get name() { return t("mcp.quick_connect_openwork_admin_title"); },
+    serverName: "openwork-admin",
+    get description() { return t("mcp.quick_connect_openwork_admin_desc"); },
+    get url() {
+      // den-api serves the admin MCP at /mcp/admin, next to the org-scoped
+      // /mcp endpoint. Access is enforced server-side via the platform-admin
+      // allowlist, so this entry stays hidden from the default catalog.
+      try {
+        return `${getDenMcpUrl()}/admin`;
+      } catch {
+        return "https://api.openworklabs.com/mcp/admin";
+      }
+    },
+    type: "remote",
+    oauth: true,
+    kind: "mcp",
+    iconSrc: "/openwork-mark.svg",
+    defaultHidden: true,
   },
   {
     get name() { return t("mcp.quick_connect_openwork_ui_title"); },

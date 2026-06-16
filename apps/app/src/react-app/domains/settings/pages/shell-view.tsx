@@ -342,6 +342,13 @@ export function ShellCustomizationView() {
         ) : null}
 
         <ToggleRow
+          label="Display notifications"
+          description="A bell in the header collecting updates from OpenWork Cloud and your workspaces."
+          checked={config.notifications}
+          onChange={(v) => update({ notifications: v })}
+        />
+
+        <ToggleRow
           label="Display task suggestions"
           description="Show task suggestions to help users get started."
           checked={config.starterCards}

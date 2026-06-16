@@ -18,6 +18,7 @@ type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
 export type OrganizationMetadata = {
   limits: OrganizationLimits
+  seatsFreeAdditional?: number
   allowedDesktopVersions?: string[]
   requireSso?: boolean
 } & Record<string, unknown>

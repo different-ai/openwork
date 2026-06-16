@@ -23,6 +23,21 @@ https://www.googleapis.com/auth/drive.file
 https://www.googleapis.com/auth/gmail.compose
 ```
 
+## Opt-In Scopes (Custom OAuth Client Only)
+
+These scopes are never requested by the built-in OpenWork OAuth client. They are only requested when the user supplies their own Google OAuth client and explicitly enables the matching permission in `Settings -> Extensions -> Google Workspace -> Advanced`:
+
+```text
+https://www.googleapis.com/auth/gmail.readonly        (Read Gmail)
+https://www.googleapis.com/auth/drive                 (Full Google Drive access)
+https://www.googleapis.com/auth/calendar.events       (Create calendar events)
+https://www.googleapis.com/auth/chat.spaces.readonly  (Google Chat)
+https://www.googleapis.com/auth/chat.messages.readonly
+https://www.googleapis.com/auth/chat.messages.create
+```
+
+Each opt-in permission is enforced per account at runtime: extension actions that need a scope return a `403` (`google_gmail_read_not_granted`, `google_calendar_write_not_granted`, `google_chat_not_granted`) when the connected account did not grant it.
+
 ## Scope Justifications
 
 ### `openid`, `userinfo.email`, `userinfo.profile`

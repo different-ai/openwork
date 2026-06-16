@@ -225,16 +225,23 @@ export const pluginUpdateSchema = z.object({
   }
 })
 
+export const marketplaceLogoUrlSchema = z.string().trim().min(1).max(1024).refine(
+  (value) => (value.startsWith("/") ? !value.startsWith("//") : /^https:\/\//i.test(value)),
+  { message: "Logo URL must be an https:// URL or a root-relative path." },
+)
+
 export const marketplaceCreateSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema.optional(),
+  logoUrl: marketplaceLogoUrlSchema.nullable().optional(),
 })
 
 export const marketplaceUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
+  logoUrl: marketplaceLogoUrlSchema.nullable().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.description === undefined) {
+  if (value.name === undefined && value.description === undefined && value.logoUrl === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Provide at least one field to update.",
@@ -503,6 +510,7 @@ export const marketplaceSchema = z.object({
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema,
+  logoUrl: nullableStringSchema,
   status: marketplaceStatusSchema,
   createdByOrgMembershipId: memberIdSchema,
   createdAt: z.string().datetime({ offset: true }),

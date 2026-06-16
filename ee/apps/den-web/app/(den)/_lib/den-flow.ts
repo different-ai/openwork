@@ -71,7 +71,19 @@ export type AuthUser = {
   id: string;
   email: string;
   name: string | null;
+  authProviders: string[];
 };
+
+export class ReauthRequiredError extends Error {
+  readonly error = "reauth";
+  readonly reason: string | null;
+
+  constructor(message: string, reason: string | null) {
+    super(message);
+    this.name = "ReauthRequiredError";
+    this.reason = reason;
+  }
+}
 
 export type WorkerLaunch = {
   workerId: string;
@@ -428,6 +440,25 @@ export function getOrgPaymentRequiredError(payload: unknown): OrgPaymentRequired
   };
 }
 
+export function getReauthRequiredError(payload: unknown, response: Response): ReauthRequiredError | null {
+  if (response.status !== 403 || !isRecord(payload) || payload.error !== "reauth") {
+    return null;
+  }
+
+  return new ReauthRequiredError(
+    getErrorMessage(payload, "Sign in again before continuing."),
+    typeof payload.reason === "string" ? payload.reason : null,
+  );
+}
+
+export function getRequestError(payload: unknown, response: Response, fallback: string) {
+  return getReauthRequiredError(payload, response) ?? new Error(getErrorMessage(payload, fallback));
+}
+
+export function isReauthRequiredError(error: unknown): error is ReauthRequiredError {
+  return error instanceof ReauthRequiredError;
+}
+
 export function getUser(payload: unknown): AuthUser | null {
   if (!isRecord(payload) || !isRecord(payload.user)) {
     return null;
@@ -441,7 +472,10 @@ export function getUser(payload: unknown): AuthUser | null {
   return {
     id: user.id,
     email: user.email,
-    name: typeof user.name === "string" ? user.name : null
+    name: typeof user.name === "string" ? user.name : null,
+    authProviders: Array.isArray(user.authProviders)
+      ? user.authProviders.filter((provider): provider is string => typeof provider === "string")
+      : []
   };
 }
 

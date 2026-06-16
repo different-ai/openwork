@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
-  BookOpen,
+  BarChart3,
   Bot,
   Cable,
   CreditCard,
@@ -27,6 +27,7 @@ import {
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
   formatRoleLabel,
+  getAnalyticsRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
   getBillingRoute,
@@ -42,7 +43,6 @@ import {
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
-  getSkillHubsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
@@ -109,6 +109,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname === dashboardRoot) {
     return "Home";
   }
+  if (pathname.startsWith(getAnalyticsRoute(orgSlug))) {
+    return "Analytics";
+  }
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
   }
@@ -132,9 +135,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
     return "OpenWork Models";
-  }
-  if (pathname.startsWith(getSkillHubsRoute(orgSlug))) {
-    return "Skill Hubs";
   }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugins";
@@ -188,11 +188,18 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     ...(access.isAdmin
       ? [
           {
-            href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
-            label: "Shared Workspace",
-            icon: Bot,
-            badge: "Alpha",
+            href: activeOrg ? getAnalyticsRoute(activeOrg.slug) : "#",
+            label: "Analytics",
+            icon: BarChart3,
+            badge: "New",
           },
+          // NOTE: Shared Workspace soft-disabled — uncomment to re-enable
+          // {
+          //   href: activeOrg ? getBackgroundAgentsRoute(activeOrg.slug) : "#",
+          //   label: "Shared Workspace",
+          //   icon: Bot,
+          //   badge: "Alpha",
+          // },
           {
             href: activeOrg ? getInferenceRoute(activeOrg.slug) : "#",
             label: "OpenWork Models",
@@ -209,12 +216,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             label: "Desktop Policies",
             icon: Laptop,
           },
-          // NOTE: Skill Hubs soft-disabled — uncomment to re-enable
-          // {
-          //   href: activeOrg ? getSkillHubsRoute(activeOrg.slug) : "#",
-          //   label: "Skill Hubs",
-          //   icon: BookOpen,
-          // },
           {
             href: activeOrg ? getIntegrationsRoute(activeOrg.slug) : "#",
             label: "Integrations",

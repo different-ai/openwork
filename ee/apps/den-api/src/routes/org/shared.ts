@@ -4,6 +4,10 @@ import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
 import { env } from "../../env.js"
 import { denTypeIdSchema } from "../../openapi.js"
+import {
+  canManageSecurityConfiguration as canManageOrganizationSecurityConfiguration,
+  type SecurityConfigurationPermissionPayload,
+} from "../../organization-access.js"
 import type { AuthContextVariables } from "../../session.js"
 
 export type OrgRouteVariables =
@@ -11,6 +15,47 @@ export type OrgRouteVariables =
   & Partial<UserOrganizationsContext>
   & Partial<OrganizationContextVariables>
   & Partial<MemberTeamsContext>
+
+export const PRIVILEGED_SESSION_MAX_AGE_MS = 15 * 60 * 1000
+
+type PrivilegedOrgRouteContext = {
+  get: <K extends "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
+}
+
+export function hasFreshPrivilegedSession(payload: { session: { createdAt?: Date | string | null } | null | undefined }, now = new Date()) {
+  const createdAt = payload.session?.createdAt
+  const createdAtMs = createdAt instanceof Date
+    ? createdAt.getTime()
+    : typeof createdAt === "string"
+      ? new Date(createdAt).getTime()
+      : Number.NaN
+
+  if (!Number.isFinite(createdAtMs)) {
+    return false
+  }
+
+  const ageMs = now.getTime() - createdAtMs
+  return ageMs >= 0 && ageMs <= PRIVILEGED_SESSION_MAX_AGE_MS
+}
+
+function ensureFreshPrivilegedSession(c: { get: (key: "session") => OrgRouteVariables["session"] }) {
+  if (hasFreshPrivilegedSession({ session: c.get("session") })) {
+    return { ok: true as const }
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "reauth",
+      reason: "fresh_auth_required",
+      message: "Sign in again before performing this privileged action.",
+    },
+  }
+}
+
+export function orgAccessFailureStatus(response: { error: string }) {
+  return response.error === "organization_not_found" ? 404 : 403
+}
 
 export function idParamSchema<K extends string>(key: K, typeName?: DenTypeIdName) {
   if (!typeName) {
@@ -63,7 +108,7 @@ export function buildInvitationLink(inviteToken: string) {
   return new URL(`/join-org?invite=${encodeURIComponent(inviteToken)}`, getInvitationOrigin()).toString()
 }
 
-export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureOwner(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload?.currentMember.isOwner) {
     return {
@@ -75,10 +120,10 @@ export function ensureOwner(c: { get: (key: "organizationContext") => OrgRouteVa
     }
   }
 
-  return { ok: true as const }
+  return ensureFreshPrivilegedSession(c)
 }
 
-export function ensureInviteManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureOrganizationAdmin(c: PrivilegedOrgRouteContext, message: string) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -90,7 +135,31 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+    return ensureFreshPrivilegedSession(c)
+  }
+
+  return {
+    ok: false as const,
+    response: {
+      error: "forbidden",
+      message,
+    },
+  }
+}
+
+export function ensureInviteManager(c: PrivilegedOrgRouteContext) {
+  const payload = c.get("organizationContext")
+  if (!payload) {
+    return {
+      ok: false as const,
+      response: {
+        error: "organization_not_found",
+      },
+    }
+  }
+
+  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
@@ -102,7 +171,7 @@ export function ensureInviteManager(c: { get: (key: "organizationContext") => Or
   }
 }
 
-export function ensureMemberRemover(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureMemberRemover(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -114,7 +183,7 @@ export function ensureMemberRemover(c: { get: (key: "organizationContext") => Or
   }
 
   if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
@@ -126,7 +195,11 @@ export function ensureMemberRemover(c: { get: (key: "organizationContext") => Or
   }
 }
 
-export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureTeamManager(c: PrivilegedOrgRouteContext) {
+  return ensureOrganizationAdmin(c, "Only workspace owners and admins can manage teams.")
+}
+
+export function ensureApiKeyManager(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -137,20 +210,32 @@ export function ensureTeamManager(c: { get: (key: "organizationContext") => OrgR
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+  if (canManageApiKeys(payload)) {
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage teams.",
+      message: "Only workspace owners or members with security configuration permission can manage API keys.",
     },
   }
 }
 
-export function ensureApiKeyManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function canManageSecurityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
+  return canManageOrganizationSecurityConfiguration(payload)
+}
+
+export function canManageApiKeys(payload: SecurityConfigurationPermissionPayload | null | undefined) {
+  return canManageSecurityConfiguration(payload)
+}
+
+export function canManageIdentityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
+  return canManageSecurityConfiguration(payload)
+}
+
+export function ensureScimManager(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -161,20 +246,20 @@ export function ensureApiKeyManager(c: { get: (key: "organizationContext") => Or
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+  if (canManageIdentityConfiguration(payload)) {
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage API keys.",
+      message: "Only workspace owners or members with security configuration permission can manage SCIM.",
     },
   }
 }
 
-export function ensureScimManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
+export function ensureSsoManager(c: PrivilegedOrgRouteContext) {
   const payload = c.get("organizationContext")
   if (!payload) {
     return {
@@ -185,39 +270,15 @@ export function ensureScimManager(c: { get: (key: "organizationContext") => OrgR
     }
   }
 
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
+  if (canManageIdentityConfiguration(payload)) {
+    return ensureFreshPrivilegedSession(c)
   }
 
   return {
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can manage SCIM.",
-    },
-  }
-}
-
-export function ensureSsoManager(c: { get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }) {
-  const payload = c.get("organizationContext")
-  if (!payload) {
-    return {
-      ok: false as const,
-      response: {
-        error: "organization_not_found",
-      },
-    }
-  }
-
-  if (payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")) {
-    return { ok: true as const }
-  }
-
-  return {
-    ok: false as const,
-    response: {
-      error: "forbidden",
-      message: "Only workspace owners and admins can manage SSO.",
+      message: "Only workspace owners or members with security configuration permission can manage SSO.",
     },
   }
 }

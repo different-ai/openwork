@@ -2,10 +2,12 @@
 
 import { PaperGrainGradient } from "@openwork/ui/react";
 
-export function LandingBackground() {
+export function LandingBackground({ fadeOnScroll = true }: { fadeOnScroll?: boolean }) {
   return (
     <>
-      <div className="landing-background-fade pointer-events-none fixed inset-0 z-0">
+      <div
+        className={`${fadeOnScroll ? "landing-background-fade" : "opacity-60"} pointer-events-none fixed inset-0 z-0`}
+      >
         <PaperGrainGradient
           colors={["#f6f9fc", "#f6f9fc", "#1e293b", "#334155"]}
           colorBack="#f6f9fc"

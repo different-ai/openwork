@@ -1016,7 +1016,27 @@ function WorkspaceSidebarGroup({
                           className="text-muted-foreground text-xs"
                           onClick={() => showMoreSessions(workspace.id, activeRootCount)}
                         >
-                          <span className="truncate">{showMoreLabel}</span>
+                          <span className="flex min-w-0 items-center gap-1">
+                            <span className="truncate">{showMoreLabel}</span>
+                            <span aria-hidden className="shrink-0">⋅</span>
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="shrink-0 hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                ctx.onOpenCreateGroupModal?.(workspace.id);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" && event.key !== " ") return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                ctx.onOpenCreateGroupModal?.(workspace.id);
+                              }}
+                            >
+                              {t("session_management.create_group")}
+                            </span>
+                          </span>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     ) : null}

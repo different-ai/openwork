@@ -1,0 +1,4 @@
+export const ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED: true = true
+export const ORGANIZATION_SAML_ALLOW_IDP_INITIATED: false = false
+export const ORGANIZATION_SAML_REQUIRE_TIMESTAMPS: true = true
+export const ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR: "reject" = "reject"

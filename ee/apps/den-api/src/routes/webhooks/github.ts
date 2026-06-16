@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
+import { signedWebhookRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { enqueueGithubWebhookSync } from "../org/plugin-system/store.js"
 import {
@@ -39,6 +40,7 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
         503: emptyResponse("GitHub webhook secret is not configured."),
       },
     }),
+    signedWebhookRoute,
     async (c) => {
       const secret = env.githubConnectorApp.webhookSecret
       if (!secret) {

@@ -7,11 +7,6 @@
       "types": "./src/react/index.ts",
       "development": "./src/react/index.ts",
       "default": "./src/react/index.ts"
-    },
-    "./solid": {
-      "types": "./src/solid/index.ts",
-      "development": "./src/solid/index.ts",
-      "default": "./src/solid/index.ts"
     }
   },
   "files": [
@@ -20,15 +15,14 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.react.ts && tsup --config tsup.config.solid.ts"
+    "build": "tsup --config tsup.config.react.ts"
   },
   "dependencies": {
     "@paper-design/shaders": "0.0.72",
     "@paper-design/shaders-react": "0.0.72"
   },
   "peerDependencies": {
-    "react": "^18 || ^19",
-    "solid-js": "^1.9.0"
+    "react": "^18 || ^19"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",

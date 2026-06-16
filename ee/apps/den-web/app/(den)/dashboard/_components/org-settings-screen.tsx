@@ -10,6 +10,7 @@ import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
   const domains = [
@@ -405,6 +406,9 @@ export function OrgSettingsScreen() {
       description="Control your organization's settings."
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}
     >
+      {orgContext && !orgContext.entitlements.orgControls ? (
+        <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
+      ) : null}
       {pageError ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
           {pageError}

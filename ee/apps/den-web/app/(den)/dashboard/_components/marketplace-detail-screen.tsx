@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useEffect } from "react";
-import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Store, Users, X } from "lucide-react";
+import { ArrowLeft, Check, GitBranch, Github, Globe, Loader2, Plus, Puzzle, Users, X } from "lucide-react";
 import { PaperMeshGradient } from "@openwork/ui/react";
 import {
   getGithubIntegrationSetupRoute,
@@ -18,6 +18,7 @@ import {
   useMarketplaceAccess,
   useRevokeMarketplaceAccess,
 } from "./marketplace-data";
+import { MarketplaceLogo } from "./marketplace-logo";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -85,7 +86,12 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
             </div>
             <div className="relative flex h-full items-center justify-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-[16px] border border-white/60 bg-white shadow-[0_10px_24px_-10px_rgba(15,23,42,0.3)]">
-                <Store className="h-6 w-6 text-gray-700" aria-hidden />
+                <MarketplaceLogo
+                  logoUrl={marketplace.logoUrl}
+                  name={marketplace.name}
+                  imgClassName="h-9 w-9"
+                  iconClassName="h-6 w-6"
+                />
               </div>
             </div>
           </div>
@@ -556,9 +562,15 @@ function MarketplacePluginCard({
                 </span>
               ))}
             </div>
-          ) : (
+          ) : plugin.memberCount > 0 ? (
             <p className="mt-2 text-[11.5px] text-gray-400">
               {plugin.memberCount} imported object{plugin.memberCount === 1 ? "" : "s"}
+            </p>
+          ) : (
+            <p className="mt-2 text-[11.5px] text-gray-400">
+              {plugin.sourceFormat === "openwork-builtin"
+                ? "Built into the OpenWork desktop app"
+                : "Content imports when the source repository is connected"}
             </p>
           )}
         </div>

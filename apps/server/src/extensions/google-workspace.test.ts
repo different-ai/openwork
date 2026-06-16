@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import type { ServerConfig } from "../types.js";
 import {
   callGoogleWorkspaceExtensionAction,
+  createGoogleWorkspaceConnectFlowManager,
   googleWorkspaceDisconnect,
   googleWorkspaceSetActiveAccount,
   googleWorkspaceStatus,
@@ -220,6 +221,108 @@ describe("Google Workspace extension", () => {
     const result = await callGoogleWorkspaceExtensionAction(config, "gmail_get_message", { messageId: "m1" }, {});
     expect(result?.ok).toBe(true);
     expect(result?.result).toMatchObject({ id: "m1", subject: "Greetings", body: "Hello from Gmail" });
+  });
+
+  test("calendar_create_event rejects accounts without the calendar.events scope", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+
+    expect(callGoogleWorkspaceExtensionAction(config, "calendar_create_event", { summary: "Sync", start: "2026-06-12T10:00:00Z", end: "2026-06-12T11:00:00Z" }, {})).rejects.toThrow(
+      new ApiError(403, "google_calendar_write_not_granted", "Calendar editing access is not granted for this account. Reconnect Google Workspace with calendar editing enabled."),
+    );
+  });
+
+  test("calendar_create_event creates events when the scope is granted", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/calendar.events"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "event-1", htmlLink: "https://calendar.google.com/event-1" }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "calendar_create_event", {
+      summary: "Sync",
+      start: "2026-06-12T10:00:00Z",
+      end: "2026-06-12T11:00:00Z",
+      attendees: ["alice@example.com"],
+    }, {});
+    expect(result?.ok).toBe(true);
+    expect(result?.result).toMatchObject({ id: "event-1" });
+    expect(requests[0]?.url).toContain("/calendar/v3/calendars/primary/events");
+    expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({ summary: "Sync", attendees: [{ email: "alice@example.com" }] });
+  });
+
+  test("chat actions reject accounts without Google Chat scopes", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+
+    expect(callGoogleWorkspaceExtensionAction(config, "chat_list_spaces", {}, {})).rejects.toThrow(
+      new ApiError(403, "google_chat_not_granted", "Google Chat access is not granted for this account. Reconnect Google Workspace with Google Chat enabled."),
+    );
+    expect(callGoogleWorkspaceExtensionAction(config, "chat_send_message", { spaceId: "spaces/AAA", text: "hi" }, {})).rejects.toThrow(
+      new ApiError(403, "google_chat_not_granted", "Google Chat access is not granted for this account. Reconnect Google Workspace with Google Chat enabled."),
+    );
+  });
+
+  test("chat_send_message posts to the chat space when the scope is granted", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/chat.messages.create"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ name: "spaces/AAA/messages/m1" }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "chat_send_message", { spaceId: "AAA", text: "hi" }, {});
+    expect(result?.ok).toBe(true);
+    expect(requests[0]?.url).toBe("https://chat.googleapis.com/v1/spaces/AAA/messages");
+    expect(JSON.parse(requests[0]?.body ?? "{}")).toEqual({ text: "hi" });
+  });
+
+  test("connect start rejects optional features without a custom OAuth client", async () => {
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const flows = createGoogleWorkspaceConnectFlowManager(createTestConfig());
+    expect(flows.start({ features: ["driveFull"] })).rejects.toThrow(
+      new ApiError(400, "google_extra_scopes_require_custom_client", "Extra Google permissions (Gmail read, full Drive, calendar editing, Google Chat) are only available when using your own Google OAuth client."),
+    );
+    expect(flows.start({ gmailRead: true })).rejects.toThrow(
+      new ApiError(400, "google_extra_scopes_require_custom_client", "Extra Google permissions (Gmail read, full Drive, calendar editing, Google Chat) are only available when using your own Google OAuth client."),
+    );
   });
 
   test("can update the active account", async () => {

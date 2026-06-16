@@ -10,7 +10,7 @@ Daytona proxy.
 ### 1. Create/start the sandbox
 
 ```bash
-daytona organization use "Different AI"
+daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh [branch-or-commit]
 ```
 

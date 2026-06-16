@@ -1,0 +1,45 @@
+name: Den DB Check
+
+on:
+  pull_request:
+    paths:
+      - "ee/packages/den-db/**"
+
+permissions:
+  contents: read
+
+jobs:
+  migrations-in-sync:
+    name: Schema and migrations in sync
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --filter "@openwork-ee/den-db..."
+
+      - name: Generate migrations from schema
+        run: pnpm --filter @openwork-ee/den-db db:generate
+
+      - name: Fail if schema changed without a committed migration
+        run: |
+          set -euo pipefail
+          changes="$(git status --porcelain -- ee/packages/den-db/drizzle)"
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            echo "::error::Schema changed without a committed migration. Run 'pnpm --filter @openwork-ee/den-db db:generate' locally and commit the generated files in ee/packages/den-db/drizzle."
+            exit 1
+          fi
+          echo "Migrations are in sync with the schema."

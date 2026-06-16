@@ -8,7 +8,7 @@ import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
 import ru from "./locales/ru";
-import { LANGUAGE_PREF_KEY } from "../app/constants";
+export const LANGUAGE_PREF_KEY = "openwork.language";
 
 /**
  * Supported languages

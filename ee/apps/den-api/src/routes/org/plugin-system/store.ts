@@ -49,6 +49,16 @@ import {
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
+import {
+  DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
+  DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
+  DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
+  DEFAULT_ANTHROPIC_STARTER_PLUGINS,
+  DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
+  DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
+  DEFAULT_OPENWORK_MARKETPLACE_NAME,
+  type DefaultMarketplacePluginEntry,
+} from "./default-marketplaces.js"
 import { db } from "../../../db.js"
 import { env } from "../../../env.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -342,11 +352,6 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-const DEFAULT_OPENWORK_MARKETPLACE_NAME = "OpenWork Marketplace"
-const DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION = "Built-in OpenWork AI capabilities available in the desktop app after sign-in."
-const DEFAULT_ANTHROPIC_MARKETPLACE_NAME = "Anthropic-Compatible Plugins"
-const DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION = "Starter marketplace for Claude/Anthropic-compatible plugin repos. Example source: https://github.com/anthropics/knowledge-work-plugins."
-
 const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
   {
     schemaVersion: 1,
@@ -428,6 +433,10 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
       { type: "tool", id: "google-calendar-read", label: "Calendar", required: true },
       { type: "tool", id: "google-gmail-drafts", label: "Gmail drafts", required: true },
       { type: "tool", id: "google-drive-selected-files", label: "Selected Drive files", required: true },
+      { type: "tool", id: "google-gmail-read", label: "Gmail read (opt-in)", required: false },
+      { type: "tool", id: "google-drive-full", label: "Full Drive access (opt-in)", required: false },
+      { type: "tool", id: "google-calendar-events", label: "Calendar events (opt-in)", required: false },
+      { type: "tool", id: "google-chat", label: "Google Chat (opt-in)", required: false },
     ],
     contributions: [
       { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },
@@ -557,6 +566,7 @@ function serializeMarketplace(row: MarketplaceRow, pluginCount?: number) {
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
     id: row.id,
+    logoUrl: row.logoUrl,
     name: row.name,
     organizationId: row.organizationId,
     pluginCount,
@@ -1139,6 +1149,13 @@ export async function listConfigObjects(input: {
   type?: ConfigObjectRow["objectType"]
 }) {
   const organizationId = input.context.organizationContext.organization.id
+  if (input.connectorInstanceId) {
+    await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
+  }
+  if (input.pluginId) {
+    await ensureVisiblePlugin(input.context, input.pluginId)
+  }
+
   const rows = await db
     .select()
     .from(ConfigObjectTable)
@@ -1164,7 +1181,12 @@ export async function listConfigObjects(input: {
       const memberships = await db
         .select({ id: PluginConfigObjectTable.id })
         .from(PluginConfigObjectTable)
-        .where(and(eq(PluginConfigObjectTable.pluginId, input.pluginId), eq(PluginConfigObjectTable.configObjectId, row.id), isNull(PluginConfigObjectTable.removedAt)))
+        .where(and(
+          eq(PluginConfigObjectTable.organizationId, organizationId),
+          eq(PluginConfigObjectTable.pluginId, input.pluginId),
+          eq(PluginConfigObjectTable.configObjectId, row.id),
+          isNull(PluginConfigObjectTable.removedAt),
+        ))
         .limit(1)
       if (!memberships[0]) continue
     }
@@ -1192,7 +1214,7 @@ export async function createConfigObject(input: {
   }
 
   for (const pluginId of input.pluginIds ?? []) {
-    await requirePluginArchResourceRole({ context: input.context, resourceId: pluginId, resourceKind: "plugin", role: "editor" })
+    await ensureEditablePlugin(input.context, pluginId)
   }
 
   const now = new Date()
@@ -1658,58 +1680,80 @@ export async function listMarketplaces(input: { context: PluginArchActorContext;
 }
 
 async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext) {
-  const organizationId = context.organizationContext.organization.id
-  const createdByOrgMembershipId = context.organizationContext.currentMember.id
   const now = new Date()
-  await ensureDefaultMarketplace({
+  const anthropicMarketplace = await ensureDefaultMarketplace({
     context,
     createdAt: now,
     description: DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
+    logoUrl: DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
     name: DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
+  })
+  await ensureDefaultMarketplacePlugins({
+    context,
+    createdAt: now,
+    entries: DEFAULT_ANTHROPIC_STARTER_PLUGINS,
+    marketplaceId: anthropicMarketplace.id,
   })
 
   const marketplace = await ensureDefaultMarketplace({
     context,
     createdAt: now,
     description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
+    logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
     name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
   })
+  await ensureDefaultMarketplacePlugins({
+    context,
+    createdAt: now,
+    entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
+    marketplaceId: marketplace.id,
+  })
+}
 
-  for (const manifest of DEFAULT_OPENWORK_EXTENSION_MANIFESTS) {
+async function ensureDefaultMarketplacePlugins(input: {
+  context: PluginArchActorContext
+  createdAt: Date
+  entries: DefaultMarketplacePluginEntry[]
+  marketplaceId: MarketplaceId
+}) {
+  const organizationId = input.context.organizationContext.organization.id
+  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
+
+  for (const entry of input.entries) {
     let plugin = (await db
       .select()
       .from(PluginTable)
       .where(and(
         eq(PluginTable.organizationId, organizationId),
-        eq(PluginTable.name, manifest.name),
-        eq(PluginTable.description, manifest.description),
+        eq(PluginTable.name, entry.name),
+        eq(PluginTable.description, entry.description),
         isNull(PluginTable.deletedAt),
       ))
       .limit(1))[0]
 
     if (!plugin) {
       const pluginRow = {
-        createdAt: now,
+        createdAt: input.createdAt,
         createdByOrgMembershipId,
         deletedAt: null,
-        description: manifest.description,
+        description: entry.description,
         id: createDenTypeId("plugin"),
-        name: manifest.name,
+        name: entry.name,
         organizationId,
         status: "active" as const,
-        updatedAt: now,
+        updatedAt: input.createdAt,
       }
       await db.insert(PluginTable).values(pluginRow)
       plugin = pluginRow
     }
 
-    await ensureOrgWidePluginAccess({ context, pluginId: plugin.id, role: "viewer" })
+    await ensureOrgWidePluginAccess({ context: input.context, pluginId: plugin.id, role: "viewer" })
 
     const existingMembership = (await db
       .select()
       .from(MarketplacePluginTable)
       .where(and(
-        eq(MarketplacePluginTable.marketplaceId, marketplace.id),
+        eq(MarketplacePluginTable.marketplaceId, input.marketplaceId),
         eq(MarketplacePluginTable.pluginId, plugin.id),
       ))
       .limit(1))[0]
@@ -1722,10 +1766,10 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     }
 
     await db.insert(MarketplacePluginTable).values({
-      createdAt: now,
+      createdAt: input.createdAt,
       createdByOrgMembershipId,
       id: createDenTypeId("marketplacePlugin"),
-      marketplaceId: marketplace.id,
+      marketplaceId: input.marketplaceId,
       membershipSource: "system",
       organizationId,
       pluginId: plugin.id,
@@ -1738,6 +1782,7 @@ async function ensureDefaultMarketplace(input: {
   context: PluginArchActorContext
   createdAt: Date
   description: string
+  logoUrl: string
   name: string
 }) {
   const organizationId = input.context.organizationContext.organization.id
@@ -1760,6 +1805,7 @@ async function ensureDefaultMarketplace(input: {
       deletedAt: null,
       description: input.description,
       id: createDenTypeId("marketplace"),
+      logoUrl: input.logoUrl,
       name: input.name,
       organizationId,
       status: "active" as const,
@@ -1767,6 +1813,9 @@ async function ensureDefaultMarketplace(input: {
     }
     await db.insert(MarketplaceTable).values(marketplaceRow)
     marketplace = marketplaceRow
+  } else if (!marketplace.logoUrl) {
+    await db.update(MarketplaceTable).set({ logoUrl: input.logoUrl }).where(eq(MarketplaceTable.id, marketplace.id))
+    marketplace = { ...marketplace, logoUrl: input.logoUrl }
   }
 
   await ensureOrgWideMarketplaceAccess({ context: input.context, marketplaceId: marketplace.id, role: "viewer" })
@@ -1848,7 +1897,7 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; name: string }) {
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string }) {
   const now = new Date()
   const row = {
     createdAt: now,
@@ -1856,6 +1905,7 @@ export async function createMarketplace(input: { context: PluginArchActorContext
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
     id: createDenTypeId("marketplace"),
+    logoUrl: normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name.trim(),
     organizationId: input.context.organizationContext.organization.id,
     status: "active" as const,
@@ -1880,11 +1930,12 @@ export async function createMarketplace(input: { context: PluginArchActorContext
   return serializeMarketplace(row, 0)
 }
 
-export async function updateMarketplace(input: { context: PluginArchActorContext; description?: string | null; marketplaceId: MarketplaceId; name?: string }) {
+export async function updateMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; marketplaceId: MarketplaceId; name?: string }) {
   const row = await ensureEditableMarketplace(input.context, input.marketplaceId)
   const updatedAt = new Date()
   await db.update(MarketplaceTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
+    logoUrl: input.logoUrl === undefined ? row.logoUrl : normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name?.trim() || row.name,
     updatedAt,
   }).where(eq(MarketplaceTable.id, row.id))
@@ -2163,7 +2214,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
 
   // Resolve every imported marketplace/plugin id to delete up front so the
   // transaction below is a single pass of pure writes (no reads on the tx).
-  const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds(connectorPluginIds)
+  const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId, seedPluginIds: connectorPluginIds })
 
   await db.transaction(async (tx) => {
     if (instanceIds.length > 0) {
@@ -2190,7 +2241,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
     }
 
-    await deleteConnectorImportedResources({ plan: importedResourceCleanupPlan, tx })
+    await deleteConnectorImportedResources({ organizationId, plan: importedResourceCleanupPlan, tx })
 
     await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.id, row.id))
   })
@@ -2333,8 +2384,8 @@ type ConnectorImportedResourceCleanupPlan = {
 
 // Read-only planning pass. Runs outside of any transaction so that the
 // subsequent delete pass can execute as a single transaction of pure writes.
-async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]): Promise<ConnectorImportedResourceCleanupPlan> {
-  const uniqueSeedPluginIds = uniqueIds(seedPluginIds)
+async function planConnectorImportedResourceCleanupIds(input: { organizationId: OrganizationId; seedPluginIds: PluginId[] }): Promise<ConnectorImportedResourceCleanupPlan> {
+  const uniqueSeedPluginIds = uniqueIds(input.seedPluginIds)
   if (uniqueSeedPluginIds.length === 0) {
     return { marketplaceIdsToDelete: [], pluginIdsToDelete: [] }
   }
@@ -2342,8 +2393,11 @@ async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]
   const connectorMarketplaceRows = await db
     .select({ marketplaceId: MarketplacePluginTable.marketplaceId })
     .from(MarketplacePluginTable)
+    .innerJoin(MarketplaceTable, eq(MarketplacePluginTable.marketplaceId, MarketplaceTable.id))
     .where(and(
       inArray(MarketplacePluginTable.pluginId, uniqueSeedPluginIds),
+      eq(MarketplacePluginTable.organizationId, input.organizationId),
+      eq(MarketplaceTable.organizationId, input.organizationId),
       eq(MarketplacePluginTable.membershipSource, "connector"),
       isNull(MarketplacePluginTable.removedAt),
     ))
@@ -2360,6 +2414,7 @@ async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]
       .from(MarketplacePluginTable)
       .where(and(
         inArray(MarketplacePluginTable.marketplaceId, candidateMarketplaceIds),
+        eq(MarketplacePluginTable.organizationId, input.organizationId),
         isNull(MarketplacePluginTable.removedAt),
       ))
 
@@ -2377,6 +2432,7 @@ async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]
       .from(PluginConfigObjectTable)
       .where(and(
         inArray(PluginConfigObjectTable.pluginId, candidatePluginIds),
+        eq(PluginConfigObjectTable.organizationId, input.organizationId),
         isNull(PluginConfigObjectTable.removedAt),
       ))
 
@@ -2385,7 +2441,10 @@ async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]
     : await db
       .select({ pluginId: ConnectorMappingTable.pluginId })
       .from(ConnectorMappingTable)
-      .where(inArray(ConnectorMappingTable.pluginId, candidatePluginIds))
+      .where(and(
+        inArray(ConnectorMappingTable.pluginId, candidatePluginIds),
+        eq(ConnectorMappingTable.organizationId, input.organizationId),
+      ))
 
   return planConnectorImportedResourceCleanup({
     activeMarketplaceMemberships,
@@ -2401,22 +2460,23 @@ async function planConnectorImportedResourceCleanupIds(seedPluginIds: PluginId[]
 // Write-only delete pass. Must run inside a transaction. Contains no reads so it
 // is safe to run alongside the other deletes on the same Vitess connection.
 async function deleteConnectorImportedResources(input: {
+  organizationId: OrganizationId
   plan: ConnectorImportedResourceCleanupPlan
   tx: DbTransaction
 }) {
   const { marketplaceIdsToDelete, pluginIdsToDelete } = input.plan
 
   if (pluginIdsToDelete.length > 0) {
-    await input.tx.delete(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.pluginId, pluginIdsToDelete))
-    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete))
-    await input.tx.delete(PluginAccessGrantTable).where(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete))
-    await input.tx.delete(PluginTable).where(inArray(PluginTable.id, pluginIdsToDelete))
+    await input.tx.delete(PluginConfigObjectTable).where(and(inArray(PluginConfigObjectTable.pluginId, pluginIdsToDelete), eq(PluginConfigObjectTable.organizationId, input.organizationId)))
+    await input.tx.delete(MarketplacePluginTable).where(and(inArray(MarketplacePluginTable.pluginId, pluginIdsToDelete), eq(MarketplacePluginTable.organizationId, input.organizationId)))
+    await input.tx.delete(PluginAccessGrantTable).where(and(inArray(PluginAccessGrantTable.pluginId, pluginIdsToDelete), eq(PluginAccessGrantTable.organizationId, input.organizationId)))
+    await input.tx.delete(PluginTable).where(and(inArray(PluginTable.id, pluginIdsToDelete), eq(PluginTable.organizationId, input.organizationId)))
   }
 
   if (marketplaceIdsToDelete.length > 0) {
-    await input.tx.delete(MarketplacePluginTable).where(inArray(MarketplacePluginTable.marketplaceId, marketplaceIdsToDelete))
-    await input.tx.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIdsToDelete))
-    await input.tx.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIdsToDelete))
+    await input.tx.delete(MarketplacePluginTable).where(and(inArray(MarketplacePluginTable.marketplaceId, marketplaceIdsToDelete), eq(MarketplacePluginTable.organizationId, input.organizationId)))
+    await input.tx.delete(MarketplaceAccessGrantTable).where(and(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIdsToDelete), eq(MarketplaceAccessGrantTable.organizationId, input.organizationId)))
+    await input.tx.delete(MarketplaceTable).where(and(inArray(MarketplaceTable.id, marketplaceIdsToDelete), eq(MarketplaceTable.organizationId, input.organizationId)))
   }
 }
 
@@ -2532,7 +2592,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
 
   // Resolve every imported marketplace/plugin id to delete up front so the
   // transaction below is a single pass of pure writes (no reads on the tx).
-  const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds(pluginIds)
+  const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId: instance.organizationId, seedPluginIds: pluginIds })
 
   await db.transaction(async (tx) => {
     await tx.delete(ConnectorSourceTombstoneTable).where(eq(ConnectorSourceTombstoneTable.connectorInstanceId, instance.id))
@@ -2555,7 +2615,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
 
-    await deleteConnectorImportedResources({ plan: importedResourceCleanupPlan, tx })
+    await deleteConnectorImportedResources({ organizationId: instance.organizationId, plan: importedResourceCleanupPlan, tx })
   })
 
   return {
@@ -2953,6 +3013,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
 
   return {
     memberTeams: [],
+    session: null,
     organizationContext: {
       currentMember: {
         createdAt: member.createdAt,
@@ -4232,7 +4293,17 @@ export async function enqueueGithubWebhookSync(input: {
     .select({ instance: ConnectorInstanceTable, target: ConnectorTargetTable })
     .from(ConnectorTargetTable)
     .innerJoin(ConnectorInstanceTable, eq(ConnectorTargetTable.connectorInstanceId, ConnectorInstanceTable.id))
-    .where(and(eq(ConnectorTargetTable.connectorType, "github"), eq(ConnectorTargetTable.remoteId, input.repositoryFullName)))
+    .innerJoin(ConnectorAccountTable, eq(ConnectorInstanceTable.connectorAccountId, ConnectorAccountTable.id))
+    .where(and(
+      eq(ConnectorTargetTable.connectorType, "github"),
+      eq(ConnectorTargetTable.remoteId, input.repositoryFullName),
+      eq(ConnectorTargetTable.organizationId, ConnectorInstanceTable.organizationId),
+      eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
+      eq(ConnectorAccountTable.connectorType, "github"),
+      eq(ConnectorAccountTable.remoteId, String(input.installationId)),
+      eq(ConnectorAccountTable.status, "active"),
+      eq(ConnectorInstanceTable.status, "active"),
+    ))
 
   const queuedIds: string[] = []
   for (const row of instances) {
