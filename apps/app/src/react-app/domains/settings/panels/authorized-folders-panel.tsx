@@ -308,27 +308,30 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
               ))}
             </ul>
           ) : (
-            <Empty>
+            <Empty
+              variant="ghost"
+              className="rounded-2xl border border-dashed border-dls-border bg-dls-surface px-5 py-8 text-dls-text"
+            >
               <EmptyHeader>
-                <EmptyMedia>
-                  <Folder className="text-muted-foreground" />
+                <EmptyMedia className="mb-1 flex size-10 rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+                  <Folder className="size-5" />
                 </EmptyMedia>
-                <EmptyTitle>
+                <EmptyTitle className="text-sm text-dls-text">
                   {t("context_panel.no_external_folders")}
                 </EmptyTitle>
-                <EmptyDescription>
+                <EmptyDescription className="text-xs text-dls-secondary">
                   {t("context_panel.add_folder_hint")}
                 </EmptyDescription>
               </EmptyHeader>
-            <EmptyContent>
-              <Button
-                onClick={() => void pickAuthorizedFolder()}
-                disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
-              >
-                <Plus className="size-4" />
-                Add folder
-              </Button>
-            </EmptyContent>
+              <EmptyContent>
+                <Button
+                  onClick={() => void pickAuthorizedFolder()}
+                  disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+                >
+                  <Plus className="size-4" />
+                  Add folder
+                </Button>
+              </EmptyContent>
             </Empty>
           )}
 
