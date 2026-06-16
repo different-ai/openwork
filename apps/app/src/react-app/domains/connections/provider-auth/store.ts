@@ -1658,6 +1658,103 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return request;
   }
 
+  async function submitCustomProvider(opts: {
+    baseUrl: string;
+    modelId: string;
+    apiKey: string;
+  }) {
+    setStateField("providerAuthError", null);
+    const c = options.client();
+    if (!c) {
+      throw new Error(t("providers.not_connected"));
+    }
+
+    const baseUrl = opts.baseUrl.trim();
+    const modelId = opts.modelId.trim();
+    const apiKey = opts.apiKey.trim();
+
+    if (!baseUrl) {
+      throw new Error("Base URL is required.");
+    }
+
+    // Validate URL format
+    try {
+      new URL(baseUrl);
+    } catch {
+      throw new Error("Valid Base URL is required (e.g. https://inference-api.nousresearch.com/v1).");
+    }
+
+    if (!apiKey) {
+      throw new Error("API Key is required.");
+    }
+
+    // Derive a stable provider ID from the base URL hostname
+    let providerId = "custom-openai";
+    try {
+      const hostname = new URL(baseUrl).hostname;
+      const slug = hostname
+        .replace(/^(api\.|inference-api\.|inference\.)/i, "")
+        .replace(/\.(com|io|ai|net|org|dev)$/i, "")
+        .replace(/[^a-z0-9]+/gi, "-")
+        .toLowerCase()
+        .slice(0, 24)
+        .replace(/^-+|-+$/g, "");
+      if (slug) {
+        providerId = `custom-${slug}`;
+      }
+    } catch {
+      // fall back to generic id
+    }
+
+    assertProviderAllowedByDesktopPolicy(providerId);
+
+    try {
+      // Write provider block to opencode.jsonc
+      const modelEntry = modelId
+        ? { [modelId]: { id: modelId, name: modelId } }
+        : {};
+
+      const updatedConfig = await updateProjectConfigFile(
+        (raw) => {
+          let updated = raw.trim()
+            ? raw
+            : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+
+          const providerEdits = modify(
+            updated,
+            ["provider", providerId],
+            {
+              id: providerId,
+              name: "Custom OpenAI Compatible",
+              api: baseUrl,
+              npm: "@ai-sdk/openai-compatible",
+              ...(modelId ? { models: modelEntry } : {}),
+            } as unknown as Record<string, unknown>,
+            { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+          );
+          updated = applyEdits(updated, providerEdits);
+          return updated.endsWith("\n") ? updated : `${updated}\n`;
+        },
+      );
+
+      if (!updatedConfig) {
+        throw new Error("Could not update opencode.jsonc for this workspace.");
+      }
+
+      // Store API key
+      await c.auth.set({ providerID: providerId, auth: { type: "api", key: apiKey } });
+
+      // Refresh providers
+      await refreshProviders({ dispose: true });
+
+      return `Connected custom provider: ${providerId}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to save custom provider.");
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function disconnectProvider(providerId: string) {
     setStateField("providerAuthError", null);
     const c = options.client();
@@ -1914,6 +2011,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,
+    submitCustomProvider,
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,

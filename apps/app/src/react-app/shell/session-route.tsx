@@ -1562,6 +1562,12 @@ export function SessionRoute() {
         },
         onSubmitOAuth: sessionProviderAuthStore.completeProviderAuthOAuth,
         onRefreshProviders: sessionProviderAuthStore.refreshProviders,
+        onSubmitCustomProvider: async (opts) => {
+          const result = await sessionProviderAuthStore.submitCustomProvider(opts);
+          modelPicker.setQuery("");
+          modelPicker.setOpen(true);
+          return result;
+        },
         onClose: () => sessionProviderAuthStore.closeProviderAuthModal(),
       } : null}
       settingsSlot={

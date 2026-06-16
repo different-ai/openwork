@@ -2307,6 +2307,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onRefreshProviders={providerAuthStore.refreshProviders}
         showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
         onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
+        onSubmitCustomProvider={providerAuthStore.submitCustomProvider}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <CreateWorkspaceModal

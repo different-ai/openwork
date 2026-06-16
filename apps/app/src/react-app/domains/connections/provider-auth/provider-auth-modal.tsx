@@ -57,6 +57,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const OPENWORK_MODELS_PROVIDER_ID = "openwork";
+const CUSTOM_OPENAI_PROVIDER_ID = "__custom_openai_compatible__";
 
 export type ProviderAuthModalProps = {
   open: boolean;
@@ -79,6 +80,11 @@ export type ProviderAuthModalProps = {
   onRefreshProviders?: () => Promise<unknown>;
   showOpenWorkModelsSubscribe?: boolean;
   onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  onSubmitCustomProvider?: (opts: {
+    baseUrl: string;
+    modelId: string;
+    apiKey: string;
+  }) => Promise<string | void>;
   onClose: () => void;
 };
 
@@ -87,7 +93,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
+    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe" | "custom"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -101,6 +107,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
+  // Custom OpenAI-Compatible provider form state
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [customModelId, setCustomModelId] = useState("");
+  const [customApiKey, setCustomApiKey] = useState("");
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
@@ -196,6 +206,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       })
       .sort(compareProviders);
 
+    const customEntry: ProviderAuthEntry = {
+      id: CUSTOM_OPENAI_PROVIDER_ID,
+      name: "Custom OpenAI Compatible",
+      methods: [{ type: "api", label: "Configure" }],
+      connected: false,
+      env: [],
+    };
+
     if (props.showOpenWorkModelsSubscribe) {
       const connectedToOpenWork = connected.has(OPENWORK_MODELS_PROVIDER_ID);
       return [
@@ -207,10 +225,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           env: [],
         },
         ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== OPENWORK_MODELS_PROVIDER_ID),
+        customEntry,
       ];
     }
 
-    return nextEntries;
+    return [...nextEntries, customEntry];
   }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showOpenWorkModelsSubscribe]);
 
   const selectedEntry = useMemo(
@@ -271,6 +290,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
+    setCustomBaseUrl("");
+    setCustomModelId("");
+    setCustomApiKey("");
   };
 
   const stopProviderPolling = () => {
@@ -533,6 +555,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
 
+    if (entry.id === CUSTOM_OPENAI_PROVIDER_ID) {
+      setView("custom");
+      return;
+    }
+
     if (entry.methods.length === 1) {
       void handleMethodSelect(entry.methods[0]);
       return;
@@ -544,6 +571,36 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
 
     setLocalError(`No authentication methods available for ${entry.name}.`);
+  };
+
+  const handleCustomSubmit = async () => {
+    const trimmedUrl = customBaseUrl.trim();
+    const trimmedKey = customApiKey.trim();
+    const trimmedModel = customModelId.trim();
+
+    if (!trimmedUrl) {
+      setLocalError("Base URL is required.");
+      return;
+    }
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      setLocalError("Valid Base URL is required (e.g. https://inference-api.nousresearch.com/v1).");
+      return;
+    }
+    if (!trimmedKey) {
+      setLocalError("API Key is required.");
+      return;
+    }
+
+    setLocalError(null);
+    try {
+      await props.onSubmitCustomProvider?.({ baseUrl: trimmedUrl, modelId: trimmedModel, apiKey: trimmedKey });
+      props.onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save custom provider";
+      setLocalError(message);
+    }
   };
 
   const handleApiSubmit = async () => {
@@ -592,7 +649,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "openwork-subscribe") {
+    if (resolvedView === "openwork-subscribe" || resolvedView === "custom") {
       resetState();
       return;
     }
@@ -633,6 +690,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (resolvedView === "cloud") return "Connecting organization provider...";
     if (resolvedView === "oauth-code") return "Verifying authorization code...";
     if (resolvedView === "oauth-auto") return "Waiting for OAuth confirmation...";
+    if (resolvedView === "custom") return "Saving custom provider...";
     return "Opening authentication...";
   };
 
@@ -958,6 +1016,92 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-end">
                     <Button onClick={() => void props.onSubscribeOpenWorkModels?.()} disabled={actionDisabled}>
                       Subscribe
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {resolvedView === "custom" ? (
+                <div className="rounded-xl border border-violet-6/50 bg-violet-2/20 shadow-sm p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-12">Custom OpenAI Compatible</div>
+                      <div className="text-xs text-gray-10 mt-1">
+                        Connect any OpenAI-compatible API endpoint (e.g. Nous Research).
+                      </div>
+                    </div>
+                    <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
+                      Back
+                    </Button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-11 mb-1">
+                        Base URL <span className="text-red-11">*</span>
+                      </label>
+                      <input
+                        id="custom-provider-base-url"
+                        type="url"
+                        placeholder="https://inference-api.nousresearch.com/v1"
+                        value={customBaseUrl}
+                        onChange={(e) => {
+                          setCustomBaseUrl(e.currentTarget.value);
+                          if (localError) setLocalError(null);
+                        }}
+                        autoComplete="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        disabled={actionDisabled}
+                        className="w-full rounded-lg border border-gray-6/70 bg-gray-1/70 px-3 py-2 text-[13px] text-gray-12 placeholder:text-gray-9 focus:border-violet-7 focus:outline-none transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-11 mb-1">
+                        Model Name <span className="text-gray-9">(optional)</span>
+                      </label>
+                      <input
+                        id="custom-provider-model-id"
+                        type="text"
+                        placeholder="DeepHermes-3-Llama-3-8B"
+                        value={customModelId}
+                        onChange={(e) => {
+                          setCustomModelId(e.currentTarget.value);
+                        }}
+                        autoComplete="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        disabled={actionDisabled}
+                        className="w-full rounded-lg border border-gray-6/70 bg-gray-1/70 px-3 py-2 text-[13px] text-gray-12 placeholder:text-gray-9 focus:border-violet-7 focus:outline-none transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-11 mb-1">
+                        API Key <span className="text-red-11">*</span>
+                      </label>
+                      <input
+                        id="custom-provider-api-key"
+                        type="password"
+                        placeholder="sk-..."
+                        value={customApiKey}
+                        onChange={(e) => {
+                          setCustomApiKey(e.currentTarget.value);
+                          if (localError) setLocalError(null);
+                        }}
+                        autoComplete="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        disabled={actionDisabled}
+                        className="w-full rounded-lg border border-gray-6/70 bg-gray-1/70 px-3 py-2 text-[13px] text-gray-12 placeholder:text-gray-9 focus:border-violet-7 focus:outline-none transition-colors"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] text-gray-9">Keys are stored locally by OpenCode.</div>
+                    <Button
+                      onClick={() => void handleCustomSubmit()}
+                      disabled={actionDisabled || !customBaseUrl.trim() || !customApiKey.trim()}
+                    >
+                      {props.submitting ? "Saving…" : "Save provider"}
                     </Button>
                   </div>
                 </div>
